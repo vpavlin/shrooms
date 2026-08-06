@@ -28,6 +28,8 @@ func main() {
 		err = cmdDaemon(os.Args[2:])
 	case "status":
 		err = cmdStatus(os.Args[2:])
+	case "paths":
+		err = cmdPaths(os.Args[2:])
 	case "key":
 		err = cmdKey(os.Args[2:])
 	case "-h", "--help", "help":
@@ -53,6 +55,7 @@ Usage:
   logos-vpn join KEY [--name NAME]     join an existing mesh
   logos-vpn daemon                     run the mesh node
   logos-vpn status [--json]            show the roster and tunnel state
+  logos-vpn paths [NAME]               show probed candidates and which won
   logos-vpn key show                   print the network key
 
 Common flags:

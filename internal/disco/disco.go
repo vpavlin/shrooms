@@ -17,14 +17,21 @@
 //     does the same thing and its source calls Pong "effectively a STUN
 //     response".
 //
-// Packets are authenticated with a key derived from the network key, which in
-// v1 means "authenticated as a mesh member" — consistent with the bearer model.
-// That is enough to stop off-path injection; it is not per-device
-// authentication, which arrives with credentials in M5.
+// Packets are ENCRYPTED, not merely authenticated, under a key derived from the
+// network key. Authenticating alone would leave the sender's device public key
+// in cleartext on every probe — a stable 32-byte identifier that any on-path
+// observer could use to correlate a device across every network it joins. Pongs
+// would additionally expose the observed address, leaking topology.
+//
+// Every packet is the same size regardless of type, so an observer cannot even
+// distinguish a ping from a pong by length.
+//
+// The key is mesh-wide, so this is "authenticated as a mesh member", consistent
+// with the bearer model. Per-device authentication arrives with credentials in
+// M5.
 package disco
 
 import (
-	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
@@ -32,6 +39,7 @@ import (
 	"fmt"
 	"net/netip"
 
+	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/crypto/hkdf"
 
 	"github.com/vpavlin/logos-vpn/internal/identity"
@@ -48,23 +56,20 @@ const (
 const (
 	// TxIDLen is the length of the transaction id correlating a Pong to a Ping.
 	TxIDLen = 12
-	// macLen is the truncated HMAC length. 16 bytes is ample for rejecting
-	// off-path forgeries on a personal mesh.
-	macLen = 16
 	// devicePubLen is an ed25519 public key.
 	devicePubLen = 32
 
 	// addrLen is a serialised ip:port: 16-byte v6 address plus 2-byte port.
-	// v4 is stored as v4-in-v6 so the wire format is fixed-size, which keeps
-	// the packet a constant length.
+	// v4 is stored as v4-in-v6 so the plaintext is a fixed size.
 	addrLen = 18
 
-	headerLen = 1 + 1 + devicePubLen + TxIDLen // version, type, sender, txid
+	// innerLen is the padded plaintext: type, sender, txid and an address slot
+	// that a ping leaves zeroed. Padding a ping out to a pong's length is what
+	// makes the two indistinguishable on the wire.
+	innerLen = 1 + devicePubLen + TxIDLen + addrLen
 
-	// PingLen and PongLen are fixed. Constant-size probes give a traffic
-	// observer nothing to distinguish a ping from a pong beyond direction.
-	PingLen = headerLen + macLen
-	PongLen = headerLen + addrLen + macLen
+	// PacketLen is the fixed on-wire size: version, nonce, ciphertext, tag.
+	PacketLen = 1 + chacha20poly1305.NonceSizeX + innerLen + chacha20poly1305.Overhead
 )
 
 const version byte = 1
@@ -105,59 +110,79 @@ type Message struct {
 	Observed netip.AddrPort
 }
 
-// EncodePing builds an authenticated ping.
+// EncodePing builds an encrypted ping.
 func EncodePing(k Key, senderPub []byte, tx TxID) ([]byte, error) {
-	if len(senderPub) != devicePubLen {
-		return nil, errors.New("sender public key must be 32 bytes")
-	}
-	buf := make([]byte, 0, PingLen)
-	buf = append(buf, version, byte(TypePing))
-	buf = append(buf, senderPub...)
-	buf = append(buf, tx[:]...)
-	return append(buf, mac(k, buf)...), nil
+	return seal(k, TypePing, senderPub, tx, netip.AddrPort{})
 }
 
-// EncodePong builds an authenticated pong echoing the observed source address.
+// EncodePong builds an encrypted pong echoing the observed source address.
 func EncodePong(k Key, senderPub []byte, tx TxID, observed netip.AddrPort) ([]byte, error) {
+	return seal(k, TypePong, senderPub, tx, observed)
+}
+
+// seal builds the fixed-size encrypted packet. A ping and a pong differ only
+// in plaintext, so they are indistinguishable on the wire.
+func seal(k Key, t Type, senderPub []byte, tx TxID, observed netip.AddrPort) ([]byte, error) {
 	if len(senderPub) != devicePubLen {
 		return nil, errors.New("sender public key must be 32 bytes")
 	}
-	buf := make([]byte, 0, PongLen)
-	buf = append(buf, version, byte(TypePong))
-	buf = append(buf, senderPub...)
-	buf = append(buf, tx[:]...)
-	buf = append(buf, encodeAddr(observed)...)
-	return append(buf, mac(k, buf)...), nil
+
+	inner := make([]byte, 0, innerLen)
+	inner = append(inner, byte(t))
+	inner = append(inner, senderPub...)
+	inner = append(inner, tx[:]...)
+	inner = append(inner, encodeAddr(observed)...) // zeroed for a ping
+
+	aead, err := chacha20poly1305.NewX(k[:])
+	if err != nil {
+		return nil, fmt.Errorf("aead: %w", err)
+	}
+	nonce := make([]byte, aead.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, fmt.Errorf("nonce: %w", err)
+	}
+
+	// The version byte is authenticated as additional data rather than
+	// encrypted, so a receiver can reject a wrong version without a key.
+	out := make([]byte, 0, PacketLen)
+	out = append(out, version)
+	out = append(out, nonce...)
+	return aead.Seal(out, nonce, inner, []byte{version}), nil
 }
 
-// Decode parses and authenticates a disco packet.
+// Decode decrypts and validates a disco packet.
 func Decode(k Key, pkt []byte) (*Message, error) {
-	if len(pkt) < headerLen+macLen {
-		return nil, errors.New("packet too short")
+	if len(pkt) != PacketLen {
+		return nil, fmt.Errorf("packet is %d bytes, want %d", len(pkt), PacketLen)
 	}
 	if pkt[0] != version {
 		return nil, fmt.Errorf("unsupported disco version %d", pkt[0])
 	}
 
-	body, gotMAC := pkt[:len(pkt)-macLen], pkt[len(pkt)-macLen:]
-	if !hmac.Equal(gotMAC, mac(k, body)) {
-		return nil, errors.New("authentication failed")
+	aead, err := chacha20poly1305.NewX(k[:])
+	if err != nil {
+		return nil, fmt.Errorf("aead: %w", err)
+	}
+	nonce := pkt[1 : 1+aead.NonceSize()]
+	ct := pkt[1+aead.NonceSize():]
+
+	inner, err := aead.Open(nil, nonce, ct, []byte{version})
+	if err != nil {
+		return nil, errors.New("decryption failed")
+	}
+	if len(inner) != innerLen {
+		return nil, fmt.Errorf("plaintext is %d bytes, want %d", len(inner), innerLen)
 	}
 
-	m := &Message{Type: Type(pkt[1])}
-	copy(m.SenderPub[:], pkt[2:2+devicePubLen])
-	copy(m.TxID[:], pkt[2+devicePubLen:headerLen])
+	m := &Message{Type: Type(inner[0])}
+	copy(m.SenderPub[:], inner[1:1+devicePubLen])
+	copy(m.TxID[:], inner[1+devicePubLen:1+devicePubLen+TxIDLen])
 
 	switch m.Type {
 	case TypePing:
-		if len(pkt) != PingLen {
-			return nil, fmt.Errorf("ping is %d bytes, want %d", len(pkt), PingLen)
-		}
+		// The address slot is padding on a ping; ignore whatever it holds.
 	case TypePong:
-		if len(pkt) != PongLen {
-			return nil, fmt.Errorf("pong is %d bytes, want %d", len(pkt), PongLen)
-		}
-		ap, err := decodeAddr(pkt[headerLen : headerLen+addrLen])
+		ap, err := decodeAddr(inner[1+devicePubLen+TxIDLen:])
 		if err != nil {
 			return nil, err
 		}
@@ -166,12 +191,6 @@ func Decode(k Key, pkt []byte) (*Message, error) {
 		return nil, fmt.Errorf("unknown disco type %d", m.Type)
 	}
 	return m, nil
-}
-
-func mac(k Key, body []byte) []byte {
-	h := hmac.New(sha256.New, k[:])
-	h.Write(body)
-	return h.Sum(nil)[:macLen]
 }
 
 // encodeAddr writes an AddrPort as 16-byte address (v4-mapped if needed) plus

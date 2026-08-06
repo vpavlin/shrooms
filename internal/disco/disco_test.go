@@ -1,6 +1,7 @@
 package disco
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"net/netip"
 	"testing"
@@ -32,8 +33,8 @@ func TestPingRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EncodePing: %v", err)
 	}
-	if len(pkt) != PingLen {
-		t.Fatalf("ping is %d bytes, want %d", len(pkt), PingLen)
+	if len(pkt) != PacketLen {
+		t.Fatalf("ping is %d bytes, want %d", len(pkt), PacketLen)
 	}
 
 	m, err := Decode(k, pkt)
@@ -60,8 +61,8 @@ func TestPongCarriesObservedAddress(t *testing.T) {
 		if err != nil {
 			t.Fatalf("EncodePong: %v", err)
 		}
-		if len(pkt) != PongLen {
-			t.Fatalf("pong is %d bytes, want %d", len(pkt), PongLen)
+		if len(pkt) != PacketLen {
+			t.Fatalf("pong is %d bytes, want %d", len(pkt), PacketLen)
 		}
 		m, err := Decode(k, pkt)
 		if err != nil {
@@ -73,15 +74,63 @@ func TestPongCarriesObservedAddress(t *testing.T) {
 	}
 }
 
-// Every ping is the same size and every pong is the same size, so an observer
-// learns nothing from length.
+// Every packet is the same size, whatever its type or contents, so an observer
+// cannot even tell a ping from a pong by length.
 func TestPacketSizesAreConstant(t *testing.T) {
 	k, pub, tx := fixture(t)
 
-	a, _ := EncodePong(k, pub, tx, netip.MustParseAddrPort("1.2.3.4:1"))
-	b, _ := EncodePong(k, pub, tx, netip.MustParseAddrPort("[2001:db8::dead:beef]:65535"))
-	if len(a) != len(b) {
-		t.Fatalf("pong size varies with address family: %d vs %d", len(a), len(b))
+	ping, _ := EncodePing(k, pub, tx)
+	v4, _ := EncodePong(k, pub, tx, netip.MustParseAddrPort("1.2.3.4:1"))
+	v6, _ := EncodePong(k, pub, tx, netip.MustParseAddrPort("[2001:db8::dead:beef]:65535"))
+
+	for _, pkt := range [][]byte{ping, v4, v6} {
+		if len(pkt) != PacketLen {
+			t.Fatalf("packet is %d bytes, want a constant %d", len(pkt), PacketLen)
+		}
+	}
+}
+
+// The whole point of encrypting rather than only authenticating: the device
+// public key must not appear on the wire, or an on-path observer gets a stable
+// identifier that follows the device between networks.
+func TestSenderKeyNotOnTheWire(t *testing.T) {
+	k, pub, tx := fixture(t)
+
+	ping, _ := EncodePing(k, pub, tx)
+	pong, _ := EncodePong(k, pub, tx, netip.MustParseAddrPort("203.0.113.9:41234"))
+
+	for name, pkt := range map[string][]byte{"ping": ping, "pong": pong} {
+		if bytes.Contains(pkt, pub) {
+			t.Errorf("%s carries the sender public key in cleartext", name)
+		}
+		if bytes.Contains(pkt, tx[:]) {
+			t.Errorf("%s carries the transaction id in cleartext", name)
+		}
+	}
+}
+
+// A pong's observed address is topology information and must not be visible.
+func TestObservedAddressNotOnTheWire(t *testing.T) {
+	k, pub, tx := fixture(t)
+
+	observed := netip.MustParseAddrPort("203.0.113.9:41234")
+	pkt, _ := EncodePong(k, pub, tx, observed)
+
+	raw := observed.Addr().As4()
+	if bytes.Contains(pkt, raw[:]) {
+		t.Error("pong carries the observed address in cleartext")
+	}
+}
+
+// Two packets with identical contents must differ on the wire, or an observer
+// can fingerprint repeated probes.
+func TestPacketsAreNotDeterministic(t *testing.T) {
+	k, pub, tx := fixture(t)
+
+	a, _ := EncodePing(k, pub, tx)
+	b, _ := EncodePing(k, pub, tx)
+	if bytes.Equal(a, b) {
+		t.Fatal("identical inputs produced an identical packet; nonce is not random")
 	}
 }
 
@@ -128,39 +177,37 @@ func TestTruncatedPacketRejected(t *testing.T) {
 func TestLengthTypeMismatchRejected(t *testing.T) {
 	k, pub, tx := fixture(t)
 
+	// With encryption an attacker cannot re-type a packet without the key, so
+	// the length/type mismatch this used to guard is no longer reachable.
+	// What remains testable is that a wrong-length packet is rejected outright.
 	pong, _ := EncodePong(k, pub, tx, netip.MustParseAddrPort("1.2.3.4:5"))
-	// Re-mac a pong body claiming to be a ping.
-	body := append([]byte(nil), pong[:len(pong)-macLen]...)
-	body[1] = byte(TypePing)
-	forged := append(body, mac(k, body)...)
-
-	if _, err := Decode(k, forged); err == nil {
-		t.Fatal("accepted a ping whose length is a pong's")
+	if _, err := Decode(k, append(pong, 0)); err == nil {
+		t.Fatal("accepted an over-long packet")
 	}
 }
 
+// An unknown type can only be produced by someone holding the key, so this
+// checks the parser rejects it rather than mis-handling it.
 func TestUnknownTypeRejected(t *testing.T) {
 	k, pub, tx := fixture(t)
-	ping, _ := EncodePing(k, pub, tx)
-
-	body := append([]byte(nil), ping[:len(ping)-macLen]...)
-	body[1] = 99
-	forged := append(body, mac(k, body)...)
-
+	forged, err := seal(k, Type(99), pub, tx, netip.AddrPort{})
+	if err != nil {
+		t.Fatalf("seal: %v", err)
+	}
 	if _, err := Decode(k, forged); err == nil {
 		t.Fatal("accepted an unknown disco type")
 	}
 }
 
+// The version byte is authenticated as additional data, so tampering with it
+// fails decryption rather than being silently accepted.
 func TestWrongVersionRejected(t *testing.T) {
 	k, pub, tx := fixture(t)
 	ping, _ := EncodePing(k, pub, tx)
 
-	body := append([]byte(nil), ping[:len(ping)-macLen]...)
-	body[0] = 99
-	forged := append(body, mac(k, body)...)
-
-	if _, err := Decode(k, forged); err == nil {
+	bad := append([]byte(nil), ping...)
+	bad[0] = 99
+	if _, err := Decode(k, bad); err == nil {
 		t.Fatal("accepted an unknown disco version")
 	}
 }

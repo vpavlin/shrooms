@@ -116,6 +116,18 @@ type statusPayload struct {
 	Overlay string       `json:"overlay"`
 	Prefix  string       `json:"prefix"`
 	Peers   []peerStatus `json:"peers"`
+
+	// Reflexive is what peers report observing our source address as. Several
+	// distinct values means endpoint-dependent (symmetric) NAT, which is the
+	// case where punching fails and a relay is required.
+	Reflexive []string `json:"reflexive,omitempty"`
+}
+
+type pathStatus struct {
+	Addr     string `json:"addr"`
+	RTTMs    int64  `json:"rtt_ms"`
+	LastPong string `json:"last_pong"`
+	Selected bool   `json:"selected"`
 }
 
 type peerStatus struct {
@@ -128,6 +140,10 @@ type peerStatus struct {
 
 	// Data-plane view. Gossip says the peer exists; this says whether we can
 	// actually reach it.
+	// Paths are the candidates that answered a probe. Empty means either no
+	// probing has completed or none of the peer's candidates are reachable.
+	Paths []pathStatus `json:"paths,omitempty"`
+
 	Handshaked    bool   `json:"handshaked"`
 	LastHandshake string `json:"last_handshake,omitempty"`
 	Endpoint      string `json:"endpoint,omitempty"`
@@ -167,6 +183,15 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Me
 				LastSeen:  p.LastSeen.Format(time.RFC3339),
 				Online:    p.Online(now),
 			}
+			best, hasBest := m.BestPath(p.ID(), now)
+			for _, path := range m.Paths(p.ID()) {
+				ps.Paths = append(ps.Paths, pathStatus{
+					Addr:     path.Addr.String(),
+					RTTMs:    path.RTT.Milliseconds(),
+					LastPong: path.LastPong.Format(time.RFC3339),
+					Selected: hasBest && path.Addr == best.Addr,
+				})
+			}
 			if st, ok := stats[p.WGPub.String()]; ok {
 				ps.Endpoint = st.Endpoint
 				ps.RxBytes = st.RxBytes
@@ -177,6 +202,9 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Me
 				}
 			}
 			out.Peers = append(out.Peers, ps)
+		}
+		for _, ap := range m.Reflexive() {
+			out.Reflexive = append(out.Reflexive, ap.String())
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(out)

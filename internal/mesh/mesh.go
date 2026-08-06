@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/vpavlin/logos-vpn/internal/control"
+	"github.com/vpavlin/logos-vpn/internal/disco"
 	"github.com/vpavlin/logos-vpn/internal/identity"
 	"github.com/vpavlin/logos-vpn/internal/state"
 	"github.com/vpavlin/logos-vpn/internal/topic"
@@ -47,6 +48,9 @@ type Mesh struct {
 
 	self netip.Addr
 
+	discoKey disco.Key
+	prober   *disco.Prober
+
 	mu         sync.Mutex
 	subscribed map[string]bool // content topics we hold a subscription for
 }
@@ -58,7 +62,7 @@ func New(log *slog.Logger, cfg state.Config, st *state.State, node *waku.Node, d
 	if err != nil {
 		return nil, err
 	}
-	return &Mesh{
+	m := &Mesh{
 		log:        log,
 		cfg:        cfg,
 		st:         st,
@@ -68,9 +72,28 @@ func New(log *slog.Logger, cfg state.Config, st *state.State, node *waku.Node, d
 		roster:     NewRoster(nk, st.Identity.DevicePub),
 		guard:      control.NewReplayGuard(),
 		self:       identity.OverlayAddr(nk, st.Identity.DevicePub),
+		discoKey:   disco.DeriveKey(nk),
 		subscribed: make(map[string]bool),
-	}, nil
+	}
+	m.prober = disco.NewProber(m.discoKey, st.Identity.DevicePub, m.sendDisco)
+
+	// Control packets share the WireGuard socket; this is what makes NAT
+	// traversal possible at all.
+	dev.Bind.SetControlHandler(m.handleControl)
+
+	return m, nil
 }
+
+// Paths returns every probed path for a peer, for diagnostics.
+func (m *Mesh) Paths(peerID string) []disco.Path { return m.prober.Paths(peerID) }
+
+// BestPath returns the selected path for a peer, if any.
+func (m *Mesh) BestPath(peerID string, now time.Time) (disco.Path, bool) {
+	return m.prober.Best(peerID, now)
+}
+
+// Reflexive returns the self-addresses peers have reported observing.
+func (m *Mesh) Reflexive() []netip.AddrPort { return m.prober.Reflexive(time.Now()) }
 
 // PeerStats exposes the data-plane view of peers.
 func (m *Mesh) PeerStats() (map[string]wg.PeerStat, error) { return m.dev.PeerStats() }
@@ -95,10 +118,17 @@ func (m *Mesh) Run(ctx context.Context) error {
 	ticker := time.NewTicker(AnnounceInterval)
 	defer ticker.Stop()
 
+	// Probing runs far more often than announcing: finding a path is urgent,
+	// advertising is not.
+	probeTicker := time.NewTicker(disco.ProbeInterval)
+	defer probeTicker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case now := <-probeTicker.C:
+			m.probeAll(now)
 		case now := <-ticker.C:
 			// Resubscribe first: near an epoch boundary the next topic must be
 			// live before we publish to it.
@@ -179,24 +209,6 @@ func (m *Mesh) announce(now time.Time) error {
 	}
 	m.log.Debug("announced", "seq", seq, "endpoints", a.Endpoints)
 	return nil
-}
-
-// candidates returns the endpoints we advertise.
-//
-// Configured advertise entries come first: on a publicly reachable node they
-// are the only useful ones. Local addresses follow, which help peers on the
-// same LAN and are harmless elsewhere. Reflexive (STUN-discovered) candidates
-// arrive in M2.
-func (m *Mesh) candidates() []string {
-	out := append([]string(nil), m.cfg.Advertise...)
-
-	for _, ip := range localAddrs() {
-		out = append(out, net.JoinHostPort(ip.String(), fmt.Sprint(m.cfg.ListenPort)))
-	}
-	if len(out) > 8 {
-		out = out[:8] // keep the announce inside its fixed padding
-	}
-	return out
 }
 
 // localAddrs lists routable local addresses, skipping loopback, link-local and
@@ -288,6 +300,11 @@ func (m *Mesh) handle(ev waku.Event) {
 	m.log.Info("peer updated", "name", peer.Name, "overlay", peer.Overlay,
 		"endpoints", peer.Endpoints, "seq", peer.Seq)
 
+	// Probe straight away. This is also the punch: the outbound probes open our
+	// NAT mapping so the peer's own probes can get back in, and both sides do
+	// this on receiving each other's announce.
+	m.prober.Probe(peer.ID(), parseCandidates(peer.Endpoints), now)
+
 	if err := m.syncPeers(); err != nil {
 		m.log.Error("failed to reconfigure data plane", "err", err)
 	}
@@ -298,10 +315,15 @@ func (m *Mesh) syncPeers() error {
 	peers := m.roster.Peers()
 	out := make([]wg.Peer, 0, len(peers))
 
+	now := time.Now()
 	for _, p := range peers {
+		// Prefer a path that has actually answered a probe. Fall back to the
+		// first announced candidate so a directly-reachable peer still works
+		// before probing completes — that is the M1 behaviour.
 		ep := ""
-		if len(p.Endpoints) > 0 {
-			// M1 takes the first candidate. Racing all of them is M2.
+		if best, ok := m.prober.Best(p.ID(), now); ok {
+			ep = best.Addr.String()
+		} else if len(p.Endpoints) > 0 {
 			ep = p.Endpoints[0]
 		}
 		out = append(out, wg.Peer{
