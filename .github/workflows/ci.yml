@@ -1,0 +1,87 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # Unit tests that need no liblogosdelivery. internal/waku is cgo-bound to the
+  # library and is excluded here; it is covered by the build job and by the
+  # container integration test.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l ./cmd ./internal)
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt'd:"; echo "$unformatted"; exit 1
+          fi
+      - name: vet
+        run: CGO_CFLAGS= CGO_LDFLAGS= go vet ./internal/identity/... ./internal/topic/... ./internal/control/... ./internal/wg/...
+      - name: test
+        run: make test-unit
+
+  # Build liblogosdelivery from source in a pinned container, then build
+  # logos-vpn against it. The library build is slow, so it is cached by the
+  # upstream revision it was built from.
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve logos-delivery revision
+        id: ld
+        run: |
+          rev=$(git ls-remote https://github.com/logos-messaging/logos-delivery.git refs/heads/master | cut -f1)
+          echo "rev=$rev" >> "$GITHUB_OUTPUT"
+          echo "building against logos-delivery $rev"
+
+      - name: Cache liblogosdelivery
+        id: libcache
+        uses: actions/cache@v4
+        with:
+          path: docker/build/lib
+          key: liblogosdelivery-${{ steps.ld.outputs.rev }}-${{ hashFiles('docker/build-lib.Dockerfile') }}
+
+      - name: Build liblogosdelivery
+        if: steps.libcache.outputs.cache-hit != 'true'
+        run: |
+          docker build -f docker/build-lib.Dockerfile \
+            --build-arg LD_REF=${{ steps.ld.outputs.rev }} \
+            --target lib -o docker/build/lib .
+
+      - name: Build logos-vpn
+        run: |
+          VERSION=${GITHUB_REF_NAME:-dev} docker build \
+            -f docker/build-vpn.Dockerfile \
+            --build-arg VERSION=${GITHUB_REF_NAME:-dev} \
+            --target dist -o dist .
+          cp packaging/logos-vpn.service dist/
+
+      - name: Report glibc requirement
+        run: |
+          echo "max glibc symbol required:"
+          objdump -T dist/bin/logos-vpn | grep -oE 'GLIBC_[0-9.]+' | sort -Vu | tail -1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: logos-vpn-linux-amd64
+          path: dist/
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tar czf logos-vpn-linux-amd64.tar.gz -C dist .
+          echo "built logos-vpn-linux-amd64.tar.gz"
+        # Attaching to a GitHub Release needs contents:write; add it here and
+        # a release step when you are ready to publish.
