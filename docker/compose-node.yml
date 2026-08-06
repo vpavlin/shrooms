@@ -1,0 +1,41 @@
+# A single production mesh node.
+#
+# Uses host networking deliberately. A VPN node must bind its UDP port on the
+# machine's real address: behind docker's bridge NAT the reflexive address peers
+# observe would be the docker gateway's, the source port would be rewritten, and
+# hole punching would be fighting an extra layer of NAT that does not exist in
+# reality. Host networking also puts the TUN device in the host's namespace,
+# where you can see it with `ip addr` and route to it normally.
+#
+#   docker compose -f compose-node.yml up -d
+#
+# Config and state live on the host so the container is disposable and the
+# device identity — and its announce sequence number — survive a redeploy.
+
+services:
+  logos-vpn:
+    image: logos-vpn:latest
+    container_name: logos-vpn
+    restart: unless-stopped
+
+    network_mode: host
+
+    # NET_ADMIN to create and configure the TUN device. Nothing else is needed;
+    # in particular this does not need to be privileged.
+    cap_add: [NET_ADMIN]
+    devices:
+      - /dev/net/tun:/dev/net/tun
+
+    volumes:
+      - /etc/logos-vpn:/etc/logos-vpn
+      - /var/lib/logos-vpn:/var/lib/logos-vpn
+      # The control socket, so `logos-vpn status` works from the host.
+      - /run/logos-vpn:/run/logos-vpn
+
+    command: ["daemon", "--socket", "/run/logos-vpn/logos-vpn.sock"]
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

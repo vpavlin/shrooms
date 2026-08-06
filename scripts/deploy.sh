@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# Ship logos-vpn to a remote host and run it.
+#
+#   ./scripts/deploy.sh user@vps.example.com                    # join an existing mesh
+#   ./scripts/deploy.sh user@vps --init                         # create a new mesh
+#   ./scripts/deploy.sh user@vps --advertise 203.0.113.4:51820  # publicly reachable node
+#
+# Ships a container image rather than a binary. liblogosdelivery requires
+# glibc 2.38, so a tarball fails on Debian 12 (2.36) and works only on Ubuntu
+# 24.04+ (2.39). The image carries its own userland and works anywhere docker
+# does.
+#
+# What this touches on the remote host:
+#   /etc/logos-vpn/       config
+#   /var/lib/logos-vpn/   device identity and announce sequence number
+#   /run/logos-vpn/       control socket
+#   a `logos-vpn` container, and a TUN interface
+#
+# Nothing is destroyed: an existing config is left alone unless you pass --force.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+HOST=${1:-}
+[ -n "$HOST" ] || { echo "usage: $0 user@host [--init] [--advertise IP:PORT] [--name NAME] [--force]"; exit 1; }
+shift
+
+INIT=0
+FORCE=0
+ADVERTISE=""
+NAME=""
+KEY="${LOGOS_VPN_KEY:-}"
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --init)      INIT=1; shift ;;
+        --force)     FORCE=1; shift ;;
+        --advertise) ADVERTISE=$2; shift 2 ;;
+        --name)      NAME=$2; shift 2 ;;
+        --key)       KEY=$2; shift 2 ;;
+        *) echo "unknown option $1"; exit 1 ;;
+    esac
+done
+
+LD_LIB=${LD_LIB:-docker/build/lib}
+IMAGE=logos-vpn:latest
+
+echo "==> checking the remote host"
+ssh "$HOST" 'command -v docker >/dev/null || { echo "docker is not installed"; exit 1; }
+             [ -e /dev/net/tun ] || { echo "no /dev/net/tun"; exit 1; }
+             echo "  $(. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME"), docker $(docker version --format "{{.Server.Version}}" 2>/dev/null)"'
+
+echo "==> building image"
+[ -f "$LD_LIB/liblogosdelivery.so" ] || { echo "no liblogosdelivery.so in $LD_LIB — run 'make deps-basecamp'"; exit 1; }
+make logos-vpn >/dev/null
+
+CTX=docker/build/deploy
+rm -rf "$CTX"; mkdir -p "$CTX/lib"
+cp bin/logos-vpn "$CTX/"
+cp docker/gateway.sh docker/entrypoint-nat.sh "$CTX/" 2>/dev/null || true
+cp "$LD_LIB"/*.so "$LD_LIB"/*.so.* "$CTX/lib/" 2>/dev/null || true
+docker build -q -t "$IMAGE" -f docker/Dockerfile "$CTX" >/dev/null
+echo "  $(docker image inspect "$IMAGE" --format '{{.Size}}' | awk '{printf "%.0f MB\n", $1/1048576}')"
+
+echo "==> shipping image (this is the slow part)"
+docker save "$IMAGE" | gzip -1 | ssh "$HOST" 'gunzip | docker load' | tail -1
+
+echo "==> preparing directories"
+ssh "$HOST" 'sudo mkdir -p /etc/logos-vpn /var/lib/logos-vpn /run/logos-vpn
+             sudo chmod 700 /etc/logos-vpn /var/lib/logos-vpn'
+
+# Generate the config locally so the network key never has to be typed on the
+# remote host, then copy it over.
+if ssh "$HOST" 'sudo test -f /etc/logos-vpn/config.toml' && [ $FORCE -eq 0 ]; then
+    echo "==> config already present on $HOST, leaving it alone (use --force to replace)"
+else
+    echo "==> generating config"
+    TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+    ARGS=(--config "$TMP/config.toml" --state "$TMP/state")
+    [ -n "$NAME" ] && ARGS+=(--name "$NAME")
+    [ -n "$ADVERTISE" ] && ARGS+=(--advertise "$ADVERTISE")
+
+    if [ $INIT -eq 1 ]; then
+        ./bin/logos-vpn init "${ARGS[@]}"
+    else
+        [ -n "$KEY" ] || { echo "need a network key: pass --key KEY, set LOGOS_VPN_KEY, or use --init"; exit 1; }
+        ./bin/logos-vpn join "$KEY" "${ARGS[@]}"
+    fi
+
+    # Ship the config; the remote generates its own device identity on first
+    # start, so no private key ever crosses the wire.
+    scp -q "$TMP/config.toml" "$HOST:/tmp/logos-vpn-config.toml"
+    ssh "$HOST" 'sudo mv /tmp/logos-vpn-config.toml /etc/logos-vpn/config.toml
+                 sudo chmod 600 /etc/logos-vpn/config.toml'
+fi
+
+echo "==> installing compose file"
+scp -q docker/compose-node.yml "$HOST:/tmp/logos-vpn-compose.yml"
+ssh "$HOST" 'sudo mv /tmp/logos-vpn-compose.yml /etc/logos-vpn/compose.yml'
+
+echo "==> starting"
+ssh "$HOST" 'cd /etc/logos-vpn && sudo docker compose -f compose.yml up -d --force-recreate' 2>&1 | tail -3
+
+echo
+echo "==> status (give it ~20s to reach the fleet)"
+sleep 20
+ssh "$HOST" 'sudo docker exec logos-vpn logos-vpn status --socket /run/logos-vpn/logos-vpn.sock' 2>&1 | head -12 || \
+    ssh "$HOST" 'sudo docker logs logos-vpn 2>&1 | grep "^time=" | tail -10'
+
+cat <<EOF
+
+Useful on $HOST:
+  sudo docker exec logos-vpn logos-vpn status --socket /run/logos-vpn/logos-vpn.sock
+  sudo docker exec logos-vpn logos-vpn paths  --socket /run/logos-vpn/logos-vpn.sock
+  sudo docker logs -f logos-vpn
+
+If this node is publicly reachable, open its UDP port:
+  sudo ufw allow 51820/udp        # or the equivalent for your firewall
+EOF
