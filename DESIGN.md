@@ -649,6 +649,18 @@ freely. The only pinned constant is one 32-byte mesh public key.
 
 ---
 
+## 8a. Security status
+
+See [SECURITY.md](SECURITY.md) for the current accounting of what is protected,
+what leaks inherently, and what is deferred with a plan. Anything deferred is
+listed there rather than only in commit messages, so it cannot quietly ship as
+done.
+
+The two that matter most before production use: the network key is a **bearer
+credential** with no per-device revocation until M5, and disco authenticates
+**mesh membership rather than device identity** — bounded, because WireGuard's
+own handshake is what authenticates peers and encrypts traffic.
+
 ## 9. Open risks
 
 Ordered by how much they'd change the design.
