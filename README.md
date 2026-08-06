@@ -113,6 +113,20 @@ cleanly, where a current host (git 2.51) fails on a nimble lockfile checksum.
 
 ---
 
+## Do I need a VPS?
+
+**Probably not.** Any mesh node with a reachable address can relay for the
+others — set `relay = "true"` in its config. If you have an office box with a
+port forward, a home server on a static IP, or anything with working UPnP, that
+node covers every pair that cannot connect directly.
+
+A VPS is only needed when *nothing you own* is reachable. See
+[ADR-012](docs/adr/012-relay-hosting.md), which also covers why a public
+volunteer relay network is architecturally easy — the relay cannot read what it
+forwards — but blocked on incentives rather than code.
+
+---
+
 ## Deploying
 
 ```console
@@ -140,7 +154,7 @@ in reality.
 | **M0** WireGuard sharing a socket with control traffic | ✅ tunnel + control packets, no root |
 | **M1** Waku-discovered peers replace static config | ✅ two containers, discovery + tunnel + ping |
 | **M2** NAT traversal | ⚠️ reflexive discovery proven; the punch is not |
-| **M3** relay fallback | not started |
+| **M3** relay fallback | ✅ implemented, not yet tested end to end |
 | **M5** credentials, enrolment, revocation | not started |
 
 `make m0` / `make m1` / `make s1` / `make s3` reproduce these.
