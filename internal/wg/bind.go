@@ -145,8 +145,8 @@ func (b *Bind) Stats() (rx, tx uint64) { return b.ctrlRx, b.ctrlTx }
 
 // --- remaining conn.Bind methods delegate to the inner bind ---
 
-func (b *Bind) Close() error                                { return b.inner.Close() }
-func (b *Bind) SetMark(mark uint32) error                   { return b.inner.SetMark(mark) }
-func (b *Bind) Send(bufs [][]byte, ep conn.Endpoint) error  { return b.inner.Send(bufs, ep) }
+func (b *Bind) Close() error                                  { return b.inner.Close() }
+func (b *Bind) SetMark(mark uint32) error                     { return b.inner.SetMark(mark) }
+func (b *Bind) Send(bufs [][]byte, ep conn.Endpoint) error    { return b.inner.Send(bufs, ep) }
 func (b *Bind) ParseEndpoint(s string) (conn.Endpoint, error) { return b.inner.ParseEndpoint(s) }
-func (b *Bind) BatchSize() int                              { return b.inner.BatchSize() }
+func (b *Bind) BatchSize() int                                { return b.inner.BatchSize() }
