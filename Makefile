@@ -101,7 +101,8 @@ m1:
 ## which is exactly the situation in CI before the build job runs.
 test-unit:
 	CGO_CFLAGS= CGO_LDFLAGS= $(GO) test -race ./internal/identity/... \
-		./internal/topic/... ./internal/control/... ./internal/wg/...
+		./internal/topic/... ./internal/control/... ./internal/wg/... \
+		./internal/disco/...
 
 test: check-lib
 	$(GO) test ./...

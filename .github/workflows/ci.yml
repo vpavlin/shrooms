@@ -27,7 +27,7 @@ jobs:
             echo "not gofmt'd:"; echo "$unformatted"; exit 1
           fi
       - name: vet
-        run: CGO_CFLAGS= CGO_LDFLAGS= go vet ./internal/identity/... ./internal/topic/... ./internal/control/... ./internal/wg/...
+        run: CGO_CFLAGS= CGO_LDFLAGS= go vet ./internal/identity/... ./internal/topic/... ./internal/control/... ./internal/wg/... ./internal/disco/...
       - name: test
         run: make test-unit
 
