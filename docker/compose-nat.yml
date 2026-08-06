@@ -1,0 +1,115 @@
+# M2 topology: three nodes, two of them behind separate NATs.
+#
+# The M1 compose puts every node on one bridge, so they are directly reachable
+# and no hole punching is needed — it exercises discovery, not traversal. Here:
+#
+#            ┌──────────── public ────────────┐
+#            │                                │
+#     ┌──────┴──────┐                  ┌──────┴──────┐
+#     │  gw-a (NAT) │                  │  gw-b (NAT) │
+#     └──────┬──────┘                  └──────┬──────┘
+#            │ lan-a                          │ lan-b
+#       ┌────┴────┐                      ┌────┴────┐
+#       │ node-a  │                      │ node-b  │
+#       └─────────┘                      └─────────┘
+#
+#     node-pub sits directly on `public` with a reachable address.
+#
+# node-a and node-b can each reach node-pub (outbound through their NAT), but
+# reaching each other requires punching — which is the whole point of M2.
+#
+# The gateways are plain Linux boxes doing MASQUERADE, which gives
+# endpoint-independent mapping (the friendly case). Symmetric NAT is a separate
+# scenario; see scripts/m2-containers.sh for how to switch a gateway's mapping
+# behaviour.
+
+x-node: &node
+  image: logos-vpn:test
+  cap_add: [NET_ADMIN]
+  devices:
+    - /dev/net/tun:/dev/net/tun
+  # Nodes behind a NAT must not use docker's default route; the gateway
+  # container is their way out. entrypoint-nat.sh rewrites it at startup.
+  entrypoint: ["/usr/bin/entrypoint-nat.sh"]
+
+services:
+  # Reachable node: no NAT, a stable address on the public segment.
+  node-pub:
+    image: logos-vpn:test
+    container_name: logos-vpn-pub
+    cap_add: [NET_ADMIN]
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - ./run/pub/etc:/etc/logos-vpn
+      - ./run/pub/state:/var/lib/logos-vpn
+    networks:
+      public:
+        ipv4_address: 10.90.0.10
+    command: ["daemon", "-v"]
+
+  gw-a:
+    image: logos-vpn:test
+    container_name: logos-vpn-gw-a
+    cap_add: [NET_ADMIN]
+    entrypoint: ["/usr/bin/gateway.sh"]
+    networks:
+      public:
+        ipv4_address: 10.90.0.20
+      lan-a:
+        ipv4_address: 10.91.0.1
+
+  gw-b:
+    image: logos-vpn:test
+    container_name: logos-vpn-gw-b
+    cap_add: [NET_ADMIN]
+    entrypoint: ["/usr/bin/gateway.sh"]
+    networks:
+      public:
+        ipv4_address: 10.90.0.30
+      lan-b:
+        ipv4_address: 10.92.0.1
+
+  node-a:
+    <<: *node
+    container_name: logos-vpn-a
+    depends_on: [gw-a]
+    environment:
+      NAT_GW: 10.91.0.1
+    volumes:
+      - ./run/a/etc:/etc/logos-vpn
+      - ./run/a/state:/var/lib/logos-vpn
+    networks:
+      lan-a:
+        ipv4_address: 10.91.0.100
+
+  node-b:
+    <<: *node
+    container_name: logos-vpn-b
+    depends_on: [gw-b]
+    environment:
+      NAT_GW: 10.92.0.1
+    volumes:
+      - ./run/b/etc:/etc/logos-vpn
+      - ./run/b/state:/var/lib/logos-vpn
+    networks:
+      lan-b:
+        ipv4_address: 10.92.0.100
+
+networks:
+  # `public` carries the reachable node and the outside of both gateways. It
+  # still needs upstream internet so nodes can reach the logos.dev fleet.
+  public:
+    driver: bridge
+    ipam:
+      config: [{subnet: 10.90.0.0/24}]
+  lan-a:
+    driver: bridge
+    internal: true
+    ipam:
+      config: [{subnet: 10.91.0.0/24}]
+  lan-b:
+    driver: bridge
+    internal: true
+    ipam:
+      config: [{subnet: 10.92.0.0/24}]

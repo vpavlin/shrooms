@@ -9,8 +9,10 @@ FROM ubuntu:25.10
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         iproute2 \
+        iptables \
         iputils-ping \
         libstdc++6 \
+        procps \
     && rm -rf /var/lib/apt/lists/*
 
 # liblogosdelivery.so links librln.so from the same directory.
@@ -18,6 +20,9 @@ COPY lib/ /opt/logos/lib/
 ENV LD_LIBRARY_PATH=/opt/logos/lib
 
 COPY logos-vpn /usr/bin/logos-vpn
+
+# NAT-topology helpers, used by compose-nat.yml (M2).
+COPY gateway.sh entrypoint-nat.sh /usr/bin/
 
 # Config and state live on volumes so a container restart keeps its identity —
 # and, importantly, its announce sequence number.

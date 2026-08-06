@@ -31,7 +31,12 @@ ENV PATH=/opt/cargo/bin:$PATH
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
         | sh -s -- -y --profile minimal --default-toolchain stable
 
-ARG LD_REF=master
+# Pinned, not master. Two reasons:
+#   - reproducibility: a build that tracks a moving branch is not reproducible
+#   - master is currently broken. At a5d7818 the Nim compile fails with
+#     "illegal effect: NestedPoll" in rest_api/endpoint/relay/handlers.nim.
+# This revision is what the Android bindings pin, so it is known to build.
+ARG LD_REF=7a3a064b52742434b3e40260e98e94abf006442b
 WORKDIR /src
 RUN git clone https://github.com/logos-messaging/logos-delivery.git . \
     && git checkout "$LD_REF" \

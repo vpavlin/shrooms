@@ -27,6 +27,7 @@ echo "==> staging image context"
 rm -rf "$BUILD" "$RUN"
 mkdir -p "$BUILD/lib" "$RUN"/{a,b}/{etc,state}
 cp bin/logos-vpn "$BUILD/"
+cp docker/gateway.sh docker/entrypoint-nat.sh "$BUILD/"
 # Copy every shared library Basecamp ships alongside liblogosdelivery, not just
 # the obvious two: the library dlopen()s libpq at runtime for the Store backend,
 # and that failure is fatal and only visible at startup.
