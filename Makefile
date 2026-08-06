@@ -15,14 +15,16 @@ LD_INC ?= $(LD_DIR)
 
 BASECAMP_LIB ?= $(HOME)/.local/share/Logos/LogosBasecamp/modules/delivery_module
 
-export CGO_CFLAGS  += -I$(LD_INC)
-export CGO_LDFLAGS += -L$(LD_LIB) -llogosdelivery -Wl,-rpath,$(abspath $(LD_LIB))
+# Absolute paths: cgo runs the compiler in each package's directory, so a
+# relative -I or -L resolves relative to internal/waku rather than the repo root.
+export CGO_CFLAGS  += -I$(abspath $(LD_INC))
+export CGO_LDFLAGS += -L$(abspath $(LD_LIB)) -llogosdelivery -Wl,-rpath,$(abspath $(LD_LIB))
 
 GO ?= go
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 .PHONY: all deps deps-basecamp check-lib logos-vpn wakuspike s3topics m0demo \
-        s1 s3 probe m0 m1 dist test test-unit fmt clean
+        s1 s3 probe m0 m1 m2 m2-edm dist test test-unit fmt clean
 
 all: logos-vpn
 
@@ -91,6 +93,15 @@ m0: m0demo
 ## Needs docker and /dev/net/tun.
 m1:
 	./scripts/m1-containers.sh
+
+## M2: two nodes behind separate NATs punch through to each other.
+m2:
+	./scripts/m2-containers.sh
+
+## M2 under endpoint-dependent NAT, where punching is expected to fail and
+## the relay (M3) is required.
+m2-edm:
+	NAT_MODE=edm ./scripts/m2-containers.sh
 
 ## --- checks ---
 

@@ -9,9 +9,9 @@
 #     │  gw-a (NAT) │                  │  gw-b (NAT) │
 #     └──────┬──────┘                  └──────┬──────┘
 #            │ lan-a                          │ lan-b
-#       ┌────┴────┐                      ┌────┴────┐
-#       │ node-a  │                      │ node-b  │
-#       └─────────┘                      └─────────┘
+#       ┌────┴────┐                      ┌────┴────┐   (docker takes .1
+#       │ node-a  │                      │ node-b  │    on each bridge,
+#       └─────────┘                      └─────────┘    so gateways use .2)
 #
 #     node-pub sits directly on `public` with a reachable address.
 #
@@ -57,7 +57,7 @@ services:
       public:
         ipv4_address: 10.90.0.20
       lan-a:
-        ipv4_address: 10.91.0.1
+        ipv4_address: 10.91.0.2
 
   gw-b:
     image: logos-vpn:test
@@ -68,14 +68,14 @@ services:
       public:
         ipv4_address: 10.90.0.30
       lan-b:
-        ipv4_address: 10.92.0.1
+        ipv4_address: 10.92.0.2
 
   node-a:
     <<: *node
     container_name: logos-vpn-a
     depends_on: [gw-a]
     environment:
-      NAT_GW: 10.91.0.1
+      NAT_GW: 10.91.0.2
     volumes:
       - ./run/a/etc:/etc/logos-vpn
       - ./run/a/state:/var/lib/logos-vpn
@@ -88,7 +88,7 @@ services:
     container_name: logos-vpn-b
     depends_on: [gw-b]
     environment:
-      NAT_GW: 10.92.0.1
+      NAT_GW: 10.92.0.2
     volumes:
       - ./run/b/etc:/etc/logos-vpn
       - ./run/b/state:/var/lib/logos-vpn

@@ -25,20 +25,22 @@ func (m *Mesh) handleControl(payload []byte, ep conn.Endpoint) {
 
 	msg, err := disco.Decode(m.discoKey, payload)
 	if err != nil {
-		// Unauthenticated or malformed. Expected if something else on the
-		// network happens to hit our port; not worth logging per packet.
+		m.log.Debug("undecodable control packet", "from", from, "bytes", len(payload), "err", err)
 		return
 	}
 
 	switch msg.Type {
 	case disco.TypePing:
+		m.log.Debug("ping received", "from", from)
 		m.prober.HandlePing(msg, from)
 
 	case disco.TypePong:
 		peerID, ok := m.prober.HandlePong(msg, from, time.Now())
 		if !ok {
+			m.log.Debug("pong for an unknown probe", "from", from)
 			return
 		}
+		m.log.Info("path confirmed", "peer", peerID[:8], "via", from, "observed_us_at", msg.Observed)
 		// A newly usable path may be better than what WireGuard is using, so
 		// re-evaluate. syncPeers is cheap and idempotent.
 		if err := m.syncPeers(); err != nil {
@@ -61,7 +63,13 @@ func (m *Mesh) sendDisco(pkt []byte, to netip.AddrPort) error {
 	if err != nil {
 		return fmt.Errorf("parse endpoint %s: %w", to, err)
 	}
-	return m.dev.Bind.SendControl(pkt, ep)
+	if err := m.dev.Bind.SendControl(pkt, ep); err != nil {
+		// A probe that never leaves the host looks identical to one dropped in
+		// transit, so this is worth surfacing.
+		m.log.Debug("disco send failed", "to", to, "err", err)
+		return err
+	}
+	return nil
 }
 
 // probeAll probes every known peer's candidates.
@@ -76,7 +84,9 @@ func (m *Mesh) probeAll(now time.Time) {
 		if _, ok := m.prober.Best(p.ID(), now); ok {
 			continue
 		}
-		m.prober.Probe(p.ID(), parseCandidates(p.Endpoints), now)
+		cands := parseCandidates(p.Endpoints)
+		m.log.Debug("probing", "peer", p.Name, "candidates", p.Endpoints, "parsed", len(cands))
+		m.prober.Probe(p.ID(), cands, now)
 	}
 }
 

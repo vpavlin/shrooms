@@ -463,7 +463,60 @@ cellular CGNAT, where ~40% of mappings are symmetric.
 **Done when:** two nodes behind separate NATs establish a direct tunnel and you
 can see which candidate won.
 
-**~1–2 weeks.**
+**~1–2 weeks.** ⚠️ **PARTIAL** — see below.
+
+#### M2 status (2026-08-06)
+
+Implemented and unit-tested: `internal/disco` (encrypted probes, path prober),
+wired into the mesh loop, `logos-vpn paths` for diagnosis. `make m2` runs the
+NAT harness.
+
+**Proven end to end, over the real logos.dev fleet:**
+
+- **Reflexive discovery works.** A node behind NAT learns its own public address
+  from a peer's pong, with no STUN server. Observed directly in the announce
+  stream:
+  ```
+  seq=1  endpoints=[10.91.0.100:51820]                    ← LAN only
+  seq=2  endpoints=[10.90.0.20:51820 10.91.0.100:51820]   ← learned its NAT address
+  ```
+- **Discovery works through NAT.** All three nodes found each other and
+  exchanged candidates.
+- **A node behind NAT reaches a public node directly** — `node-pub` path
+  confirmed, tunnel up, traffic flowing.
+
+**Not proven: the punch itself.** Two nodes behind separate NATs never
+established a direct path. The blocker is the *harness*, not obviously the
+code:
+
+> **Plain Linux `MASQUERADE` is not endpoint-independent.** Measured here: it
+> allocates a different external port per destination, i.e. it behaves as
+> symmetric NAT. A traversal harness built on bare MASQUERADE therefore tests
+> the *hard* case while claiming to test the easy one.
+>
+> ```
+> -s 10.90.0.20 --sport 51820 --dport 51820  →  0 packets
+> -s 10.90.0.20            --dport 51820     →  8 packets
+> ```
+>
+> Forcing endpoint-independent mapping with a fixed-port `SNAT` changes the
+> behaviour but did not produce a punch either; packets stopped arriving at the
+> far gateway entirely, which suggests a NAT-allocation conflict rather than a
+> protocol failure.
+
+**Recommendation: settle this on real infrastructure rather than emulation.**
+Real home and VPS NATs are genuine; the emulation is a proxy that is proving
+harder to get right than the thing it proxies. Step 3 of the plan (one public
+VPS, one NATed VPS, plus a laptop) tests the same property without the
+emulation in the way — and `logos-vpn paths` already reports whether the NAT is
+endpoint-independent, which is the diagnostic that matters:
+```
+reflexive addresses (as peers observe us):
+  203.0.113.4:41001
+  203.0.113.4:41002
+  note: 2 distinct addresses suggests endpoint-dependent NAT,
+        where hole punching fails and a relay is needed.
+```
 
 ### M3 — VPS relay, auto-discovered
 

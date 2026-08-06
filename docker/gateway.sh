@@ -36,13 +36,25 @@ for ifc in $(ls /sys/class/net | grep -v lo); do
 done
 echo "resolved: wan=$WAN lan=$LAN"
 
-if [ "$MODE" = "edm" ]; then
-    # --random-fully makes the source port unpredictable per flow, approximating
-    # endpoint-dependent mapping: a port observed by one peer does not predict
-    # the port another peer will see.
-    iptables -t nat -A POSTROUTING -o "$WAN" -j MASQUERADE --random-fully
-else
+WAN_IP=$(ip -4 -o addr show dev "$WAN" | awk '{print $4}' | cut -d/ -f1)
+WG_PORT=${WG_PORT:-51820}
+
+if [ "$MODE" = "eim" ]; then
+    # Endpoint-independent mapping: pin the external port so every destination
+    # sees the same ip:port. This needs an explicit SNAT.
+    #
+    # Plain MASQUERADE is NOT endpoint-independent — measured here, it allocates
+    # a different external port per destination, i.e. it behaves as symmetric
+    # NAT. A traversal harness built on bare MASQUERADE therefore tests the hard
+    # case while claiming to test the easy one.
+    iptables -t nat -A POSTROUTING -o "$WAN" -p udp --sport "$WG_PORT" \
+        -j SNAT --to-source "$WAN_IP:$WG_PORT"
     iptables -t nat -A POSTROUTING -o "$WAN" -j MASQUERADE
+else
+    # Endpoint-dependent: a different external port per flow, so a port learned
+    # by one peer is useless to another. ~40% of cellular CGNATs behave this way
+    # and it is where punching fails and the relay must take over.
+    iptables -t nat -A POSTROUTING -o "$WAN" -j MASQUERADE --random-fully
 fi
 
 # Drop unsolicited inbound, keeping established flows. Without this the
