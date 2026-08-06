@@ -15,9 +15,9 @@ export CGO_LDFLAGS += -L$(LD_LIB) -llogosdelivery -Wl,-rpath,$(LD_LIB)
 
 GO ?= go
 
-.PHONY: all check-lib wakuspike s1 probe test clean
+.PHONY: all check-lib wakuspike s1 probe m0 test clean
 
-all: wakuspike
+all: wakuspike m0demo
 
 check-lib:
 	@test -f "$(LD_INC)/liblogosdelivery.h" \
@@ -38,6 +38,14 @@ probe: wakuspike
 ## Run S1 against logos.dev (cluster 2)
 s1: wakuspike
 	./bin/wakuspike -v
+
+## Milestone M0: two userspace WireGuard peers sharing a socket with the
+## control protocol. Needs no root — uses a netstack TUN.
+m0demo:
+	$(GO) build -o bin/m0demo ./cmd/m0demo
+
+m0: m0demo
+	./bin/m0demo
 
 test: check-lib
 	$(GO) test ./...

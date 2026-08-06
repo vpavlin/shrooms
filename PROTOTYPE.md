@@ -286,9 +286,42 @@ chain.)*
 
 ## 5. Milestones
 
-### M0 — Two boxes, static config, no Waku
+### M0 — Two boxes, static config, no Waku ✅ **PASSED** (2026-08-06)
 
-Prove the data plane and socket sharing in isolation.
+Implemented in `internal/identity/`, `internal/wg/`, `cmd/m0demo/`. Run with
+`make m0`; unit tests with `go test ./internal/...`.
+
+Two userspace WireGuard peers in one process over loopback, each on a netstack
+TUN so **no root and no real interface are needed**:
+
+```
+mesh prefix : fd5a:22e9:a17e::/48
+A overlay   : fd5a:22e9:a17e:bf44:9753:491d:203:5b9e
+B overlay   : fd5a:22e9:a17e:6407:54a6:5a06:c6a:c41f
+  TCP echo 22 bytes A->B->A in 2ms
+  B received "ping-from-A from 127.0.0.1:51820"
+  A received "ping-from-B from 127.0.0.1:51821"
+  TCP echo 22 bytes A->B->A in 1ms
+M0 PASS
+```
+
+Proved: overlay addresses derived from device keys with no allocator, both
+inside the network-key-derived `/48`; a real WireGuard tunnel carrying TCP;
+control packets in both directions **on the same UDP socket**; and the tunnel
+still healthy afterwards.
+
+The demux (`internal/wg/bind.go`) wraps `StdNetBind`'s `ReceiveFunc`s and
+filters in place, so batching and GSO/GRO survive — the data path never goes
+through a channel. Magic is `"mvpn"` (`0x6d…`), chosen to sit outside
+WireGuard's `0x01..0x04` type range and away from Tailscale disco's `0x54`.
+
+Note on the harness: the *first* connection can take ~5 s while the WireGuard
+handshake completes, then drops to 1–2 ms. Don't read the first number as
+steady-state latency.
+
+Unit tests cover the part most likely to break silently: compaction keeping
+`packets`/`sizes`/`eps` aligned. Misalignment there attributes a packet to the
+wrong peer and surfaces much later as an inexplicable handshake failure.
 
 - Embed `wireguard-go` in `logos-vpn daemon`.
 - `conn.Bind` wrapper with first-byte demux (magic > `0x04`, ≠ `0x54`), following
