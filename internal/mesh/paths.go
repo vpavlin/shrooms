@@ -10,6 +10,8 @@ import (
 	"golang.zx2c4.com/wireguard/conn"
 
 	"github.com/vpavlin/logos-vpn/internal/disco"
+	"github.com/vpavlin/logos-vpn/internal/relay"
+	"github.com/vpavlin/logos-vpn/internal/wg"
 )
 
 // handleControl dispatches a packet that arrived on the shared WireGuard socket
@@ -17,16 +19,23 @@ import (
 //
 // Called on the receive path, so it must not block. Everything here is a
 // bounded map operation plus at most one send.
-func (m *Mesh) handleControl(payload []byte, ep conn.Endpoint) {
+func (m *Mesh) handleControl(sub wg.Sub, payload []byte, ep conn.Endpoint) ([]byte, conn.Endpoint, bool) {
 	from, err := endpointAddrPort(ep)
 	if err != nil {
-		return
+		return nil, nil, false
+	}
+
+	if sub == wg.SubRelay {
+		return m.handleRelayFrame(payload, from)
+	}
+	if sub != wg.SubDisco {
+		return nil, nil, false
 	}
 
 	msg, err := disco.Decode(m.discoKey, payload)
 	if err != nil {
 		m.log.Debug("undecodable control packet", "from", from, "bytes", len(payload), "err", err)
-		return
+		return nil, nil, false
 	}
 
 	switch msg.Type {
@@ -38,7 +47,7 @@ func (m *Mesh) handleControl(payload []byte, ep conn.Endpoint) {
 		peerID, ok := m.prober.HandlePong(msg, from, time.Now())
 		if !ok {
 			m.log.Debug("pong for an unknown probe", "from", from)
-			return
+			return nil, nil, false
 		}
 		m.log.Info("path confirmed", "peer", peerID[:8], "via", from, "observed_us_at", msg.Observed)
 		// A newly usable path may be better than what WireGuard is using, so
@@ -47,6 +56,33 @@ func (m *Mesh) handleControl(payload []byte, ep conn.Endpoint) {
 			m.log.Warn("failed to apply discovered path", "peer", peerID[:8], "err", err)
 		}
 	}
+	return nil, nil, false
+}
+
+// handleRelayFrame processes relayed traffic.
+//
+// Two roles share this path. If we are acting as a relay, we forward. If we are
+// a client, an inbound frame is unwrapped and handed back to the caller so it
+// can be injected into the batch as though WireGuard had received it directly.
+func (m *Mesh) handleRelayFrame(payload []byte, from netip.AddrPort) ([]byte, conn.Endpoint, bool) {
+	if m.relaySrv != nil {
+		// Relay role: forward and consume.
+		out, to, ok := m.relaySrv.Handle(payload, from, time.Now())
+		if ok {
+			if ep, err := m.dev.Bind.ParseEndpoint(to.String()); err == nil {
+				_ = m.dev.Bind.SendControl(wg.SubRelay, out, ep)
+			}
+		}
+		return nil, nil, false
+	}
+
+	// Client role: unwrap and hand to WireGuard.
+	f, err := relay.Decode(m.relayKey, payload)
+	if err != nil || f.Type != relay.TypeForward {
+		return nil, nil, false
+	}
+	ep := wg.NewRelayEndpoint(m.relayKey, from, m.st.Identity.WGPub, f.Src)
+	return f.Payload, ep, true
 }
 
 // endpointAddrPort extracts the source address from a wireguard-go endpoint.
@@ -63,13 +99,32 @@ func (m *Mesh) sendDisco(pkt []byte, to netip.AddrPort) error {
 	if err != nil {
 		return fmt.Errorf("parse endpoint %s: %w", to, err)
 	}
-	if err := m.dev.Bind.SendControl(pkt, ep); err != nil {
+	if err := m.dev.Bind.SendControl(wg.SubDisco, pkt, ep); err != nil {
 		// A probe that never leaves the host looks identical to one dropped in
 		// transit, so this is worth surfacing.
 		m.log.Debug("disco send failed", "to", to, "err", err)
 		return err
 	}
 	return nil
+}
+
+// registerWithRelay tells our relay where to reach us.
+//
+// Re-sent on every probe tick rather than once: the relay's mapping is soft
+// state with a TTL, and a NAT rebinding invalidates our address without either
+// side noticing.
+func (m *Mesh) registerWithRelay() {
+	if !m.relayAddr.IsValid() || m.relaySrv != nil {
+		return
+	}
+	ep, err := m.dev.Bind.ParseEndpoint(m.relayAddr.String())
+	if err != nil {
+		return
+	}
+	frame := relay.EncodeRegister(m.relayKey, m.st.Identity.WGPub)
+	if err := m.dev.Bind.SendControl(wg.SubRelay, frame, ep); err != nil {
+		m.log.Debug("relay registration failed", "relay", m.relayAddr, "err", err)
+	}
 }
 
 // probeAll probes every known peer's candidates.

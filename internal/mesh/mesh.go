@@ -19,6 +19,7 @@ import (
 	"github.com/vpavlin/logos-vpn/internal/control"
 	"github.com/vpavlin/logos-vpn/internal/disco"
 	"github.com/vpavlin/logos-vpn/internal/identity"
+	"github.com/vpavlin/logos-vpn/internal/relay"
 	"github.com/vpavlin/logos-vpn/internal/state"
 	"github.com/vpavlin/logos-vpn/internal/topic"
 	"github.com/vpavlin/logos-vpn/internal/waku"
@@ -51,6 +52,12 @@ type Mesh struct {
 	discoKey disco.Key
 	prober   *disco.Prober
 
+	relayKey relay.Key
+	// relaySrv is non-nil only when this node acts as a relay for others.
+	relaySrv *relay.Server
+	// relayAddr is the relay we use when no direct path exists.
+	relayAddr netip.AddrPort
+
 	mu         sync.Mutex
 	subscribed map[string]bool // content topics we hold a subscription for
 }
@@ -73,7 +80,20 @@ func New(log *slog.Logger, cfg state.Config, st *state.State, node *waku.Node, d
 		guard:      control.NewReplayGuard(),
 		self:       identity.OverlayAddr(nk, st.Identity.DevicePub),
 		discoKey:   disco.DeriveKey(nk),
+		relayKey:   relay.DeriveKey(nk),
 		subscribed: make(map[string]bool),
+	}
+	if cfg.Relay {
+		m.relaySrv = relay.NewServer(m.relayKey)
+		log.Info("acting as a relay for this mesh")
+	}
+	if cfg.RelayAddr != "" {
+		if ap, err := netip.ParseAddrPort(cfg.RelayAddr); err == nil {
+			m.relayAddr = ap
+			log.Info("relay configured", "addr", ap)
+		} else {
+			log.Warn("ignoring unparseable relay_addr", "value", cfg.RelayAddr, "err", err)
+		}
 	}
 	m.prober = disco.NewProber(m.discoKey, st.Identity.DevicePub, m.sendDisco)
 
@@ -129,6 +149,7 @@ func (m *Mesh) Run(ctx context.Context) error {
 			return ctx.Err()
 		case now := <-probeTicker.C:
 			m.probeAll(now)
+			m.registerWithRelay()
 		case now := <-ticker.C:
 			// Resubscribe first: near an epoch boundary the next topic must be
 			// live before we publish to it.
@@ -310,6 +331,11 @@ func (m *Mesh) handle(ev waku.Event) {
 	}
 }
 
+func hasBest(m *Mesh, id string, now time.Time) bool {
+	_, ok := m.prober.Best(id, now)
+	return ok
+}
+
 // syncPeers pushes the roster into WireGuard.
 func (m *Mesh) syncPeers() error {
 	peers := m.roster.Peers()
@@ -320,19 +346,29 @@ func (m *Mesh) syncPeers() error {
 		// Prefer a path that has actually answered a probe. Fall back to the
 		// first announced candidate so a directly-reachable peer still works
 		// before probing completes — that is the M1 behaviour.
-		ep := ""
-		if best, ok := m.prober.Best(p.ID(), now); ok {
-			ep = best.Addr.String()
-		} else if len(p.Endpoints) > 0 {
-			ep = p.Endpoints[0]
-		}
-		out = append(out, wg.Peer{
+		peer := wg.Peer{
 			WGPub:     p.WGPub,
-			Endpoint:  ep,
 			AllowedIP: p.Overlay,
 			PSK:       identity.PairPSK(m.nk, m.st.Identity.WGPub, p.WGPub),
 			Keepalive: Keepalive,
-		})
+		}
+
+		switch {
+		case hasBest(m, p.ID(), now):
+			// A probed path: packets have demonstrably reached the peer here.
+			best, _ := m.prober.Best(p.ID(), now)
+			peer.Endpoint = best.Addr.String()
+		case m.relayAddr.IsValid() && m.relaySrv == nil:
+			// No direct path. Route through the relay rather than leaving the
+			// peer unreachable — failing over is just an endpoint swap, with no
+			// tunnel teardown or rehandshake.
+			peer.RelayVia = wg.NewRelayEndpoint(m.relayKey, m.relayAddr, m.st.Identity.WGPub, p.WGPub)
+		case len(p.Endpoints) > 0:
+			// Nothing probed and no relay: try what was announced. This is the
+			// M1 behaviour and works whenever one side is directly reachable.
+			peer.Endpoint = p.Endpoints[0]
+		}
+		out = append(out, peer)
 	}
 	return m.dev.SetPeers(out)
 }

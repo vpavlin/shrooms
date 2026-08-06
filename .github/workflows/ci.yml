@@ -27,14 +27,21 @@ jobs:
             echo "not gofmt'd:"; echo "$unformatted"; exit 1
           fi
       - name: vet
-        run: CGO_CFLAGS= CGO_LDFLAGS= go vet ./internal/identity/... ./internal/topic/... ./internal/control/... ./internal/wg/... ./internal/disco/...
+        run: CGO_CFLAGS= CGO_LDFLAGS= go vet ./internal/identity/... ./internal/topic/... ./internal/control/... ./internal/wg/... ./internal/disco/... ./internal/relay/...
       - name: test
         run: make test-unit
 
   # Build liblogosdelivery from source in a pinned container, then build
   # logos-vpn against it. The library build is slow, so it is cached by the
   # upstream revision it was built from.
-  build:
+  # Building liblogosdelivery from source is currently blocked upstream: the Nim
+  # build fails with "illegal effect: NestedPoll" in rest_api at both master and
+  # the revision the Android bindings pin. This job is kept so we notice when
+  # that is fixed, but it must not gate the repo — a red badge for someone
+  # else's breakage teaches you to ignore the badge.
+  build-from-source:
+    name: build from source (blocked upstream)
+    continue-on-error: true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

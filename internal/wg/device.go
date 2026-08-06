@@ -23,6 +23,11 @@ type Peer struct {
 	// 74% of CGNATs expire idle UDP state within 60s and the non-cellular CGN
 	// median is 35s.
 	Keepalive int
+
+	// RelayVia routes this peer through a relay instead of a direct endpoint.
+	// Mutually exclusive with Endpoint; when set, WireGuard is told to send to
+	// the relay and the Bind wraps each packet.
+	RelayVia *RelayEndpoint
 }
 
 // Device is a userspace WireGuard device whose UDP socket is shared with our
@@ -70,7 +75,12 @@ func (d *Device) SetPeers(peers []Peer) error {
 		if p.PSK != ([32]byte{}) {
 			fmt.Fprintf(&b, "preshared_key=%s\n", hex.EncodeToString(p.PSK[:]))
 		}
-		if p.Endpoint != "" {
+		switch {
+		case p.RelayVia != nil:
+			// Our own endpoint form, which Bind.ParseEndpoint turns back into a
+			// RelayEndpoint. WireGuard treats the string as opaque.
+			fmt.Fprintf(&b, "endpoint=%s\n", p.RelayVia.DstToString())
+		case p.Endpoint != "":
 			fmt.Fprintf(&b, "endpoint=%s\n", p.Endpoint)
 		}
 		if p.Keepalive > 0 {

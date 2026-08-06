@@ -56,6 +56,14 @@ type Config struct {
 	// Mode is the Waku node mode: Core on always-on machines.
 	Mode string
 
+	// Relay makes this node forward traffic for peers that cannot reach each
+	// other directly. Only useful on a node with a reachable address.
+	Relay bool
+
+	// RelayAddr is the relay to fall back to when no direct path exists.
+	// Discovered via RelayAnnounce once that lands; configured for now.
+	RelayAddr string
+
 	// AdminPK is reserved for M5 (admin-signed credentials) and ignored while
 	// empty. Present now so adding it later is not a config break.
 	AdminPK string
@@ -258,6 +266,10 @@ func parseConfig(text string) (Config, error) {
 			c.Mode = unquote(val)
 		case "admin_pk":
 			c.AdminPK = unquote(val)
+		case "relay":
+			c.Relay = unquote(val) == "true"
+		case "relay_addr":
+			c.RelayAddr = unquote(val)
 		case "listen_port":
 			var p uint16
 			if _, err := fmt.Sscanf(val, "%d", &p); err != nil {
@@ -309,6 +321,13 @@ func WriteConfig(path string, c Config) error {
 	fmt.Fprintf(&b, "listen_port = %d\n", c.ListenPort)
 	fmt.Fprintf(&b, "preset      = %q\n", c.Preset)
 	fmt.Fprintf(&b, "mode        = %q\n", c.Mode)
+	if c.Relay {
+		b.WriteString("\n# This node forwards traffic for peers that cannot reach each other.\n")
+		b.WriteString("relay = \"true\"\n")
+	}
+	if c.RelayAddr != "" {
+		fmt.Fprintf(&b, "relay_addr  = %q\n", c.RelayAddr)
+	}
 	b.WriteString("\n# Endpoints to announce as dialable. Set this on a publicly reachable\n")
 	b.WriteString("# node; a NATed box only knows LAN addresses, which peers cannot use.\n")
 	if len(c.Advertise) == 0 {

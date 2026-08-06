@@ -25,9 +25,9 @@ func wgPacket(typ byte, body ...byte) []byte {
 	return append([]byte{typ, 0, 0, 0}, body...)
 }
 
-// ctrlPacket builds one of ours.
+// ctrlPacket builds one of ours: magic, sub-protocol byte, then the body.
 func ctrlPacket(body ...byte) []byte {
-	return append(Magic[:], body...)
+	return append(append(Magic[:], byte(SubDisco)), body...)
 }
 
 // runDemux feeds a fixed batch through the demux and reports what survived and
@@ -36,8 +36,9 @@ func runDemux(t *testing.T, batch [][]byte) (kept [][]byte, ctrl [][]byte, keptE
 	t.Helper()
 
 	b := &Bind{}
-	b.SetControlHandler(func(payload []byte, ep conn.Endpoint) {
+	b.SetControlHandler(func(_ Sub, payload []byte, ep conn.Endpoint) ([]byte, conn.Endpoint, bool) {
 		ctrl = append(ctrl, append([]byte(nil), payload...))
+		return nil, nil, false
 	})
 
 	packets := make([][]byte, len(batch))
@@ -125,9 +126,10 @@ func TestDemuxPassesThroughWhenNoControl(t *testing.T) {
 	}
 }
 
-// A short packet must not be mistaken for control, and must not panic.
+// A short packet must not be mistaken for control, and must not panic. Note a
+// bare magic with no sub-protocol byte is too short to be valid.
 func TestIsControlShortPacket(t *testing.T) {
-	for _, p := range [][]byte{{}, {0x6d}, {0x6d, 0x76}, {0x6d, 0x76, 0x70}} {
+	for _, p := range [][]byte{{}, {0x6d}, {0x6d, 0x76}, {0x6d, 0x76, 0x70}, {0x6d, 0x76, 0x70, 0x6e}} {
 		if isControl(p) {
 			t.Errorf("isControl(%v) = true, want false", p)
 		}
