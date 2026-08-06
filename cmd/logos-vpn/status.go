@@ -12,6 +12,18 @@ import (
 	"time"
 )
 
+func human(n uint64) string {
+	switch {
+	case n >= 1<<30:
+		return fmt.Sprintf("%.1fG", float64(n)/(1<<30))
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1fM", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%.1fK", float64(n)/(1<<10))
+	}
+	return fmt.Sprintf("%d", n)
+}
+
 func cmdStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
 	sock := fs.String("socket", DefaultSocket, "control socket path")
@@ -62,17 +74,25 @@ func cmdStatus(args []string) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tOVERLAY IP\tSTATE\tSEQ\tENDPOINT")
+	fmt.Fprintln(w, "NAME\tOVERLAY IP\tANNOUNCE\tTUNNEL\tENDPOINT\tRX/TX")
 	for _, p := range st.Peers {
-		state := "offline"
+		ann := "offline"
 		if p.Online {
-			state = "online"
+			ann = "online"
 		}
-		ep := "-"
-		if len(p.Endpoints) > 0 {
-			ep = p.Endpoints[0]
+		tun := "no handshake"
+		if p.Handshaked {
+			tun = "up"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\n", p.Name, p.Overlay, state, p.Seq, ep)
+		ep := p.Endpoint
+		if ep == "" && len(p.Endpoints) > 0 {
+			ep = p.Endpoints[0] + " (announced)"
+		}
+		if ep == "" {
+			ep = "-"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s/%s\n",
+			p.Name, p.Overlay, ann, tun, ep, human(p.RxBytes), human(p.TxBytes))
 	}
 	return w.Flush()
 }

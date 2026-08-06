@@ -15,7 +15,7 @@ export CGO_LDFLAGS += -L$(LD_LIB) -llogosdelivery -Wl,-rpath,$(LD_LIB)
 
 GO ?= go
 
-.PHONY: all check-lib logos-vpn wakuspike s1 s3 probe m0 test clean
+.PHONY: all check-lib logos-vpn wakuspike s1 s3 probe m0 m1 test clean
 
 all: logos-vpn wakuspike s3topics m0demo
 
@@ -57,6 +57,11 @@ m0demo:
 
 m0: m0demo
 	./bin/m0demo
+
+## Milestone M1: two containerised nodes discover each other over logos.dev
+## and bring up a tunnel. Needs docker and /dev/net/tun.
+m1:
+	./scripts/m1-containers.sh
 
 test: check-lib
 	$(GO) test ./...

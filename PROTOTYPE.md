@@ -392,7 +392,42 @@ Peers discover each other; Waku becomes load-bearing.
 **Done when:** you can move a box to a new IP and the other side reconnects with
 no config change, and `logos-vpn status` shows an accurate roster.
 
-**~4–6 days.**
+**~4–6 days.** ✅ **PASSED (2026-08-06)** — see below.
+
+#### M1 result
+
+Two containerised nodes, each in its own network namespace, discover each other
+over the public logos.dev fleet and bring up a WireGuard tunnel. Run with
+`make m1` (needs docker and `/dev/net/tun`).
+
+```
+    discovered peer after 18s
+    handshake complete after 18s
+
+NAME    OVERLAY IP                             ANNOUNCE  TUNNEL  ENDPOINT          RX/TX
+node-b  fdae:ce35:48a3:3a6:edfa:3505:829b:173  online    up      172.22.0.3:51820  556/612
+
+3 packets transmitted, 3 received, 0% packet loss
+rtt min/avg/max/mdev = 0.498/0.841/1.058/0.245 ms
+M1 PASS: discovery over logos.dev, tunnel up, overlay ping works
+```
+
+Observed discovery 18–20 s from cold start (most of which is the Waku node
+connecting to the fleet); handshake 0–35 s after that.
+
+**Three things this shook out:**
+
+1. **`liblogosdelivery` dlopens `libpq` at runtime** for the Store backend, and
+   the failure is fatal but only visible at startup. Ship *every* library
+   Basecamp installs alongside it, not just `liblogosdelivery.so` + `librln.so`.
+2. **Discovery completes well before the WireGuard handshake.** A test that
+   pings as soon as the peer appears in the roster fails in a way that looks
+   like a routing bug. `status` now separates ANNOUNCE (gossip) from TUNNEL
+   (handshake) so the distinction is visible — which is what the milestone
+   wanted anyway.
+3. **Don't grep pretty-printed JSON.** `status --json` emits `"online": true`
+   with a space; a `grep '"online":true'` never matches and the harness reports
+   a system failure that isn't one. Parse it.
 
 #### What M1 can and cannot do in the real world
 

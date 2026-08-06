@@ -125,6 +125,14 @@ type peerStatus struct {
 	Seq       uint64   `json:"seq"`
 	LastSeen  string   `json:"last_seen"`
 	Online    bool     `json:"online"`
+
+	// Data-plane view. Gossip says the peer exists; this says whether we can
+	// actually reach it.
+	Handshaked    bool   `json:"handshaked"`
+	LastHandshake string `json:"last_handshake,omitempty"`
+	Endpoint      string `json:"endpoint,omitempty"`
+	RxBytes       uint64 `json:"rx_bytes"`
+	TxBytes       uint64 `json:"tx_bytes"`
 }
 
 // serveControl exposes status over a unix socket.
@@ -149,15 +157,26 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Me
 			Overlay: self.String(),
 			Prefix:  nk.Prefix().String(),
 		}
+		stats, _ := m.PeerStats()
 		for _, p := range m.Roster().Peers() {
-			out.Peers = append(out.Peers, peerStatus{
+			ps := peerStatus{
 				Name:      p.Name,
 				Overlay:   p.Overlay.String(),
 				Endpoints: p.Endpoints,
 				Seq:       p.Seq,
 				LastSeen:  p.LastSeen.Format(time.RFC3339),
 				Online:    p.Online(now),
-			})
+			}
+			if st, ok := stats[p.WGPub.String()]; ok {
+				ps.Endpoint = st.Endpoint
+				ps.RxBytes = st.RxBytes
+				ps.TxBytes = st.TxBytes
+				if st.Handshaked() {
+					ps.Handshaked = true
+					ps.LastHandshake = st.LastHandshake.Format(time.RFC3339)
+				}
+			}
+			out.Peers = append(out.Peers, ps)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(out)

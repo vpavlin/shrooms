@@ -1,0 +1,46 @@
+# Two mesh nodes in separate network namespaces on a shared bridge.
+#
+# Both are directly reachable from each other, which is exactly the M1 case:
+# discovery and tunnel establishment with no NAT traversal. Each container
+# announces its own bridge address automatically via localAddrs(), so no
+# `advertise` config is needed here.
+#
+# For M2 the topology changes: separate networks behind a NAT gateway, so the
+# nodes have to punch.
+#
+# Both need outbound internet to reach the logos.dev fleet.
+
+services:
+  node-a:
+    image: logos-vpn:test
+    container_name: logos-vpn-a
+    build:
+      context: ./build
+      dockerfile: ../Dockerfile
+    # NET_ADMIN to create and configure the TUN device; the tun device node
+    # must be passed through explicitly.
+    cap_add: [NET_ADMIN]
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - ./run/a/etc:/etc/logos-vpn
+      - ./run/a/state:/var/lib/logos-vpn
+    networks: [mesh]
+
+  node-b:
+    image: logos-vpn:test
+    container_name: logos-vpn-b
+    build:
+      context: ./build
+      dockerfile: ../Dockerfile
+    cap_add: [NET_ADMIN]
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - ./run/b/etc:/etc/logos-vpn
+      - ./run/b/state:/var/lib/logos-vpn
+    networks: [mesh]
+
+networks:
+  mesh:
+    driver: bridge

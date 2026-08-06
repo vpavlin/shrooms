@@ -72,6 +72,9 @@ func New(log *slog.Logger, cfg state.Config, st *state.State, node *waku.Node, d
 	}, nil
 }
 
+// PeerStats exposes the data-plane view of peers.
+func (m *Mesh) PeerStats() (map[string]wg.PeerStat, error) { return m.dev.PeerStats() }
+
 // Roster exposes the peer roster.
 func (m *Mesh) Roster() *Roster { return m.roster }
 
