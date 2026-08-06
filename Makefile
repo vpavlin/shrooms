@@ -15,9 +15,9 @@ export CGO_LDFLAGS += -L$(LD_LIB) -llogosdelivery -Wl,-rpath,$(LD_LIB)
 
 GO ?= go
 
-.PHONY: all check-lib wakuspike s1 probe m0 test clean
+.PHONY: all check-lib wakuspike s1 s3 probe m0 test clean
 
-all: wakuspike m0demo
+all: wakuspike s3topics m0demo
 
 check-lib:
 	@test -f "$(LD_INC)/liblogosdelivery.h" \
@@ -38,6 +38,13 @@ probe: wakuspike
 ## Run S1 against logos.dev (cluster 2)
 s1: wakuspike
 	./bin/wakuspike -v
+
+## Spike S3: rotating rendezvous topics must stay on one shard
+s3topics: check-lib
+	$(GO) build -o bin/s3topics ./cmd/s3topics
+
+s3: s3topics
+	./scripts/check-s3.sh
 
 ## Milestone M0: two userspace WireGuard peers sharing a socket with the
 ## control protocol. Needs no root — uses a netstack TUN.

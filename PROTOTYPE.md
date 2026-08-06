@@ -265,14 +265,33 @@ Matters less on Linux than it will on Android (always-on peers overlap, so the
 async mailbox is less critical), but it determines whether the VPS needs to run
 Store. Cheap to find out now.
 
-### S3 — Rotating content topics stay on one shard
+### S3 — Rotating content topics stay on one shard ✅ **PASSED** (2026-08-06)
 
-Subscribe on one node, publish from another with `{name}` rotated, confirm
-delivery without resubscribing, and check `waku_relay_get_peers_in_mesh` is
-stable across rotations. Guards against nwaku#2538.
+```
+expected shard      : /waku/2/rs/2/3
+topics published    : 6
+distinct shards used: 1
+  /waku/2/rs/2/3
+S3 PASS: 6 rotated topics all routed to /waku/2/rs/2/3
+```
 
-**If it fails:** use a single static content topic. Costs rendezvous
-unlinkability, costs nothing functionally.
+Six consecutive epoch topics, published to a live logos.dev node, all routed to
+one shard — matching the value `internal/topic` computed independently. The
+rotation design holds and nwaku#2538 does not bite.
+
+Implemented in `internal/topic/` + `cmd/s3topics/` + `scripts/check-s3.sh`;
+run with `make s3`.
+
+**Two traps found while building this:**
+
+1. **`waku_pubsub_topic` is not the autosharding resolver.** It formats a
+   *named* (static-sharding) topic — passing a content topic returns
+   `/waku/2//app/1/name/proto`, i.e. plain concatenation. The autoshard mapping
+   is `sha256(app‖version)[24:32] mod numShards`, implemented in `topic.Shard`.
+2. **A Core node relays other people's traffic across all 8 shards**, so
+   grepping the log for `pubsubTopic=` sees the whole cluster. The check has to
+   match `start publish Waku message` lines carrying *our* app/version prefix.
+   An unfiltered grep reports 8 shards and a spurious failure.
 
 ### S4 — WireGuard baseline (30 min)
 

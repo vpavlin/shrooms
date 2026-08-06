@@ -51,6 +51,22 @@ static int bridge_available_configs(void *ctx, void *ud) {
 static void bridge_set_event_callback(void *ctx, void *ud) {
     logosdelivery_set_event_callback(ctx, (FFICallBack)goFFICallback, ud);
 }
+
+// Kernel API. Declared here rather than included: the packaged build exports
+// these symbols but ships no matching kernel header alongside the .so.
+extern int waku_pubsub_topic(void *ctx, FFICallBack callback, void *userData, const char *topicName);
+extern int waku_relay_get_num_peers_in_mesh(void *ctx, FFICallBack callback, void *userData, const char *pubsubTopic);
+extern int waku_get_my_peerid(void *ctx, FFICallBack callback, void *userData);
+
+static int bridge_pubsub_topic(void *ctx, void *ud, const char *topicName) {
+    return waku_pubsub_topic(ctx, (FFICallBack)goFFICallback, ud, topicName);
+}
+static int bridge_peers_in_mesh(void *ctx, void *ud, const char *pubsubTopic) {
+    return waku_relay_get_num_peers_in_mesh(ctx, (FFICallBack)goFFICallback, ud, pubsubTopic);
+}
+static int bridge_my_peerid(void *ctx, void *ud) {
+    return waku_get_my_peerid(ctx, (FFICallBack)goFFICallback, ud);
+}
 */
 import "C"
 
@@ -252,6 +268,31 @@ func (n *Node) NodeInfoIDs() (string, error) {
 // discovering the real config surface instead of guessing.
 func (n *Node) AvailableConfigs() (string, error) {
 	return call(func(ud unsafe.Pointer) C.int { return C.bridge_available_configs(n.ctx, ud) })
+}
+
+// NamedPubsubTopic formats a *named* (static-sharding) pubsub topic as
+// "/waku/2/<name>".
+//
+// It does NOT resolve autosharding — verified empirically: passing a content
+// topic returns "/waku/2//app/1/name/proto", i.e. simple concatenation. Use
+// topic.Shard for the autoshard mapping.
+func (n *Node) NamedPubsubTopic(contentTopic string) (string, error) {
+	ct := C.CString(contentTopic)
+	defer C.free(unsafe.Pointer(ct))
+	return call(func(ud unsafe.Pointer) C.int { return C.bridge_pubsub_topic(n.ctx, ud, ct) })
+}
+
+// PeersInMesh reports how many gossipsub mesh peers we have for a pubsub topic.
+// Useful for confirming a rotation did not disturb the mesh.
+func (n *Node) PeersInMesh(pubsubTopic string) (string, error) {
+	pt := C.CString(pubsubTopic)
+	defer C.free(unsafe.Pointer(pt))
+	return call(func(ud unsafe.Pointer) C.int { return C.bridge_peers_in_mesh(n.ctx, ud, pt) })
+}
+
+// PeerID returns this node's libp2p peer id.
+func (n *Node) PeerID() (string, error) {
+	return call(func(ud unsafe.Pointer) C.int { return C.bridge_my_peerid(n.ctx, ud) })
 }
 
 // Events returns the channel asynchronous events are delivered on.
