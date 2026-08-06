@@ -200,3 +200,14 @@ func ParseWGKey(s string) (WGKey, error) {
 	copy(k[:], raw)
 	return k, nil
 }
+
+// PublicFromPrivate derives the Curve25519 public key for a private key.
+func PublicFromPrivate(priv WGKey) (WGKey, error) {
+	pubSlice, err := curve25519.X25519(priv[:], curve25519.Basepoint)
+	if err != nil {
+		return WGKey{}, fmt.Errorf("derive public key: %w", err)
+	}
+	var pub WGKey
+	copy(pub[:], pubSlice)
+	return pub, nil
+}

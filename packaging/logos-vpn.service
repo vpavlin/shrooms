@@ -1,0 +1,34 @@
+[Unit]
+Description=logos-vpn overlay mesh
+Documentation=https://github.com/vpavlin/logos-vpn
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/logos-vpn daemon
+
+# CAP_NET_ADMIN is needed to create the TUN device and configure its address
+# and route. Everything else runs unprivileged.
+AmbientCapabilities=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN
+
+StateDirectory=logos-vpn
+StateDirectoryMode=0700
+ConfigurationDirectory=logos-vpn
+RuntimeDirectory=logos-vpn
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK AF_UNIX
+
+# The Waku node reconnects on its own; restart covers process-level failures.
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

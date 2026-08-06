@@ -15,9 +15,9 @@ export CGO_LDFLAGS += -L$(LD_LIB) -llogosdelivery -Wl,-rpath,$(LD_LIB)
 
 GO ?= go
 
-.PHONY: all check-lib wakuspike s1 s3 probe m0 test clean
+.PHONY: all check-lib logos-vpn wakuspike s1 s3 probe m0 test clean
 
-all: wakuspike s3topics m0demo
+all: logos-vpn wakuspike s3topics m0demo
 
 check-lib:
 	@test -f "$(LD_INC)/liblogosdelivery.h" \
@@ -38,6 +38,10 @@ probe: wakuspike
 ## Run S1 against logos.dev (cluster 2)
 s1: wakuspike
 	./bin/wakuspike -v
+
+## The daemon and CLI
+logos-vpn: check-lib
+	$(GO) build -o bin/logos-vpn ./cmd/logos-vpn
 
 ## Spike S3: rotating rendezvous topics must stay on one shard
 s3topics: check-lib
