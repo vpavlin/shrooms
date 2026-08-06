@@ -79,6 +79,101 @@ all) at the cost of N² topics.
 
 ---
 
+## Roadmap
+
+The bearer key is the weakest part of the system and it is not a design
+position — it is a v1 shortcut with a planned replacement. Sequenced by
+value-per-effort, not by tidiness.
+
+### Phase 1 — one-time invite tokens ⭐ do this first
+
+**Problem:** the artifact you copy between machines is a permanent credential.
+It lands in shell history, clipboard managers, and whatever you pasted it into.
+Anyone who ever sees it is a member forever.
+
+**Change:** `logos-vpn invite` emits a token valid ~15 minutes, single
+redemption. The joining device generates its own keys, redeems the token, and
+receives the network key over the resulting authenticated channel.
+
+**Why first:** it is the highest value per unit of work in the whole plan, and
+it is *independent of credentials*. It does not need an admin key, a PKI, or a
+wire-format change — it only changes how the existing secret is transported. A
+leaked clipboard stops being worth anything.
+
+**Effort:** small. **Depends on:** nothing.
+
+### Phase 2 — admin-signed credentials
+
+**Problem:** holding the network key makes you a member, so there is no
+per-device revocation and no expiry.
+
+**Change:** split authorization out of the network key.
+
+- `K_rdv` keeps deriving the topic, payload key and per-pair PSKs — rendezvous
+  genuinely needs a shared secret, since every member must compute the same
+  topic with no coordination.
+- Membership becomes ~100 bytes of admin-signed CBOR over `{device_pk, wg_pk,
+  name, overlay_ip, not_before, not_after, caps}`, verified against `admin_pk`,
+  which is a **public** value in config.
+- 7–30 day expiry, auto-renewed while the admin is reachable.
+
+**Why the expiry matters more than the signature:** a gossip bus lets an
+attacker *suppress* a revocation message even though it cannot forge one.
+Expiry is what bounds that; the gossiped revocation is only the fast path.
+Implementing revocation without renewal and expiry builds the half that can be
+defeated by dropping packets.
+
+**Effort:** medium. **Depends on:** phase 1 for the enrolment channel.
+
+### Phase 3 — revocation
+
+**Change:** `logos-vpn revoke <name>` publishes a signed revocation with a
+monotonic serial, republished on every epoch rotation and on join. Peers **tear
+down live tunnels** on receipt.
+
+**Why tearing down matters:** Nebula's documented gap is that its blocklist is
+not distributed at all — you push it with Ansible — and its `disconnect_invalid`
+is opt-in, so a revoked host keeps working tunnels for the remaining certificate
+lifetime. We have a gossip bus, so we can do better; not doing so would be
+choosing their weakness deliberately.
+
+**Effort:** small once phase 2 exists. **Depends on:** phase 2.
+
+### Phase 4 — per-device disco authentication
+
+**Problem:** disco probes authenticate mesh *membership*, not device *identity*,
+so any member can send a probe claiming any sender key.
+
+**Bounded today:** disco only selects a candidate path. WireGuard's own
+handshake is what authenticates the peer and encrypts traffic, so a hostile
+member could steer path selection, not read traffic.
+
+**Change:** key disco off per-device credentials from phase 2.
+
+**Effort:** small. **Depends on:** phase 2.
+
+### Deliberately not planned
+
+- **Pairwise rendezvous** (per-pair topics from a DH secret, no group secret at
+  all — DESIGN §7). Removes the last shared secret, at the cost of N² topics.
+  Worth it only if metadata privacy becomes a priority over simplicity.
+- **Forward secrecy on the control plane.** Per-epoch derivation limits exposure
+  to one hour; the underlying key is long-lived. Follows the network key's
+  lifecycle.
+- **Hardware-backed device keys.** The architecture already permits it — this is
+  exactly why the device key is separate from the WireGuard key (ADR-007) — but
+  nothing uses a TPM or Secure Enclave yet.
+
+### Where this sits against the rest of the plan
+
+The milestone order is M2 (traversal) → M3 (relay) → M4 (seamless) → M5
+(security). That ordering assumes a mesh that does not reliably connect is not
+worth securing.
+
+**Phase 1 is the exception and should jump the queue.** It is small, has no
+dependencies, and the exposure it removes grows the moment this runs on a VPS —
+a machine you do not fully control, holding a credential that never expires.
+
 ## Before running this in anger
 
 1. **Do not treat the network key as low-value.** Until M5 it is the whole
@@ -86,8 +181,11 @@ all) at the cost of N² topics.
    you keep.
 2. **The control socket is mode 0660.** Anyone in its group can read the roster
    and every peer's endpoints. Check the group on a multi-user host.
-3. **Rotate the network key if a device is lost**, and re-enrol the rest. That
-   is the only revocation available until M5.
+3. **Rotate the network key if a device is lost** — `logos-vpn key rotate` —
+   and re-enrol the rest. That is the only revocation available until phase 2,
+   and it is blunt: the key derives the mesh prefix, so every overlay address
+   changes and every device must re-join. It is closer to creating a new mesh
+   than to rotating a credential, which is precisely what credentials fix.
 4. **`logos-vpn paths` reports reflexive addresses.** More than one distinct
    value means endpoint-dependent NAT — useful diagnostically, but it also
    means peers learn several of your external addresses.

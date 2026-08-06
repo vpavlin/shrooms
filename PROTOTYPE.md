@@ -105,7 +105,7 @@ logos-vpn peers                  roster from gossip, including offline devices
 logos-vpn paths <name>           candidates gathered, which won, and why
 logos-vpn ping <name>            overlay reachability
 logos-vpn key show               print the network key (for adding a machine)
-logos-vpn key rotate             v1 revocation: new NK, re-enrol everyone
+logos-vpn key rotate             replace it: new mesh, everyone re-joins
 ```
 
 The daemon exposes a unix socket (`/run/logos-vpn.sock`) with a small JSON API;

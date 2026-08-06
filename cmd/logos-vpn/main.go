@@ -57,6 +57,7 @@ Usage:
   logos-vpn status [--json]            show the roster and tunnel state
   logos-vpn paths [NAME]               show probed candidates and which won
   logos-vpn key show                   print the network key
+  logos-vpn key rotate                 replace it (the only revocation before M5)
 
 Common flags:
   --config PATH    config file (default /etc/logos-vpn/config.toml)

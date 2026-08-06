@@ -161,9 +161,15 @@ short version:
 
 - Control messages and discovery probes are both **encrypted**, fixed-size and
   fixed-rate, on a rotating topic, and not archived.
-- The network key is a **bearer credential** with no per-device revocation until
-  M5. Rotating it and re-enrolling is the only revocation available. Treat it
-  accordingly.
+- The network key is a **bearer credential**: anyone holding it is a member,
+  permanently. There is no per-device revocation and no expiry.
+  `logos-vpn key rotate` re-creates the mesh and forces everyone to re-join —
+  blunt, and the only option today. **Treat the key as the whole security of
+  the mesh.**
+- There is a [concrete plan to fix this](SECURITY.md#roadmap), in four phases.
+  The first — one-time invite tokens, so the copy/pasted secret stops being
+  permanent — is small, has no dependencies, and should land before this runs
+  anywhere exposed.
 - Some things leak inherently and cannot be fixed here: Waku leaves the content
   topic and timestamp in cleartext, relay peers see your IP, and WireGuard is
   identifiable as WireGuard.
