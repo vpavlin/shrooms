@@ -377,10 +377,34 @@ Peers discover each other; Waku becomes load-bearing.
 - Replay rejection: `seq` must strictly increase per device.
 - `logos-vpn init` / `join` / `status`, and the systemd unit.
 
+**Also needed for a real-world test, and easy to under-scope:**
+
+- **A real TUN device.** M0 used netstack precisely so it needed no privileges.
+  The daemon needs `/dev/net/tun`, `CAP_NET_ADMIN`, and interface address/route
+  setup.
+- **An `advertise` config option.** A NATed box knows only its LAN addresses,
+  which are useless to a remote peer — reflexive discovery is M2. So at M1 a
+  publicly reachable node must be *told* its endpoint, or its announce carries
+  nothing dialable.
+- **Persist the sequence number.** A device that restarts and resets `seq` to 1
+  is rejected by every peer's `ReplayGuard` until they forget it.
+
 **Done when:** you can move a box to a new IP and the other side reconnects with
 no config change, and `logos-vpn status` shows an accurate roster.
 
 **~4–6 days.**
+
+#### What M1 can and cannot do in the real world
+
+| Path | At M1 |
+|---|---|
+| home ↔ VPS (VPS publicly reachable) | ✅ works — home dials out, WireGuard relearns home's endpoint from the first authenticated packet |
+| two boxes on the same LAN | ✅ works — both announce usable local addresses |
+| any pair where one side is reachable | ✅ works |
+| **home ↔ office, both behind NAT** | ❌ needs M2 (punching) or M3 (relay) |
+
+So M1 is genuinely testable over the internet, but the result is **hub-and-spoke
+through the VPS, not a mesh**. Direct site-to-site is what M2 and M3 buy.
 
 ### M2 — NAT traversal
 
