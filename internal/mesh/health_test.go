@@ -126,3 +126,88 @@ func TestHealthDetailOmitsWhatProblemSaid(t *testing.T) {
 		t.Errorf("detail %q repeats the topic count the problem already gave", got)
 	}
 }
+
+func connChange(peer, event string) waku.Event {
+	return waku.Event{JSON: `{"eventType":"connection_change","peerId":"` + peer + `","peerEvent":"` + event + `"}`}
+}
+
+func statusChange(s string) waku.Event {
+	return waku.Event{JSON: `{"eventType":"connection_status_change","connectionStatus":"` + s + `"}`}
+}
+
+// The failure that cost an hour: logos.dev moved to cluster 3 while our preset
+// said 2, so every peer connected, disagreed on metadata, and hung up. The
+// reason never leaves nwaku's own log, so all our tooling could say was "not
+// connected to any fleet peers" — true, and pointing at the wrong culprit.
+//
+// The churn pattern is the recoverable signal.
+func TestHealthDetectsClusterMismatchPattern(t *testing.T) {
+	h := newHealth()
+	now := time.Now()
+
+	for i, p := range []string{"16UpeerA", "16UpeerB", "16UpeerC", "16UpeerD"} {
+		at := now.Add(time.Duration(i) * time.Second)
+		h.observe(connChange(p, "EventConnected"), at)
+		h.observe(connChange(p, "EventDisconnected"), at.Add(300*time.Millisecond))
+	}
+	h.observe(statusChange("Disconnected"), now)
+	h.setTopics(3)
+
+	got := h.snapshot().Problem(now)
+	if !strings.Contains(got, "cluster_id") || !strings.Contains(got, "preset") {
+		t.Errorf("problem = %q, want it to name preset/cluster_id as the likely cause", got)
+	}
+}
+
+// A peer that stayed connected for a while and then dropped is an ordinary
+// disconnect, not a refusal. Counting those would fire the mismatch warning at
+// every node that has simply been running a while.
+func TestHealthDoesNotCountNormalDisconnects(t *testing.T) {
+	h := newHealth()
+	now := time.Now()
+
+	for i, p := range []string{"16UpeerA", "16UpeerB", "16UpeerC", "16UpeerD"} {
+		at := now.Add(time.Duration(i) * time.Minute)
+		h.observe(connChange(p, "EventConnected"), at)
+		h.observe(connChange(p, "EventDisconnected"), at.Add(ShortLived+time.Second))
+	}
+	h.observe(statusChange("Disconnected"), now)
+
+	if c := h.snapshot().Churn; c != 0 {
+		t.Errorf("churn = %d after only long-lived sessions, want 0", c)
+	}
+	if got := h.snapshot().Problem(now); strings.Contains(got, "cluster_id") {
+		t.Errorf("mismatch warning fired on ordinary disconnects: %q", got)
+	}
+}
+
+// Once some peer accepts us the mismatch theory is dead. Without this the
+// warning would stick to a node that had recovered.
+func TestHealthChurnResetsOnConnected(t *testing.T) {
+	h := newHealth()
+	now := time.Now()
+
+	for _, p := range []string{"16UpeerA", "16UpeerB", "16UpeerC"} {
+		h.observe(connChange(p, "EventConnected"), now)
+		h.observe(connChange(p, "EventDisconnected"), now.Add(100*time.Millisecond))
+	}
+	if h.snapshot().Churn < ChurnThreshold {
+		t.Fatalf("churn = %d, expected the threshold to be reached", h.snapshot().Churn)
+	}
+
+	h.observe(statusChange("Connected"), now)
+	if c := h.snapshot().Churn; c != 0 {
+		t.Errorf("churn = %d after reaching Connected, want 0", c)
+	}
+}
+
+// An unmatched disconnect (connect never seen, e.g. from before we started)
+// must not be counted or crash.
+func TestHealthIgnoresUnmatchedDisconnect(t *testing.T) {
+	h := newHealth()
+	now := time.Now()
+	h.observe(connChange("16Uunknown", "EventDisconnected"), now)
+	if c := h.snapshot().Churn; c != 0 {
+		t.Errorf("churn = %d from an unmatched disconnect, want 0", c)
+	}
+}

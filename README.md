@@ -282,7 +282,7 @@ one of your own machines is reachable; see
 | `tun: ... (need CAP_NET_ADMIN)` | run with `sudo`, or the host has no `/dev/net/tun` |
 | peer `online` but `no handshake` | traversal, not discovery — check `paths` and whether the port is open |
 | `!! rendezvous:` warning in `status` | the fleet is unreachable. Discovery is stalled; established tunnels keep working. Confirm with `make s1` |
-| `different clusterId reported: N vs M` in the logs | the fleet has moved cluster. Every peer connects, disagrees, and hangs up, which looks exactly like an outage. Set `cluster_id` in the config to what the peers report |
+| `!! rendezvous: peers connect and are dropped immediately` | preset or `cluster_id` mismatch — you are on a different cluster than the fleet. Confirm with `different clusterId reported: N vs M` in the daemon log |
 | peer shows `stale 12m` | the tunnel is dead — the peer has not rekeyed within WireGuard's 180 s session lifetime |
 | no peers at all after 60 s | the daemon is not reaching the fleet; check outbound connectivity |
 | `missing liblogosdelivery.h` | run `make deps-basecamp` |

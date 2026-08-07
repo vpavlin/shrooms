@@ -18,6 +18,19 @@ import (
 // than one interval: a single missed gossip message is normal.
 const RendezvousStale = 4 * AnnounceInterval
 
+// ShortLived is how quickly a connection must die to count as churn rather than
+// as a normal disconnect.
+//
+// A healthy session lasts minutes. A peer dropped within a second of connecting
+// did not fail — it refused, and by far the most common reason is a metadata
+// disagreement, which is exactly what a preset or cluster mismatch looks like
+// from here.
+const ShortLived = 2 * time.Second
+
+// ChurnThreshold is how many short-lived connections before we call it. More
+// than a couple is no longer coincidence.
+const ChurnThreshold = 3
+
 // Health is what the node knows about its own connection to the rendezvous
 // plane, as opposed to the data plane.
 //
@@ -45,6 +58,10 @@ type Health struct {
 
 	// Topics is how many content topics we hold subscriptions for.
 	Topics int
+
+	// Churn counts peers that connected and were dropped again almost
+	// immediately. See ShortLived.
+	Churn int
 }
 
 // OK reports whether the rendezvous plane looks usable.
@@ -67,6 +84,11 @@ func (h Health) OK(now time.Time) bool {
 // repeating it.
 func (h Health) Problem(now time.Time) string {
 	switch {
+	// Checked before the plain disconnected case: same symptom, far more useful
+	// cause, and the one nothing else surfaces — the disconnect reason never
+	// leaves nwaku's own log.
+	case h.Status == "Disconnected" && h.Churn >= ChurnThreshold:
+		return "peers connect and are dropped immediately — usually a preset or cluster_id mismatch"
 	case h.Status == "Disconnected":
 		return "not connected to any fleet peers"
 	case h.Topics == 0:
@@ -99,14 +121,25 @@ func (h Health) Detail(now time.Time) string {
 	return strings.Join(parts, ", ")
 }
 
+// maxTrackedPeers bounds the connect-time map. Discovery churns through many
+// peers, and this is a diagnostic, not an accounting record.
+const maxTrackedPeers = 256
+
 // health is the mutable half, updated from the event loop.
 type health struct {
 	mu sync.Mutex
 	h  Health
+
+	// connectedAt is when each peer's current connection began, so a later
+	// disconnect can be classified as churn or as a normal drop.
+	connectedAt map[string]time.Time
 }
 
 func newHealth() *health {
-	return &health{h: Health{Status: "unknown"}}
+	return &health{
+		h:           Health{Status: "unknown"},
+		connectedAt: make(map[string]time.Time),
+	}
 }
 
 // observe folds a raw Waku event into the health record.
@@ -118,6 +151,31 @@ func (s *health) observe(ev waku.Event, now time.Time) {
 	case waku.EventMessageReceived:
 		s.h.LastMessage = now
 
+	case waku.EventConnectionChange:
+		// The disconnect REASON is not in the event stream — it only reaches
+		// nwaku's own log. But a peer dropped within ShortLived of connecting
+		// is a refusal, and counting those recovers the diagnosis without it.
+		var e struct {
+			PeerID    string `json:"peerId"`
+			PeerEvent string `json:"peerEvent"`
+		}
+		if json.Unmarshal([]byte(ev.JSON), &e) != nil || e.PeerID == "" {
+			return
+		}
+		switch e.PeerEvent {
+		case "EventConnected":
+			if len(s.connectedAt) < maxTrackedPeers {
+				s.connectedAt[e.PeerID] = now
+			}
+		case "EventDisconnected":
+			if at, ok := s.connectedAt[e.PeerID]; ok {
+				if now.Sub(at) < ShortLived {
+					s.h.Churn++
+				}
+				delete(s.connectedAt, e.PeerID)
+			}
+		}
+
 	case waku.EventConnectionStatus:
 		var e struct {
 			ConnectionStatus string `json:"connectionStatus"`
@@ -126,6 +184,12 @@ func (s *health) observe(ev waku.Event, now time.Time) {
 			if e.ConnectionStatus != s.h.Status {
 				s.h.Status = e.ConnectionStatus
 				s.h.StatusSince = now
+			}
+			// Reaching Connected disproves the mismatch theory: whatever churn
+			// happened, some peer accepted us. Without this reset the warning
+			// would persist on a node that recovered.
+			if e.ConnectionStatus == "Connected" {
+				s.h.Churn = 0
 			}
 		}
 	}
