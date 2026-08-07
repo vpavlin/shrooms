@@ -4,6 +4,7 @@
 #   ./scripts/deploy.sh user@vps.example.com                    # join an existing mesh
 #   ./scripts/deploy.sh user@vps --init                         # create a new mesh
 #   ./scripts/deploy.sh user@vps --advertise 203.0.113.4:51820  # publicly reachable node
+#   ./scripts/deploy.sh user@vps --relay                        # also relay for others
 #
 # Ships a container image rather than a binary. liblogosdelivery requires
 # glibc 2.38, so a tarball fails on Debian 12 (2.36) and works only on Ubuntu
@@ -22,11 +23,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 HOST=${1:-}
-[ -n "$HOST" ] || { echo "usage: $0 user@host [--init] [--advertise IP:PORT] [--name NAME] [--force]"; exit 1; }
+[ -n "$HOST" ] || { echo "usage: $0 user@host [--init] [--relay] [--advertise IP:PORT] [--name NAME] [--key KEY] [--force]"; exit 1; }
 shift
 
 INIT=0
 FORCE=0
+RELAY=0
 ADVERTISE=""
 NAME=""
 KEY="${LOGOS_VPN_KEY:-}"
@@ -34,6 +36,7 @@ KEY="${LOGOS_VPN_KEY:-}"
 while [ $# -gt 0 ]; do
     case "$1" in
         --init)      INIT=1; shift ;;
+        --relay)     RELAY=1; shift ;;
         --force)     FORCE=1; shift ;;
         --advertise) ADVERTISE=$2; shift 2 ;;
         --name)      NAME=$2; shift 2 ;;
@@ -85,6 +88,12 @@ else
     else
         [ -n "$KEY" ] || { echo "need a network key: pass --key KEY, set LOGOS_VPN_KEY, or use --init"; exit 1; }
         ./bin/logos-vpn join "$KEY" "${ARGS[@]}"
+    fi
+
+    if [ $RELAY -eq 1 ]; then
+        # A reachable node should relay: it is what lets two NATed peers reach
+        # each other when punching fails.
+        echo 'relay = "true"' >> "$TMP/config.toml"
     fi
 
     # Ship the config; the remote generates its own device identity on first

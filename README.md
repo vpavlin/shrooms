@@ -52,51 +52,37 @@ authoritative behind it.
 
 ---
 
-## Quick start
+## Prerequisites
 
-Needs a built `liblogosdelivery` — see [Building](#building).
+### On the machine you build from
 
-```console
-# first machine
-$ logos-vpn init --name home
-Network key: K7QF3M2XVBNP8SDLR4WYZC6HAJT9EUG5
-  copy this to your other machines — it is the only secret
-Overlay IP:  fd48:d107:3fce:2b84:226b:ac:f2c3:9f30
-Mesh prefix: fd48:d107:3fce::/48
+| | |
+|---|---|
+| Go 1.23+ | with cgo enabled and a C toolchain (`build-essential`) |
+| Docker | only if you deploy to a remote host |
+| `liblogosdelivery` | see below — there is no canonical distribution |
+| `/dev/net/tun` | to run a node locally |
+| `CAP_NET_ADMIN` | i.e. `sudo`, to create the TUN device |
 
-$ sudo systemctl enable --now logos-vpn
+### On any node
 
-# every other machine
-$ logos-vpn join K7QF3M2XVBNP8SDLR4WYZC6HAJT9EUG5 --name office
-$ sudo systemctl enable --now logos-vpn
-```
+| | |
+|---|---|
+| Linux | x86-64. Android is designed for but not yet built; iOS is out of scope |
+| glibc ≥ 2.38 | Ubuntu 24.04+ works, **Debian 12 does not** (2.36). Irrelevant if you deploy the container |
+| `/dev/net/tun` | **verify this on a cheap VPS** — OpenVZ/LXC hosts often disable it. Insist on KVM |
+| 1 UDP port | default 51820, inbound only needed on nodes you want reachable |
 
-That is the whole configuration: **one secret**. Device identity is generated
-locally on first start and never leaves the machine.
+**Resource use is negligible.** A measured Core-mode node acting as a relay sits
+at **~20 MiB RSS and 1–2% of one core**. Any VPS tier will do; what matters is
+bandwidth allowance and latency, since relayed traffic takes a detour through
+the node.
 
-```console
-$ logos-vpn status
-network  fd48:d107:3fce::/48          peers 2 (2 up)
-self     home  fd48:d107:3fce:2b84:226b:ac:f2c3:9f30
-
-NAME    OVERLAY IP                              ANNOUNCE  TUNNEL  ENDPOINT           RX/TX
-office  fd48:d107:3fce:a332:855c:1059:8060:59d7 online    up      203.0.113.7:51820  1.2G/430M
-laptop  fd48:d107:3fce:7e8:aea9:ff0f:a2a8:2de9  online    up      198.51.100.4:51820 22M/18M
-```
-
-`logos-vpn paths` shows which candidate endpoints answered a probe, which one
-won, and whether your NAT is punchable.
-
----
-
-## Building
-
-`liblogosdelivery` has no canonical distribution, so pick a source:
+### Getting liblogosdelivery
 
 ```console
 $ make deps-basecamp HDR=/path/to/liblogosdelivery.h   # reuse a Logos Basecamp install
 $ make deps                                            # build from source in a container
-$ make logos-vpn
 ```
 
 ⚠️ **`make deps` currently fails** — upstream logos-delivery does not compile at
@@ -107,9 +93,123 @@ rest_api/endpoint/relay/handlers.nim: Error: waitFor withTimeout(...)
 has an illegal effect: NestedPoll
 ```
 
-Use `make deps-basecamp` until that is fixed upstream. Notably the *toolchain*
+Use `make deps-basecamp` until that is fixed upstream. Note the *toolchain*
 problem is solved: building in Debian bookworm (git 2.39) resolves dependencies
 cleanly, where a current host (git 2.51) fails on a nimble lockfile checksum.
+
+If you have Logos Basecamp installed, the library and its matching header are
+already on disk:
+
+```console
+$ ls ~/.local/share/Logos/LogosBasecamp/modules/delivery_module/liblogosdelivery.so
+$ find ~ -name liblogosdelivery.h 2>/dev/null | head -1
+```
+
+---
+
+## Setting up a mesh, from scratch
+
+This is the full sequence for a VPS plus your laptop. The VPS creates the mesh
+and relays; the laptop joins.
+
+### 1. Build locally
+
+```console
+$ git clone https://github.com/vpavlin/logos-vpn
+$ cd logos-vpn
+
+$ make deps-basecamp \
+    HDR=$(find ~ -name liblogosdelivery.h 2>/dev/null | head -1)
+
+$ make logos-vpn
+$ make test-unit          # optional, ~5s
+```
+
+### 2. Deploy the VPS as the first node
+
+Replace `VPS_IP` with its public address. `--init` creates the mesh, `--relay`
+makes it forward for peers that cannot reach each other, and `--advertise`
+tells peers where to find it.
+
+```console
+$ ./scripts/deploy.sh root@VPS_IP \
+    --init --relay --name vps --advertise VPS_IP:51820
+```
+
+This checks the host, builds and ships a container image, writes
+`/etc/logos-vpn/config.toml`, and starts it. **Copy the network key it prints** —
+it is the only secret, and until the security roadmap's phase 1 lands it is a
+permanent bearer credential.
+
+Open the port:
+
+```console
+$ ssh root@VPS_IP 'ufw allow 51820/udp'    # or your firewall's equivalent
+```
+
+### 3. Join from your laptop
+
+```console
+$ sudo ./bin/logos-vpn join <NETWORK-KEY> --name laptop
+$ sudo ./bin/logos-vpn daemon -v
+```
+
+Leave that running. On first start it generates a device identity, derives its
+overlay address, connects to the logos.dev fleet, and announces itself.
+
+### 4. Check it works
+
+```console
+$ sudo ./bin/logos-vpn status
+network  fd48:d107:3fce::/48          peers 1 (1 up)
+self     laptop  fd48:d107:3fce:2b84:226b:ac:f2c3:9f30
+
+NAME  OVERLAY IP                              ANNOUNCE  TUNNEL  ENDPOINT            RX/TX
+vps   fd48:d107:3fce:a332:855c:1059:8060:59d7 online    up      203.0.113.4:51820   1.2K/900
+
+$ ping fd48:d107:3fce:a332:855c:1059:8060:59d7
+```
+
+Expect discovery in 15–25 s from cold (most of it the Waku node joining the
+fleet) and a handshake shortly after.
+
+### 5. What to look at
+
+```console
+$ sudo ./bin/logos-vpn paths
+reflexive addresses (as peers observe us):
+  203.0.113.9:41001
+```
+
+**This is the most informative single output.** One address means
+endpoint-independent NAT, so direct connections between NATed peers should work.
+Several means endpoint-dependent (symmetric) NAT, punching will not work, and
+traffic falls back to the relay — which is exactly why the relay exists.
+
+`status` separates **ANNOUNCE** (seen on the gossip bus) from **TUNNEL**
+(WireGuard handshake completed). If a peer is online but has no handshake, the
+problem is traversal, not discovery. A relayed peer shows a `relay:…` endpoint.
+
+### 6. Add more machines
+
+```console
+$ sudo ./bin/logos-vpn join <NETWORK-KEY> --name office     # locally
+$ ./scripts/deploy.sh user@host --key <NETWORK-KEY> --name nas   # remotely
+```
+
+Any node with a reachable address can also relay — add `relay = "true"` to its
+config. You do not need a VPS if one of your own machines is reachable; see
+[ADR-012](docs/adr/012-relay-hosting.md).
+
+### Troubleshooting
+
+| Symptom | Likely cause |
+|---|---|
+| `tun: ... (need CAP_NET_ADMIN)` | run with `sudo`, or the host has no `/dev/net/tun` |
+| peer `online` but `no handshake` | traversal, not discovery — check `paths` and whether the port is open |
+| no peers at all after 60 s | the daemon is not reaching logos.dev; check outbound connectivity |
+| `missing liblogosdelivery.h` | run `make deps-basecamp` |
+| the daemon exits immediately | `libpq` missing — deploy the container rather than a bare binary |
 
 ---
 
@@ -129,19 +229,22 @@ forwards — but blocked on incentives rather than code.
 
 ## Deploying
 
-```console
-$ ./scripts/deploy.sh user@vps --init --advertise 203.0.113.4:51820
-$ ./scripts/deploy.sh user@other-vps --key <NETWORK-KEY>
-```
-
-Ships a **container image**, not a binary: `liblogosdelivery` needs glibc 2.38,
-so a tarball fails on Debian 12 (2.36) and works only on Ubuntu 24.04+. The
-image runs anywhere docker does.
+`scripts/deploy.sh` ships a **container image**, not a binary: `liblogosdelivery`
+needs glibc 2.38, so a tarball fails on Debian 12 (2.36) and works only on
+Ubuntu 24.04+. The image runs anywhere docker does.
 
 It uses host networking on purpose. Behind docker's bridge the reflexive address
 peers observe would be the docker gateway's and the source port would be
-rewritten, so hole punching would be fighting a layer of NAT that does not exist
-in reality.
+rewritten, so hole punching would fight a layer of NAT that does not exist in
+reality.
+
+```console
+$ ./scripts/deploy.sh user@host [--init] [--relay] [--advertise IP:PORT] \
+      [--name NAME] [--key KEY] [--force]
+```
+
+It refuses to overwrite an existing config without `--force`, and the remote
+generates its own device identity, so no private key ever crosses the wire.
 
 ---
 
