@@ -43,12 +43,14 @@ func runDemux(t *testing.T, batch [][]byte) (kept [][]byte, ctrl [][]byte, keptE
 	})
 
 	packets := make([][]byte, len(batch))
+	orig := make([][]byte, len(batch))
 	sizes := make([]int, len(batch))
 	eps := make([]conn.Endpoint, len(batch))
 	for i, p := range batch {
 		buf := make([]byte, 1500)
 		copy(buf, p)
 		packets[i] = buf
+		orig[i] = buf
 		sizes[i] = len(p)
 		eps[i] = fakeEndpoint{id: string(rune('a' + i))}
 	}
@@ -61,8 +63,12 @@ func runDemux(t *testing.T, batch [][]byte) (kept [][]byte, ctrl [][]byte, keptE
 	if err != nil {
 		t.Fatalf("demux: %v", err)
 	}
+	// Read back through the ORIGINAL buffers, as wireguard-go does: it is handed
+	// `bufs` but reads `bufsArrs[i][:size]`. A demux that rearranges slice
+	// headers rather than bytes looks correct from the caller's view and hands
+	// WireGuard the wrong buffer. Reading packets[i] here hid exactly that.
 	for i := 0; i < n; i++ {
-		kept = append(kept, append([]byte(nil), packets[i][:sizes[i]]...))
+		kept = append(kept, append([]byte(nil), orig[i][:sizes[i]]...))
 		keptEps = append(keptEps, eps[i].DstToString())
 	}
 	return kept, ctrl, keptEps
@@ -178,12 +184,14 @@ func runDemuxInject(t *testing.T, batch [][]byte) (kept [][]byte, keptEps []stri
 	})
 
 	packets := make([][]byte, len(batch))
+	orig := make([][]byte, len(batch))
 	sizes := make([]int, len(batch))
 	eps := make([]conn.Endpoint, len(batch))
 	for i, p := range batch {
 		buf := make([]byte, 1500)
 		copy(buf, p)
 		packets[i] = buf
+		orig[i] = buf
 		sizes[i] = len(p)
 		eps[i] = fakeEndpoint{id: string(rune('a' + i))}
 	}
@@ -194,8 +202,12 @@ func runDemuxInject(t *testing.T, batch [][]byte) (kept [][]byte, keptEps []stri
 	if err != nil {
 		t.Fatalf("demux: %v", err)
 	}
+	// Read back through the ORIGINAL buffers, as wireguard-go does: it is handed
+	// `bufs` but reads `bufsArrs[i][:size]`. A demux that rearranges slice
+	// headers rather than bytes looks correct from the caller's view and hands
+	// WireGuard the wrong buffer. Reading packets[i] here hid exactly that.
 	for i := 0; i < n; i++ {
-		kept = append(kept, append([]byte(nil), packets[i][:sizes[i]]...))
+		kept = append(kept, append([]byte(nil), orig[i][:sizes[i]]...))
 		keptEps = append(keptEps, eps[i].DstToString())
 	}
 	return kept, keptEps
@@ -358,5 +370,58 @@ func TestLooksLikeWireGuardChecksFullType(t *testing.T) {
 		if got := looksLikeWireGuard(c.pkt); got != c.want {
 			t.Errorf("%s: looksLikeWireGuard(% x) = %v, want %v", c.name, c.pkt, got, c.want)
 		}
+	}
+}
+
+// Regression: compaction must move BYTES, not slice headers.
+//
+// wireguard-go hands us `bufs` but reads the packet back from `bufsArrs`
+// (device/receive.go: `recv(bufs, ...)` then `packet := bufsArrs[i][:size]`).
+// The two alias on entry, so swapping slice headers rearranges only our view —
+// WireGuard goes on reading bufsArrs[kept], which holds the control packet we
+// just consumed, with the surviving packet's length.
+//
+// The result is a packet whose first four bytes are our magic, which WireGuard
+// reports as "Received message with unknown type" while the real packet is
+// lost. It cost six minutes per reconnect, and it only bites when a control
+// packet precedes a data packet in the same batch — which is most batches,
+// since disco and WireGuard share one socket.
+func TestDemuxCompactionMovesBytesNotHeaders(t *testing.T) {
+	// Control first, so the data packet must be compacted down to index 0.
+	batch := [][]byte{ctrlPacket(0xde, 0xad), wgPacket(1, 0xbe, 0xef)}
+
+	packets := make([][]byte, len(batch))
+	orig := make([][]byte, len(batch))
+	sizes := make([]int, len(batch))
+	eps := make([]conn.Endpoint, len(batch))
+	for i, p := range batch {
+		buf := make([]byte, 1500)
+		copy(buf, p)
+		packets[i], orig[i], sizes[i] = buf, buf, len(p)
+		eps[i] = fakeEndpoint{id: string(rune('a' + i))}
+	}
+
+	b := &Bind{}
+	b.SetControlHandler(func(_ Sub, _ []byte, _ conn.Endpoint) ([]byte, conn.Endpoint, bool) {
+		return nil, nil, false
+	})
+	inner := func(_ [][]byte, _ []int, _ []conn.Endpoint) (int, error) { return len(batch), nil }
+
+	n, err := b.demux(inner)(packets, sizes, eps)
+	if err != nil {
+		t.Fatalf("demux: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("kept %d packets, want 1", n)
+	}
+
+	// Read exactly as wireguard-go does.
+	got := orig[0][:sizes[0]]
+	if isControl(got) {
+		t.Fatalf("WireGuard would read a control packet: % x — this is the "+
+			"\"unknown type\" failure", got)
+	}
+	if !bytes.Equal(got, wgPacket(1, 0xbe, 0xef)) {
+		t.Errorf("WireGuard would read % x, want % x", got, wgPacket(1, 0xbe, 0xef))
 	}
 }

@@ -165,9 +165,22 @@ func (b *Bind) demux(fn conn.ReceiveFunc) conn.ReceiveFunc {
 					}
 				}
 				// Keep for WireGuard, compacting if earlier entries were removed.
+				//
+				// COPY the bytes; do not swap the slice headers. wireguard-go
+				// hands us `bufs` but reads the packet back out of `bufsArrs`
+				// (device/receive.go: `recv(bufs, ...)` then
+				// `packet := bufsArrs[i][:size]`). The two alias on entry, so a
+				// swap here rearranges only our view: WireGuard still reads
+				// bufsArrs[kept], which holds the control packet we just
+				// consumed, with this packet's length. Its first four bytes are
+				// our magic, so it lands as "Received message with unknown
+				// type" and the real packet is lost.
+				//
+				// This is why handshakes failed whenever a control packet
+				// happened to precede a data packet in the same batch — which
+				// is most batches, since disco and WireGuard share the socket.
 				if kept != i {
-					packets[kept], packets[i] = packets[i], packets[kept]
-					sizes[kept] = sizes[i]
+					sizes[kept] = copy(packets[kept], pkt)
 					eps[kept] = eps[i]
 				}
 				kept++
