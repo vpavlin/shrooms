@@ -88,6 +88,18 @@ type Bind struct {
 	ctrlRx  uint64
 	ctrlTx  uint64
 	relayTx uint64
+
+	// unknownRx counts packets handed to WireGuard that carry neither our
+	// magic nor a valid WireGuard message type, and lastUnknown records where
+	// the most recent one came from.
+	//
+	// wireguard-go logs these as "Received message with unknown type" and says
+	// nothing about the source, which makes them impossible to attribute. They
+	// were seen on both ends of a failing tunnel and vanished once it was
+	// healthy, so they are not background scanning of port 51820 — but without
+	// a source address there is no way to tell whose they are.
+	unknownRx   uint64
+	lastUnknown string
 }
 
 // NewBind wraps a StdNetBind.
@@ -136,6 +148,15 @@ func (b *Bind) demux(fn conn.ReceiveFunc) conn.ReceiveFunc {
 		for i := 0; i < n; i++ {
 			pkt := packets[i][:sizes[i]]
 			if !isControl(pkt) {
+				// Record anything WireGuard will reject, while we still know
+				// where it came from.
+				if len(pkt) == 0 || pkt[0] < 1 || pkt[0] > 4 {
+					b.unknownRx++
+					if eps[i] != nil {
+						b.lastUnknown = fmt.Sprintf("%s first_byte=0x%02x len=%d",
+							eps[i].DstToString(), firstByte(pkt), len(pkt))
+					}
+				}
 				// Keep for WireGuard, compacting if earlier entries were removed.
 				if kept != i {
 					packets[kept], packets[i] = packets[i], packets[kept]
@@ -195,6 +216,18 @@ func (b *Bind) SendControl(sub Sub, payload []byte, ep conn.Endpoint) error {
 
 // Stats reports control packets received and sent, and packets sent via a relay.
 func (b *Bind) Stats() (rx, tx, relayed uint64) { return b.ctrlRx, b.ctrlTx, b.relayTx }
+
+// Unknown reports packets WireGuard will reject as an unknown message type, and
+// the source of the most recent one.
+func (b *Bind) Unknown() (n uint64, last string) { return b.unknownRx, b.lastUnknown }
+
+// firstByte is 0 for an empty packet rather than a panic.
+func firstByte(pkt []byte) byte {
+	if len(pkt) == 0 {
+		return 0
+	}
+	return pkt[0]
+}
 
 // --- remaining conn.Bind methods delegate to the inner bind ---
 

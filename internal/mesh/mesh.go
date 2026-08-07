@@ -74,6 +74,9 @@ type Mesh struct {
 	// data plane and otherwise gives no visible signal at all.
 	health *health
 
+	// unknownSeen is the last reported count of unroutable inbound packets.
+	unknownSeen uint64
+
 	mu         sync.Mutex
 	subscribed map[string]bool // content topics we hold a subscription for
 }
@@ -188,6 +191,7 @@ func (m *Mesh) Run(ctx context.Context) error {
 		case now := <-probeTicker.C:
 			m.probeAll(now)
 			m.registerWithRelay()
+			m.reportUnknown()
 		case now := <-ticker.C:
 			// Resubscribe first: near an epoch boundary the next topic must be
 			// live before we publish to it.
@@ -199,6 +203,21 @@ func (m *Mesh) Run(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+// reportUnknown logs packets WireGuard rejected as an unknown message type.
+//
+// wireguard-go logs these itself but without a source, which is what made them
+// impossible to attribute when they appeared on both ends of a failing tunnel.
+// Logged only when the count changes, so a healthy node stays quiet.
+func (m *Mesh) reportUnknown() {
+	n, last := m.dev.Bind.Unknown()
+	if n == m.unknownSeen {
+		return
+	}
+	m.log.Warn("packets rejected as unknown type",
+		"total", n, "new", n-m.unknownSeen, "last_from", last)
+	m.unknownSeen = n
 }
 
 // resubscribe ensures we hold subscriptions across the epoch window.

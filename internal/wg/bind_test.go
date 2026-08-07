@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"net/netip"
+	"strings"
 	"testing"
 
 	"golang.zx2c4.com/wireguard/conn"
@@ -157,5 +158,177 @@ func TestDemuxPropagatesInnerError(t *testing.T) {
 	inner := func(_ [][]byte, _ []int, _ []conn.Endpoint) (int, error) { return 0, want }
 	if _, err := b.demux(inner)(nil, nil, nil); !errors.Is(err, want) {
 		t.Fatalf("err = %v, want %v", err, want)
+	}
+}
+
+// runDemuxInject feeds a batch through the demux with a handler that UNWRAPS
+// control packets back into the stream, as relayed traffic does.
+//
+// This is the path nothing tested. The consume path only ever shrinks the
+// batch; injection rewrites buffers, sizes and endpoints in place while other
+// entries are being compacted around it.
+func runDemuxInject(t *testing.T, batch [][]byte) (kept [][]byte, keptEps []string) {
+	t.Helper()
+
+	b := &Bind{}
+	b.SetControlHandler(func(_ Sub, payload []byte, ep conn.Endpoint) ([]byte, conn.Endpoint, bool) {
+		// Mirrors handleRelayFrame: the returned slice aliases the packet
+		// buffer the demux handed us.
+		return payload, fakeEndpoint{id: "relayed-" + ep.DstToString()}, true
+	})
+
+	packets := make([][]byte, len(batch))
+	sizes := make([]int, len(batch))
+	eps := make([]conn.Endpoint, len(batch))
+	for i, p := range batch {
+		buf := make([]byte, 1500)
+		copy(buf, p)
+		packets[i] = buf
+		sizes[i] = len(p)
+		eps[i] = fakeEndpoint{id: string(rune('a' + i))}
+	}
+
+	inner := func(_ [][]byte, _ []int, _ []conn.Endpoint) (int, error) { return len(batch), nil }
+
+	n, err := b.demux(inner)(packets, sizes, eps)
+	if err != nil {
+		t.Fatalf("demux: %v", err)
+	}
+	for i := 0; i < n; i++ {
+		kept = append(kept, append([]byte(nil), packets[i][:sizes[i]]...))
+		keptEps = append(keptEps, eps[i].DstToString())
+	}
+	return kept, keptEps
+}
+
+// Every interleaving of data and unwrapped-control packets in one batch must
+// produce exactly the right payloads, with the right endpoints, and above all
+// must never hand WireGuard a packet still carrying our magic prefix — that is
+// what "Received message with unknown type" looks like from the far side.
+func TestDemuxInjectionPreservesEveryPacket(t *testing.T) {
+	data1 := wgPacket(1, 0x11)
+	data2 := wgPacket(4, 0x22)
+	// An unwrapped relay payload is itself a WireGuard packet.
+	inner1 := wgPacket(2, 0x33)
+	inner2 := wgPacket(3, 0x44)
+	wrap := func(inner []byte) []byte {
+		return append(append(Magic[:], byte(SubRelay)), inner...)
+	}
+
+	cases := []struct {
+		name  string
+		batch [][]byte
+		want  [][]byte
+	}{
+		{"relay first", [][]byte{wrap(inner1), data1}, [][]byte{inner1, data1}},
+		{"data first", [][]byte{data1, wrap(inner1)}, [][]byte{data1, inner1}},
+		{"relay sandwiched", [][]byte{data1, wrap(inner1), data2}, [][]byte{data1, inner1, data2}},
+		{"two relays", [][]byte{wrap(inner1), wrap(inner2)}, [][]byte{inner1, inner2}},
+		{"relays around data", [][]byte{wrap(inner1), data1, wrap(inner2)}, [][]byte{inner1, data1, inner2}},
+		{"data around relays", [][]byte{data1, wrap(inner1), wrap(inner2), data2}, [][]byte{data1, inner1, inner2, data2}},
+		{"all relays", [][]byte{wrap(inner1), wrap(inner2), wrap(inner1)}, [][]byte{inner1, inner2, inner1}},
+	}
+
+	for _, c := range cases {
+		kept, _ := runDemuxInject(t, c.batch)
+		if len(kept) != len(c.want) {
+			t.Errorf("%s: kept %d packets, want %d", c.name, len(kept), len(c.want))
+			continue
+		}
+		for i := range c.want {
+			if !bytes.Equal(kept[i], c.want[i]) {
+				t.Errorf("%s: packet %d = % x, want % x", c.name, i, kept[i], c.want[i])
+			}
+			if isControl(kept[i]) {
+				t.Errorf("%s: packet %d still carries the control magic — WireGuard will call this an unknown type", c.name, i)
+			}
+		}
+	}
+}
+
+// An unwrapped packet must be attributed to the endpoint the handler chose (the
+// relay endpoint), and a data packet to the address it actually came from.
+// Getting this crossed sends replies to the wrong place.
+func TestDemuxInjectionAttributesEndpoints(t *testing.T) {
+	inner := wgPacket(2, 0x99)
+	wrap := append(append(Magic[:], byte(SubRelay)), inner...)
+
+	_, eps := runDemuxInject(t, [][]byte{wgPacket(1, 0x11), wrap, wgPacket(4, 0x22)})
+	want := []string{"a", "relayed-b", "c"}
+	if len(eps) != len(want) {
+		t.Fatalf("got %d endpoints, want %d", len(eps), len(want))
+	}
+	for i := range want {
+		if eps[i] != want[i] {
+			t.Errorf("packet %d attributed to %q, want %q", i, eps[i], want[i])
+		}
+	}
+}
+
+// Packets WireGuard will reject must be counted and attributed. wireguard-go
+// logs "Received message with unknown type" without a source, which is exactly
+// why a real occurrence could not be traced.
+func TestDemuxCountsUnknownPackets(t *testing.T) {
+	b := &Bind{}
+	b.SetControlHandler(func(_ Sub, _ []byte, _ conn.Endpoint) ([]byte, conn.Endpoint, bool) {
+		return nil, nil, false
+	})
+
+	batch := [][]byte{
+		wgPacket(1, 0xaa),              // valid
+		{0x6d, 0x76, 0x00, 0x00, 0x01}, // near-magic, not ours, not WireGuard
+		ctrlPacket(0x01),               // ours, consumed
+		wgPacket(4, 0xbb),              // valid
+		{0x99, 0x00, 0x00, 0x00},       // bogus type
+	}
+
+	packets := make([][]byte, len(batch))
+	sizes := make([]int, len(batch))
+	eps := make([]conn.Endpoint, len(batch))
+	for i, p := range batch {
+		buf := make([]byte, 1500)
+		copy(buf, p)
+		packets[i], sizes[i] = buf, len(p)
+		eps[i] = fakeEndpoint{id: string(rune('a' + i))}
+	}
+
+	inner := func(_ [][]byte, _ []int, _ []conn.Endpoint) (int, error) { return len(batch), nil }
+	if _, err := b.demux(inner)(packets, sizes, eps); err != nil {
+		t.Fatalf("demux: %v", err)
+	}
+
+	n, last := b.Unknown()
+	if n != 2 {
+		t.Errorf("counted %d unknown packets, want 2", n)
+	}
+	// The most recent one, with enough to identify it.
+	if !strings.Contains(last, "e") || !strings.Contains(last, "0x99") {
+		t.Errorf("last unknown = %q, want the source and first byte of the bogus packet", last)
+	}
+}
+
+// A healthy stream must not be reported as unknown, or the signal is worthless.
+func TestDemuxCountsNoUnknownOnCleanTraffic(t *testing.T) {
+	b := &Bind{}
+	b.SetControlHandler(func(_ Sub, _ []byte, _ conn.Endpoint) ([]byte, conn.Endpoint, bool) {
+		return nil, nil, false
+	})
+	batch := [][]byte{wgPacket(1), wgPacket(2), wgPacket(3), wgPacket(4), ctrlPacket(0x01)}
+
+	packets := make([][]byte, len(batch))
+	sizes := make([]int, len(batch))
+	eps := make([]conn.Endpoint, len(batch))
+	for i, p := range batch {
+		buf := make([]byte, 1500)
+		copy(buf, p)
+		packets[i], sizes[i] = buf, len(p)
+		eps[i] = fakeEndpoint{id: "x"}
+	}
+	inner := func(_ [][]byte, _ []int, _ []conn.Endpoint) (int, error) { return len(batch), nil }
+	if _, err := b.demux(inner)(packets, sizes, eps); err != nil {
+		t.Fatalf("demux: %v", err)
+	}
+	if n, _ := b.Unknown(); n != 0 {
+		t.Errorf("counted %d unknown packets on clean traffic, want 0", n)
 	}
 }
