@@ -51,8 +51,8 @@ func usage() {
 	fmt.Fprint(os.Stderr, `logos-vpn — overlay mesh over Logos Delivery
 
 Usage:
-  logos-vpn init [--name NAME]         create a new mesh, print its network key
-  logos-vpn join KEY [--name NAME]     join an existing mesh
+  logos-vpn init [--name N] [--relay]  create a new mesh, print its network key
+  logos-vpn join KEY [--name N] [--relay]  join an existing mesh
   logos-vpn daemon                     run the mesh node
   logos-vpn status [--json]            show the roster and tunnel state
   logos-vpn paths [NAME]               show probed candidates and which won

@@ -129,7 +129,23 @@ $ make logos-vpn
 $ make test-unit          # optional, ~5s
 ```
 
-### 2. Deploy the VPS as the first node
+### 2. Bring up the first node
+
+Two ways. **If the machine can build** — Ubuntu 24.04+, Fedora, anything with
+glibc ≥ 2.38 — the simplest path is to build there directly, with no docker and
+nothing to ship:
+
+```console
+$ git clone https://github.com/vpavlin/logos-vpn && cd logos-vpn
+$ make deps-release && make logos-vpn
+$ sudo ./bin/logos-vpn init --relay --name vps
+$ sudo ./bin/logos-vpn daemon -v
+```
+
+**Otherwise, push from your machine** with `deploy.sh`, which builds a container
+image and ships it over ssh:
+
+### 2b. Deploy remotely
 
 `--init` creates the mesh and `--relay` makes it forward for peers that cannot
 reach each other directly.

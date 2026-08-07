@@ -24,6 +24,7 @@ func cmdInit(args []string) error {
 	name := fs.String("name", "", "device name (default: hostname)")
 	port := fs.Uint("port", 51820, "UDP listen port")
 	advertise := fs.String("advertise", "", "public endpoint, only if it is not on a local interface")
+	relay := fs.Bool("relay", false, "forward traffic for peers that cannot reach each other")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -36,7 +37,7 @@ func cmdInit(args []string) error {
 	if err != nil {
 		return err
 	}
-	return setup(*cfgPath, *stateDir, nk, *name, uint16(*port), *advertise, true)
+	return setup(*cfgPath, *stateDir, nk, *name, uint16(*port), *advertise, *relay, true)
 }
 
 func cmdJoin(args []string) error {
@@ -53,6 +54,7 @@ func cmdJoin(args []string) error {
 	name := fs.String("name", "", "device name (default: hostname)")
 	port := fs.Uint("port", 51820, "UDP listen port")
 	advertise := fs.String("advertise", "", "public endpoint, only if it is not on a local interface")
+	relay := fs.Bool("relay", false, "forward traffic for peers that cannot reach each other")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -64,11 +66,11 @@ func cmdJoin(args []string) error {
 	if _, err := os.Stat(*cfgPath); err == nil {
 		return fmt.Errorf("%s already exists — remove it or use a different --config", *cfgPath)
 	}
-	return setup(*cfgPath, *stateDir, nk, *name, uint16(*port), *advertise, false)
+	return setup(*cfgPath, *stateDir, nk, *name, uint16(*port), *advertise, *relay, false)
 }
 
 // setup writes the config and generates the device identity.
-func setup(cfgPath, stateDir string, nk identity.NetworkKey, name string, port uint16, advertise string, fresh bool) error {
+func setup(cfgPath, stateDir string, nk identity.NetworkKey, name string, port uint16, advertise string, relay, fresh bool) error {
 	cfg := state.DefaultConfig()
 	cfg.NetworkKey = nk.String()
 	cfg.ListenPort = port
@@ -78,6 +80,7 @@ func setup(cfgPath, stateDir string, nk identity.NetworkKey, name string, port u
 	if advertise != "" {
 		cfg.Advertise = []string{advertise}
 	}
+	cfg.Relay = relay
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
@@ -105,6 +108,15 @@ func setup(cfgPath, stateDir string, nk identity.NetworkKey, name string, port u
 	// globally routable interface address announces it automatically, and a
 	// NATed node learns its public address from the first peer that answers a
 	// probe, so demanding one up front is wrong in both common cases.
+	if cfg.Relay {
+		fmt.Printf("\nThis node will relay for peers that cannot reach each other.\n")
+	} else if mesh.HasGlobalAddr() {
+		fmt.Printf("\nThis machine has a globally routable address, so it can relay for\n")
+		fmt.Printf("peers that cannot reach each other directly. Not enabled by default,\n")
+		fmt.Printf("since relaying spends this node's bandwidth. To turn it on:\n")
+		fmt.Printf("  relay = \"true\"   in %s\n", cfgPath)
+	}
+
 	if len(cfg.Advertise) == 0 && !mesh.HasGlobalAddr() {
 		fmt.Printf("\nThis machine has no globally routable address, so peers cannot\n")
 		fmt.Printf("dial it until it learns its public address from one of them.\n")
