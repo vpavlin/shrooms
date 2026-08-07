@@ -5,6 +5,9 @@ on:
     branches: [main, master]
     tags: ['v*']
   pull_request:
+  # So a run can be forced without an empty commit — useful when checking
+  # whether the upstream build has been fixed.
+  workflow_dispatch:
 
 permissions:
   contents: read
