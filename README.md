@@ -347,14 +347,19 @@ On the machine itself, with only docker installed:
 
 ```console
 $ curl -fsSLO https://raw.githubusercontent.com/vpavlin/logos-vpn/master/scripts/install-node.sh
-$ sudo bash install-node.sh --key <NETWORK-KEY> --name laptop
+$ sudo bash install-node.sh join <NETWORK-KEY> --name laptop
 ```
 
 Or to create a new mesh, on the first machine:
 
 ```console
-$ sudo bash install-node.sh --init --name vps --relay
+$ sudo bash install-node.sh init --relay
 ```
+
+Everything after `init`/`join` goes straight to `logos-vpn`, so its flags are
+whatever that version supports — `--name`, `--relay`, `--advertise`, `--port` —
+rather than a copy in the script that drifts out of date. The device name
+defaults to this machine's hostname.
 
 It pulls the published image, generates the config, installs a systemd unit and
 a `logos-vpn` wrapper so `logos-vpn status` works on the host. No Go toolchain,

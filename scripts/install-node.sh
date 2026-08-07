@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Set up a logos-vpn node ON THIS MACHINE, from the published image.
 #
-#   sudo ./install-node.sh --key <NETWORK-KEY> --name laptop
-#   sudo ./install-node.sh --init --name vps --relay      # create a new mesh
+#   sudo ./install-node.sh join <NETWORK-KEY> --name laptop
+#   sudo ./install-node.sh init --relay                   # create a new mesh
+#
+# Everything after init/join goes straight to logos-vpn, so its flags are
+# whatever that version supports rather than a copy that drifts.
 #
 # Needs only docker and /dev/net/tun. No Go toolchain, no repository checkout,
 # no liblogosdelivery — everything is in the image.
@@ -24,43 +27,58 @@
 set -euo pipefail
 
 IMAGE=${IMAGE:-ghcr.io/vpavlin/logos-vpn:latest}
-KEY=""
-NAME=$(hostname -s 2>/dev/null || hostname)
-INIT=0
-RELAY=0
 FORCE=0
-ADVERTISE=""
 
 usage() {
     cat <<EOF
-usage: $0 (--key <NETWORK-KEY> | --init) [options]
+usage: $0 [--image REF] [--force] (init | join <NETWORK-KEY>) [flags...]
 
-  --key KEY          join an existing mesh
-  --init             create a new mesh and print its key
-  --name NAME        this device's name in the mesh (default: $NAME)
-  --relay            also forward traffic for peers that cannot connect directly
-  --advertise IP:PORT  publicly reachable address, if not auto-detected
-  --force            replace an existing config (keeps the device identity)
-  --image REF        image to run (default: $IMAGE)
+  init                 create a new mesh and print its key
+  join KEY             join an existing mesh
+
+Everything after init/join is passed straight to logos-vpn, so its flags are
+whatever that version supports:
+
+  --name NAME          device name (default: this machine's hostname)
+  --relay              also forward for peers that cannot connect directly
+  --advertise IP:PORT  public endpoint, if not on a local interface
+  --port N             UDP port
+
+This script's own options:
+  --image REF          image to run (default: $IMAGE)
+  --force              regenerate the config if one exists
+
+Examples:
+  sudo $0 join P27KNQ2... --name laptop
+  sudo $0 init --relay
 EOF
     exit 1
 }
 
+# Only this script's own options are parsed here; the first non-option ends it
+# and everything from there is the logos-vpn command line.
+#
+# Deliberately NOT re-declaring --name/--relay/--advertise: they belong to
+# logos-vpn, and duplicating them means this script silently fails to support
+# any flag added there later.
 while [ $# -gt 0 ]; do
     case "$1" in
-        --key)       KEY=$2; shift 2 ;;
-        --init)      INIT=1; shift ;;
-        --name)      NAME=$2; shift 2 ;;
-        --relay)     RELAY=1; shift ;;
-        --advertise) ADVERTISE=$2; shift 2 ;;
-        --force)     FORCE=1; shift ;;
-        --image)     IMAGE=$2; shift 2 ;;
-        -h|--help)   usage ;;
-        *) echo "unknown option $1"; usage ;;
+        --image) IMAGE=$2; shift 2 ;;
+        --force) FORCE=1; shift ;;
+        -h|--help) usage ;;
+        --) shift; break ;;
+        -*) echo "unknown option $1"; usage ;;
+        *) break ;;
     esac
 done
 
-[ -n "$KEY" ] || [ $INIT -eq 1 ] || { echo "need --key or --init"; usage; }
+[ $# -gt 0 ] || usage
+case "$1" in
+    init|join) ;;
+    *) echo "expected 'init' or 'join', got '$1'"; usage ;;
+esac
+SETUP=("$@")
+
 [ "$(id -u)" -eq 0 ] || { echo "run as root (sudo $0 ...)"; exit 1; }
 
 echo "==> checking this machine"
@@ -95,21 +113,19 @@ chmod 700 /etc/logos-vpn /var/lib/logos-vpn
 if [ -f /etc/logos-vpn/config.toml ] && [ $FORCE -eq 0 ]; then
     echo "==> config already present, leaving it alone (--force to replace)"
 else
-    echo "==> generating config"
-    ARGS=(--config /etc/logos-vpn/config.toml --state /var/lib/logos-vpn --name "$NAME")
-    [ -n "$ADVERTISE" ] && ARGS+=(--advertise "$ADVERTISE")
-    [ $RELAY -eq 1 ] && ARGS+=(--relay)
-
-    RUN=(docker run --rm
-        -v "/etc/logos-vpn:/etc/logos-vpn$Z"
-        -v "/var/lib/logos-vpn:/var/lib/logos-vpn$Z"
-        "$IMAGE")
-
-    if [ $INIT -eq 1 ]; then
-        "${RUN[@]}" init "${ARGS[@]}"
-    else
-        "${RUN[@]}" join "$KEY" "${ARGS[@]}"
-    fi
+    echo "==> generating config (${SETUP[0]})"
+    # --hostname so the CLI's own "default: hostname" means THIS machine and not
+    # the container's random one. Nothing else needs a name passed.
+    #
+    # --config/--state are appended, so they win over anything the caller typed:
+    # the service unit mounts these paths and nothing else would be read.
+    docker run --rm \
+        --hostname "$(hostname -s 2>/dev/null || hostname)" \
+        -v "/etc/logos-vpn:/etc/logos-vpn$Z" \
+        -v "/var/lib/logos-vpn:/var/lib/logos-vpn$Z" \
+        "$IMAGE" "${SETUP[@]}" \
+        --config /etc/logos-vpn/config.toml \
+        --state /var/lib/logos-vpn
     chmod 600 /etc/logos-vpn/config.toml
 fi
 
@@ -182,17 +198,23 @@ Useful here:
 
 EOF
 
-if [ $INIT -eq 1 ]; then
+# Both hints below are derived from what actually happened, not from what was
+# typed: the config is the source of truth, and a --relay that failed to take
+# effect should not produce advice implying it did.
+if [ "${SETUP[0]}" = "init" ]; then
+    KEY=$(docker run --rm -v "/etc/logos-vpn:/etc/logos-vpn$Z" "$IMAGE" \
+        key show --config /etc/logos-vpn/config.toml)
     cat <<EOF
-This machine created the mesh. Join others with its key:
+This machine created the mesh. Add others with:
 
-  sudo ./install-node.sh --key $(docker run --rm -v "/etc/logos-vpn:/etc/logos-vpn$Z" "$IMAGE" key show --config /etc/logos-vpn/config.toml) --name <their-name>
+  sudo bash install-node.sh join $KEY
 
 Treat that key as a password: anyone holding it is a member of the mesh.
 EOF
 fi
 
-if [ $RELAY -eq 1 ]; then
+if docker run --rm --entrypoint /bin/sh -v "/etc/logos-vpn:/etc/logos-vpn$Z" "$IMAGE" \
+       -c 'grep -q "^relay *= *\"true\"" /etc/logos-vpn/config.toml' 2>/dev/null; then
     echo "This node relays. Open its UDP port if a firewall is in the way:"
     echo "  ufw allow 51820/udp    # or the equivalent"
 fi
