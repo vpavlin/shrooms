@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-# Set up a logos-vpn node ON THIS MACHINE, from the published image.
+# Install logos-vpn ON THIS MACHINE and start it, from the published image.
 #
-#   sudo ./install-node.sh join <NETWORK-KEY> --name laptop
-#   sudo ./install-node.sh init --relay                   # create a new mesh
+# One command takes a bare machine to a running mesh member: it fetches the
+# image, generates the config, installs a systemd unit and starts it. There is
+# no separate "now run the daemon" step.
+#
+#   sudo ./install.sh join <NETWORK-KEY> --name laptop
+#   sudo ./install.sh init --relay                   # create a new mesh
 #
 # Everything after init/join goes straight to logos-vpn, so its flags are
 # whatever that version supports rather than a copy that drifts.
@@ -168,15 +172,31 @@ EOF
 
 # So `logos-vpn status` works on the host without anyone remembering the
 # docker incantation.
+#
+# No --socket appended: the daemon listens on the CLI's own default, and
+# appending it would break every subcommand that does not take the flag —
+# `logos-vpn key show` among them.
 cat > /usr/local/bin/logos-vpn <<'EOF'
 #!/bin/sh
 # Thin wrapper: run the CLI inside the running node container.
-exec docker exec logos-vpn logos-vpn "$@" --socket /run/logos-vpn/logos-vpn.sock
+if ! docker inspect -f '{{.State.Running}}' logos-vpn 2>/dev/null | grep -q true; then
+    echo "the logos-vpn container is not running" >&2
+    echo "  sudo systemctl status logos-vpn" >&2
+    exit 1
+fi
+exec docker exec logos-vpn logos-vpn "$@"
 EOF
 chmod 755 /usr/local/bin/logos-vpn
 
 systemctl daemon-reload
-systemctl enable --now logos-vpn >/dev/null 2>&1 || systemctl enable logos-vpn
+systemctl enable logos-vpn >/dev/null 2>&1
+# Not `enable --now ... || enable`: that swallowed a failed start and left the
+# script reporting success over a node that never came up.
+if ! systemctl restart logos-vpn; then
+    echo "the service failed to start:"
+    journalctl -u logos-vpn --no-pager -n 20
+    exit 1
+fi
 
 echo "==> waiting for the node to reach the fleet"
 for _ in $(seq 1 12); do
@@ -185,16 +205,19 @@ for _ in $(seq 1 12); do
 done
 
 echo
-logos-vpn status 2>&1 | head -12 || {
-    echo "not answering yet; check: journalctl -u logos-vpn -f"
-}
+if ! logos-vpn status 2>&1 | head -12; then
+    echo "not answering yet — it may still be connecting."
+    echo "  journalctl -u logos-vpn -f"
+fi
 
 cat <<EOF
 
-Useful here:
-  logos-vpn status
-  logos-vpn paths
-  journalctl -u logos-vpn -f
+The daemon is running now, and starts on boot.
+
+  systemctl status logos-vpn      # is it up
+  logos-vpn status                # who is on the mesh
+  logos-vpn paths                 # why a peer is or is not reachable
+  journalctl -u logos-vpn -f      # follow the log
 
 EOF
 
@@ -207,7 +230,7 @@ if [ "${SETUP[0]}" = "init" ]; then
     cat <<EOF
 This machine created the mesh. Add others with:
 
-  sudo bash install-node.sh join $KEY
+  sudo bash install.sh join $KEY
 
 Treat that key as a password: anyone holding it is a member of the mesh.
 EOF

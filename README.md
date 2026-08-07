@@ -346,14 +346,14 @@ generates its own device identity, so no private key ever crosses the wire.
 On the machine itself, with only docker installed:
 
 ```console
-$ curl -fsSLO https://raw.githubusercontent.com/vpavlin/logos-vpn/master/scripts/install-node.sh
-$ sudo bash install-node.sh join <NETWORK-KEY> --name laptop
+$ curl -fsSLO https://raw.githubusercontent.com/vpavlin/logos-vpn/master/scripts/install.sh
+$ sudo bash install.sh join <NETWORK-KEY> --name laptop
 ```
 
 Or to create a new mesh, on the first machine:
 
 ```console
-$ sudo bash install-node.sh init --relay
+$ sudo bash install.sh init --relay
 ```
 
 Everything after `init`/`join` goes straight to `logos-vpn`, so its flags are
@@ -361,11 +361,23 @@ whatever that version supports — `--name`, `--relay`, `--advertise`, `--port` 
 rather than a copy in the script that drifts out of date. The device name
 defaults to this machine's hostname.
 
-It pulls the published image, generates the config, installs a systemd unit and
-a `logos-vpn` wrapper so `logos-vpn status` works on the host. No Go toolchain,
+That is the whole thing: it pulls the image, generates the config, installs a
+systemd unit and **starts the daemon**, which then comes up on boot. There is no
+separate step to run it. `init` and `join` are the setup performed inside, not
+something you invoke separately.
+
+It also installs a `logos-vpn` wrapper so `logos-vpn status` works on the host. No Go toolchain,
 no checkout, no liblogosdelivery — everything is in the image. Re-running is
 safe: the device identity is never replaced by accident, because losing it means
 a new overlay address and looking like a different device to every peer.
+
+Afterwards:
+
+```console
+$ systemctl status logos-vpn      # is it up
+$ logos-vpn status                # who is on the mesh
+$ journalctl -u logos-vpn -f      # follow the log
+```
 
 Read the script before running it as root, as you should with anything fetched
 this way.
