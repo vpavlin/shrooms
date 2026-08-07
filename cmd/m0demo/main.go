@@ -71,11 +71,13 @@ func newNode(name string, nk identity.NetworkKey, port uint16, verbose bool) (*n
 
 	n := &node{name: name, id: id, addr: addr, dev: dev, net: netTun, ctrl: make(chan string, 16)}
 
-	dev.Bind.SetControlHandler(func(payload []byte, ep conn.Endpoint) {
+	dev.Bind.SetControlHandler(func(_ wg.Sub, payload []byte, ep conn.Endpoint) ([]byte, conn.Endpoint, bool) {
 		select {
 		case n.ctrl <- fmt.Sprintf("%s from %s", string(payload), ep.DstToString()):
 		default:
 		}
+		// Consumed: control traffic is not WireGuard's business.
+		return nil, nil, false
 	})
 	return n, nil
 }
@@ -147,8 +149,8 @@ func main() {
 		log.Fatalf("FAIL tunnel after control: %v", err)
 	}
 
-	rxA, txA := a.dev.Bind.Stats()
-	rxB, txB := b.dev.Bind.Stats()
+	rxA, txA, _ := a.dev.Bind.Stats()
+	rxB, txB, _ := b.dev.Bind.Stats()
 	log.Printf("control packets  A rx=%d tx=%d  B rx=%d tx=%d", rxA, txA, rxB, txB)
 	log.Printf("M0 PASS")
 }
@@ -214,10 +216,10 @@ func controlTest(a, b *node) error {
 		return fmt.Errorf("parse A endpoint: %w", err)
 	}
 
-	if err := a.dev.Bind.SendControl([]byte("ping-from-A"), epB); err != nil {
+	if err := a.dev.Bind.SendControl(wg.SubDisco, []byte("ping-from-A"), epB); err != nil {
 		return fmt.Errorf("A send: %w", err)
 	}
-	if err := b.dev.Bind.SendControl([]byte("ping-from-B"), epA); err != nil {
+	if err := b.dev.Bind.SendControl(wg.SubDisco, []byte("ping-from-B"), epA); err != nil {
 		return fmt.Errorf("B send: %w", err)
 	}
 

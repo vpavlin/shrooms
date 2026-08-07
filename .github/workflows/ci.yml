@@ -70,6 +70,9 @@ jobs:
             --build-arg LD_REF=${{ steps.ld.outputs.rev }} \
             --target lib -o docker/build/lib .
 
+      - name: Build every package
+        run: make build-all LD_DIR=docker/build/lib
+
       - name: Build logos-vpn
         run: |
           VERSION=${GITHUB_REF_NAME:-dev} docker build \

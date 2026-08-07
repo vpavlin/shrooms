@@ -30,6 +30,8 @@ func main() {
 		err = cmdStatus(os.Args[2:])
 	case "paths":
 		err = cmdPaths(os.Args[2:])
+	case "hosts":
+		err = cmdHosts(os.Args[2:])
 	case "key":
 		err = cmdKey(os.Args[2:])
 	case "-h", "--help", "help":
@@ -56,6 +58,7 @@ Usage:
   logos-vpn daemon                     run the mesh node
   logos-vpn status [--json]            show the roster and tunnel state
   logos-vpn paths [NAME]               show probed candidates and which won
+  logos-vpn hosts [--write]            /etc/hosts entries, so you can use names
   logos-vpn key show                   print the network key
   logos-vpn key rotate                 replace it (the only revocation before M5)
 

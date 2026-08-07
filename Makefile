@@ -25,7 +25,7 @@ GO ?= go
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 .PHONY: all deps deps-basecamp check-lib logos-vpn wakuspike s3topics m0demo \
-        s1 s3 probe m0 m1 m2 m2-edm m3 dist image push-image deps-release install uninstall test test-unit fmt clean
+        s1 s3 probe m0 m1 m2 m2-edm m3 dist image push-image deps-release install uninstall build-all test test-unit fmt clean
 
 all: logos-vpn
 
@@ -181,7 +181,13 @@ m2-edm:
 test-unit:
 	CGO_CFLAGS= CGO_LDFLAGS= $(GO) test -race ./internal/identity/... \
 		./internal/topic/... ./internal/control/... ./internal/wg/... \
-		./internal/disco/... ./internal/relay/...
+		./internal/disco/... ./internal/relay/... ./internal/state/...
+
+## Build every package. test-unit skips the cgo-bound ones, so without this an
+## API change can break a command without any check noticing — which is exactly
+## what happened to cmd/m0demo when the control-plane signature changed.
+build-all: check-lib
+	$(GO) build ./...
 
 test: check-lib
 	$(GO) test ./...
