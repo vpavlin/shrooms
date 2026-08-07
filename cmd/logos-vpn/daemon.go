@@ -118,6 +118,12 @@ type statusPayload struct {
 	Prefix  string       `json:"prefix"`
 	Peers   []peerStatus `json:"peers"`
 
+	// Rendezvous is the health of the Waku side. Reported separately from
+	// peers because the two planes fail independently: logos.dev can be
+	// unreachable while every tunnel keeps working, and without this that
+	// situation is indistinguishable from "nobody else is online".
+	Rendezvous rendezvousStatus `json:"rendezvous"`
+
 	// Reflexive is what peers report observing our source address as. Several
 	// distinct values means endpoint-dependent (symmetric) NAT, which is the
 	// case where punching fails and a relay is required.
@@ -129,6 +135,15 @@ type pathStatus struct {
 	RTTMs    int64  `json:"rtt_ms"`
 	LastPong string `json:"last_pong"`
 	Selected bool   `json:"selected"`
+}
+
+type rendezvousStatus struct {
+	Status      string `json:"status"` // Connected, PartiallyConnected, Disconnected, unknown
+	OK          bool   `json:"ok"`
+	Problem     string `json:"problem,omitempty"`
+	Topics      int    `json:"topics"`
+	LastMessage string `json:"last_message,omitempty"`
+	LastMsgAgeS int64  `json:"last_message_age_s,omitempty"`
 }
 
 type peerStatus struct {
@@ -150,7 +165,12 @@ type peerStatus struct {
 	// probing has completed or none of the peer's candidates are reachable.
 	Paths []pathStatus `json:"paths,omitempty"`
 
+	// Handshaked means a handshake has EVER completed; Live means the tunnel
+	// works now. Both are reported because they answer different questions and
+	// conflating them makes a dead peer look connected indefinitely.
 	Handshaked    bool   `json:"handshaked"`
+	Live          bool   `json:"live"`
+	HandshakeAgeS int64  `json:"handshake_age_s,omitempty"`
 	LastHandshake string `json:"last_handshake,omitempty"`
 	Endpoint      string `json:"endpoint,omitempty"`
 	RxBytes       uint64 `json:"rx_bytes"`
@@ -184,6 +204,18 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Me
 			Overlay: self.String(),
 			Prefix:  nk.Prefix().String(),
 		}
+		h := m.Health()
+		out.Rendezvous = rendezvousStatus{
+			Status:  h.Status,
+			OK:      h.OK(now),
+			Problem: h.Problem(now),
+			Topics:  h.Topics,
+		}
+		if !h.LastMessage.IsZero() {
+			out.Rendezvous.LastMessage = h.LastMessage.Format(time.RFC3339)
+			out.Rendezvous.LastMsgAgeS = int64(now.Sub(h.LastMessage).Seconds())
+		}
+
 		stats, _ := m.PeerStats()
 		for _, p := range m.Roster().Peers() {
 			ps := peerStatus{
@@ -211,6 +243,8 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Me
 				if st.Handshaked() {
 					ps.Handshaked = true
 					ps.LastHandshake = st.LastHandshake.Format(time.RFC3339)
+					ps.HandshakeAgeS = int64(now.Sub(st.LastHandshake).Seconds())
+					ps.Live = st.Live(now)
 				}
 			}
 			out.Peers = append(out.Peers, ps)

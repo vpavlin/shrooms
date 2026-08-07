@@ -36,6 +36,18 @@ func fetchStatus(sock string) (statusPayload, error) {
 	return st, nil
 }
 
+// shortDur renders an age compactly enough for a table column.
+func shortDur(sec int64) string {
+	switch {
+	case sec < 60:
+		return fmt.Sprintf("%ds", sec)
+	case sec < 3600:
+		return fmt.Sprintf("%dm", sec/60)
+	default:
+		return fmt.Sprintf("%dh", sec/3600)
+	}
+}
+
 func human(n uint64) string {
 	switch {
 	case n >= 1<<30:
@@ -75,10 +87,32 @@ func cmdStatus(args []string) error {
 	}
 
 	fmt.Printf("network  %s          peers %d (%d up)\n", st.Prefix, len(st.Peers), online)
-	fmt.Printf("self     %s  %s\n\n", st.Name, st.Overlay)
+	fmt.Printf("self     %s  %s\n", st.Name, st.Overlay)
+
+	// The rendezvous plane is reported whenever it is unhealthy, and quietly
+	// otherwise. When logos.dev is unreachable, tunnels keep working and the
+	// roster simply stops changing — which looks exactly like "nobody else is
+	// online", and sends you debugging the wrong plane. This is the line that
+	// distinguishes them.
+	if !st.Rendezvous.OK {
+		fmt.Printf("\n!! rendezvous: %s\n", st.Rendezvous.Problem)
+		fmt.Printf("   logos.dev status=%s, %d topics", st.Rendezvous.Status, st.Rendezvous.Topics)
+		if st.Rendezvous.LastMsgAgeS > 0 {
+			fmt.Printf(", last message %s ago", shortDur(st.Rendezvous.LastMsgAgeS))
+		}
+		fmt.Println()
+		fmt.Println("   Peer discovery and endpoint updates are stalled.")
+		fmt.Println("   Tunnels already established are NOT affected — Waku is only")
+		fmt.Println("   used to find peers, not to carry traffic.")
+	}
+	fmt.Println()
 
 	if len(st.Peers) == 0 {
-		fmt.Println("no peers seen yet")
+		if st.Rendezvous.OK {
+			fmt.Println("no peers seen yet")
+		} else {
+			fmt.Println("no peers seen yet — expected while rendezvous is down, see above")
+		}
 		return nil
 	}
 
@@ -89,9 +123,16 @@ func cmdStatus(args []string) error {
 		if p.Online {
 			ann = "online"
 		}
+		// "up" only while the session is actually usable. A handshake that has
+		// gone stale means the peer is gone — reporting that as up is worse
+		// than reporting nothing, because status is what you check precisely
+		// when you suspect something is wrong.
 		tun := "no handshake"
-		if p.Handshaked {
+		switch {
+		case p.Live:
 			tun = "up"
+		case p.Handshaked:
+			tun = fmt.Sprintf("stale %s", shortDur(p.HandshakeAgeS))
 		}
 		ep := p.Endpoint
 		if ep == "" && len(p.Endpoints) > 0 {

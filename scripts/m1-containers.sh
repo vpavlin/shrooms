@@ -11,29 +11,35 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 D=docker
 RUN=$D/run
+# The image context is a SUBDIRECTORY of docker/build, never docker/build
+# itself: docker/build/lib is where the fetched liblogosdelivery lives, and this
+# script wipes its context before staging. Using the parent meant `make m1`
+# deleted the library every other target depends on, so the next build failed
+# with "run make deps-release" for no reason anyone could see.
 BUILD=$D/build
+CTX=$BUILD/ctx
 
-LD_LIB=${LD_LIB:-$HOME/.local/share/Logos/LogosBasecamp/modules/delivery_module}
+LD_LIB=${LD_LIB:-$BUILD/lib}
 WAIT=${WAIT:-90}
 
 echo "==> checking prerequisites"
 [ -e /dev/net/tun ] || { echo "no /dev/net/tun on the host"; exit 1; }
-[ -f "$LD_LIB/liblogosdelivery.so" ] || { echo "missing liblogosdelivery.so in $LD_LIB"; exit 1; }
+[ -f "$LD_LIB/liblogosdelivery.so" ] || { echo "no liblogosdelivery.so in $LD_LIB — run 'make deps-release'"; exit 1; }
 
 echo "==> building logos-vpn"
 make logos-vpn >/dev/null
 
 echo "==> staging image context"
-rm -rf "$BUILD" "$RUN"
-mkdir -p "$BUILD/lib" "$RUN"/{a,b}/{etc,state}
-cp bin/logos-vpn "$BUILD/"
-cp docker/gateway.sh docker/entrypoint-nat.sh "$BUILD/"
+rm -rf "$CTX" "$RUN"
+mkdir -p "$CTX/lib" "$RUN"/{a,b}/{etc,state}
+cp bin/logos-vpn "$CTX/"
+cp docker/gateway.sh docker/entrypoint-nat.sh "$CTX/"
 # Copy every shared library Basecamp ships alongside liblogosdelivery, not just
 # the obvious two: the library dlopen()s libpq at runtime for the Store backend,
 # and that failure is fatal and only visible at startup.
-cp "$LD_LIB"/*.so "$LD_LIB"/*.so.* "$BUILD/lib/" 2>/dev/null || true
-[ -f "$BUILD/lib/liblogosdelivery.so" ] || { echo "no liblogosdelivery.so staged"; exit 1; }
-echo "    staged $(ls "$BUILD/lib" | wc -l) libraries"
+cp "$LD_LIB"/*.so "$LD_LIB"/*.so.* "$CTX/lib/" 2>/dev/null || true
+[ -f "$CTX/lib/liblogosdelivery.so" ] || { echo "no liblogosdelivery.so staged"; exit 1; }
+echo "    staged $(ls "$CTX/lib" | wc -l) libraries"
 
 echo "==> generating configs"
 # Generated on the host so both containers share one network key. State dirs
@@ -48,7 +54,7 @@ KEY=$(./bin/logos-vpn key show --config "$RUN/a/etc/config.toml")
 echo "    network key: $KEY"
 
 echo "==> building image"
-docker build -q -t logos-vpn:test -f "$D/Dockerfile" "$BUILD" >/dev/null
+docker build -q -t logos-vpn:test -f "$D/Dockerfile" "$CTX" >/dev/null
 
 echo "==> starting nodes"
 docker compose -f "$D/compose.yml" up -d --force-recreate >/dev/null
@@ -91,7 +97,7 @@ import json,sys
 try: d=json.load(sys.stdin)
 except Exception: print("0 0"); sys.exit()
 ps=d.get("peers") or []
-print(int(any(p.get("online") for p in ps)), int(any(p.get("handshaked") for p in ps)))
+print(int(any(p.get("online") for p in ps)), int(any(p.get("live") for p in ps)))
 ' 2>/dev/null)
         set -e
         on=${flags%% *}; hs=${flags##* }

@@ -70,6 +70,10 @@ type Mesh struct {
 	// datapath.
 	resync chan struct{}
 
+	// health tracks the rendezvous plane, which fails independently of the
+	// data plane and otherwise gives no visible signal at all.
+	health *health
+
 	mu         sync.Mutex
 	subscribed map[string]bool // content topics we hold a subscription for
 }
@@ -94,6 +98,7 @@ func New(log *slog.Logger, cfg state.Config, st *state.State, node *waku.Node, d
 		discoKey:   disco.DeriveKey(nk),
 		relayKey:   relay.DeriveKey(nk),
 		resync:     make(chan struct{}, 1),
+		health:     newHealth(),
 		subscribed: make(map[string]bool),
 	}
 	if cfg.Relay {
@@ -231,6 +236,7 @@ func (m *Mesh) resubscribe(now time.Time) error {
 		}
 		delete(m.subscribed, ct)
 	}
+	m.health.setTopics(len(m.subscribed))
 	return nil
 }
 
@@ -337,11 +343,16 @@ func (m *Mesh) consume(ctx context.Context) {
 }
 
 func (m *Mesh) handle(ev waku.Event) {
+	now := time.Now()
+	// Fold every event into health, not just the ones we can decrypt: traffic
+	// from other applications on the shard is undecryptable to us but still
+	// proves the subscription is live.
+	m.health.observe(ev, now)
+
 	msg, _, ok := waku.ParseMessage(ev.JSON)
 	if !ok {
 		return
 	}
-	now := time.Now()
 
 	// Try every epoch in the window: a peer whose clock differs will have
 	// sealed under a neighbouring key.
@@ -353,6 +364,8 @@ func (m *Mesh) handle(ev waku.Event) {
 		m.log.Debug("ignoring undecryptable message", "topic", msg.ContentTopic)
 		return
 	}
+
+	m.health.announceOpened(now)
 
 	if !m.guard.Accept(a) {
 		m.log.Warn("rejected replayed or stale announce",

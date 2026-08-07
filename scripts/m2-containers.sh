@@ -81,7 +81,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# peerState <container> <peer-name> -> "online handshaked"
+# peerState <container> <peer-name> -> "online live"
+#
+# `live`, not `handshaked`: the latter is true forever once a handshake has ever
+# completed, so a test could pass on a tunnel that died minutes ago.
 peerState() {
     docker exec "$1" logos-vpn status --json 2>/dev/null | python3 -c "
 import json,sys
@@ -89,7 +92,7 @@ try: d=json.load(sys.stdin)
 except Exception: print('0 0'); sys.exit()
 for p in d.get('peers') or []:
     if p.get('name')=='$2':
-        print(int(bool(p.get('online'))), int(bool(p.get('handshaked')))); sys.exit()
+        print(int(bool(p.get('online'))), int(bool(p.get('live')))); sys.exit()
 print('0 0')
 " 2>/dev/null || echo "0 0"
 }

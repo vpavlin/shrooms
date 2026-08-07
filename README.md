@@ -281,6 +281,8 @@ one of your own machines is reachable; see
 |---|---|
 | `tun: ... (need CAP_NET_ADMIN)` | run with `sudo`, or the host has no `/dev/net/tun` |
 | peer `online` but `no handshake` | traversal, not discovery — check `paths` and whether the port is open |
+| `!! rendezvous:` warning in `status` | the logos.dev fleet is unreachable. Discovery is stalled; established tunnels keep working. Confirm with `make s1` |
+| peer shows `stale 12m` | the tunnel is dead — the peer has not rekeyed within WireGuard's 180 s session lifetime |
 | no peers at all after 60 s | the daemon is not reaching logos.dev; check outbound connectivity |
 | `missing liblogosdelivery.h` | run `make deps-basecamp` |
 | the daemon exits immediately | `libpq` missing — deploy the container rather than a bare binary |
@@ -337,6 +339,13 @@ generates its own device identity, so no private key ever crosses the wire.
 | **M4** seamless operation · **M5** credentials | ⬜ not started |
 
 `make m0` / `make m1` / `make m3` / `make s1` / `make s3` reproduce these.
+
+`make m3-remote HOST=user@vps` runs the relay test over the real internet
+instead of between containers: it starts a third node behind a NAT on your
+relay host, which by construction cannot reach this machine directly, and
+measures the tunnel from here. It proves the relay path, **not** hole punching
+— see the header of `scripts/m3-remote.sh` for what it does and does not
+establish. `--down` removes the test node again.
 
 ### Known gaps, honestly
 

@@ -1,0 +1,71 @@
+# A third mesh node, behind a NAT, on a remote host.
+#
+# Used by scripts/m3-remote.sh to test the relay path over the real internet
+# rather than between containers on one machine:
+#
+#     laptop ──── real home NAT ────╮
+#                                   │   the internet
+#     VPS (relay, public IP) ───────╯
+#       └── gw (NAT) ── node        ← this file
+#
+# The laptop and this node cannot reach each other directly: the laptop is
+# behind a NAT that does not forward, and this node has no address reachable
+# from outside the VPS. So the only path between them is through the relay —
+# which is the point.
+#
+# Deliberately a separate file from compose-node.yml (the ordinary deployment)
+# so a test node can never be confused with the real one: different container
+# names, different state directory, and `down` removes only these.
+
+services:
+  gw:
+    image: logos-vpn:latest
+    container_name: logos-vpn-testgw
+    cap_add: [NET_ADMIN]
+    entrypoint: ["/usr/bin/gateway.sh"]
+    environment:
+      # eim is the friendly, punchable mapping. It makes no difference to the
+      # relay path — that is why the relay is worth having — but leaving it
+      # honest means a `direct` result here would be meaningful rather than an
+      # artefact of a NAT built to be cooperative.
+      NAT_MODE: ${NAT_MODE:-eim}
+    networks:
+      wan:
+      lan:
+        ipv4_address: 10.93.0.2
+    restart: unless-stopped
+
+  node:
+    image: logos-vpn:latest
+    container_name: logos-vpn-natted
+    cap_add: [NET_ADMIN]
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    depends_on: [gw]
+    # No default route on an internal network; the gateway container is the way
+    # out. entrypoint-nat.sh installs the route at startup.
+    entrypoint: ["/usr/bin/entrypoint-nat.sh"]
+    environment:
+      NAT_GW: 10.93.0.2
+    volumes:
+      - ./nat/etc:/etc/logos-vpn
+      - ./nat/state:/var/lib/logos-vpn
+    networks:
+      lan:
+        ipv4_address: 10.93.0.100
+    command: ["daemon", "-v"]
+    restart: unless-stopped
+
+networks:
+  # Outside of the gateway. Needs upstream internet so the node can reach the
+  # logos.dev fleet and the relay.
+  wan:
+    driver: bridge
+
+  # internal: true is what makes this a genuine NAT test — docker installs no
+  # route out, so every packet must traverse the gateway.
+  lan:
+    driver: bridge
+    internal: true
+    ipam:
+      config: [{subnet: 10.93.0.0/24}]

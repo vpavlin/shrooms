@@ -47,7 +47,17 @@ work outside a container. Both need a second NATed machine, not more code.
    between the current state and every original constraint being *demonstrated*
    rather than merely implemented. Two unknowns fall out of one test: whether
    punching works between real NATs, and whether the relay carries the pairs
-   where it does not. Needs hardware, not code.
+   where it does not.
+
+   Half of this needs no new hardware: `make m3-remote HOST=user@vps` runs a
+   NATed node on the relay host itself, which cannot reach the local machine
+   directly, so the relay path is exercised over a real internet leg with real
+   latency. That closes M3.
+
+   **M2 still needs a genuinely different network.** A synthetic NAT built to
+   be endpoint-independent proves only that the code works against a NAT we
+   made cooperative. Tethering a machine to a phone is the cheapest honest
+   test, and gets CGNAT — the case that actually matters.
 2. **Security phase 1** — one-time invite tokens. Small, no dependencies, and
    the exposure it removes grows every day this runs on a VPS holding a
    permanent bearer credential.

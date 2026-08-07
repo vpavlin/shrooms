@@ -23,8 +23,27 @@ type PeerStat struct {
 	AllowedIPs    []string
 }
 
-// Handshaked reports whether a handshake has ever completed.
+// RejectAfter is WireGuard's REJECT_AFTER_TIME: a session is unusable once its
+// handshake is this old, whatever else is true.
+//
+// A live peer rekeys well inside it — REKEY_AFTER_TIME is 120s under traffic,
+// and persistent keepalive (25s) keeps traffic flowing — so a handshake older
+// than this means the tunnel is dead, not idle.
+const RejectAfter = 180 * time.Second
+
+// Handshaked reports whether a handshake has ever completed. It says nothing
+// about whether the tunnel works NOW: use Live for that.
 func (p PeerStat) Handshaked() bool { return !p.LastHandshake.IsZero() }
+
+// Live reports whether the tunnel is currently usable.
+//
+// This is the distinction that matters and the one that is easy to get wrong.
+// Reporting "up" from Handshaked alone means a peer that connected once and
+// then vanished shows as connected forever — which is exactly when you look at
+// status, and exactly when it must not reassure you.
+func (p PeerStat) Live(now time.Time) bool {
+	return p.Handshaked() && now.Sub(p.LastHandshake) < RejectAfter
+}
 
 // PeerStats reads peer state over the UAPI.
 func (d *Device) PeerStats() (map[string]PeerStat, error) {

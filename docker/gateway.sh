@@ -18,22 +18,37 @@
 set -euo pipefail
 
 MODE=${NAT_MODE:-eim}
-WAN=${WAN_IF:-eth0}
-LAN=${LAN_IF:-eth1}
+WAN=${WAN_IF:-}
+LAN=${LAN_IF:-}
 
-echo "gateway starting: mode=$MODE wan=$WAN lan=$LAN"
+echo "gateway starting: mode=$MODE"
 
 sysctl -w net.ipv4.ip_forward=1 >/dev/null
 
-# Identify interfaces by subnet rather than trusting device order, which docker
+# Identify interfaces by role rather than trusting device order, which docker
 # does not guarantee.
-for ifc in $(ls /sys/class/net | grep -v lo); do
-    addr=$(ip -4 -o addr show dev "$ifc" | awk '{print $4}' | head -1)
-    case "$addr" in
-        10.90.*) WAN=$ifc ;;
-        10.91.*|10.92.*) LAN=$ifc ;;
-    esac
-done
+#
+# WAN is whichever interface carries the default route: docker gives one to a
+# bridge with internet access and none to an `internal` network, which is
+# exactly the split we want. LAN is the other one.
+#
+# This used to match on hardcoded subnets (10.90/10.91/10.92), which meant any
+# topology other than the M2 one silently got the wrong interface — the gateway
+# would come up, masquerade the wrong direction, and present as a network
+# failure rather than a configuration error.
+if [ -z "$WAN" ]; then
+    WAN=$(ip -4 route show default | awk '{print $5}' | head -1)
+fi
+[ -n "$WAN" ] || { echo "no default route: cannot identify the WAN interface"; exit 1; }
+
+if [ -z "$LAN" ]; then
+    for ifc in $(ls /sys/class/net | grep -v lo); do
+        [ "$ifc" = "$WAN" ] && continue
+        LAN=$ifc
+        break
+    done
+fi
+[ -n "$LAN" ] || { echo "no second interface: cannot identify the LAN interface"; exit 1; }
 echo "resolved: wan=$WAN lan=$LAN"
 
 WAN_IP=$(ip -4 -o addr show dev "$WAN" | awk '{print $4}' | cut -d/ -f1)

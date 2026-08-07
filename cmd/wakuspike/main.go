@@ -6,6 +6,9 @@
 //  1. the Nim and Go runtimes coexist in one process
 //  2. the node starts and connects
 //  3. a message published by this node comes back through the event thread
+//     WHILE the node is actually connected to the fleet — a disconnected node
+//     delivers its own message to itself, which satisfies (3) and proves
+//     nothing about the network
 package main
 
 import (
@@ -14,6 +17,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/vpavlin/logos-vpn/internal/waku"
@@ -66,12 +70,31 @@ func main() {
 		}
 	}()
 
+	// Track fleet connectivity from the event stream.
+	//
+	// This is not decoration. A node with zero fleet peers still delivers a
+	// message it publishes to its OWN subscribers, so the round-trip check
+	// below passes while completely disconnected — it proves the FFI works and
+	// says nothing whatsoever about the fleet. S1 is the canary we reach for
+	// when the mesh misbehaves, and a canary that cannot fail is worse than no
+	// canary at all.
+	var connStatus atomic.Value
+	connStatus.Store("unknown")
+
 	// Drain events immediately so the C thread is never blocked.
 	received := make(chan string, 8)
 	go func() {
 		for ev := range node.Events() {
 			if *verbose {
 				log.Printf("event ret=%d %s", ev.Ret, truncate(ev.JSON, 400))
+			}
+			var e struct {
+				EventType        string `json:"eventType"`
+				ConnectionStatus string `json:"connectionStatus"`
+			}
+			if json.Unmarshal([]byte(ev.JSON), &e) == nil && e.EventType == "connection_status_change" {
+				connStatus.Store(e.ConnectionStatus)
+				log.Printf("connection status: %s", e.ConnectionStatus)
 			}
 			if msg, hash, ok := waku.ParseMessage(ev.JSON); ok {
 				log.Printf("message_received %s on %s (%d bytes)", truncate(hash, 20), msg.ContentTopic, len(msg.Payload))
@@ -131,6 +154,19 @@ func main() {
 	log.Printf("settling %s to find peers...", *settle)
 	time.Sleep(*settle)
 
+	// Gate on connectivity BEFORE publishing, so the failure names the real
+	// cause instead of surfacing as a mysterious pass.
+	if st, _ := connStatus.Load().(string); st == "Disconnected" {
+		log.Printf("dropped events: %d", node.Dropped())
+		log.Printf("S1 FAIL: node is Disconnected after settling %s — no fleet peers", *settle)
+		log.Printf("  The round trip below would have PASSED anyway: a disconnected")
+		log.Printf("  node still delivers its own published message to its own")
+		log.Printf("  subscribers. That proves the cgo binding works, not the fleet.")
+		log.Printf("  Check whether logos.dev is reachable before debugging anything else.")
+		os.Exit(1)
+	}
+	log.Printf("connected (status=%v), publishing", connStatus.Load())
+
 	marker := fmt.Sprintf("s1-spike-%d", time.Now().UnixNano())
 	log.Printf("publishing marker %q", marker)
 
@@ -149,6 +185,13 @@ func main() {
 			}
 			log.Printf("ROUND TRIP OK in %s", time.Since(sentAt).Round(time.Millisecond))
 			log.Printf("dropped events: %d", node.Dropped())
+			// Re-check: the fleet can drop away between settling and publishing,
+			// and a self-delivered marker looks identical to a real round trip.
+			if st, _ := connStatus.Load().(string); st == "Disconnected" {
+				log.Printf("S1 FAIL: the marker came back, but the node is Disconnected —")
+				log.Printf("  it was delivered locally and never reached the fleet.")
+				os.Exit(1)
+			}
 			log.Printf("S1 PASS")
 			return
 
