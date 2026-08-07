@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/vpavlin/logos-vpn/internal/identity"
+	"github.com/vpavlin/logos-vpn/internal/mesh"
 	"github.com/vpavlin/logos-vpn/internal/state"
 )
 
@@ -22,7 +23,7 @@ func cmdInit(args []string) error {
 	cfgPath, stateDir := commonFlags(fs)
 	name := fs.String("name", "", "device name (default: hostname)")
 	port := fs.Uint("port", 51820, "UDP listen port")
-	advertise := fs.String("advertise", "", "public endpoint to announce, e.g. 203.0.113.4:51820")
+	advertise := fs.String("advertise", "", "public endpoint, only if it is not on a local interface")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -51,7 +52,7 @@ func cmdJoin(args []string) error {
 	cfgPath, stateDir := commonFlags(fs)
 	name := fs.String("name", "", "device name (default: hostname)")
 	port := fs.Uint("port", 51820, "UDP listen port")
-	advertise := fs.String("advertise", "", "public endpoint to announce, e.g. 203.0.113.4:51820")
+	advertise := fs.String("advertise", "", "public endpoint, only if it is not on a local interface")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -99,9 +100,17 @@ func setup(cfgPath, stateDir string, nk identity.NetworkKey, name string, port u
 	fmt.Printf("Overlay IP:  %s\n", addr)
 	fmt.Printf("Mesh prefix: %s\n", nk.Prefix())
 	fmt.Printf("Wrote %s\n", cfgPath)
-	if len(cfg.Advertise) == 0 {
-		fmt.Printf("\nNote: no --advertise set. A publicly reachable node should set one,\n")
-		fmt.Printf("or peers will have no dialable endpoint for it.\n")
+
+	// Only suggest --advertise when it would actually help. A node with a
+	// globally routable interface address announces it automatically, and a
+	// NATed node learns its public address from the first peer that answers a
+	// probe, so demanding one up front is wrong in both common cases.
+	if len(cfg.Advertise) == 0 && !mesh.HasGlobalAddr() {
+		fmt.Printf("\nThis machine has no globally routable address, so peers cannot\n")
+		fmt.Printf("dial it until it learns its public address from one of them.\n")
+		fmt.Printf("That happens automatically once any peer is reachable.\n\n")
+		fmt.Printf("If it is reachable via a port forward, tell it so:\n")
+		fmt.Printf("  advertise = [\"<public-ip>:%d\"]   in %s\n", cfg.ListenPort, cfgPath)
 	}
 	fmt.Printf("\nNext: systemctl enable --now logos-vpn\n")
 	return nil

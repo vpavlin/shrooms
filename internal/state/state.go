@@ -37,10 +37,14 @@ type Config struct {
 	// authenticates only as "the device holding key X calls itself this".
 	Name string
 
-	// Advertise lists endpoints to announce as dialable, e.g. "203.0.113.4:51820".
-	// Required on a publicly reachable node until reflexive discovery (M2):
-	// a NATed box knows only its LAN addresses, which are useless to a remote
-	// peer.
+	// Advertise lists extra endpoints to announce as dialable.
+	//
+	// Usually unnecessary. A node enumerates its own interface addresses, so a
+	// VPS with a directly attached public IP announces it automatically, and a
+	// NATed node learns its public address from the first peer that answers a
+	// probe. This is for the case neither covers: a public address that is not
+	// on any local interface, such as a port forward or a cloud instance that
+	// sees a private IP with the public one NAT'd in front.
 	Advertise []string
 
 	// ListenPort is the shared UDP port for WireGuard and control traffic.
@@ -328,8 +332,10 @@ func WriteConfig(path string, c Config) error {
 	if c.RelayAddr != "" {
 		fmt.Fprintf(&b, "relay_addr  = %q\n", c.RelayAddr)
 	}
-	b.WriteString("\n# Endpoints to announce as dialable. Set this on a publicly reachable\n")
-	b.WriteString("# node; a NATed box only knows LAN addresses, which peers cannot use.\n")
+	b.WriteString("\n# Extra endpoints to announce. Usually unnecessary: interface addresses\n")
+	b.WriteString("# are announced automatically and a NATed node learns its public address\n")
+	b.WriteString("# from its peers. Set this only for a port forward, or a cloud instance\n")
+	b.WriteString("# whose public IP is not on any local interface.\n")
 	if len(c.Advertise) == 0 {
 		b.WriteString("# advertise = [\"203.0.113.4:51820\"]\n")
 	} else {

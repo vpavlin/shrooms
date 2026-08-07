@@ -131,14 +131,26 @@ $ make test-unit          # optional, ~5s
 
 ### 2. Deploy the VPS as the first node
 
-Replace `VPS_IP` with its public address. `--init` creates the mesh, `--relay`
-makes it forward for peers that cannot reach each other, and `--advertise`
-tells peers where to find it.
+`--init` creates the mesh and `--relay` makes it forward for peers that cannot
+reach each other directly.
 
 ```console
-$ ./scripts/deploy.sh root@VPS_IP \
-    --init --relay --name vps --advertise VPS_IP:51820
+$ ./scripts/deploy.sh root@VPS_IP --init --relay --name vps
 ```
+
+**You do not normally need `--advertise`.** A VPS has its public IP on a local
+interface, so the node enumerates and announces it by itself. Pass it only when
+your public address is *not* on any local interface — a home server behind a
+port-forwarding router, or a cloud instance that sees `10.x` with the public IP
+NAT'd in front:
+
+```console
+$ ./scripts/deploy.sh root@HOST --init --relay --name home \
+    --advertise 203.0.113.4:51820
+```
+
+`init` tells you which case you are in: if the machine has no globally routable
+address it says so, and otherwise stays quiet.
 
 This checks the host, builds and ships a container image, writes
 `/etc/logos-vpn/config.toml`, and starts it. **Copy the network key it prints** —

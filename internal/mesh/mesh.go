@@ -238,6 +238,22 @@ func (m *Mesh) announce(now time.Time) error {
 
 // localAddrs lists routable local addresses, skipping loopback, link-local and
 // our own overlay range.
+// HasGlobalAddr reports whether any local interface carries a globally
+// routable address.
+//
+// If one does — the normal case on a VPS with a directly attached public IP —
+// the node announces it automatically and needs no `advertise` configuration.
+// If none does, the node is behind NAT and peers cannot reach it until either
+// reflexive discovery kicks in or an address is configured.
+func HasGlobalAddr() bool {
+	for _, ip := range localAddrs() {
+		if ip.IsGlobalUnicast() && !ip.IsPrivate() {
+			return true
+		}
+	}
+	return false
+}
+
 func localAddrs() []netip.Addr {
 	ifaces, err := net.Interfaces()
 	if err != nil {
