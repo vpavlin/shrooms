@@ -49,7 +49,13 @@ func (m *Mesh) handleControl(sub wg.Sub, payload []byte, ep conn.Endpoint) ([]by
 			m.log.Debug("pong for an unknown probe", "from", from)
 			return nil, nil, false
 		}
-		m.log.Info("path confirmed", "peer", peerID[:8], "via", from, "observed_us_at", msg.Observed)
+		if m.timing.mark(peerID, func(x *Milestones) *time.Time { return &x.PathConfirmed }, time.Now()) {
+			m.log.Info("path confirmed", "peer", peerID[:8], "via", from,
+				"observed_us_at", msg.Observed,
+				"after", m.Timing(peerID).PathAfter.Round(time.Millisecond))
+		} else {
+			m.log.Debug("path confirmed", "peer", peerID[:8], "via", from, "observed_us_at", msg.Observed)
+		}
 		// A newly usable path may be better than what WireGuard is using, so
 		// ask the main loop to re-evaluate. Doing it here would block the
 		// receive path.

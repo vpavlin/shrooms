@@ -77,6 +77,9 @@ type Mesh struct {
 	// unknownSeen is the last reported count of unroutable inbound packets.
 	unknownSeen uint64
 
+	// timing records how long each peer took to reach each stage.
+	timing *timings
+
 	mu         sync.Mutex
 	subscribed map[string]bool // content topics we hold a subscription for
 }
@@ -102,6 +105,7 @@ func New(log *slog.Logger, cfg state.Config, st *state.State, node *waku.Node, d
 		relayKey:   relay.DeriveKey(nk),
 		resync:     make(chan struct{}, 1),
 		health:     newHealth(),
+		timing:     newTimings(time.Now()),
 		subscribed: make(map[string]bool),
 	}
 	if cfg.Relay {
@@ -192,6 +196,7 @@ func (m *Mesh) Run(ctx context.Context) error {
 			m.probeAll(now)
 			m.registerWithRelay()
 			m.reportUnknown()
+			m.checkTunnels(now)
 		case now := <-ticker.C:
 			// Resubscribe first: near an epoch boundary the next topic must be
 			// live before we publish to it.
@@ -395,6 +400,10 @@ func (m *Mesh) handle(ev waku.Event) {
 	peer, changed := m.roster.Apply(a, now)
 	if peer.DevicePub == nil {
 		return // our own announce
+	}
+	if m.timing.mark(peer.ID(), func(x *Milestones) *time.Time { return &x.Discovered }, now) {
+		m.log.Info("peer discovered", "peer", peer.Name,
+			"after", m.Timing(peer.ID()).DiscoveredAfter.Round(time.Millisecond))
 	}
 	if !changed {
 		return

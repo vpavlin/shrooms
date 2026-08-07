@@ -131,7 +131,7 @@ func cmdStatus(args []string) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tOVERLAY IP\tANNOUNCE\tTUNNEL\tENDPOINT\tRX/TX")
+	fmt.Fprintln(w, "NAME\tOVERLAY IP\tANNOUNCE\tTUNNEL\tENDPOINT\tRX/TX\tCONNECTED IN")
 	for _, p := range st.Peers {
 		ann := "offline"
 		if p.Online {
@@ -161,8 +161,15 @@ func cmdStatus(args []string) error {
 		if p.Relay {
 			name += " (relay)"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s/%s\n",
-			name, p.Overlay, ann, tun, ep, human(p.RxBytes), human(p.TxBytes))
+		// How long this peer took to become usable, since the daemon started.
+		// Blank rather than "0s" when it never has: an absent measurement and a
+		// fast one must not look the same.
+		took := "-"
+		if p.TunnelAfterS > 0 {
+			took = shortDur(int64(p.TunnelAfterS))
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s/%s\t%s\n",
+			name, p.Overlay, ann, tun, ep, human(p.RxBytes), human(p.TxBytes), took)
 	}
 	return w.Flush()
 }

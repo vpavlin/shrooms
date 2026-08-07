@@ -185,6 +185,14 @@ type peerStatus struct {
 	// Handshaked means a handshake has EVER completed; Live means the tunnel
 	// works now. Both are reported because they answer different questions and
 	// conflating them makes a dead peer look connected indefinitely.
+	// How long each stage took, measured from daemon start. Reported because
+	// "it connected eventually" is not a measurement, and the three stages fail
+	// for different reasons: discovery is the rendezvous plane, path is NAT
+	// traversal, tunnel is WireGuard.
+	DiscoveredAfterS float64 `json:"discovered_after_s,omitempty"`
+	PathAfterS       float64 `json:"path_after_s,omitempty"`
+	TunnelAfterS     float64 `json:"tunnel_after_s,omitempty"`
+
 	Handshaked    bool   `json:"handshaked"`
 	Live          bool   `json:"live"`
 	HandshakeAgeS int64  `json:"handshake_age_s,omitempty"`
@@ -244,6 +252,11 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Me
 				LastSeen:  p.LastSeen.Format(time.RFC3339),
 				Online:    p.Online(now),
 				Relay:     p.Relay,
+			}
+			if t := m.Timing(p.ID()); t.DiscoveredAfter > 0 || t.TunnelAfter > 0 {
+				ps.DiscoveredAfterS = t.DiscoveredAfter.Seconds()
+				ps.PathAfterS = t.PathAfter.Seconds()
+				ps.TunnelAfterS = t.TunnelAfter.Seconds()
 			}
 			best, hasBest := m.BestPath(p.ID(), now)
 			for _, path := range m.Paths(p.ID()) {
