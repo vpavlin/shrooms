@@ -111,7 +111,8 @@ func prefixOf(contentTopic string) (string, bool) {
 }
 
 // NumShardsLogosDev is the shard count for the logos.dev cluster (autosharding,
-// 8 shards). Changing cluster changes this.
+// 8 shards). Changing cluster changes this — though the 2026-08-07 migration
+// from cluster 2 to cluster 3 kept 8 shards, so the derived topics did not move.
 const NumShardsLogosDev = 8
 
 // Shard returns the autoshard index for a content topic, per

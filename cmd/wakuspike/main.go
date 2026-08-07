@@ -107,7 +107,13 @@ func main() {
 	}()
 
 	if cfgs, err := node.AvailableConfigs(); err == nil {
-		log.Printf("available configs: %s", truncate(cfgs, 800))
+		// Untruncated under -probe: printing what the library accepts is the
+		// entire purpose of that mode, and an 800-char cut hid most of it.
+		if *probeOnly {
+			log.Printf("available configs:\n%s", cfgs)
+		} else {
+			log.Printf("available configs: %s", truncate(cfgs, 800))
+		}
 	} else {
 		log.Printf("available configs: %v", err)
 	}

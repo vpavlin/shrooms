@@ -78,7 +78,20 @@ func cmdDaemon(args []string) error {
 	log.Info("data plane up", "interface", cfg.Interface, "port", cfg.ListenPort)
 
 	// --- rendezvous plane ---
-	node, err := waku.New(waku.Config{"mode": cfg.Mode, "preset": cfg.Preset})
+	// clusterId alongside preset, not instead of it: the preset is what loads
+	// the fleet's entry nodes, and the explicit cluster is what stops those
+	// nodes hanging up on us. See state.DefaultClusterID.
+	nodeCfg := waku.Config{
+		"mode":      cfg.Mode,
+		"clusterId": cfg.ClusterID,
+	}
+	if cfg.Preset != "" {
+		nodeCfg["preset"] = cfg.Preset
+	}
+	if len(cfg.EntryNodes) > 0 {
+		nodeCfg["entryNodes"] = cfg.EntryNodes
+	}
+	node, err := waku.New(nodeCfg)
 	if err != nil {
 		return fmt.Errorf("rendezvous plane: %w", err)
 	}
@@ -87,7 +100,7 @@ func cmdDaemon(args []string) error {
 	if err := node.Start(); err != nil {
 		return fmt.Errorf("start rendezvous plane: %w", err)
 	}
-	log.Info("rendezvous plane up", "preset", cfg.Preset, "mode", cfg.Mode)
+	log.Info("rendezvous plane up", "preset", cfg.Preset, "cluster", cfg.ClusterID, "mode", cfg.Mode)
 
 	m, err := mesh.New(log, cfg, st, node, dev)
 	if err != nil {

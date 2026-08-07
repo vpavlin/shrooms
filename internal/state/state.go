@@ -27,6 +27,13 @@ const (
 	DefaultStateDir   = "/var/lib/logos-vpn"
 )
 
+// DefaultClusterID is the cluster the logos.dev fleet runs on.
+//
+// Verified 2026-08-07 against six live fleet peers, all reporting
+// remoteClusterId=ok(3). Our pinned liblogosdelivery's preset still says
+// cluster 2, which it was until the fleet migrated.
+const DefaultClusterID = 3
+
 // Config is the human-edited configuration.
 type Config struct {
 	// NetworkKey is the mesh secret, base32. In v1 it is a bearer credential:
@@ -53,9 +60,34 @@ type Config struct {
 	// Interface is the TUN device name.
 	Interface string
 
-	// Preset selects the Waku network. Use "logos.dev", NOT clusterId — only
-	// the preset loads the fleet's entry nodes.
+	// Preset selects the network. It is what loads the fleet's entry nodes, so
+	// it is required even when ClusterID is set.
 	Preset string
+
+	// EntryNodes are explicit bootstrap addresses (enrtree:, enr:, or
+	// multiaddr), used instead of whatever the preset would supply.
+	//
+	// Exists because the presets compiled into our pinned liblogosdelivery are
+	// demonstrably stale — they still describe logos.dev as cluster 2, which it
+	// is not — so their bootstrap addresses cannot be trusted either. This is
+	// the escape hatch for pointing at a fleet whose current addresses we know,
+	// without waiting for a library rebuild.
+	EntryNodes []string
+
+	// ClusterID overrides the cluster the preset would select.
+	//
+	// Required, and not merely an override, because the preset baked into our
+	// pinned liblogosdelivery is out of date: it still reports logos.dev as
+	// cluster 2, while every live fleet peer now reports cluster 3. A node on
+	// the wrong cluster does not fail loudly — it connects to each peer, the
+	// metadata exchange disagrees, and the peer hangs up:
+	//
+	//   Received WakuMetadata request  remoteClusterId=ok(3) localClusterId=2
+	//   disconnecting from peer  reason="different clusterId reported: 2 vs 3"
+	//
+	// which presents as "the fleet is down" rather than as a version skew.
+	// Configurable so the next migration is a config edit, not a rebuild.
+	ClusterID uint16
 
 	// Mode is the Waku node mode: Core on always-on machines.
 	Mode string
@@ -99,6 +131,7 @@ func DefaultConfig() Config {
 		ListenPort:  51820,
 		Interface:   "logos0",
 		Preset:      "logos.dev",
+		ClusterID:   DefaultClusterID,
 		Mode:        "Core",
 		HostsSuffix: "mesh",
 	}
@@ -121,8 +154,11 @@ func (c *Config) Validate() error {
 	if c.Interface == "" {
 		return errors.New("interface is empty")
 	}
-	if c.Preset == "" {
-		return errors.New("preset is empty")
+	if c.Preset == "" && len(c.EntryNodes) == 0 {
+		return errors.New("preset is empty and no entry_nodes are set — the node would have nowhere to bootstrap from")
+	}
+	if c.ClusterID == 0 {
+		return errors.New("cluster_id is 0 — the fleet uses a non-zero cluster")
 	}
 	return nil
 }
@@ -282,6 +318,14 @@ func parseConfig(text string) (Config, error) {
 			c.Interface = unquote(val)
 		case "preset":
 			c.Preset = unquote(val)
+		case "entry_nodes":
+			c.EntryNodes = parseArray(val)
+		case "cluster_id":
+			var cid uint16
+			if _, err := fmt.Sscanf(val, "%d", &cid); err != nil {
+				return c, fmt.Errorf("line %d: cluster_id: %w", n+1, err)
+			}
+			c.ClusterID = cid
 		case "mode":
 			c.Mode = unquote(val)
 		case "admin_pk":
@@ -317,6 +361,20 @@ func unquote(s string) string {
 	return s
 }
 
+// formatArray renders a string slice as the TOML-subset array parseArray reads.
+func formatArray(vals []string) string {
+	var b strings.Builder
+	b.WriteByte('[')
+	for i, v := range vals {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		fmt.Fprintf(&b, "%q", v)
+	}
+	b.WriteByte(']')
+	return b.String()
+}
+
 func parseArray(s string) []string {
 	s = strings.TrimSpace(s)
 	s = strings.TrimPrefix(s, "[")
@@ -344,6 +402,15 @@ func WriteConfig(path string, c Config) error {
 	fmt.Fprintf(&b, "interface   = %q\n", c.Interface)
 	fmt.Fprintf(&b, "listen_port = %d\n", c.ListenPort)
 	fmt.Fprintf(&b, "preset      = %q\n", c.Preset)
+	b.WriteString("\n# The cluster the fleet runs on. Must match, or every peer connects,\n")
+	b.WriteString("# compares metadata, disagrees, and hangs up — which looks exactly like\n")
+	b.WriteString("# the fleet being down. Set explicitly because the preset compiled into\n")
+	b.WriteString("# liblogosdelivery is older than the fleet's migration to cluster 3.\n")
+	fmt.Fprintf(&b, "cluster_id  = %d\n", c.ClusterID)
+	if len(c.EntryNodes) > 0 {
+		b.WriteString("\n# Explicit bootstrap addresses, used instead of the preset's.\n")
+		fmt.Fprintf(&b, "entry_nodes = %s\n", formatArray(c.EntryNodes))
+	}
 	fmt.Fprintf(&b, "mode        = %q\n", c.Mode)
 	if c.Relay {
 		b.WriteString("\n# This node forwards traffic for peers that cannot reach each other.\n")
