@@ -24,6 +24,7 @@
 package wg
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -150,11 +151,17 @@ func (b *Bind) demux(fn conn.ReceiveFunc) conn.ReceiveFunc {
 			if !isControl(pkt) {
 				// Record anything WireGuard will reject, while we still know
 				// where it came from.
-				if len(pkt) == 0 || pkt[0] < 1 || pkt[0] > 4 {
+				//
+				// The type is a little-endian uint32 over the first four bytes,
+				// not a single byte — checking only pkt[0] let a packet with a
+				// valid first byte and rubbish after it pass as fine, which is
+				// how the first version of this counter reported zero while
+				// wireguard-go was rejecting sixty.
+				if !looksLikeWireGuard(pkt) {
 					b.unknownRx++
 					if eps[i] != nil {
-						b.lastUnknown = fmt.Sprintf("%s first_byte=0x%02x len=%d",
-							eps[i].DstToString(), firstByte(pkt), len(pkt))
+						b.lastUnknown = fmt.Sprintf("%s len=%d head=%x",
+							eps[i].DstToString(), len(pkt), head(pkt, 16))
 					}
 				}
 				// Keep for WireGuard, compacting if earlier entries were removed.
@@ -221,12 +228,22 @@ func (b *Bind) Stats() (rx, tx, relayed uint64) { return b.ctrlRx, b.ctrlTx, b.r
 // the source of the most recent one.
 func (b *Bind) Unknown() (n uint64, last string) { return b.unknownRx, b.lastUnknown }
 
-// firstByte is 0 for an empty packet rather than a panic.
-func firstByte(pkt []byte) byte {
-	if len(pkt) == 0 {
-		return 0
+// looksLikeWireGuard reports whether wireguard-go will recognise the message
+// type: a little-endian uint32 in 1..4 over the first four bytes.
+func looksLikeWireGuard(pkt []byte) bool {
+	if len(pkt) < 4 {
+		return false
 	}
-	return pkt[0]
+	t := binary.LittleEndian.Uint32(pkt[:4])
+	return t >= 1 && t <= 4
+}
+
+// head returns up to n leading bytes, for identifying a packet we cannot parse.
+func head(pkt []byte, n int) []byte {
+	if len(pkt) < n {
+		return pkt
+	}
+	return pkt[:n]
 }
 
 // --- remaining conn.Bind methods delegate to the inner bind ---

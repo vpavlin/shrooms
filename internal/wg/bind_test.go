@@ -302,8 +302,8 @@ func TestDemuxCountsUnknownPackets(t *testing.T) {
 		t.Errorf("counted %d unknown packets, want 2", n)
 	}
 	// The most recent one, with enough to identify it.
-	if !strings.Contains(last, "e") || !strings.Contains(last, "0x99") {
-		t.Errorf("last unknown = %q, want the source and first byte of the bogus packet", last)
+	if !strings.Contains(last, "e") || !strings.Contains(last, "99") {
+		t.Errorf("last unknown = %q, want the source and leading bytes of the bogus packet", last)
 	}
 }
 
@@ -330,5 +330,33 @@ func TestDemuxCountsNoUnknownOnCleanTraffic(t *testing.T) {
 	}
 	if n, _ := b.Unknown(); n != 0 {
 		t.Errorf("counted %d unknown packets on clean traffic, want 0", n)
+	}
+}
+
+// The message type is a little-endian uint32, not a byte. Checking only the
+// first byte passed packets wireguard-go rejects, which is why the counter read
+// zero while sixty were being dropped.
+func TestLooksLikeWireGuardChecksFullType(t *testing.T) {
+	cases := []struct {
+		name string
+		pkt  []byte
+		want bool
+	}{
+		{"initiation", []byte{1, 0, 0, 0}, true},
+		{"response", []byte{2, 0, 0, 0}, true},
+		{"cookie", []byte{3, 0, 0, 0}, true},
+		{"data", []byte{4, 0, 0, 0}, true},
+		{"type 0", []byte{0, 0, 0, 0}, false},
+		{"type 5", []byte{5, 0, 0, 0}, false},
+		// Valid first byte, rubbish above it: the case the byte-only check missed.
+		{"high bytes set", []byte{1, 0, 1, 0}, false},
+		{"high byte set", []byte{2, 0, 0, 8}, false},
+		{"too short", []byte{1, 0}, false},
+		{"empty", nil, false},
+	}
+	for _, c := range cases {
+		if got := looksLikeWireGuard(c.pkt); got != c.want {
+			t.Errorf("%s: looksLikeWireGuard(% x) = %v, want %v", c.name, c.pkt, got, c.want)
+		}
 	}
 }
