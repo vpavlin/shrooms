@@ -259,3 +259,49 @@ func TestProbeExpiry(t *testing.T) {
 		t.Fatalf("%d pending probes, want 1 (the stale one should be dropped)", pending)
 	}
 }
+
+// A path must be renewed while it is still good. Refreshing only after it has
+// expired leaves a window, every PathFresh, in which the peer has no usable
+// path — which shows up as a node dropping its relay and re-acquiring it
+// seconds later, and on a real link lasts a full round trip rather than the
+// ~0 it costs in a container.
+func TestPathIsRefreshedBeforeItExpires(t *testing.T) {
+	if PathRefresh >= PathFresh {
+		t.Fatalf("PathRefresh (%s) must be less than PathFresh (%s), or paths lapse before renewal", PathRefresh, PathFresh)
+	}
+
+	key := testKey(t)
+	f := newFakeNet()
+	aAddr := netip.MustParseAddrPort("10.0.0.1:51820")
+	bAddr := netip.MustParseAddrPort("10.0.0.2:51820")
+
+	a := newTestProber(t, key, f, aAddr)
+	newTestProber(t, key, f, bAddr)
+
+	now := time.Now()
+	a.Probe("peer-b", []netip.AddrPort{bAddr}, now)
+
+	if a.NeedsProbe("peer-b", now) {
+		t.Error("a just-confirmed path was immediately due for renewal")
+	}
+
+	// A hair past PathRefresh: the pong is recorded at the moment it is
+	// handled, microseconds after `now`, so exactly PathRefresh later is
+	// marginally too early.
+	due := now.Add(PathRefresh + time.Second)
+	if !a.NeedsProbe("peer-b", due) {
+		t.Errorf("path not due for renewal after %s", PathRefresh)
+	}
+	if _, ok := a.Best("peer-b", due); !ok {
+		t.Errorf("path had already expired by renewal time — the gap this exists to close")
+	}
+}
+
+// A peer with no path at all must always be probed, or it is never found.
+func TestUnknownPeerAlwaysNeedsProbe(t *testing.T) {
+	key := testKey(t)
+	p := NewProber(key, make([]byte, 32), func([]byte, netip.AddrPort) error { return nil })
+	if !p.NeedsProbe("nobody", time.Now()) {
+		t.Error("a peer with no known path was not due for probing")
+	}
+}

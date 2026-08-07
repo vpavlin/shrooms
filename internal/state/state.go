@@ -64,8 +64,12 @@ type Config struct {
 	// other directly. Only useful on a node with a reachable address.
 	Relay bool
 
-	// RelayAddr is the relay to fall back to when no direct path exists.
-	// Discovered via RelayAnnounce once that lands; configured for now.
+	// RelayAddr pins a specific relay, overriding discovery.
+	//
+	// Normally empty. Relays announce themselves like any other peer and are
+	// picked up from the roster, so no node needs to be told where one is. Kept
+	// as an escape hatch: bringing up a mesh whose relay has not announced yet,
+	// or forcing a particular relay while debugging.
 	RelayAddr string
 
 	// ManageHosts lets the daemon keep /etc/hosts current as the roster
@@ -346,6 +350,8 @@ func WriteConfig(path string, c Config) error {
 		b.WriteString("relay = \"true\"\n")
 	}
 	if c.RelayAddr != "" {
+		b.WriteString("\n# Pins a relay, overriding discovery. Not normally needed: relays are\n")
+		b.WriteString("# found from their announces like any other peer.\n")
 		fmt.Fprintf(&b, "relay_addr  = %q\n", c.RelayAddr)
 	}
 	b.WriteString("\n# Keep /etc/hosts current as peers come and go, so `ssh vps.mesh` works\n")

@@ -56,8 +56,12 @@ type Mesh struct {
 	relayKey relay.Key
 	// relaySrv is non-nil only when this node acts as a relay for others.
 	relaySrv *relay.Server
-	// relayAddr is the relay we use when no direct path exists.
-	relayAddr netip.AddrPort
+	// relayPin is a hand-configured relay_addr. Normally empty: relays are
+	// discovered from the roster instead. Kept as an escape hatch for a mesh
+	// whose relay has not announced yet, and for the container tests.
+	relayPin netip.AddrPort
+	// relayNow is the relay currently in use, for logging changes.
+	relayNow netip.AddrPort
 
 	// resync is poked when the data plane needs reconfiguring. The control
 	// handler runs on the packet receive path and must not block, so it signals
@@ -98,8 +102,8 @@ func New(log *slog.Logger, cfg state.Config, st *state.State, node *waku.Node, d
 	}
 	if cfg.RelayAddr != "" {
 		if ap, err := netip.ParseAddrPort(cfg.RelayAddr); err == nil {
-			m.relayAddr = ap
-			log.Info("relay configured", "addr", ap)
+			m.relayPin = ap
+			log.Info("relay pinned by config", "addr", ap)
 		} else {
 			log.Warn("ignoring unparseable relay_addr", "value", cfg.RelayAddr, "err", err)
 		}
@@ -245,6 +249,7 @@ func (m *Mesh) announce(now time.Time) error {
 		Endpoints: m.candidates(),
 		Seq:       seq,
 		Timestamp: now.Unix(),
+		Relay:     m.cfg.Relay,
 	}
 
 	raw, err := control.Seal(m.nk, topic.Epoch(now), m.st.Identity.DevicePriv, a)
@@ -385,6 +390,7 @@ func (m *Mesh) syncPeers() error {
 	out := make([]wg.Peer, 0, len(peers))
 
 	now := time.Now()
+	rl := m.selectRelay(now)
 	for _, p := range peers {
 		// Prefer a path that has actually answered a probe. Fall back to the
 		// first announced candidate so a directly-reachable peer still works
@@ -401,11 +407,11 @@ func (m *Mesh) syncPeers() error {
 			// A probed path: packets have demonstrably reached the peer here.
 			best, _ := m.prober.Best(p.ID(), now)
 			peer.Endpoint = best.Addr.String()
-		case m.relayAddr.IsValid() && m.relaySrv == nil:
+		case rl.ok && rl.id != p.ID():
 			// No direct path. Route through the relay rather than leaving the
 			// peer unreachable — failing over is just an endpoint swap, with no
 			// tunnel teardown or rehandshake.
-			peer.RelayVia = wg.NewRelayEndpoint(m.relayKey, m.relayAddr, m.st.Identity.WGPub, p.WGPub)
+			peer.RelayVia = wg.NewRelayEndpoint(m.relayKey, rl.addr, m.st.Identity.WGPub, p.WGPub)
 		case len(p.Endpoints) > 0:
 			// Nothing probed and no relay: try what was announced. This is the
 			// M1 behaviour and works whenever one side is directly reachable.

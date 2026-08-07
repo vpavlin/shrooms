@@ -19,8 +19,9 @@ BUILD=$D/build
 LD_LIB=${LD_LIB:-$D/build/lib}
 WAIT=${WAIT:-150}
 NAT_MODE=${NAT_MODE:-eim}
-# RELAY=1 configures node-pub as a relay and points the NATed nodes at it, so
-# the test measures the relay path rather than punching.
+# RELAY=1 configures node-pub as a relay. The NATed nodes discover it from its
+# announce, so the test measures relay discovery and the relay path rather than
+# punching.
 RELAY=${RELAY:-0}
 
 echo "==> prerequisites"
@@ -49,11 +50,12 @@ done
 if [ "$RELAY" = "1" ]; then
     # node-pub relays; the NATed nodes fall back to it when no direct path
     # exists. Appended rather than rewritten so the generated config is intact.
+    #
+    # Only node-pub is configured. The NATed nodes are told nothing about the
+    # relay and must learn it from its announce — deliberately, since a relay
+    # nobody can discover is the thing this milestone exists to fix.
     echo 'relay = "true"' >> "$RUN/pub/etc/config.toml"
-    for n in a b; do
-        echo 'relay_addr  = "10.90.0.10:51820"' >> "$RUN/$n/etc/config.toml"
-    done
-    echo "    relay: node-pub at 10.90.0.10:51820"
+    echo "    relay: node-pub, to be discovered by node-a and node-b"
 fi
 echo "    network key: $KEY"
 
@@ -99,6 +101,10 @@ else
     echo "==> waiting up to ${WAIT}s for a DIRECT path between node-a and node-b"
     echo "    (both are behind separate NATs; reaching each other needs a punch)"
 fi
+# Measured from here, not from script start. $SECONDS is process-wide, so the
+# earlier numbers this printed silently included the docker build — which made a
+# 5s connect read as 350s and looked like a regression.
+started=$SECONDS
 deadline=$((SECONDS + WAIT))
 discovered=0
 punched=0
@@ -107,11 +113,11 @@ while [ $SECONDS -lt $deadline ]; do
     read -r on hs <<<"$(peerState logos-vpn-a node-b)"
     set -e
     if [ "$on" = "1" ] && [ $discovered -eq 0 ]; then
-        echo "    node-a discovered node-b after $((SECONDS))s"
+        echo "    node-a discovered node-b after $((SECONDS - started))s"
         discovered=1
     fi
     if [ "$hs" = "1" ]; then
-        echo "    node-a <-> node-b handshake after $((SECONDS))s"
+        echo "    node-a <-> node-b handshake after $((SECONDS - started))s"
         punched=1
         break
     fi

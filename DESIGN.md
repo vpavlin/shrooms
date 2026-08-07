@@ -17,7 +17,7 @@ Connect ~5–10 personal devices into a private mesh with no coordination server
 |---|---|---|
 | Android phones are full mesh participants | requirement | iOS out of scope entirely |
 | No self-run Waku cluster | requirement | use the public `logos.dev` fleet (cluster 2) |
-| A small VPS is acceptable, but auto-discovered | requirement | no hardcoded relay IPs; VPS announces itself in-band. **Not yet met** — `relay_addr` is still configured by hand; see PROTOTYPE.md |
+| A small VPS is acceptable, but auto-discovered | requirement | no hardcoded relay IPs; the VPS announces itself in-band. **Met** — relays are found from their announces; see §8 |
 | Daily driver, not a demo | requirement | reliability and roaming beat novelty |
 
 All peers are mutually trusted and owned by one person. The adversary is a network
@@ -183,7 +183,6 @@ anonymity exists; don't undo that).
 |---|---|---|---|
 | `EndpointAnnounce{peer_pk, candidates[], wg_port, seq, ts, sig}` | `/vpn/1/endpoints/` | `false` (Store-backed) | 30–60 s, and on network change |
 | `PunchRequest{from_pk, to_pk, candidates[], nonce, ts}` | `/vpn/1/punch/` | `true` | on demand, deduped, ≤1/s per peer |
-| `RelayAnnounce{relay_pk, addrports[], seq, expiry, sig}` | `/vpn/1/relay/` | `false` (Store-backed) | 30–60 s from VPS |
 | `Revocation{revoked_pk, serial, not_before, sig}` | `/vpn/1/revoke/` | `false` | on demand + on epoch rotation |
 
 **Replay protection is mandatory.** A public bus means anyone can re-publish a
@@ -643,9 +642,27 @@ Rejected alternatives:
 1 TB/month VPS sustains ~3.1 Mbit/s continuously — ample for a handful of devices
 where only a minority of pairs fall back.
 
-**Discovery:** the VPS publishes a signed `RelayAnnounce` to a Store-backed topic
-every 30–60 s. Devices fetch it via `waku_store_query`. The VPS IP can change
-freely. The only pinned constant is one 32-byte mesh public key.
+**Discovery — implemented.** Originally specced as a separate `RelayAnnounce`
+message on its own Store-backed topic. In the end it is a single `relay` boolean
+on the ordinary `EndpointAnnounce`, because a relay *is* just a peer that is
+willing to forward. Folding it in means discovery, endpoint validation and path
+probing all apply to relays unchanged, with no second topic, no second
+subscription and no second message type. A relay is only ever used once probes
+have actually reached it.
+
+The VPS IP can change freely. The only pinned constant is one 32-byte mesh key.
+
+**Selection must be deterministic across nodes.** The relay forwards by
+destination WireGuard key and can only do so for a peer that has registered with
+it, so if A and B pick different relays their traffic never meets. Selection is
+therefore a pure function of state both ends share — lowest device ID among
+online, probe-confirmed relays. Explicitly *not* lowest RTT, which each side
+measures differently and would disagree on. There is a regression test for this
+(`TestSelectRelayIsDeterministicAcrossNodes`); it fails if the tiebreak is
+changed to RTT.
+
+`relay_addr` remains as a config escape hatch to pin a relay, but is no longer
+needed in normal operation.
 
 ---
 

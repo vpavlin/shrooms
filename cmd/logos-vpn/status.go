@@ -100,8 +100,14 @@ func cmdStatus(args []string) error {
 		if ep == "" {
 			ep = "-"
 		}
+		// Marked on the name rather than given a column: it is rarely true and
+		// a mostly-empty column costs width on every row.
+		name := p.Name
+		if p.Relay {
+			name += " (relay)"
+		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s/%s\n",
-			p.Name, p.Overlay, ann, tun, ep, human(p.RxBytes), human(p.TxBytes))
+			name, p.Overlay, ann, tun, ep, human(p.RxBytes), human(p.TxBytes))
 	}
 	return w.Flush()
 }

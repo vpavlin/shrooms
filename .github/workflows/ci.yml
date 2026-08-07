@@ -34,6 +34,30 @@ jobs:
       - name: test
         run: make test-unit
 
+  # Everything that links liblogosdelivery, built and tested against the
+  # prebuilt library.
+  #
+  # Without this the cgo-bound packages are only covered by build-from-source,
+  # which is continue-on-error — so internal/mesh's tests could fail and nothing
+  # would go red. Uses the release tarball rather than a source build precisely
+  # so that this job can gate.
+  test-cgo:
+    name: test (with liblogosdelivery)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - name: Fetch liblogosdelivery
+        run: make deps-release
+      - name: vet
+        run: make vet-cgo
+      - name: Build every package
+        run: make build-all
+      - name: Test
+        run: make test
+
   # Build liblogosdelivery from source in a pinned container, then build
   # logos-vpn against it. The library build is slow, so it is cached by the
   # upstream revision it was built from.

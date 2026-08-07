@@ -107,35 +107,92 @@ func (m *Mesh) sendDisco(pkt []byte, to netip.AddrPort) error {
 	return nil
 }
 
+// relayChoice is the relay this node routes through, if any.
+type relayChoice struct {
+	ok   bool
+	id   string // hex device pub; empty when pinned by config
+	addr netip.AddrPort
+}
+
+// selectRelay picks which relay to route through when no direct path exists.
+//
+// Relaying only works if BOTH ends pick the same relay: the relay forwards by
+// destination WireGuard key and can only do so for a peer that has registered
+// with it. So this must be a pure function of state both ends share. Lowest
+// device ID wins — deliberately not lowest RTT, which each side measures
+// differently and would therefore disagree on.
+func (m *Mesh) selectRelay(now time.Time) relayChoice {
+	// An explicit relay_addr overrides discovery.
+	if m.relayPin.IsValid() {
+		return relayChoice{ok: true, addr: m.relayPin}
+	}
+	// A relay is publicly reachable by definition, so it has no use for one.
+	if m.relaySrv != nil {
+		return relayChoice{}
+	}
+
+	var best relayChoice
+	for _, p := range m.roster.Peers() {
+		if !p.Relay || !p.Online(now) {
+			continue
+		}
+		// Only ever use a probed address. An unverified candidate would
+		// blackhole every relayed packet with nothing to show for it, and
+		// unlike a direct endpoint there is no second chance: WireGuard cannot
+		// relearn a relay path from an inbound packet.
+		path, ok := m.prober.Best(p.ID(), now)
+		if !ok {
+			continue
+		}
+		if !best.ok || p.ID() < best.id {
+			best = relayChoice{ok: true, id: p.ID(), addr: path.Addr}
+		}
+	}
+	return best
+}
+
 // registerWithRelay tells our relay where to reach us.
 //
 // Re-sent on every probe tick rather than once: the relay's mapping is soft
 // state with a TTL, and a NAT rebinding invalidates our address without either
 // side noticing.
 func (m *Mesh) registerWithRelay() {
-	if !m.relayAddr.IsValid() || m.relaySrv != nil {
+	rl := m.selectRelay(time.Now())
+	if !rl.ok {
+		if m.relayNow.IsValid() {
+			m.log.Info("no relay available", "was", m.relayNow)
+			m.relayNow = netip.AddrPort{}
+		}
 		return
 	}
-	ep, err := m.dev.Bind.ParseEndpoint(m.relayAddr.String())
+	if rl.addr != m.relayNow {
+		m.log.Info("using relay", "addr", rl.addr, "discovered", rl.id != "")
+		m.relayNow = rl.addr
+		// The set of usable endpoints just changed, so the data plane is stale.
+		m.requestResync()
+	}
+
+	ep, err := m.dev.Bind.ParseEndpoint(rl.addr.String())
 	if err != nil {
 		return
 	}
 	frame := relay.EncodeRegister(m.relayKey, m.st.Identity.WGPub)
 	if err := m.dev.Bind.SendControl(wg.SubRelay, frame, ep); err != nil {
-		m.log.Debug("relay registration failed", "relay", m.relayAddr, "err", err)
+		m.log.Debug("relay registration failed", "relay", rl.addr, "err", err)
 	}
 }
 
 // probeAll probes every known peer's candidates.
 //
-// Peers with a fresh working path are skipped: probing is for finding a path,
-// and WireGuard's own keepalives maintain one once found.
+// Peers whose best path is not yet due for renewal are skipped. Probing is not
+// only for finding a path: a path that is never re-probed expires, and the peer
+// then has no usable endpoint until the next probe completes. See PathRefresh.
 func (m *Mesh) probeAll(now time.Time) {
 	for _, p := range m.roster.Peers() {
 		if !p.Online(now) {
 			continue
 		}
-		if _, ok := m.prober.Best(p.ID(), now); ok {
+		if !m.prober.NeedsProbe(p.ID(), now) {
 			continue
 		}
 		cands := parseCandidates(p.Endpoints)

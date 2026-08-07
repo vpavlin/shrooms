@@ -139,6 +139,11 @@ type peerStatus struct {
 	LastSeen  string   `json:"last_seen"`
 	Online    bool     `json:"online"`
 
+	// Relay reports that this peer offers to forward for others. Worth
+	// surfacing: "which of my peers can relay" is otherwise invisible, and it
+	// is the first thing to check when a pair will not connect.
+	Relay bool `json:"relay,omitempty"`
+
 	// Data-plane view. Gossip says the peer exists; this says whether we can
 	// actually reach it.
 	// Paths are the candidates that answered a probe. Empty means either no
@@ -188,6 +193,7 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Me
 				Seq:       p.Seq,
 				LastSeen:  p.LastSeen.Format(time.RFC3339),
 				Online:    p.Online(now),
+				Relay:     p.Relay,
 			}
 			best, hasBest := m.BestPath(p.ID(), now)
 			for _, path := range m.Paths(p.ID()) {

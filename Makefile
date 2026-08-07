@@ -25,7 +25,7 @@ GO ?= go
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 .PHONY: all deps deps-basecamp check-lib logos-vpn wakuspike s3topics m0demo \
-        s1 s3 probe m0 m1 m2 m2-edm m3 dist image push-image deps-release install uninstall build-all test test-unit fmt clean
+        s1 s3 probe m0 m1 m2 m2-edm m3 dist image push-image deps-release install uninstall build-all vet-cgo test test-unit fmt clean
 
 all: logos-vpn
 
@@ -189,6 +189,17 @@ test-unit:
 ## what happened to cmd/m0demo when the control-plane signature changed.
 build-all: check-lib
 	$(GO) build ./...
+
+## Vet the packages that link liblogosdelivery. The no-cgo vet in CI cannot
+## reach these, so without it internal/mesh is never vetted at all.
+##
+## internal/waku is excluded: it passes a cgo.Handle as the void* userData the
+## library's callback signature demands, which vet flags as unsafe.Pointer
+## misuse. That is the common idiom for FFI userdata and is safe here (a Handle
+## is a map key, not an address), but silencing it properly means reshaping the
+## bridge to pass uintptr_t. Left alone rather than blanket-disabling vet.
+vet-cgo: check-lib
+	$(GO) vet ./internal/mesh/... ./cmd/...
 
 test: check-lib
 	$(GO) test ./...

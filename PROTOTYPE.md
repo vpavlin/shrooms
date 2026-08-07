@@ -17,13 +17,13 @@ what the project is for.
 |---|---|
 | Android phones are full mesh participants | ⬜ not started. Design is done (DESIGN §6) and the code is kept platform-neutral, but nothing runs there yet |
 | No self-run Waku cluster | ✅ running on the public logos.dev fleet |
-| A VPS is acceptable, but **auto-discovered** | ❌ **not met.** `relay_addr` is configured by hand; `RelayAnnounce` over Waku is unimplemented |
+| A VPS is acceptable, but **auto-discovered** | ✅ met in code. Relays advertise themselves in their ordinary announce and are picked up from the roster; nothing is hardcoded. Exercised in containers, not yet on real infrastructure |
 | Daily driver, not a demo | 🟨 partly. A NATed laptop ↔ VPS tunnel works over the real internet and carries ssh, but M4 (survive roaming, restarts, outages) is untested |
 
-**The auto-discovery gap is the one that matters most**, because it was an
-explicit requirement rather than a nice-to-have, and because the relay is
-useless without it: a fresh client has no way to learn the relay exists. It is
-the top of the list below.
+**The remaining gap is evidence, not code.** Every original constraint except
+Android is now met by the implementation; what is missing is proof that the two
+hardest paths — punching between two NATed peers, and relaying between them —
+work outside a container. Both need a second NATed machine, not more code.
 
 ### Spikes and milestones
 
@@ -36,23 +36,23 @@ the top of the list below.
 | **M0** data plane + shared socket | ✅ containers |
 | **M1** Waku-discovered peers | ✅ containers **and real internet** |
 | **M2** NAT traversal | 🟨 reflexive discovery proven on real NAT; punching between two NATed nodes still unproven |
-| **M3** relay | 🟨 works in containers; untested on real infrastructure; not auto-discovered |
+| **M3** relay | 🟨 auto-discovery implemented and exercised in containers; untested on real infrastructure |
 | **M4** make it seamless | ⬜ not started |
 | **M5** credentials, enrolment, revocation | ⬜ not started — see SECURITY.md §Roadmap |
 | **M6** name resolution | 🟨 `logos-vpn hosts` + `manage_hosts` verified on real infrastructure (`ssh root@vps.mesh`); DNS server not started |
 
 ### What I would do next, in order
 
-1. **`RelayAnnounce` over Waku** (finishes M3). Closes the one broken original
-   constraint, and makes the relay usable by a client that was not told about
-   it. Small: the message type and topic already exist in the design.
-2. **A second NATed node** (finishes M2). Closes the last unknown about whether
-   punching works on real NATs. Needs hardware, not code.
-3. **Security phase 1** — one-time invite tokens. Small, no dependencies, and
+1. **A second NATed node** (finishes M2 and M3). Now the only thing standing
+   between the current state and every original constraint being *demonstrated*
+   rather than merely implemented. Two unknowns fall out of one test: whether
+   punching works between real NATs, and whether the relay carries the pairs
+   where it does not. Needs hardware, not code.
+2. **Security phase 1** — one-time invite tokens. Small, no dependencies, and
    the exposure it removes grows every day this runs on a VPS holding a
    permanent bearer credential.
-4. **S2** — half an hour, and it determines whether the Android design holds.
-5. **M4** — the unglamorous work that decides whether this is actually a daily
+3. **S2** — half an hour, and it determines whether the Android design holds.
+4. **M4** — the unglamorous work that decides whether this is actually a daily
    driver.
 
 ---
@@ -599,9 +599,14 @@ Connectivity when punching fails, with nothing hardcoded.
 
 - `logos-vpn relay` mode: DERP-style UDP reflector keyed by 32-byte pubkey,
   HMAC-authenticated header. ~200 lines.
-- VPS publishes signed `RelayAnnounce` to a Store-backed topic every 30–60 s.
-- Devices fetch it via `waku_store_query` on start, not by waiting for a live
-  publish.
+- ~~VPS publishes signed `RelayAnnounce` to a Store-backed topic every 30–60 s,
+  fetched via `waku_store_query` on start.~~ **Built differently:** a relay is
+  just a peer willing to forward, so it is a `relay` boolean on the ordinary
+  announce. No second topic, no second message type, no Store dependency — and
+  relays inherit endpoint validation and path probing unchanged.
+- Selection is deterministic across nodes (lowest device ID among online,
+  probe-confirmed relays), because both ends must choose the *same* relay or
+  their traffic never meets. See DESIGN §8.
 - Relay path established **concurrently** with punching, not after it fails, so
   traffic flows within one RTT.
 - Path preference: direct beats relayed; re-race every ~60 s.
@@ -613,13 +618,16 @@ the transition.
 **~4–6 days.** ✅ **PASSED (2026-08-07)** — `make m3`
 
 Two nodes behind separate NAT gateways, neither reachable from the other, with a
-public node relaying:
+public node relaying. Neither NATed node is told the relay exists; both learn it
+from its announce:
 
 ```
-    node-a <-> node-b handshake after 19s
+    node-a discovered node-b after 10s
+    node-a <-> node-b handshake after 15s
 
-NAME    OVERLAY IP                              ANNOUNCE  TUNNEL  ENDPOINT
-node-b  fd09:8f62:b2a1:e9c8:3e03:1b25:f51:e2ac  online    up      relay:15590dd4…@10.90.0.10:51820
+NAME              OVERLAY IP                               ANNOUNCE  TUNNEL  ENDPOINT
+node-b            fdf7:132b:4213:aeb2:d147:39f:c912:f4d1   online    up      relay:fa398866…@10.90.0.10:51820
+node-pub (relay)  fdf7:132b:4213:68b8:…                    online    up      10.90.0.10:51820
 
 3 packets transmitted, 3 received, 0% packet loss
 ```
@@ -627,6 +635,30 @@ node-b  fd09:8f62:b2a1:e9c8:3e03:1b25:f51:e2ac  online    up      relay:15590dd4
 This is the property that makes the mesh usable: any pair connects regardless of
 NAT, whether or not punching works. It also sidesteps the M2 harness problem
 entirely, since the relay path does not depend on endpoint-independent mapping.
+
+**Still only proven in containers.** The relay path over the real internet is
+untested; see the open items at the top of this file.
+
+**Two bugs this run surfaced**, both invisible until the numbers were read
+carefully:
+
+*The harness was lying about its own timings.* `$SECONDS` is measured from
+process start, so the reported connect time silently included the docker build —
+a 5 s connect printed as 350 s, and looked like a regression from the relay
+work. The earlier "19 s" figure was measured the same way and was equally
+meaningless. Now measured from the start of the wait loop.
+
+*Paths were only re-probed after they had already expired.* `probeAll` skipped
+any peer with a fresh path, so nothing refreshed it until it went stale at
+`PathFresh` — leaving a window, every 15 s, where a peer had no usable path at
+all until the next pong returned. It showed up as a node logging `no relay
+available` and re-acquiring the relay three seconds later. In a container that
+gap costs ~0; across a real link it is a full round trip, on a node that had a
+perfectly good path the whole time. Paths now refresh at `PathRefresh` (5 s),
+while still good. Connect time went from 21 s/107 s to 10 s/15 s.
+
+The pattern is the recurring one: **containers hide anything timing-dependent.**
+Both of these were sitting in a passing test.
 
 **The bug worth remembering:** `SetRelayIdentity` was defined but never called,
 so relay endpoints were built with a zero key, the MAC was wrong, and the relay

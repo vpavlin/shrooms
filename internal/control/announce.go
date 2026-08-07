@@ -59,6 +59,16 @@ type Announce struct {
 	Seq       uint64 `json:"seq"`
 	Timestamp int64  `json:"ts"` // unix seconds
 
+	// Relay says this device will forward traffic for peers that cannot reach
+	// each other directly.
+	//
+	// Carried on the ordinary announce rather than as a separate message: a
+	// relay is just a peer that is willing to forward, so it should be found
+	// the same way. Discovery, endpoint validation and path probing then all
+	// apply to it unchanged, and a relay is only used once packets have
+	// demonstrably reached it.
+	Relay bool `json:"relay,omitempty"`
+
 	// Credential is empty in v1. Reserved so that adding admin-signed
 	// credentials in M5 is a behaviour change rather than a wire-format break.
 	Credential []byte `json:"cred,omitempty"`

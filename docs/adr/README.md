@@ -23,3 +23,4 @@ number appears, its source is named.
 | [011](011-no-mixnet.md) | No mixnet in the data path | accepted |
 | [012](012-relay-hosting.md) | Who runs the relay (you may not need a VPS) | accepted |
 | [013](013-name-resolution.md) | Name resolution: hosts file now, DNS server next | accepted |
+| [014](014-relay-discovery-via-announce.md) | Relay discovery: a flag on the announce, not a separate message | accepted |

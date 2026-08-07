@@ -269,7 +269,10 @@ $ ./scripts/deploy.sh user@host --key <NETWORK-KEY> --name nas   # remotely
 ```
 
 Any node with a reachable address can also relay — add `relay = "true"` to its
-config. You do not need a VPS if one of your own machines is reachable; see
+config and restart it. Nothing else needs configuring: the relay advertises
+itself in its ordinary announce and every other node picks it up, so there are
+no relay addresses to distribute or keep up to date. You do not need a VPS if
+one of your own machines is reachable; see
 [ADR-012](docs/adr/012-relay-hosting.md).
 
 ### Troubleshooting
@@ -287,7 +290,8 @@ config. You do not need a VPS if one of your own machines is reachable; see
 ## Do I need a VPS?
 
 **Probably not.** Any mesh node with a reachable address can relay for the
-others — set `relay = "true"` in its config. If you have an office box with a
+others — set `relay = "true"` in its config; the rest of the mesh finds it on
+its own, and its IP can change freely. If you have an office box with a
 port forward, a home server on a static IP, or anything with working UPnP, that
 node covers every pair that cannot connect directly.
 
@@ -328,7 +332,7 @@ generates its own device identity, so no private key ever crosses the wire.
 | **M0** WireGuard sharing a socket with control traffic | ✅ tunnel + control packets, no root |
 | **M1** Waku-discovered peers replace static config | ✅ **verified over the real internet**: NATed laptop ↔ VPS, direct tunnel, ssh across it |
 | **M2** NAT traversal | 🟨 reflexive discovery proven on real NAT; punching between two NATed nodes unproven |
-| **M3** relay fallback | 🟨 works in containers; untested for real, and **not yet auto-discovered** |
+| **M3** relay fallback | 🟨 auto-discovered and working in containers; untested on real infrastructure |
 | **M6** name resolution | 🟨 `logos-vpn hosts` **verified for real** (`ssh root@vps.mesh`); DNS server planned |
 | **M4** seamless operation · **M5** credentials | ⬜ not started |
 
@@ -336,10 +340,10 @@ generates its own device identity, so no private key ever crosses the wire.
 
 ### Known gaps, honestly
 
-**The relay is not auto-discovered.** `relay_addr` is configured by hand, and
-`RelayAnnounce` over Waku is unimplemented — so a fresh client has no way to
-learn a relay exists. This was an explicit design requirement, and it is the
-next thing to fix.
+**The relay has not been tested on real infrastructure.** Relays now announce
+themselves and are discovered from the roster, so no node needs to be told where
+one is — but that has only been exercised in containers. The path that matters,
+two NATed devices meeting through a VPS over the real internet, is untested.
 
 **Punching between two NATed peers is unproven.** A NATed node reaching a public
 one works for real. Two NATed nodes reaching *each other* has only been

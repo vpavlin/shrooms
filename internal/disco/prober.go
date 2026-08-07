@@ -16,6 +16,18 @@ const (
 	// matter are 35-65s, so this is comfortably inside them.
 	PathFresh = 15 * time.Second
 
+	// PathRefresh is when a working path is re-probed. It must be comfortably
+	// less than PathFresh.
+	//
+	// Refreshing only once a path has already expired leaves a gap, every
+	// PathFresh, in which the peer has no usable path at all — it lasts until
+	// the next probe's pong returns, which on a real link is a round trip and
+	// not the ~0 it is in a container. During that gap endpoint selection falls
+	// back, and a node using a relay drops it and re-acquires it seconds later.
+	// Refreshing early means a path is renewed while it is still good, so the
+	// state never lapses.
+	PathRefresh = 5 * time.Second
+
 	// ProbeTimeout discards an unanswered probe.
 	ProbeTimeout = 10 * time.Second
 
@@ -159,6 +171,13 @@ func (p *Prober) HandlePong(m *Message, from netip.AddrPort, now time.Time) (pee
 	path.LastPong = now
 
 	return pr.peerID, true
+}
+
+// NeedsProbe reports whether a peer should be probed now: either it has no
+// working path, or its best one is due for renewal before it expires.
+func (p *Prober) NeedsProbe(peerID string, now time.Time) bool {
+	best, ok := p.Best(peerID, now)
+	return !ok || now.Sub(best.LastPong) >= PathRefresh
 }
 
 // Best returns the preferred working path for a peer.

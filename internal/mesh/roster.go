@@ -30,6 +30,9 @@ type PeerInfo struct {
 	Endpoints []string
 	Seq       uint64
 	LastSeen  time.Time
+
+	// Relay reports that this peer will forward for others.
+	Relay bool
 }
 
 // Online reports whether the peer has announced recently.
@@ -86,6 +89,7 @@ func (r *Roster) Apply(a *control.Announce, now time.Time) (PeerInfo, bool) {
 		Endpoints: append([]string(nil), a.Endpoints...),
 		Seq:       a.Seq,
 		LastSeen:  now,
+		Relay:     a.Relay,
 	}
 
 	prev, existed := r.peers[id]
@@ -97,6 +101,7 @@ func (r *Roster) Apply(a *control.Announce, now time.Time) (PeerInfo, bool) {
 	changed := !existed ||
 		prev.WGPub != p.WGPub ||
 		prev.Name != p.Name ||
+		prev.Relay != p.Relay ||
 		!equalStrings(prev.Endpoints, p.Endpoints)
 
 	return p, changed
