@@ -25,7 +25,7 @@ RELAY=${RELAY:-0}
 
 echo "==> prerequisites"
 [ -e /dev/net/tun ] || { echo "no /dev/net/tun on the host"; exit 1; }
-[ -f "$LD_LIB/liblogosdelivery.so" ] || { echo "no liblogosdelivery.so in $LD_LIB — run 'make deps-basecamp'"; exit 1; }
+[ -f "$LD_LIB/liblogosdelivery.so" ] || { echo "no liblogosdelivery.so in $LD_LIB — run 'make deps-release'"; exit 1; }
 
 echo "==> building"
 make logos-vpn >/dev/null

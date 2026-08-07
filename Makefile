@@ -3,8 +3,9 @@
 # Building needs liblogosdelivery (shared library + matching header). There is
 # no canonical place for it, so pick one:
 #
-#   make deps                 build from source in a pinned container (slow, portable)
-#   make deps-basecamp        reuse the copy Logos Basecamp installed (fast, local)
+#   make deps-release         download a prebuilt copy (works anywhere) <- use this
+#   make deps-basecamp        reuse the copy Logos Basecamp installed
+#   make deps                 build from source in a container (blocked upstream)
 #   make LD_DIR=/path/to/lib  point at your own build
 #
 # `make dist` produces a portable distribution built entirely in containers.
@@ -24,7 +25,7 @@ GO ?= go
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 .PHONY: all deps deps-basecamp check-lib logos-vpn wakuspike s3topics m0demo \
-        s1 s3 probe m0 m1 m2 m2-edm m3 dist test test-unit fmt clean
+        s1 s3 probe m0 m1 m2 m2-edm m3 dist image push-image deps-release test test-unit fmt clean
 
 all: logos-vpn
 
@@ -48,9 +49,9 @@ deps-basecamp:
 
 check-lib:
 	@test -f "$(LD_INC)/liblogosdelivery.h" \
-		|| { echo "missing $(LD_INC)/liblogosdelivery.h — run 'make deps' or 'make deps-basecamp'"; exit 1; }
+		|| { echo "missing $(LD_INC)/liblogosdelivery.h — run 'make deps-release'"; exit 1; }
 	@test -f "$(LD_LIB)/liblogosdelivery.so" \
-		|| { echo "missing $(LD_LIB)/liblogosdelivery.so — run 'make deps' or 'make deps-basecamp'"; exit 1; }
+		|| { echo "missing $(LD_LIB)/liblogosdelivery.so — run 'make deps-release'"; exit 1; }
 
 ## --- binaries ---
 
@@ -69,6 +70,33 @@ m0demo:
 ## Portable distribution, built entirely in containers.
 dist:
 	./scripts/build-portable.sh
+
+## --- container image ---
+##
+## The image is how this gets deployed: liblogosdelivery needs glibc 2.38 and
+## exists only where Logos Basecamp is installed, so a machine without it can
+## neither build nor run a bare binary. Publish once from a machine that has the
+## library; every other machine pulls.
+
+IMAGE ?= ghcr.io/vpavlin/logos-vpn
+TAG   ?= latest
+
+image: logos-vpn check-lib
+	@rm -rf docker/build/ctx && mkdir -p docker/build/ctx/lib
+	@cp bin/logos-vpn docker/build/ctx/
+	@cp docker/gateway.sh docker/entrypoint-nat.sh docker/build/ctx/
+	@cp $(LD_LIB)/*.so $(LD_LIB)/*.so.* docker/build/ctx/lib/ 2>/dev/null || true
+	docker build -t $(IMAGE):$(TAG) -f docker/Dockerfile docker/build/ctx
+	@echo "built $(IMAGE):$(TAG)"
+
+push-image: image
+	docker push $(IMAGE):$(TAG)
+	@echo "pushed $(IMAGE):$(TAG) — other machines need only 'docker pull'"
+
+## Fetch a prebuilt liblogosdelivery from this repo's releases, so a machine
+## without Logos Basecamp can still build.
+deps-release:
+	./scripts/fetch-lib.sh
 
 ## --- spikes and milestones ---
 

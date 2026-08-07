@@ -54,7 +54,7 @@ ssh "$HOST" 'command -v docker >/dev/null || { echo "docker is not installed"; e
              echo "  $(. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME"), docker $(docker version --format "{{.Server.Version}}" 2>/dev/null)"'
 
 echo "==> building image"
-[ -f "$LD_LIB/liblogosdelivery.so" ] || { echo "no liblogosdelivery.so in $LD_LIB — run 'make deps-basecamp'"; exit 1; }
+[ -f "$LD_LIB/liblogosdelivery.so" ] || { echo "no liblogosdelivery.so in $LD_LIB — run 'make deps-release'"; exit 1; }
 make logos-vpn >/dev/null
 
 CTX=docker/build/deploy

@@ -81,8 +81,14 @@ the node.
 ### Getting liblogosdelivery
 
 ```console
-$ make deps-basecamp HDR=/path/to/liblogosdelivery.h   # reuse a Logos Basecamp install
-$ make deps                                            # build from source in a container
+$ make deps-release      # download a prebuilt copy — works anywhere
+```
+
+That is the one you want. The other two exist for completeness:
+
+```console
+$ make deps-basecamp HDR=/path/to/liblogosdelivery.h   # reuse a local Logos Basecamp install
+$ make deps                                            # build from source in a container (broken, see below)
 ```
 
 ⚠️ **`make deps` currently fails** — upstream logos-delivery does not compile at
@@ -93,17 +99,15 @@ rest_api/endpoint/relay/handlers.nim: Error: waitFor withTimeout(...)
 has an illegal effect: NestedPoll
 ```
 
-Use `make deps-basecamp` until that is fixed upstream. Note the *toolchain*
-problem is solved: building in Debian bookworm (git 2.39) resolves dependencies
-cleanly, where a current host (git 2.51) fails on a nimble lockfile checksum.
+So the library exists only where Logos Basecamp is installed — which would
+make a fresh machine, CI, or a VPS unable to build at all. `make deps-release`
+works around that by downloading a repackaged copy from
+[this repo's releases](https://github.com/vpavlin/logos-vpn/releases/tag/deps-v1)
+(Apache-2.0 OR MIT, unmodified).
 
-If you have Logos Basecamp installed, the library and its matching header are
-already on disk:
-
-```console
-$ ls ~/.local/share/Logos/LogosBasecamp/modules/delivery_module/liblogosdelivery.so
-$ find ~ -name liblogosdelivery.h 2>/dev/null | head -1
-```
+Note the *toolchain* problem is solved: building in Debian bookworm (git 2.39)
+resolves dependencies cleanly, where a current host (git 2.51) fails on a nimble
+lockfile checksum. Only upstream's own compile error remains.
 
 ---
 
@@ -112,7 +116,7 @@ $ find ~ -name liblogosdelivery.h 2>/dev/null | head -1
 This is the full sequence for a VPS plus your laptop. The VPS creates the mesh
 and relays; the laptop joins.
 
-### 1. Build locally
+### 1. Build
 
 ```console
 $ git clone https://github.com/vpavlin/logos-vpn
