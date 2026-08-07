@@ -55,6 +55,9 @@ services:
     image: logos-vpn:test
     container_name: logos-vpn-gw-a
     cap_add: [NET_ADMIN]
+    # Declared rather than left to gateway.sh's own sysctl call: some engines
+    # mount /proc/sys read-only, and the gateway then forwards nothing.
+    sysctls: {net.ipv4.ip_forward: 1}
     entrypoint: ["/usr/bin/gateway.sh"]
     networks:
       public:
@@ -66,6 +69,7 @@ services:
     image: logos-vpn:test
     container_name: logos-vpn-gw-b
     cap_add: [NET_ADMIN]
+    sysctls: {net.ipv4.ip_forward: 1}
     entrypoint: ["/usr/bin/gateway.sh"]
     networks:
       public:

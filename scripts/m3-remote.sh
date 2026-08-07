@@ -61,8 +61,13 @@ REMOTE_DIR=/etc/logos-vpn/m3-remote
 
 if [ $DOWN -eq 1 ]; then
     echo "==> removing the test node from $HOST"
-    ssh "$HOST" "cd $REMOTE_DIR 2>/dev/null && sudo docker compose -f compose.yml down -v 2>&1 | tail -3 || echo '  nothing running'"
-    ssh "$HOST" "sudo rm -rf $REMOTE_DIR"
+    ssh "$HOST" "REMOTE_DIR=$REMOTE_DIR bash -s" <<'REMOTE'
+S=""; [ "$(id -u)" -eq 0 ] || S=sudo
+$S docker rm -f logos-vpn-natted logos-vpn-testgw 2>/dev/null || echo "  no containers"
+$S docker network rm m3-lan m3-wan 2>/dev/null || true
+$S rm -rf "$REMOTE_DIR"
+echo "  removed"
+REMOTE
     echo
     echo "The node will drop out of your roster after ~3 minutes (OfflineAfter)."
     echo "If manage_hosts is on, its /etc/hosts entry goes with it."
@@ -91,6 +96,14 @@ if ! ./bin/logos-vpn status --socket "$LOCAL_SOCK" >/dev/null 2>&1; then
     # "the daemon is not answering" when the daemon is answering fine.
     if sudo ./bin/logos-vpn status --socket "$LOCAL_SOCK" >/dev/null 2>&1; then
         SUDO=1
+    elif [ -S "$LOCAL_SOCK" ] && ! sudo -n true 2>/dev/null; then
+        # The socket exists, so the daemon is almost certainly fine — we just
+        # cannot read it. Saying "the daemon is not answering" here sends people
+        # to debug a healthy daemon, which is exactly what happened.
+        echo "cannot read $LOCAL_SOCK without sudo, and sudo needs a password here."
+        echo "Run this from a terminal where sudo can prompt, or pre-authorise with:"
+        echo "  sudo -v && make m3-remote HOST=$HOST"
+        exit 1
     else
         echo "the local daemon is not answering on $LOCAL_SOCK"
         echo "try:  sudo ./bin/logos-vpn status --socket $LOCAL_SOCK"
@@ -164,15 +177,59 @@ TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 # announce, which is half of what the test is for.
 
 echo "==> installing on $HOST"
-scp -q docker/compose-remote-nat.yml "$HOST:/tmp/m3-compose.yml"
 scp -q "$TMP/config.toml" "$HOST:/tmp/m3-config.toml"
-ssh "$HOST" "sudo mkdir -p $REMOTE_DIR/nat/etc $REMOTE_DIR/nat/state
-             sudo mv /tmp/m3-compose.yml $REMOTE_DIR/compose.yml
-             sudo mv /tmp/m3-config.toml $REMOTE_DIR/nat/etc/config.toml
-             sudo chmod 600 $REMOTE_DIR/nat/etc/config.toml"
 
-echo "==> starting the NATed node"
-ssh "$HOST" "cd $REMOTE_DIR && sudo docker compose -f compose.yml up -d --force-recreate" 2>&1 | tail -3
+# Plain `docker run` rather than compose. The remote engine may be podman with
+# podman-compose, where `internal:` networks, static ipv4_address and SELinux
+# bind mounts are the least reliable corner; these commands behave identically
+# on docker and podman. It also removes a file that had to be kept in step with
+# this script.
+ssh "$HOST" "REMOTE_DIR=$REMOTE_DIR bash -s" <<'REMOTE'
+set -euo pipefail
+S=""; [ "$(id -u)" -eq 0 ] || S=sudo
+
+# SELinux relabels bind mounts; without :Z the container cannot read its config
+# and reports it as missing.
+Z=""
+if command -v getenforce >/dev/null && [ "$(getenforce 2>/dev/null)" = "Enforcing" ]; then
+    Z=":Z"
+    echo "  SELinux enforcing, relabelling mounts"
+fi
+
+$S mkdir -p "$REMOTE_DIR/nat/etc" "$REMOTE_DIR/nat/state"
+$S mv /tmp/m3-config.toml "$REMOTE_DIR/nat/etc/config.toml"
+$S chmod 600 "$REMOTE_DIR/nat/etc/config.toml"
+
+# Idempotent: a previous run must not block this one.
+$S docker rm -f logos-vpn-natted logos-vpn-testgw >/dev/null 2>&1 || true
+$S docker network rm m3-lan m3-wan >/dev/null 2>&1 || true
+
+$S docker network create m3-wan >/dev/null
+$S docker network create --internal --subnet 10.93.0.0/24 m3-lan >/dev/null
+
+# create -> connect -> start, so the gateway has BOTH interfaces before
+# gateway.sh runs. It identifies WAN by which one carries the default route,
+# and an interface attached after startup would arrive too late.
+# --sysctl because podman mounts /proc/sys read-only, so gateway.sh cannot
+# enable forwarding from inside. Without it the gateway starts and forwards
+# nothing, and everything behind it loses connectivity.
+$S docker create --name logos-vpn-testgw --cap-add NET_ADMIN \
+    --sysctl net.ipv4.ip_forward=1 \
+    --network m3-wan --entrypoint /usr/bin/gateway.sh logos-vpn:test >/dev/null
+$S docker network connect --ip 10.93.0.2 m3-lan logos-vpn-testgw
+$S docker start logos-vpn-testgw >/dev/null
+echo "  gateway up"
+
+$S docker create --name logos-vpn-natted --cap-add NET_ADMIN \
+    --device /dev/net/tun \
+    -e NAT_GW=10.93.0.2 \
+    --network m3-lan --ip 10.93.0.100 \
+    -v "$REMOTE_DIR/nat/etc:/etc/logos-vpn$Z" \
+    -v "$REMOTE_DIR/nat/state:/var/lib/logos-vpn$Z" \
+    --entrypoint /usr/bin/entrypoint-nat.sh logos-vpn:test daemon -v >/dev/null
+$S docker start logos-vpn-natted >/dev/null
+echo "  NATed node up"
+REMOTE
 
 # ---------------------------------------------------------------------------
 # Measure from this machine. The remote's own view is not the question —

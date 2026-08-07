@@ -23,7 +23,18 @@ LAN=${LAN_IF:-}
 
 echo "gateway starting: mode=$MODE"
 
-sysctl -w net.ipv4.ip_forward=1 >/dev/null
+# Verified, not assumed. podman mounts /proc/sys read-only, so this call is
+# ignored with a warning on stderr and the gateway then forwards nothing —
+# while still printing "gateway ready". The containers behind it lose all
+# connectivity, which presents as a mesh failure a long way from the cause.
+sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
+if [ "$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null)" != "1" ]; then
+    echo "FATAL: could not enable net.ipv4.ip_forward" >&2
+    echo "  /proc/sys is read-only in this container. Start it with:" >&2
+    echo "    --sysctl net.ipv4.ip_forward=1" >&2
+    echo "  (podman needs this; docker usually permits the write directly)" >&2
+    exit 1
+fi
 
 # Identify interfaces by role rather than trusting device order, which docker
 # does not guarantee.
