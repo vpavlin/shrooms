@@ -8,6 +8,55 @@ See [DESIGN.md](DESIGN.md) for the architecture and its justification.
 
 ---
 
+## Where we are (2026-08-07)
+
+Scored against the **original constraints**, not the milestone list — those are
+what the project is for.
+
+| Constraint | Status |
+|---|---|
+| Android phones are full mesh participants | ⬜ not started. Design is done (DESIGN §6) and the code is kept platform-neutral, but nothing runs there yet |
+| No self-run Waku cluster | ✅ running on the public logos.dev fleet |
+| A VPS is acceptable, but **auto-discovered** | ❌ **not met.** `relay_addr` is configured by hand; `RelayAnnounce` over Waku is unimplemented |
+| Daily driver, not a demo | 🟨 partly. A NATed laptop ↔ VPS tunnel works over the real internet and carries ssh, but M4 (survive roaming, restarts, outages) is untested |
+
+**The auto-discovery gap is the one that matters most**, because it was an
+explicit requirement rather than a nice-to-have, and because the relay is
+useless without it: a fresh client has no way to learn the relay exists. It is
+the top of the list below.
+
+### Spikes and milestones
+
+| | State |
+|---|---|
+| **S1** cgo → liblogosdelivery | ✅ round trip over the real fleet |
+| **S2** logos.dev Store retention | ⬜ **never run.** Matters for intermittent peers and therefore for Android |
+| **S3** rotating topics stay on one shard | ✅ 6 epochs → one shard |
+| **S4** WireGuard throughput baseline | ⬜ never run, minor |
+| **M0** data plane + shared socket | ✅ containers |
+| **M1** Waku-discovered peers | ✅ containers **and real internet** |
+| **M2** NAT traversal | 🟨 reflexive discovery proven on real NAT; punching between two NATed nodes still unproven |
+| **M3** relay | 🟨 works in containers; untested on real infrastructure; not auto-discovered |
+| **M4** make it seamless | ⬜ not started |
+| **M5** credentials, enrolment, revocation | ⬜ not started — see SECURITY.md §Roadmap |
+| **M6** name resolution | 🟨 `logos-vpn hosts` done; DNS server not started |
+
+### What I would do next, in order
+
+1. **`RelayAnnounce` over Waku** (finishes M3). Closes the one broken original
+   constraint, and makes the relay usable by a client that was not told about
+   it. Small: the message type and topic already exist in the design.
+2. **A second NATed node** (finishes M2). Closes the last unknown about whether
+   punching works on real NATs. Needs hardware, not code.
+3. **Security phase 1** — one-time invite tokens. Small, no dependencies, and
+   the exposure it removes grows every day this runs on a VPS holding a
+   permanent bearer credential.
+4. **S2** — half an hour, and it determines whether the Android design holds.
+5. **M4** — the unglamorous work that decides whether this is actually a daily
+   driver.
+
+---
+
 ## 0. Why Linux-first is much smaller
 
 Restricting v1 to Linux removes two of the five open risks in DESIGN §9 and one
@@ -604,6 +653,28 @@ earns the project.
 **Done when:** you stop thinking about it for a week.
 
 **~1 week, spread over real use.**
+
+### M6 — Name resolution
+
+`logos-vpn hosts` ✅ writes `/etc/hosts` entries from the live roster, in a
+marked block, atomically. Zero dependencies and useful today.
+
+Not enough on its own: it is static (a new peer is unreachable by name until
+someone regenerates), needs root, and **does not exist on Android**, which is
+the platform this is ultimately for.
+
+**The DNS server is the real answer.** The daemon already holds the roster, so
+it serves it over DNS on the overlay address, authoritative for the mesh domain
+only. Every platform then has a supported hook — and Android's is the easiest of
+the four, via `VpnService.Builder.addDnsServer()`.
+
+See [ADR-013](docs/adr/013-name-resolution.md) for the full reasoning, including
+why mDNS is the wrong shape for a point-to-point mesh.
+
+**Done when:** `ssh vps.mesh` works on Linux and macOS without editing a file,
+and a peer that joins becomes resolvable without anything being regenerated.
+
+**~3–5 days**, most of it per-OS resolver wiring rather than the server.
 
 ### M5 — Credentials, enrolment, revocation
 

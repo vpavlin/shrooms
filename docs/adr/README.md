@@ -22,3 +22,4 @@ number appears, its source is named.
 | [010](010-ship-a-container-not-a-binary.md) | Ship a container image, not a binary | accepted |
 | [011](011-no-mixnet.md) | No mixnet in the data path | accepted |
 | [012](012-relay-hosting.md) | Who runs the relay (you may not need a VPS) | accepted |
+| [013](013-name-resolution.md) | Name resolution: hosts file now, DNS server next | accepted |

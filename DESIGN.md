@@ -17,7 +17,7 @@ Connect ~5–10 personal devices into a private mesh with no coordination server
 |---|---|---|
 | Android phones are full mesh participants | requirement | iOS out of scope entirely |
 | No self-run Waku cluster | requirement | use the public `logos.dev` fleet (cluster 2) |
-| A small VPS is acceptable, but auto-discovered | requirement | no hardcoded relay IPs; VPS announces itself in-band |
+| A small VPS is acceptable, but auto-discovered | requirement | no hardcoded relay IPs; VPS announces itself in-band. **Not yet met** — `relay_addr` is still configured by hand; see PROTOTYPE.md |
 | Daily driver, not a demo | requirement | reliability and roaming beat novelty |
 
 All peers are mutually trusted and owned by one person. The adversary is a network

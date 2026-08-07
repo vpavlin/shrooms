@@ -236,7 +236,20 @@ traffic falls back to the relay — which is exactly why the relay exists.
 (WireGuard handshake completed). If a peer is online but has no handshake, the
 problem is traversal, not discovery. A relayed peer shows a `relay:…` endpoint.
 
-### 6. Add more machines
+### 6. Use names instead of addresses
+
+```console
+$ sudo logos-vpn hosts            # preview
+$ sudo logos-vpn hosts --write    # update /etc/hosts
+
+$ ssh root@vps.mesh
+```
+
+Entries go in a marked block, written atomically, and re-running is safe. It is
+static, so re-run it when peers change — a DNS server that avoids that is
+planned ([ADR-013](docs/adr/013-name-resolution.md)).
+
+### 7. Add more machines
 
 ```console
 $ sudo ./bin/logos-vpn join <NETWORK-KEY> --name office     # locally
@@ -301,24 +314,33 @@ generates its own device identity, so no private key ever crosses the wire.
 | **S1** cgo binding to liblogosdelivery | ✅ publish→receive over the real fleet |
 | **S3** rotating topics stay on one shard | ✅ 6 epochs, all to `/waku/2/rs/2/3` |
 | **M0** WireGuard sharing a socket with control traffic | ✅ tunnel + control packets, no root |
-| **M1** Waku-discovered peers replace static config | ✅ **verified over the real internet**: NATed laptop ↔ VPS, direct tunnel |
-| **M2** NAT traversal | ⚠️ reflexive discovery proven; the punch is not |
-| **M3** relay fallback | ✅ two NATed nodes carry traffic through a relay |
-| **M5** credentials, enrolment, revocation | not started |
+| **M1** Waku-discovered peers replace static config | ✅ **verified over the real internet**: NATed laptop ↔ VPS, direct tunnel, ssh across it |
+| **M2** NAT traversal | 🟨 reflexive discovery proven on real NAT; punching between two NATed nodes unproven |
+| **M3** relay fallback | 🟨 works in containers; untested for real, and **not yet auto-discovered** |
+| **M6** name resolution | 🟨 `logos-vpn hosts` works; DNS server planned |
+| **M4** seamless operation · **M5** credentials | ⬜ not started |
 
-`make m0` / `make m1` / `make s1` / `make s3` reproduce these.
+`make m0` / `make m1` / `make m3` / `make s1` / `make s3` reproduce these.
 
-**A NATed node reaching a public one works for real**, not just in containers.
-What remains unproven is two *NATed* nodes punching through to each other.
+### Known gaps, honestly
 
-**M2's caveat is worth reading before you rely on it.** Reflexive discovery
-demonstrably works — a NATed node learns its own public address from a peer's
-pong with no STUN server. What is unproven is two NATed nodes punching through
-to each other. The container harness turned out to be the obstacle: plain Linux
-`MASQUERADE` is *not* endpoint-independent, so it tests the hard case while
-claiming to test the easy one. See PROTOTYPE.md §M2.
+**The relay is not auto-discovered.** `relay_addr` is configured by hand, and
+`RelayAnnounce` over Waku is unimplemented — so a fresh client has no way to
+learn a relay exists. This was an explicit design requirement, and it is the
+next thing to fix.
 
----
+**Punching between two NATed peers is unproven.** A NATed node reaching a public
+one works for real. Two NATed nodes reaching *each other* has only been
+attempted in containers, where the harness turned out to be the obstacle: plain
+Linux `MASQUERADE` is not endpoint-independent, so it tests the hard case while
+claiming to test the easy one.
+
+**Nothing has been through M4.** Roaming, restarts, a VPS reboot, logos.dev
+being briefly unreachable — none of it is tested. Treat this as working rather
+than dependable.
+
+**Testing on real infrastructure has found two bugs that containers hid**, both
+timing- or NAT-dependent. Prefer hardware for anything in those categories.
 
 ## Security
 
@@ -349,7 +371,7 @@ short version:
 | [DESIGN.md](DESIGN.md) | architecture and the research behind each decision |
 | [PROTOTYPE.md](PROTOTYPE.md) | build plan, milestones, what each proved |
 | [SECURITY.md](SECURITY.md) | what is protected, what leaks, what is deferred |
-| [docs/adr/](docs/adr/) | why each significant decision was made |
+| [docs/adr/](docs/adr/) | why each significant decision was made (13 records) |
 
 ---
 
