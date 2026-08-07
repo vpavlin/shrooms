@@ -59,6 +59,13 @@ type Mesh struct {
 	// relayAddr is the relay we use when no direct path exists.
 	relayAddr netip.AddrPort
 
+	// resync is poked when the data plane needs reconfiguring. The control
+	// handler runs on the packet receive path and must not block, so it signals
+	// here instead of doing the work inline — IpcSet takes device locks and
+	// refreshHosts touches the filesystem, neither of which belongs on the
+	// datapath.
+	resync chan struct{}
+
 	mu         sync.Mutex
 	subscribed map[string]bool // content topics we hold a subscription for
 }
@@ -82,6 +89,7 @@ func New(log *slog.Logger, cfg state.Config, st *state.State, node *waku.Node, d
 		self:       identity.OverlayAddr(nk, st.Identity.DevicePub),
 		discoKey:   disco.DeriveKey(nk),
 		relayKey:   relay.DeriveKey(nk),
+		resync:     make(chan struct{}, 1),
 		subscribed: make(map[string]bool),
 	}
 	if cfg.Relay {
@@ -120,6 +128,18 @@ func (m *Mesh) BestPath(peerID string, now time.Time) (disco.Path, bool) {
 // Reflexive returns the self-addresses peers have reported observing.
 func (m *Mesh) Reflexive() []netip.AddrPort { return m.prober.Reflexive(time.Now()) }
 
+// requestResync asks the main loop to reconfigure the data plane.
+//
+// Non-blocking and coalescing: a full channel already means a resync is pending,
+// and one resync reflects the current roster however many times it was
+// requested.
+func (m *Mesh) requestResync() {
+	select {
+	case m.resync <- struct{}{}:
+	default:
+	}
+}
+
 // PeerStats exposes the data-plane view of peers.
 func (m *Mesh) PeerStats() (map[string]wg.PeerStat, error) { return m.dev.PeerStats() }
 
@@ -152,6 +172,10 @@ func (m *Mesh) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-m.resync:
+			if err := m.syncPeers(); err != nil {
+				m.log.Error("failed to reconfigure data plane", "err", err)
+			}
 		case now := <-probeTicker.C:
 			m.probeAll(now)
 			m.registerWithRelay()
@@ -347,9 +371,7 @@ func (m *Mesh) handle(ev waku.Event) {
 	// this on receiving each other's announce.
 	m.prober.Probe(peer.ID(), parseCandidates(peer.Endpoints), now)
 
-	if err := m.syncPeers(); err != nil {
-		m.log.Error("failed to reconfigure data plane", "err", err)
-	}
+	m.requestResync()
 }
 
 func hasBest(m *Mesh, id string, now time.Time) bool {

@@ -61,8 +61,14 @@ const (
 const headerLen = MagicLen + 1
 
 // ControlHandler receives a control packet and the endpoint it arrived from.
-// It is called on the receive path and MUST NOT block: copy what you need and
-// hand off. The buffer is reused once the call returns.
+//
+// It is called on the receive path and MUST NOT block. Anything slower than a
+// map lookup — file I/O, device reconfiguration, a network round trip — belongs
+// on another goroutine, because stalling here stalls receiving for every peer,
+// which surfaces as handshakes that never complete rather than as anything that
+// points at this function.
+//
+// The buffer is reused once the call returns, so copy what you keep.
 //
 // Returning a non-nil packet and true injects it back into the batch as though
 // it had arrived from `inject` — this is how relayed WireGuard traffic is

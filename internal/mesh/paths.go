@@ -51,10 +51,9 @@ func (m *Mesh) handleControl(sub wg.Sub, payload []byte, ep conn.Endpoint) ([]by
 		}
 		m.log.Info("path confirmed", "peer", peerID[:8], "via", from, "observed_us_at", msg.Observed)
 		// A newly usable path may be better than what WireGuard is using, so
-		// re-evaluate. syncPeers is cheap and idempotent.
-		if err := m.syncPeers(); err != nil {
-			m.log.Warn("failed to apply discovered path", "peer", peerID[:8], "err", err)
-		}
+		// ask the main loop to re-evaluate. Doing it here would block the
+		// receive path.
+		m.requestResync()
 	}
 	return nil, nil, false
 }
