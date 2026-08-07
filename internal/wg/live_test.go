@@ -18,7 +18,12 @@ func TestStaleHandshakeIsNotLive(t *testing.T) {
 	}{
 		{"fresh", 5 * time.Second, true},
 		{"one rekey ago", 100 * time.Second, true},
-		{"just past reject-after", RejectAfter + time.Second, false},
+		{"rekey just triggered", 166 * time.Second, true},
+		// The band that used to produce false alarms: rekeying starts at 165s,
+		// so a healthy tunnel sits here regularly.
+		{"mid-rekey", RejectAfter + time.Second, true},
+		{"still retrying", RejectAfter + RekeyAttemptTime - time.Second, true},
+		{"past every retry", LiveWindow + time.Second, false},
 		{"long gone", time.Hour, false},
 	}
 

@@ -23,13 +23,27 @@ type PeerStat struct {
 	AllowedIPs    []string
 }
 
-// RejectAfter is WireGuard's REJECT_AFTER_TIME: a session is unusable once its
-// handshake is this old, whatever else is true.
-//
-// A live peer rekeys well inside it — REKEY_AFTER_TIME is 120s under traffic,
-// and persistent keepalive (25s) keeps traffic flowing — so a handshake older
-// than this means the tunnel is dead, not idle.
+// RejectAfter is WireGuard's REJECT_AFTER_TIME: a session may not be used once
+// its handshake is this old.
 const RejectAfter = 180 * time.Second
+
+// LiveWindow is how old a handshake may be before we stop calling the tunnel up.
+//
+// NOT RejectAfter, which is what this used to be and which flaps. wireguard-go
+// starts rekeying at REJECT_AFTER_TIME - KEEPALIVE_TIMEOUT - REKEY_TIMEOUT =
+// 165s, so a perfectly healthy tunnel routinely carries a handshake 165-175s
+// old — leaving about five seconds of margin against a 180s threshold. Any
+// retransmitted handshake crosses it, and the tunnel reads as stale while it is
+// working.
+//
+// The margin is RekeyAttemptTime: the 90s wireguard-go spends retrying a
+// handshake before giving up. Past 165s + 90s nothing further is being
+// attempted, so the tunnel really is down rather than mid-rekey.
+const LiveWindow = RejectAfter + RekeyAttemptTime
+
+// RekeyAttemptTime is wireguard-go's REKEY_ATTEMPT_TIME: how long it keeps
+// retrying a handshake before giving up until there is new traffic.
+const RekeyAttemptTime = 90 * time.Second
 
 // Handshaked reports whether a handshake has ever completed. It says nothing
 // about whether the tunnel works NOW: use Live for that.
@@ -42,7 +56,7 @@ func (p PeerStat) Handshaked() bool { return !p.LastHandshake.IsZero() }
 // then vanished shows as connected forever — which is exactly when you look at
 // status, and exactly when it must not reassure you.
 func (p PeerStat) Live(now time.Time) bool {
-	return p.Handshaked() && now.Sub(p.LastHandshake) < RejectAfter
+	return p.Handshaked() && now.Sub(p.LastHandshake) < LiveWindow
 }
 
 // PeerStats reads peer state over the UAPI.

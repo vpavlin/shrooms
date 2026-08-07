@@ -100,20 +100,58 @@ fi
 echo "  local daemon up${SUDO:+ (reading its socket via sudo)}"
 
 echo "==> checking $HOST"
-ssh "$HOST" 'command -v docker >/dev/null || { echo "docker is not installed"; exit 1; }
-             [ -e /dev/net/tun ] || { echo "no /dev/net/tun"; exit 1; }
-             sudo docker inspect logos-vpn >/dev/null 2>&1 || { echo "no logos-vpn container — deploy it first with scripts/deploy.sh"; exit 1; }
-             sudo docker image inspect logos-vpn:latest >/dev/null 2>&1 || { echo "no logos-vpn:latest image"; exit 1; }
-             sudo grep -q "^relay *= *\"true\"" /etc/logos-vpn/config.toml || { echo "this host is not configured as a relay (relay = \"true\") — nothing would forward"; exit 1; }
-             echo "  relay container present"'
+# `sudo` only when not already root: a VPS logged into as root may not have it,
+# and prefixing regardless turns a working host into a confusing failure.
+ssh "$HOST" '
+S=""; [ "$(id -u)" -eq 0 ] || S=sudo
+command -v docker >/dev/null || { echo "docker is not installed"; exit 1; }
+[ -e /dev/net/tun ] || { echo "no /dev/net/tun"; exit 1; }
+$S test -f /etc/logos-vpn/config.toml || { echo "no /etc/logos-vpn/config.toml — this host is not a mesh node"; exit 1; }
+$S grep -q "^relay *= *\"true\"" /etc/logos-vpn/config.toml || { echo "this host is not configured as a relay (relay = \"true\") — nothing would forward"; exit 1; }
 
-# The key comes off the VPS rather than being passed in: the new node has to
-# join the SAME mesh as the relay, and typing it again is a way to get that
-# subtly wrong.
+# The relay may run natively or in a container; both are supported deployments,
+# and requiring one silently excluded the other.
+if $S docker inspect logos-vpn >/dev/null 2>&1; then
+    echo "  relay: container"
+elif pgrep -f "logos-vpn daemon" >/dev/null; then
+    echo "  relay: native process"
+else
+    echo "no logos-vpn daemon running (neither a container named logos-vpn nor a native process)"; exit 1
+fi
+if docker version 2>/dev/null | grep -qi podman || docker --version 2>&1 | grep -qi podman; then
+    echo "  container engine: podman"
+fi'
+
+# The key comes off the relay host rather than being passed in: the new node has
+# to join the SAME mesh, and retyping it is a way to get that subtly wrong.
 echo "==> reading the network key from $HOST"
-KEY=$(ssh "$HOST" 'sudo docker exec logos-vpn logos-vpn key show --config /etc/logos-vpn/config.toml' | tr -d '\r\n')
+KEY=$(ssh "$HOST" '
+S=""; [ "$(id -u)" -eq 0 ] || S=sudo
+if command -v logos-vpn >/dev/null; then
+    $S logos-vpn key show --config /etc/logos-vpn/config.toml
+else
+    $S docker exec logos-vpn logos-vpn key show --config /etc/logos-vpn/config.toml
+fi' | tr -d '\r\n')
 [ -n "$KEY" ] || { echo "could not read the network key"; exit 1; }
 echo "  ${KEY:0:8}… (joining the same mesh as the relay)"
+
+# The test node runs in a container regardless of how the relay runs — it needs
+# a NAT topology, which is the whole point. Ship the image if it is not there.
+echo "==> ensuring the image exists on $HOST"
+if ssh "$HOST" 'S=""; [ "$(id -u)" -eq 0 ] || S=sudo; $S docker image inspect logos-vpn:test >/dev/null 2>&1'; then
+    echo "  logos-vpn:test already present (IMAGE=rebuild to replace)"
+else
+    LD_LIB=${LD_LIB:-docker/build/lib}
+    [ -f "$LD_LIB/liblogosdelivery.so" ] || { echo "no liblogosdelivery.so in $LD_LIB — run 'make deps-release'"; exit 1; }
+    echo "  building locally"
+    CTX=docker/build/m3remote
+    rm -rf "$CTX"; mkdir -p "$CTX/lib"
+    cp bin/logos-vpn docker/gateway.sh docker/entrypoint-nat.sh "$CTX/"
+    cp "$LD_LIB"/*.so "$LD_LIB"/*.so.* "$CTX/lib/" 2>/dev/null || true
+    docker build -q -t logos-vpn:test -f docker/Dockerfile "$CTX" >/dev/null
+    echo "  shipping (this is the slow part)"
+    docker save logos-vpn:test | gzip -1 | ssh "$HOST" 'S=""; [ "$(id -u)" -eq 0 ] || S=sudo; gunzip | $S docker load' | tail -1
+fi
 
 # ---------------------------------------------------------------------------
 # Bring the node up.
