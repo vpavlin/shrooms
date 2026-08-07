@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/netip"
 	"strings"
+	"sync"
 
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun"
@@ -36,6 +37,9 @@ type Device struct {
 	*device.Device
 	Bind *Bind
 	tun  tun.Device
+
+	mu      sync.Mutex
+	applied []Peer // last configuration written, for diffing
 }
 
 // NewDevice brings up a WireGuard device on the given TUN, using a Bind that
@@ -60,15 +64,46 @@ func NewDevice(t tun.Device, priv identity.WGKey, listenPort uint16, logger *dev
 	return &Device{Device: dev, Bind: b, tun: t}, nil
 }
 
-// SetPeers replaces the peer set.
+// SetPeers reconciles the peer set.
 //
-// Note replace_peers=true is used deliberately here: the mesh roster is
-// authoritative and we always send the full set. Partial updates via wgctrl are
-// a known footgun (wgctrl-go#88 silently wiped AllowedIPs), so we avoid the
-// merge semantics entirely.
+// It deliberately does NOT use replace_peers. That removes and recreates every
+// peer, and a peer that is being recreated is not running — so a handshake
+// initiation arriving in that window is rejected with "Received invalid
+// initiation message", and the handshake never completes.
+//
+// This is easy to miss on a LAN, where a handshake finishes in a millisecond
+// and never overlaps the gap. Over the internet, with 100-450 ms round trips
+// and a sync on every probe response, it loses the race repeatedly.
+//
+// Instead peers are updated in place, which preserves handshake state, and only
+// peers that have genuinely left are removed. Endpoint changes in particular
+// must not disturb an established tunnel — that is how roaming works.
 func (d *Device) SetPeers(peers []Peer) error {
+	want := make(map[identity.WGKey]bool, len(peers))
+	for _, p := range peers {
+		want[p.WGPub] = true
+	}
+
+	// Nothing to do if the configuration is identical. Skipping the write
+	// avoids touching the device at all on the common no-op sync.
+	d.mu.Lock()
+	unchanged := d.applied != nil && samePeers(d.applied, peers)
+	d.mu.Unlock()
+	if unchanged {
+		return nil
+	}
+
 	var b strings.Builder
-	b.WriteString("replace_peers=true\n")
+
+	// Remove peers that have left the roster. Without replace_peers they would
+	// otherwise linger.
+	d.mu.Lock()
+	for _, prev := range d.applied {
+		if !want[prev.WGPub] {
+			fmt.Fprintf(&b, "public_key=%s\nremove=true\n", hex.EncodeToString(prev.WGPub[:]))
+		}
+	}
+	d.mu.Unlock()
 
 	for _, p := range peers {
 		fmt.Fprintf(&b, "public_key=%s\n", hex.EncodeToString(p.WGPub[:]))
@@ -95,7 +130,40 @@ func (d *Device) SetPeers(peers []Peer) error {
 	if err := d.IpcSet(b.String()); err != nil {
 		return fmt.Errorf("set peers: %w", err)
 	}
+
+	d.mu.Lock()
+	d.applied = append([]Peer(nil), peers...)
+	d.mu.Unlock()
 	return nil
+}
+
+// samePeers reports whether two peer sets are equivalent for configuration
+// purposes. Order is ignored: the roster is sorted by name, so a rename would
+// otherwise reshuffle it and trigger a pointless rewrite.
+func samePeers(a, b []Peer) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	idx := make(map[identity.WGKey]Peer, len(a))
+	for _, p := range a {
+		idx[p.WGPub] = p
+	}
+	for _, p := range b {
+		prev, ok := idx[p.WGPub]
+		if !ok || prev.Endpoint != p.Endpoint || prev.PSK != p.PSK ||
+			prev.AllowedIP != p.AllowedIP || prev.Keepalive != p.Keepalive {
+			return false
+		}
+		// Relay endpoints compare by their serialised form, which encodes both
+		// the peer key and the relay address.
+		switch {
+		case (prev.RelayVia == nil) != (p.RelayVia == nil):
+			return false
+		case prev.RelayVia != nil && prev.RelayVia.DstToString() != p.RelayVia.DstToString():
+			return false
+		}
+	}
+	return true
 }
 
 // Close shuts the device down.

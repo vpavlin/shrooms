@@ -35,7 +35,12 @@ if ! curl -fsSL "$url" -o "$tmp/$ASSET"; then
 fi
 
 tar xzf "$tmp/$ASSET" -C "$tmp"
-cp "$tmp"/lib/* "$DEST/"
+# The bundled files are read-only (they come from a Basecamp install), so a
+# plain cp over an existing copy fails with EACCES.
+cp -f --no-preserve=mode "$tmp"/lib/* "$DEST/" 2>/dev/null || {
+    chmod -R u+w "$DEST" 2>/dev/null || true
+    cp -f --no-preserve=mode "$tmp"/lib/* "$DEST/"
+}
 
 [ -f "$DEST/liblogosdelivery.so" ] || { echo "bundle did not contain liblogosdelivery.so"; exit 1; }
 [ -f "$DEST/liblogosdelivery.h" ]  || { echo "bundle did not contain liblogosdelivery.h"; exit 1; }
