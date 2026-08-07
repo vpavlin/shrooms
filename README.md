@@ -13,6 +13,7 @@ discovered each other over the public logos.dev fleet and brought up a direct
 WireGuard tunnel — no coordination server, one shared key:
 
 ```
+$ ssh root@vps.mesh          # names come from the mesh, not DNS
 $ ping fd3b:ffe9:f81:6f18:41e:c574:c529:5bbf
 4 packets transmitted, 4 received, 0% packet loss
 rtt min/avg/max/mdev = 31.883/63.188/94.992/25.589 ms
@@ -328,7 +329,7 @@ generates its own device identity, so no private key ever crosses the wire.
 | **M1** Waku-discovered peers replace static config | ✅ **verified over the real internet**: NATed laptop ↔ VPS, direct tunnel, ssh across it |
 | **M2** NAT traversal | 🟨 reflexive discovery proven on real NAT; punching between two NATed nodes unproven |
 | **M3** relay fallback | 🟨 works in containers; untested for real, and **not yet auto-discovered** |
-| **M6** name resolution | 🟨 `logos-vpn hosts` works; DNS server planned |
+| **M6** name resolution | 🟨 `logos-vpn hosts` **verified for real** (`ssh root@vps.mesh`); DNS server planned |
 | **M4** seamless operation · **M5** credentials | ⬜ not started |
 
 `make m0` / `make m1` / `make m3` / `make s1` / `make s3` reproduce these.

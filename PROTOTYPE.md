@@ -39,7 +39,7 @@ the top of the list below.
 | **M3** relay | 🟨 works in containers; untested on real infrastructure; not auto-discovered |
 | **M4** make it seamless | ⬜ not started |
 | **M5** credentials, enrolment, revocation | ⬜ not started — see SECURITY.md §Roadmap |
-| **M6** name resolution | 🟨 `logos-vpn hosts` done; DNS server not started |
+| **M6** name resolution | 🟨 `logos-vpn hosts` + `manage_hosts` verified on real infrastructure (`ssh root@vps.mesh`); DNS server not started |
 
 ### What I would do next, in order
 
