@@ -24,46 +24,93 @@ const (
 // DefaultFile is the file updated by default.
 const DefaultFile = "/etc/hosts"
 
-// Entry is one name/address pair.
+// Entry is one name/address pair, and the mesh it came from.
 type Entry struct {
 	Name string
 	Addr string
+
+	// Mesh is the local label for the mesh this peer belongs to. Empty means
+	// an unlabelled single-mesh node, which renders exactly as before.
+	Mesh string
 }
 
 // Render builds the managed block.
 //
-// Names are self-asserted in the announce, so two devices can claim the same
-// one. Rather than silently letting the last writer win — which would send your
-// ssh to the wrong machine — duplicates are disambiguated by appending a short
-// piece of the overlay address, and the bare name is left to the first.
+// Two kinds of collision have to be survived, and neither may be resolved by
+// last-writer-wins — that silently sends your ssh to the wrong machine.
+//
+// Within a mesh, device names are self-asserted in the announce, so two devices
+// can claim the same one. Duplicates get a short piece of their overlay address
+// appended; the bare name is left to the first.
+//
+// Across meshes, two meshes can each hold a "vps". Every peer therefore gets a
+// qualified name — vps.home.mesh — which is unambiguous by construction. The
+// short form, vps.mesh, is emitted only when that name occurs in exactly one
+// mesh, so ambiguity removes the short name rather than resolving it to an
+// arbitrary candidate. A single-mesh node has no ambiguity and so keeps every
+// short name it has today.
 func Render(entries []Entry, suffix string) string {
 	suffix = strings.TrimPrefix(suffix, ".")
 
 	sorted := append([]Entry(nil), entries...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Name < sorted[j].Name })
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].Mesh != sorted[j].Mesh {
+			return sorted[i].Mesh < sorted[j].Mesh
+		}
+		return sorted[i].Name < sorted[j].Name
+	})
 
-	var b strings.Builder
-	b.WriteString(Begin + "\n")
-	b.WriteString("# Regenerate with: logos-vpn hosts --write\n")
-
-	seen := map[string]bool{}
+	// Resolve within-mesh duplicates first, so the cross-mesh count below sees
+	// the names that will actually be written.
+	type resolved struct{ name, mesh, addr string }
+	var out []resolved
+	seen := map[string]bool{} // mesh+name
 	for _, e := range sorted {
 		name := sanitise(e.Name)
 		if name == "" {
 			continue
 		}
-		if seen[name] {
+		key := e.Mesh + "\x00" + name
+		if seen[key] {
 			if short := shortAddr(e.Addr); short != "" {
 				name = name + "-" + short
 			}
 		}
-		seen[name] = true
+		seen[key] = true
+		out = append(out, resolved{name: name, mesh: sanitise(e.Mesh), addr: e.Addr})
+	}
 
-		if suffix != "" {
-			fmt.Fprintf(&b, "%s  %s %s.%s\n", e.Addr, name, name, suffix)
-		} else {
-			fmt.Fprintf(&b, "%s  %s\n", e.Addr, name)
+	// A bare name is only safe if exactly one entry claims it.
+	claims := map[string]int{}
+	for _, r := range out {
+		claims[r.name]++
+	}
+
+	var b strings.Builder
+	b.WriteString(Begin + "\n")
+	b.WriteString("# Regenerate with: logos-vpn hosts --write\n")
+
+	for _, r := range out {
+		names := make([]string, 0, 3)
+		if r.mesh != "" {
+			names = append(names, r.name+"."+r.mesh)
 		}
+		if claims[r.name] == 1 {
+			names = append(names, r.name)
+		}
+		if len(names) == 0 {
+			// Ambiguous and unlabelled: nothing safe to write.
+			continue
+		}
+
+		fields := make([]string, 0, len(names)*2)
+		for _, n := range names {
+			fields = append(fields, n)
+			if suffix != "" {
+				fields = append(fields, n+"."+suffix)
+			}
+		}
+		fmt.Fprintf(&b, "%s  %s\n", r.addr, strings.Join(fields, " "))
 	}
 	b.WriteString(End + "\n")
 	return b.String()

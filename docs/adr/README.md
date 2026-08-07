@@ -24,3 +24,4 @@ number appears, its source is named.
 | [012](012-relay-hosting.md) | Who runs the relay (you may not need a VPS) | accepted |
 | [013](013-name-resolution.md) | Name resolution: hosts file now, DNS server next | accepted |
 | [014](014-relay-discovery-via-announce.md) | Relay discovery: a flag on the announce, not a separate message | accepted |
+| [015](015-multiple-meshes-one-daemon.md) | Multiple meshes in one daemon | accepted |

@@ -147,3 +147,78 @@ func TestUpdateHostsFileAtomic(t *testing.T) {
 		t.Errorf("expected only the hosts file, found %d entries", len(ents))
 	}
 }
+
+// A node in one mesh must look exactly as it did before mesh labels existed.
+// This is every node today, so a regression here is a regression for everyone.
+func TestSingleMeshKeepsShortNames(t *testing.T) {
+	got := Render([]Entry{
+		{Name: "vps", Addr: "fd00::1", Mesh: "home"},
+		{Name: "laptop", Addr: "fd00::2", Mesh: "home"},
+	}, "mesh")
+
+	for _, want := range []string{"vps.mesh", "laptop.mesh", "vps.home.mesh", "laptop.home.mesh"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+}
+
+// The collision that motivated qualified names: two meshes, each with a "vps".
+// Neither may claim the bare name.
+func TestCrossMeshCollisionDropsShortName(t *testing.T) {
+	got := Render([]Entry{
+		{Name: "vps", Addr: "fd00::1", Mesh: "home"},
+		{Name: "vps", Addr: "fd11::1", Mesh: "shared"},
+		{Name: "nas", Addr: "fd00::2", Mesh: "home"},
+	}, "mesh")
+
+	for _, want := range []string{"vps.home.mesh", "vps.shared.mesh"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing qualified name %q in:\n%s", want, got)
+		}
+	}
+	// The bare name must not appear as a standalone field: resolving it to
+	// either machine would silently send traffic to the wrong one.
+	for _, line := range strings.Split(got, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		for _, name := range fields[1:] { // fields[0] is the address
+			if name == "vps" || name == "vps.mesh" {
+				t.Errorf("ambiguous short name %q was emitted: %s", name, line)
+			}
+		}
+	}
+	// An unambiguous name in the same render keeps its short form.
+	if !strings.Contains(got, "nas.mesh") {
+		t.Errorf("unambiguous name lost its short form:\n%s", got)
+	}
+}
+
+// Duplicate device names inside one mesh keep the existing disambiguation, and
+// it must survive into the qualified form too.
+func TestWithinMeshDuplicatesStillDisambiguated(t *testing.T) {
+	got := Render([]Entry{
+		{Name: "box", Addr: "fd00::dead:beef", Mesh: "home"},
+		{Name: "box", Addr: "fd00::cafe:f00d", Mesh: "home"},
+	}, "mesh")
+
+	if strings.Count(got, "box.home.mesh") != 1 {
+		t.Errorf("both devices claimed box.home.mesh:\n%s", got)
+	}
+	if !strings.Contains(got, "box-") {
+		t.Errorf("second device was not disambiguated:\n%s", got)
+	}
+}
+
+// Entries with no mesh label render as before — the migration path.
+func TestUnlabelledEntriesRenderBare(t *testing.T) {
+	got := Render([]Entry{{Name: "vps", Addr: "fd00::1"}}, "mesh")
+	if !strings.Contains(got, "vps.mesh") {
+		t.Errorf("unlabelled entry lost its name:\n%s", got)
+	}
+	if strings.Contains(got, "vps..mesh") {
+		t.Errorf("empty mesh label leaked into the name:\n%s", got)
+	}
+}
