@@ -31,6 +31,19 @@ const (
 	// ProbeTimeout discards an unanswered probe.
 	ProbeTimeout = 10 * time.Second
 
+	// SwitchMargin is how much better a challenger path must be before we move
+	// to it, when the one in use is still working.
+	//
+	// Without it, two paths to the same peer with near-identical RTT trade
+	// places on every probe — observed alternating every 3s between a host's
+	// two bridge addresses. Each flip rewrites the peer's endpoint in
+	// WireGuard, and endpoint churn is the most expensive kind of bug this
+	// project has: a swap mid-handshake costs a full retry.
+	//
+	// Large enough to ignore jitter on a LAN, small enough that a genuinely
+	// better route still wins.
+	SwitchMargin = 15 * time.Millisecond
+
 	// MaxReflexive caps how many distinct self-addresses we remember. Under
 	// endpoint-dependent (symmetric) NAT every peer observes a different port,
 	// so this set grows with peers rather than converging — which is itself the
@@ -74,6 +87,10 @@ type Prober struct {
 	pending   map[TxID]probe
 	paths     map[string]map[netip.AddrPort]*Path // peerID -> addr -> path
 	reflexive map[netip.AddrPort]time.Time        // self-addresses peers reported
+
+	// selected is the path currently in use per peer, so Best can keep it
+	// rather than re-racing near-equal candidates on every call.
+	selected map[string]netip.AddrPort
 }
 
 // NewProber returns a prober that sends via the given function.
@@ -84,6 +101,7 @@ func NewProber(key Key, selfPub []byte, send func([]byte, netip.AddrPort) error)
 		send:      send,
 		pending:   make(map[TxID]probe),
 		paths:     make(map[string]map[netip.AddrPort]*Path),
+		selected:  make(map[string]netip.AddrPort),
 		reflexive: make(map[netip.AddrPort]time.Time),
 	}
 }
@@ -181,21 +199,52 @@ func (p *Prober) NeedsProbe(peerID string, now time.Time) bool {
 }
 
 // Best returns the preferred working path for a peer.
+//
+// Sticky: once a path is in use it is kept while it still works, unless a
+// challenger is decisively better. Re-racing every call makes near-equal paths
+// alternate, and every alternation rewrites WireGuard's endpoint for that peer.
 func (p *Prober) Best(peerID string, now time.Time) (Path, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	var best Path
+	var cand Path
 	found := false
 	for _, path := range p.paths[peerID] {
 		if !path.Fresh(now) {
 			continue
 		}
-		if !found || better(*path, best) {
-			best, found = *path, true
+		if !found || better(*path, cand) {
+			cand, found = *path, true
 		}
 	}
-	return best, found
+	if !found {
+		delete(p.selected, peerID)
+		return Path{}, false
+	}
+
+	// Stay where we are unless the challenger clearly beats it.
+	if cur, ok := p.paths[peerID][p.selected[peerID]]; ok && cur.Fresh(now) {
+		if !decisivelyBetter(cand, *cur) {
+			return *cur, true
+		}
+	}
+	p.selected[peerID] = cand.Addr
+	return cand, true
+}
+
+// decisivelyBetter reports whether a challenger justifies abandoning a working
+// path.
+//
+// A change of address family always does: IPv6 means no NAT to traverse, which
+// is worth more than any latency difference. Within a family, the challenger
+// must beat the incumbent by SwitchMargin rather than merely by a hair.
+func decisivelyBetter(cand, cur Path) bool {
+	c6 := cand.Addr.Addr().Is6() && !cand.Addr.Addr().Is4In6()
+	u6 := cur.Addr.Addr().Is6() && !cur.Addr.Addr().Is4In6()
+	if c6 != u6 {
+		return c6
+	}
+	return cand.RTT+SwitchMargin < cur.RTT
 }
 
 // Paths returns every known path for a peer, for diagnostics.
@@ -228,6 +277,7 @@ func (p *Prober) Reflexive(now time.Time) []netip.AddrPort {
 func (p *Prober) Forget(peerID string) {
 	p.mu.Lock()
 	delete(p.paths, peerID)
+	delete(p.selected, peerID)
 	p.mu.Unlock()
 }
 

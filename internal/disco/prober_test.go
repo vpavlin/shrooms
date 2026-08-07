@@ -305,3 +305,116 @@ func TestUnknownPeerAlwaysNeedsProbe(t *testing.T) {
 		t.Error("a peer with no known path was not due for probing")
 	}
 }
+
+// pathAt injects a confirmed path directly, so a test can set exact RTTs.
+func pathAt(p *Prober, peerID string, addr netip.AddrPort, rtt time.Duration, at time.Time) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	byAddr := p.paths[peerID]
+	if byAddr == nil {
+		byAddr = make(map[netip.AddrPort]*Path)
+		p.paths[peerID] = byAddr
+	}
+	byAddr[addr] = &Path{Addr: addr, RTT: rtt, LastPong: at}
+}
+
+func newBareProber(t *testing.T) *Prober {
+	t.Helper()
+	return NewProber(testKey(t), make([]byte, 32), func([]byte, netip.AddrPort) error { return nil })
+}
+
+// Two near-equal paths must not trade places. Observed on real infrastructure:
+// a peer with two addresses on the same host alternated every 3s, and every
+// alternation rewrites WireGuard's endpoint — churn that costs a full handshake
+// retry if it lands mid-negotiation.
+func TestBestDoesNotFlapBetweenNearEqualPaths(t *testing.T) {
+	p := newBareProber(t)
+	now := time.Now()
+	a := netip.MustParseAddrPort("10.89.7.1:51820")
+	b := netip.MustParseAddrPort("10.93.0.1:51820")
+
+	pathAt(p, "peer", a, 3*time.Millisecond, now)
+	pathAt(p, "peer", b, 4*time.Millisecond, now)
+
+	first, ok := p.Best("peer", now)
+	if !ok {
+		t.Fatal("no path selected")
+	}
+
+	// Jitter reverses the ordering on each subsequent tick.
+	for i := 1; i <= 10; i++ {
+		at := now.Add(time.Duration(i) * time.Second)
+		if i%2 == 0 {
+			pathAt(p, "peer", a, 3*time.Millisecond, at)
+			pathAt(p, "peer", b, 2*time.Millisecond, at)
+		} else {
+			pathAt(p, "peer", a, 2*time.Millisecond, at)
+			pathAt(p, "peer", b, 3*time.Millisecond, at)
+		}
+		got, ok := p.Best("peer", at)
+		if !ok {
+			t.Fatalf("tick %d: lost the path entirely", i)
+		}
+		if got.Addr != first.Addr {
+			t.Fatalf("tick %d: switched %v -> %v on %s of jitter",
+				i, first.Addr, got.Addr, time.Millisecond)
+		}
+	}
+}
+
+// Stickiness must not become stubbornness: a decisively better path wins.
+func TestBestSwitchesWhenClearlyBetter(t *testing.T) {
+	p := newBareProber(t)
+	now := time.Now()
+	slow := netip.MustParseAddrPort("10.0.0.1:51820")
+	fast := netip.MustParseAddrPort("10.0.0.2:51820")
+
+	pathAt(p, "peer", slow, 200*time.Millisecond, now)
+	if got, _ := p.Best("peer", now); got.Addr != slow {
+		t.Fatalf("selected %v, want the only path %v", got.Addr, slow)
+	}
+
+	pathAt(p, "peer", fast, 20*time.Millisecond, now)
+	if got, _ := p.Best("peer", now); got.Addr != fast {
+		t.Errorf("stayed on the %s path with a %s one available", 200*time.Millisecond, 20*time.Millisecond)
+	}
+}
+
+// IPv6 wins regardless of latency: no NAT to traverse at all.
+func TestBestSwitchesToIPv6EvenIfSlower(t *testing.T) {
+	p := newBareProber(t)
+	now := time.Now()
+	v4 := netip.MustParseAddrPort("10.0.0.1:51820")
+	v6 := netip.MustParseAddrPort("[2001:db8::1]:51820")
+
+	pathAt(p, "peer", v4, 5*time.Millisecond, now)
+	p.Best("peer", now)
+
+	pathAt(p, "peer", v6, 40*time.Millisecond, now)
+	if got, _ := p.Best("peer", now); got.Addr != v6 {
+		t.Errorf("selected %v, want the IPv6 path", got.Addr)
+	}
+}
+
+// When the path in use goes stale, another must take over rather than the peer
+// being reported unreachable.
+func TestBestLeavesStaleSelection(t *testing.T) {
+	p := newBareProber(t)
+	now := time.Now()
+	old := netip.MustParseAddrPort("10.0.0.1:51820")
+	fresh := netip.MustParseAddrPort("10.0.0.2:51820")
+
+	pathAt(p, "peer", old, 5*time.Millisecond, now)
+	p.Best("peer", now)
+
+	later := now.Add(PathFresh + time.Second)
+	pathAt(p, "peer", fresh, 50*time.Millisecond, later)
+
+	got, ok := p.Best("peer", later)
+	if !ok {
+		t.Fatal("reported unreachable while a fresh path existed")
+	}
+	if got.Addr != fresh {
+		t.Errorf("stayed on the stale path %v", got.Addr)
+	}
+}
