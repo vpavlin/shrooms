@@ -53,6 +53,18 @@ ssh "$HOST" 'command -v docker >/dev/null || { echo "docker is not installed"; e
              [ -e /dev/net/tun ] || { echo "no /dev/net/tun"; exit 1; }
              echo "  $(. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME"), docker $(docker version --format "{{.Server.Version}}" 2>/dev/null)"'
 
+# Pull from the registry when we can: building and shipping the image is by far
+# the slowest step, and CI publishes one on every push to master.
+REGISTRY_IMAGE=${REGISTRY_IMAGE:-ghcr.io/vpavlin/logos-vpn:latest}
+if [ "${BUILD_IMAGE:-0}" != "1" ] && \
+   ssh "$HOST" "sudo docker pull -q $REGISTRY_IMAGE >/dev/null 2>&1 && sudo docker tag $REGISTRY_IMAGE $IMAGE"; then
+    echo "==> pulled $REGISTRY_IMAGE on the remote host (BUILD_IMAGE=1 to build locally instead)"
+    SKIP_SHIP=1
+else
+    SKIP_SHIP=0
+fi
+
+if [ "$SKIP_SHIP" = "0" ]; then
 echo "==> building image"
 [ -f "$LD_LIB/liblogosdelivery.so" ] || { echo "no liblogosdelivery.so in $LD_LIB — run 'make deps-release'"; exit 1; }
 make logos-vpn >/dev/null
@@ -67,6 +79,7 @@ echo "  $(docker image inspect "$IMAGE" --format '{{.Size}}' | awk '{printf "%.0
 
 echo "==> shipping image (this is the slow part)"
 docker save "$IMAGE" | gzip -1 | ssh "$HOST" 'gunzip | docker load' | tail -1
+fi
 
 echo "==> preparing directories"
 ssh "$HOST" 'sudo mkdir -p /etc/logos-vpn /var/lib/logos-vpn /run/logos-vpn

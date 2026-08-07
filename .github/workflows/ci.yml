@@ -58,6 +58,73 @@ jobs:
       - name: Test
         run: make test
 
+  # Publish the container image.
+  #
+  # Separate from build-from-source, which is continue-on-error and blocked
+  # upstream — so the only image build in this workflow was one that never
+  # completed. Deploying therefore meant building locally and pushing ~200MB
+  # over ssh to every host, which is the slow part of every deploy and of
+  # scripts/m3-remote.sh.
+  #
+  # Built against the release tarball rather than a source build, for the same
+  # reason test-cgo is: this job has to be able to gate.
+  image:
+    name: publish image
+    runs-on: ubuntu-latest
+    # Only from the canonical branch and tags. A pull request must not be able
+    # to publish an image under this repository's name.
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Fetch liblogosdelivery
+        run: make deps-release
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Lower-cased because ghcr rejects capitals in a repository name, and the
+      # owner is whatever GitHub says it is.
+      - name: Resolve image name
+        id: img
+        run: echo "name=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: make image IMAGE=${{ steps.img.outputs.name }} TAG=${{ github.sha }}
+
+      - name: Tag and push
+        run: |
+          set -eux
+          IMG=${{ steps.img.outputs.name }}
+          docker push "$IMG:${{ github.sha }}"
+          # A moving tag for deployments, and the version for tagged builds.
+          if [ "${{ github.ref }}" = "refs/heads/master" ] || [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            docker tag "$IMG:${{ github.sha }}" "$IMG:latest"
+            docker push "$IMG:latest"
+          fi
+          case "${{ github.ref }}" in
+            refs/tags/v*)
+              docker tag "$IMG:${{ github.sha }}" "$IMG:${GITHUB_REF_NAME}"
+              docker push "$IMG:${GITHUB_REF_NAME}"
+              ;;
+          esac
+
+      - name: Report
+        run: |
+          echo "pushed ${{ steps.img.outputs.name }}:${{ github.sha }}"
+          echo "hosts can now: docker pull ${{ steps.img.outputs.name }}:latest"
+          echo "NOTE: the package is private until made public in the repo's package settings."
+
   # Build liblogosdelivery from source in a pinned container, then build
   # logos-vpn against it. The library build is slow, so it is cached by the
   # upstream revision it was built from.

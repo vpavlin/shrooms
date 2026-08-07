@@ -151,8 +151,14 @@ echo "  ${KEY:0:8}… (joining the same mesh as the relay)"
 # The test node runs in a container regardless of how the relay runs — it needs
 # a NAT topology, which is the whole point. Ship the image if it is not there.
 echo "==> ensuring the image exists on $HOST"
-if ssh "$HOST" 'S=""; [ "$(id -u)" -eq 0 ] || S=sudo; $S docker image inspect logos-vpn:test >/dev/null 2>&1'; then
-    echo "  logos-vpn:test already present (IMAGE=rebuild to replace)"
+REGISTRY_IMAGE=${REGISTRY_IMAGE:-ghcr.io/vpavlin/logos-vpn:latest}
+if [ "${FORCE_IMAGE:-0}" != "1" ] && ssh "$HOST" 'S=""; [ "$(id -u)" -eq 0 ] || S=sudo; $S docker image inspect logos-vpn:test >/dev/null 2>&1'; then
+    echo "  logos-vpn:test already present (FORCE_IMAGE=1 to replace)"
+elif ssh "$HOST" "S=\"\"; [ \"\$(id -u)\" -eq 0 ] || S=sudo; \$S docker pull -q $REGISTRY_IMAGE >/dev/null 2>&1 && \$S docker tag $REGISTRY_IMAGE logos-vpn:test"; then
+    # Pulling beats building and pushing ~200MB over ssh, which is by far the
+    # slowest step here. Falls through to that when the registry is
+    # unreachable or the package is still private.
+    echo "  pulled $REGISTRY_IMAGE"
 else
     LD_LIB=${LD_LIB:-docker/build/lib}
     [ -f "$LD_LIB/liblogosdelivery.so" ] || { echo "no liblogosdelivery.so in $LD_LIB — run 'make deps-release'"; exit 1; }

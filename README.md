@@ -341,6 +341,13 @@ generates its own device identity, so no private key ever crosses the wire.
 
 `make m0` / `make m1` / `make m3` / `make s1` / `make s3` reproduce these.
 
+CI publishes a container image to `ghcr.io/vpavlin/logos-vpn` on every push to
+`master`, so `deploy.sh` and `m3-remote` pull it rather than building locally
+and pushing ~200 MB over ssh. Set `BUILD_IMAGE=1` (or `FORCE_IMAGE=1`) to build
+from your working tree instead — which you want whenever you are testing changes
+that are not yet pushed. The package must be made public in the repository's
+package settings before an unauthenticated host can pull it.
+
 `make m3-remote HOST=user@vps` runs the relay test over the real internet
 instead of between containers: it starts a third node behind a NAT on your
 relay host, which by construction cannot reach this machine directly, and
