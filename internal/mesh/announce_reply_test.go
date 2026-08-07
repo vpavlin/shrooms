@@ -3,6 +3,9 @@ package mesh
 import (
 	"testing"
 	"time"
+
+	"github.com/vpavlin/logos-vpn/internal/control"
+	"github.com/vpavlin/logos-vpn/internal/identity"
 )
 
 // requestAnnounce runs on the packet receive path and must never block, however
@@ -60,5 +63,49 @@ func TestReplyCooldownIsPerPeer(t *testing.T) {
 	}
 	if !allow("a", now.Add(AnnounceInterval+time.Second)) {
 		t.Error("cooldown never expired")
+	}
+}
+
+// A Fresh announce must draw a reply even when we believe the tunnel is fine.
+//
+// This is the case the first version got wrong: after a peer restarts, our
+// session with it stays valid for REJECT_AFTER_TIME, so a tunnel-only rule
+// stays silent for minutes — through exactly the window the restarted node is
+// waiting in.
+func TestFreshAnnounceSurvivesWireRoundTrip(t *testing.T) {
+	nk, _ := identity.NewNetworkKey()
+	id, _ := identity.New()
+	now := time.Now()
+
+	a := newAnnounce(t, id, "laptop", []string{"203.0.113.9:51820"}, 1)
+	a.Fresh = true
+
+	sealed, err := control.Seal(nk, 1, id.DevicePriv, a)
+	if err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+	got, err := control.OpenAnnounce(nk, 1, sealed, now)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if !got.Fresh {
+		t.Error("the fresh flag did not survive the wire; peers would never be asked")
+	}
+}
+
+// A steady-state announce must not carry it, or every node asks for
+// introductions forever and the reply rule is meaningless.
+func TestSteadyStateAnnounceIsNotFresh(t *testing.T) {
+	nk, _ := identity.NewNetworkKey()
+	id, _ := identity.New()
+
+	a := newAnnounce(t, id, "laptop", nil, 7)
+	sealed, _ := control.Seal(nk, 1, id.DevicePriv, a)
+	got, err := control.OpenAnnounce(nk, 1, sealed, time.Now())
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if got.Fresh {
+		t.Error("a default announce claimed to be fresh")
 	}
 }

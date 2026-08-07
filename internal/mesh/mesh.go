@@ -50,6 +50,11 @@ const AnnounceInterval = 45 * time.Second
 // forever without ever connecting.
 const AnnounceDebounce = 5 * time.Second
 
+// FreshWindow is how long after starting a node marks its announces Fresh,
+// asking peers to introduce themselves. Comfortably longer than the time to
+// hear the replies, and far shorter than an announce interval.
+const FreshWindow = 90 * time.Second
+
 // Keepalive is the WireGuard persistent keepalive, in seconds.
 //
 // DESIGN §10: 74% of CGNATs expire idle UDP state within 60s and the
@@ -314,13 +319,23 @@ func (m *Mesh) resubscribe(now time.Time) error {
 // unreachable — a genuine outage rather than a restart — would otherwise draw a
 // reply every time it spoke, doubling announce traffic on a shared bus for as
 // long as it stayed broken.
-func (m *Mesh) shouldReplyTo(p PeerInfo, now time.Time) bool {
-	stats, err := m.dev.PeerStats()
-	if err != nil {
-		return false
-	}
-	if st, ok := stats[p.WGPub.String()]; ok && st.Live(now) {
-		return false // already connected; they know where we are
+func (m *Mesh) shouldReplyTo(a *control.Announce, p PeerInfo, now time.Time) bool {
+	if !a.Fresh {
+		// Not asking. Answer anyway if they have no tunnel to us, which catches
+		// a peer stuck for some reason other than having just started.
+		//
+		// Deliberately NOT the only condition: after a peer restarts, our
+		// session with it stays valid for REJECT_AFTER_TIME, so we would
+		// consider the tunnel live and stay silent for minutes — through
+		// exactly the window the restarted node is waiting in. Only it knows it
+		// restarted, which is what Fresh is for.
+		stats, err := m.dev.PeerStats()
+		if err != nil {
+			return false
+		}
+		if st, ok := stats[p.WGPub.String()]; ok && st.Live(now) {
+			return false
+		}
 	}
 
 	m.replyMu.Lock()
@@ -356,6 +371,7 @@ func (m *Mesh) announce(now time.Time) error {
 		Seq:       seq,
 		Timestamp: now.Unix(),
 		Relay:     m.cfg.Relay,
+		Fresh:     now.Sub(m.timing.started) < FreshWindow,
 	}
 
 	raw, err := control.Seal(m.nk, topic.Epoch(now), m.st.Identity.DevicePriv, a)
@@ -483,15 +499,8 @@ func (m *Mesh) handle(ev waku.Event) {
 			"after", m.Timing(peer.ID()).DiscoveredAfter.Round(time.Millisecond))
 	}
 
-	// Reply with our own announce when this peer has no working tunnel to us.
-	//
-	// Triggering on "peer is new to us" would be the obvious rule and would be
-	// useless: the node that needs help is the one that just restarted, and it
-	// is NOT new to us — we have had it in our roster the whole time. It is we
-	// who are new to IT, and it cannot tell us so. Keying on the absent tunnel
-	// catches exactly that case, plus any other in which a peer is announcing
-	// but not connected.
-	if m.shouldReplyTo(peer, now) {
+	// Introduce ourselves when asked, or when this peer plainly cannot reach us.
+	if m.shouldReplyTo(a, peer, now) {
 		m.requestAnnounce()
 	}
 	if !changed {

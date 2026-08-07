@@ -59,6 +59,17 @@ type Announce struct {
 	Seq       uint64 `json:"seq"`
 	Timestamp int64  `json:"ts"` // unix seconds
 
+	// Fresh marks an announce sent shortly after the sender started, and asks
+	// peers to announce themselves in reply.
+	//
+	// A restarted node has an empty roster and must otherwise wait out every
+	// peer's announce interval to rebuild it — measured at 19.3s against 5.4s
+	// in the other direction. It cannot be helped by peers noticing anything,
+	// because nothing about it looks new to them: they have had it in their
+	// rosters throughout, and its sequence number persists across restarts. The
+	// sender is the only party that knows, so it has to say so.
+	Fresh bool `json:"fresh,omitempty"`
+
 	// Relay says this device will forward traffic for peers that cannot reach
 	// each other directly.
 	//
