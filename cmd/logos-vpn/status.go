@@ -141,10 +141,17 @@ func cmdStatus(args []string) error {
 		// gone stale means the peer is gone — reporting that as up is worse
 		// than reporting nothing, because status is what you check precisely
 		// when you suspect something is wrong.
+		// The handshake age is always shown, never just "up".
+		//
+		// A peer that restarts leaves the other side holding a session that
+		// stays valid for REJECT_AFTER_TIME, so "up" can be true of a peer that
+		// has already gone. The age is what distinguishes a tunnel rekeying
+		// every ~165s from one frozen since the peer vanished, and hiding it
+		// meant status asserted a connection that was not there.
 		tun := "no handshake"
 		switch {
 		case p.Live:
-			tun = "up"
+			tun = fmt.Sprintf("up %s", shortDur(p.HandshakeAgeS))
 		case p.Handshaked:
 			tun = fmt.Sprintf("stale %s", shortDur(p.HandshakeAgeS))
 		}
