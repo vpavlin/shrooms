@@ -341,6 +341,33 @@ generates its own device identity, so no private key ever crosses the wire.
 
 `make m0` / `make m1` / `make m3` / `make s1` / `make s3` reproduce these.
 
+### Adding a machine
+
+On the machine itself, with only docker installed:
+
+```console
+$ curl -fsSLO https://raw.githubusercontent.com/vpavlin/logos-vpn/master/scripts/install-node.sh
+$ sudo bash install-node.sh --key <NETWORK-KEY> --name laptop
+```
+
+Or to create a new mesh, on the first machine:
+
+```console
+$ sudo bash install-node.sh --init --name vps --relay
+```
+
+It pulls the published image, generates the config, installs a systemd unit and
+a `logos-vpn` wrapper so `logos-vpn status` works on the host. No Go toolchain,
+no checkout, no liblogosdelivery — everything is in the image. Re-running is
+safe: the device identity is never replaced by accident, because losing it means
+a new overlay address and looking like a different device to every peer.
+
+Read the script before running it as root, as you should with anything fetched
+this way.
+
+Use `scripts/deploy.sh` instead when you want to push to a remote host *from* a
+machine that has the repo — for example to deploy an unpushed change.
+
 CI publishes a container image to `ghcr.io/vpavlin/logos-vpn` on every push to
 `master`, so `deploy.sh` and `m3-remote` pull it rather than building locally
 and pushing ~200 MB over ssh. Set `BUILD_IMAGE=1` (or `FORCE_IMAGE=1`) to build
