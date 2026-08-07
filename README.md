@@ -8,9 +8,17 @@ WireGuard carries the traffic. Waku is only used to find each other — cold
 start, roaming, and repair. Once tunnels exist they sustain themselves, so
 there is nothing to keep running and nothing to pay for.
 
-**Status: working prototype.** Two nodes discover each other over the public
-logos.dev fleet and bring up a tunnel. See [Status](#status) for what is proven
-and what is not.
+**Status: working over the real internet.** A laptop behind NAT and a VPS
+discovered each other over the public logos.dev fleet and brought up a direct
+WireGuard tunnel — no coordination server, one shared key:
+
+```
+$ ping fd3b:ffe9:f81:6f18:41e:c574:c529:5bbf
+4 packets transmitted, 4 received, 0% packet loss
+rtt min/avg/max/mdev = 31.883/63.188/94.992/25.589 ms
+```
+
+See [Status](#status) for what is proven and what is not.
 
 ---
 
@@ -293,12 +301,15 @@ generates its own device identity, so no private key ever crosses the wire.
 | **S1** cgo binding to liblogosdelivery | ✅ publish→receive over the real fleet |
 | **S3** rotating topics stay on one shard | ✅ 6 epochs, all to `/waku/2/rs/2/3` |
 | **M0** WireGuard sharing a socket with control traffic | ✅ tunnel + control packets, no root |
-| **M1** Waku-discovered peers replace static config | ✅ two containers, discovery + tunnel + ping |
+| **M1** Waku-discovered peers replace static config | ✅ **verified over the real internet**: NATed laptop ↔ VPS, direct tunnel |
 | **M2** NAT traversal | ⚠️ reflexive discovery proven; the punch is not |
 | **M3** relay fallback | ✅ two NATed nodes carry traffic through a relay |
 | **M5** credentials, enrolment, revocation | not started |
 
 `make m0` / `make m1` / `make s1` / `make s3` reproduce these.
+
+**A NATed node reaching a public one works for real**, not just in containers.
+What remains unproven is two *NATed* nodes punching through to each other.
 
 **M2's caveat is worth reading before you rely on it.** Reflexive discovery
 demonstrably works — a NATed node learns its own public address from a peer's

@@ -394,7 +394,33 @@ no config change, and `logos-vpn status` shows an accurate roster.
 
 **~4–6 days.** ✅ **PASSED (2026-08-06)** — see below.
 
-#### M1 result
+#### M1 verified on real infrastructure (2026-08-07)
+
+A laptop behind residential NAT and a Hetzner VPS, discovering each other over
+the public logos.dev fleet:
+
+```
+NAME  OVERLAY IP                             ANNOUNCE  TUNNEL  ENDPOINT              RX/TX
+vps   fd3b:ffe9:f81:6f18:41e:c574:c529:5bbf  online    up      128.140.55.128:51820  156/212
+
+4 packets transmitted, 4 received, 0% packet loss
+rtt min/avg/max/mdev = 31.883/63.188/94.992/25.589 ms
+```
+
+Direct endpoint, not relayed. Reflexive discovery gave the laptop its public
+address (`178.213.45.235:51820`) with no STUN server, and a single reflexive
+address confirmed the NAT is endpoint-independent.
+
+**This found a bug the container tests could not.** See the peer-churn entry
+below: `replace_peers=true` on every sync recreated peers constantly, and a
+handshake initiation arriving mid-recreation is rejected as invalid. At 1 ms
+container RTT the handshake always won the race; at 100-450 ms it always lost.
+
+Two for two on the emulated network hiding real failures — the other being
+`MASQUERADE` not being endpoint-independent in M2. Prefer real infrastructure
+for anything timing- or NAT-dependent.
+
+#### M1 result (containers)
 
 Two containerised nodes, each in its own network namespace, discover each other
 over the public logos.dev fleet and bring up a WireGuard tunnel. Run with
