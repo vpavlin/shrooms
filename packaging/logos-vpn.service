@@ -25,6 +25,11 @@ Environment=LD_LIBRARY_PATH=/usr/local/lib/logos-vpn
 
 NoNewPrivileges=yes
 ProtectSystem=strict
+
+# ProtectSystem=strict makes /etc read-only, which would silently defeat
+# manage_hosts. Narrowly re-opened to the one file, so the daemon can keep peer
+# names current without gaining write access to the rest of /etc.
+ReadWritePaths=/etc/hosts
 ProtectHome=yes
 PrivateTmp=yes
 ProtectKernelTunables=yes

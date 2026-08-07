@@ -181,7 +181,8 @@ m2-edm:
 test-unit:
 	CGO_CFLAGS= CGO_LDFLAGS= $(GO) test -race ./internal/identity/... \
 		./internal/topic/... ./internal/control/... ./internal/wg/... \
-		./internal/disco/... ./internal/relay/... ./internal/state/...
+		./internal/disco/... ./internal/relay/... ./internal/state/... \
+		./internal/hosts/...
 
 ## Build every package. test-unit skips the cgo-bound ones, so without this an
 ## API change can break a command without any check noticing — which is exactly

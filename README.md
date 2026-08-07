@@ -245,9 +245,20 @@ $ sudo logos-vpn hosts --write    # update /etc/hosts
 $ ssh root@vps.mesh
 ```
 
-Entries go in a marked block, written atomically, and re-running is safe. It is
-static, so re-run it when peers change — a DNS server that avoids that is
-planned ([ADR-013](docs/adr/013-name-resolution.md)).
+Entries go in a marked block, written atomically, and re-running is safe.
+
+To keep it current without re-running anything, let the daemon do it:
+
+```toml
+manage_hosts = "true"      # in /etc/logos-vpn/config.toml
+```
+
+It rewrites the block whenever the roster changes, and leaves the file alone
+when nothing has. Off by default, since a VPN editing a system file that
+cloud-init and NetworkManager also touch should be a deliberate choice.
+
+Still a hosts file, so it needs root and does not exist on Android — the DNS
+server that replaces it is [ADR-013](docs/adr/013-name-resolution.md).
 
 ### 7. Add more machines
 

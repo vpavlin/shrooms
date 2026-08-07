@@ -68,6 +68,17 @@ type Config struct {
 	// Discovered via RelayAnnounce once that lands; configured for now.
 	RelayAddr string
 
+	// ManageHosts lets the daemon keep /etc/hosts current as the roster
+	// changes, so peers stay reachable by name without re-running anything.
+	//
+	// Off by default: a VPN silently editing a system file that cloud-init,
+	// NetworkManager and others also touch is a surprise, and it should be the
+	// operator's choice. The DNS server (M6) removes the need for it.
+	ManageHosts bool
+
+	// HostsSuffix is the domain appended to peer names.
+	HostsSuffix string
+
 	// AdminPK is reserved for M5 (admin-signed credentials) and ignored while
 	// empty. Present now so adding it later is not a config break.
 	AdminPK string
@@ -80,11 +91,12 @@ func DefaultConfig() Config {
 		host = "unnamed"
 	}
 	return Config{
-		Name:       host,
-		ListenPort: 51820,
-		Interface:  "logos0",
-		Preset:     "logos.dev",
-		Mode:       "Core",
+		Name:        host,
+		ListenPort:  51820,
+		Interface:   "logos0",
+		Preset:      "logos.dev",
+		Mode:        "Core",
+		HostsSuffix: "mesh",
 	}
 }
 
@@ -274,6 +286,10 @@ func parseConfig(text string) (Config, error) {
 			c.Relay = unquote(val) == "true"
 		case "relay_addr":
 			c.RelayAddr = unquote(val)
+		case "manage_hosts":
+			c.ManageHosts = unquote(val) == "true"
+		case "hosts_suffix":
+			c.HostsSuffix = unquote(val)
 		case "listen_port":
 			var p uint16
 			if _, err := fmt.Sscanf(val, "%d", &p); err != nil {
@@ -331,6 +347,13 @@ func WriteConfig(path string, c Config) error {
 	}
 	if c.RelayAddr != "" {
 		fmt.Fprintf(&b, "relay_addr  = %q\n", c.RelayAddr)
+	}
+	b.WriteString("\n# Keep /etc/hosts current as peers come and go, so `ssh vps.mesh` works\n")
+	b.WriteString("# without re-running anything. Off by default: this edits a system file.\n")
+	if c.ManageHosts {
+		b.WriteString("manage_hosts = \"true\"\n")
+	} else {
+		b.WriteString("# manage_hosts = \"true\"\n")
 	}
 	b.WriteString("\n# Extra endpoints to announce. Usually unnecessary: interface addresses\n")
 	b.WriteString("# are announced automatically and a NATed node learns its public address\n")

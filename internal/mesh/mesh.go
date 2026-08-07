@@ -18,6 +18,7 @@ import (
 
 	"github.com/vpavlin/logos-vpn/internal/control"
 	"github.com/vpavlin/logos-vpn/internal/disco"
+	"github.com/vpavlin/logos-vpn/internal/hosts"
 	"github.com/vpavlin/logos-vpn/internal/identity"
 	"github.com/vpavlin/logos-vpn/internal/relay"
 	"github.com/vpavlin/logos-vpn/internal/state"
@@ -390,5 +391,42 @@ func (m *Mesh) syncPeers() error {
 		}
 		out = append(out, peer)
 	}
-	return m.dev.SetPeers(out)
+	if err := m.dev.SetPeers(out); err != nil {
+		return err
+	}
+	m.refreshHosts()
+	return nil
+}
+
+// refreshHosts keeps /etc/hosts in step with the roster, when asked to.
+//
+// Called after every successful peer sync rather than on a timer: the roster is
+// what it reflects, so it should change exactly when the roster does. Apply is a
+// no-op when the rendered block is unchanged, so an unchanged sync does not
+// touch the file.
+func (m *Mesh) refreshHosts() {
+	if !m.cfg.ManageHosts {
+		return
+	}
+
+	entries := []hosts.Entry{{Name: m.cfg.Name, Addr: m.self.String()}}
+	for _, p := range m.roster.Peers() {
+		entries = append(entries, hosts.Entry{Name: p.Name, Addr: p.Overlay.String()})
+	}
+
+	suffix := m.cfg.HostsSuffix
+	if suffix == "" {
+		suffix = "mesh"
+	}
+
+	changed, err := hosts.Apply(hosts.DefaultFile, hosts.Render(entries, suffix))
+	if err != nil {
+		// Not fatal: the mesh works without names. Warn once per occurrence
+		// rather than failing the sync.
+		m.log.Warn("could not update /etc/hosts", "err", err)
+		return
+	}
+	if changed {
+		m.log.Info("updated /etc/hosts", "entries", len(entries))
+	}
 }

@@ -657,11 +657,12 @@ earns the project.
 ### M6 — Name resolution
 
 `logos-vpn hosts` ✅ writes `/etc/hosts` entries from the live roster, in a
-marked block, atomically. Zero dependencies and useful today.
+marked block, atomically. With `manage_hosts = "true"` the daemon keeps it
+current as the roster changes, so it is no longer stale between runs.
 
-Not enough on its own: it is static (a new peer is unreachable by name until
-someone regenerates), needs root, and **does not exist on Android**, which is
-the platform this is ultimately for.
+Still not enough on its own: it needs root, edits a system file other tools also
+manage, and **does not exist on Android**, which is the platform this is
+ultimately for.
 
 **The DNS server is the real answer.** The daemon already holds the roster, so
 it serves it over DNS on the overlay address, authoritative for the mesh domain
