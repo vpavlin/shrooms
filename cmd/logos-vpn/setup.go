@@ -124,7 +124,17 @@ func setup(cfgPath, stateDir string, nk identity.NetworkKey, name string, port u
 		fmt.Printf("If it is reachable via a port forward, tell it so:\n")
 		fmt.Printf("  advertise = [\"<public-ip>:%d\"]   in %s\n", cfg.ListenPort, cfgPath)
 	}
-	fmt.Printf("\nNext: systemctl enable --now logos-vpn\n")
+	// Only suggest systemd if the unit is actually installed. Telling someone
+	// to enable a service that does not exist is worse than saying nothing.
+	if _, err := os.Stat("/etc/systemd/system/logos-vpn.service"); err == nil {
+		fmt.Printf("\nNext:\n")
+		fmt.Printf("  sudo systemctl enable --now logos-vpn\n")
+	} else {
+		fmt.Printf("\nNext, run it:\n")
+		fmt.Printf("  sudo logos-vpn daemon -v\n")
+		fmt.Printf("\nOr install it as a service first:\n")
+		fmt.Printf("  sudo make install && sudo systemctl enable --now logos-vpn\n")
+	}
 	return nil
 }
 

@@ -6,7 +6,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/logos-vpn daemon
+ExecStart=/usr/local/bin/logos-vpn daemon
 
 # CAP_NET_ADMIN is needed to create the TUN device and configure its address
 # and route. Everything else runs unprivileged.
@@ -17,6 +17,11 @@ StateDirectory=logos-vpn
 StateDirectoryMode=0700
 ConfigurationDirectory=logos-vpn
 RuntimeDirectory=logos-vpn
+RuntimeDirectoryMode=0750
+
+# liblogosdelivery and friends are installed alongside the binary rather than
+# into a system library path, so they do not collide with anything.
+Environment=LD_LIBRARY_PATH=/usr/local/lib/logos-vpn
 
 NoNewPrivileges=yes
 ProtectSystem=strict

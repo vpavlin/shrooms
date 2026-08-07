@@ -138,9 +138,15 @@ nothing to ship:
 ```console
 $ git clone https://github.com/vpavlin/logos-vpn && cd logos-vpn
 $ make deps-release && make logos-vpn
-$ sudo ./bin/logos-vpn init --relay --name vps
-$ sudo ./bin/logos-vpn daemon -v
+$ sudo make install                       # binary, libraries, systemd unit
+$ sudo logos-vpn init --relay --name vps
+$ sudo systemctl enable --now logos-vpn
 ```
+
+`make install` relinks the binary with an rpath pointing at
+`/usr/local/lib/logos-vpn`, so it keeps working after you delete the checkout.
+To run it in the foreground instead, skip the install and use
+`sudo ./bin/logos-vpn daemon -v`.
 
 **Otherwise, push from your machine** with `deploy.sh`, which builds a container
 image and ships it over ssh:
@@ -186,7 +192,7 @@ $ sudo ./bin/logos-vpn join <NETWORK-KEY> --name laptop
 $ sudo ./bin/logos-vpn daemon -v
 ```
 
-Leave that running. On first start it generates a device identity, derives its
+Leave that running (or `sudo make install` and use systemd here too). On first start it generates a device identity, derives its
 overlay address, connects to the logos.dev fleet, and announces itself.
 
 ### 4. Check it works

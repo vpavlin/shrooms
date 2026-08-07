@@ -25,7 +25,7 @@ GO ?= go
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 .PHONY: all deps deps-basecamp check-lib logos-vpn wakuspike s3topics m0demo \
-        s1 s3 probe m0 m1 m2 m2-edm m3 dist image push-image deps-release test test-unit fmt clean
+        s1 s3 probe m0 m1 m2 m2-edm m3 dist image push-image deps-release install uninstall test test-unit fmt clean
 
 all: logos-vpn
 
@@ -97,6 +97,41 @@ push-image: image
 ## without Logos Basecamp can still build.
 deps-release:
 	./scripts/fetch-lib.sh
+
+## --- install ---
+
+PREFIX  ?= /usr/local
+LIBDIR  ?= $(PREFIX)/lib/logos-vpn
+
+## Install the binary, its libraries and the systemd unit.
+##
+## The binary is relinked with an rpath pointing at the installed library
+## directory, so it does not depend on this checkout still existing.
+install: check-lib
+	install -d $(DESTDIR)$(LIBDIR) $(DESTDIR)$(PREFIX)/bin
+	install -m 0644 $(LD_LIB)/*.so $(DESTDIR)$(LIBDIR)/
+	@cp $(LD_LIB)/*.so.* $(DESTDIR)$(LIBDIR)/ 2>/dev/null || true
+	CGO_LDFLAGS="-L$(abspath $(LD_LIB)) -llogosdelivery -Wl,-rpath,$(LIBDIR)" 		$(GO) build -trimpath -ldflags "-X main.version=$(VERSION)" 		-o $(DESTDIR)$(PREFIX)/bin/logos-vpn ./cmd/logos-vpn
+	install -d $(DESTDIR)/etc/systemd/system
+	install -m 0644 packaging/logos-vpn.service $(DESTDIR)/etc/systemd/system/
+	@echo
+	@echo "installed:"
+	@echo "  $(PREFIX)/bin/logos-vpn"
+	@echo "  $(LIBDIR)/"
+	@echo "  /etc/systemd/system/logos-vpn.service"
+	@echo
+	@echo "next:"
+	@echo "  sudo logos-vpn init --relay --name $$(hostname)   # or: join <KEY>"
+	@echo "  sudo systemctl daemon-reload"
+	@echo "  sudo systemctl enable --now logos-vpn"
+
+uninstall:
+	systemctl disable --now logos-vpn 2>/dev/null || true
+	rm -f $(DESTDIR)$(PREFIX)/bin/logos-vpn $(DESTDIR)/etc/systemd/system/logos-vpn.service
+	rm -rf $(DESTDIR)$(LIBDIR)
+	@echo "removed the binary, libraries and unit."
+	@echo "config and identity are left alone:"
+	@echo "  /etc/logos-vpn  /var/lib/logos-vpn"
 
 ## --- spikes and milestones ---
 

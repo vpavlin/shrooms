@@ -12,6 +12,7 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -26,7 +27,7 @@ import (
 
 // DefaultSocket is the daemon's control socket. The CLI is a thin client over
 // it, which also gives monitoring a hook for free.
-const DefaultSocket = "/run/logos-vpn.sock"
+const DefaultSocket = "/run/logos-vpn/logos-vpn.sock"
 
 func cmdDaemon(args []string) error {
 	fs := flag.NewFlagSet("daemon", flag.ExitOnError)
@@ -153,6 +154,11 @@ type peerStatus struct {
 
 // serveControl exposes status over a unix socket.
 func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Mesh, cfg state.Config, self netip.Addr) (*http.Server, error) {
+	// systemd's RuntimeDirectory creates this, but the daemon must also work
+	// when run by hand.
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, fmt.Errorf("create socket directory: %w", err)
+	}
 	_ = os.Remove(path) // a stale socket from an unclean exit would block bind
 
 	ln, err := net.Listen("unix", path)
