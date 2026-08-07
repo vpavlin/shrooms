@@ -101,6 +101,10 @@ func New(log *slog.Logger, cfg state.Config, st *state.State, node *waku.Node, d
 	// traversal possible at all.
 	dev.Bind.SetControlHandler(m.handleControl)
 
+	// ParseEndpoint needs these to rebuild relay endpoints when WireGuard hands
+	// back an endpoint string over the UAPI.
+	dev.Bind.SetRelayIdentity(m.relayKey, st.Identity.WGPub)
+
 	return m, nil
 }
 

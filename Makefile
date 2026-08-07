@@ -24,7 +24,7 @@ GO ?= go
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 .PHONY: all deps deps-basecamp check-lib logos-vpn wakuspike s3topics m0demo \
-        s1 s3 probe m0 m1 m2 m2-edm dist test test-unit fmt clean
+        s1 s3 probe m0 m1 m2 m2-edm m3 dist test test-unit fmt clean
 
 all: logos-vpn
 
@@ -97,6 +97,11 @@ m1:
 ## M2: two nodes behind separate NATs punch through to each other.
 m2:
 	./scripts/m2-containers.sh
+
+## M3: two NATed nodes carry traffic through a relay. Does not depend on
+## punching, so it is unaffected by the MASQUERADE mapping problem.
+m3:
+	RELAY=1 ./scripts/m2-containers.sh
 
 ## M2 under endpoint-dependent NAT, where punching is expected to fail and
 ## the relay (M3) is required.

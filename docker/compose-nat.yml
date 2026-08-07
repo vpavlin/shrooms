@@ -47,6 +47,9 @@ services:
       public:
         ipv4_address: 10.90.0.10
     command: ["daemon", "-v"]
+    # node-pub is reachable from both LANs, so it doubles as the relay. This is
+    # the case that matters: two NATed peers talking through a public one, and
+    # it does not depend on punching working at all.
 
   gw-a:
     image: logos-vpn:test

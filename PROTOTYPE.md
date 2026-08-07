@@ -535,7 +535,29 @@ Connectivity when punching fails, with nothing hardcoded.
 via the relay, and it recovers to direct when unblocked — with `status` showing
 the transition.
 
-**~4–6 days.**
+**~4–6 days.** ✅ **PASSED (2026-08-07)** — `make m3`
+
+Two nodes behind separate NAT gateways, neither reachable from the other, with a
+public node relaying:
+
+```
+    node-a <-> node-b handshake after 19s
+
+NAME    OVERLAY IP                              ANNOUNCE  TUNNEL  ENDPOINT
+node-b  fd09:8f62:b2a1:e9c8:3e03:1b25:f51:e2ac  online    up      relay:15590dd4…@10.90.0.10:51820
+
+3 packets transmitted, 3 received, 0% packet loss
+```
+
+This is the property that makes the mesh usable: any pair connects regardless of
+NAT, whether or not punching works. It also sidesteps the M2 harness problem
+entirely, since the relay path does not depend on endpoint-independent mapping.
+
+**The bug worth remembering:** `SetRelayIdentity` was defined but never called,
+so relay endpoints were built with a zero key, the MAC was wrong, and the relay
+dropped every frame — with no error logged anywhere. It presented as a network
+failure. `ParseEndpoint` now returns an error instead of building an endpoint
+that cannot work, with a regression test.
 
 ### M4 — Make it seamless
 

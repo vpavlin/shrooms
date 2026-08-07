@@ -154,7 +154,7 @@ in reality.
 | **M0** WireGuard sharing a socket with control traffic | ✅ tunnel + control packets, no root |
 | **M1** Waku-discovered peers replace static config | ✅ two containers, discovery + tunnel + ping |
 | **M2** NAT traversal | ⚠️ reflexive discovery proven; the punch is not |
-| **M3** relay fallback | ✅ implemented, not yet tested end to end |
+| **M3** relay fallback | ✅ two NATed nodes carry traffic through a relay |
 | **M5** credentials, enrolment, revocation | not started |
 
 `make m0` / `make m1` / `make s1` / `make s3` reproduce these.

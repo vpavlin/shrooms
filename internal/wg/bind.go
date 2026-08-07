@@ -256,6 +256,13 @@ func (b *Bind) ParseEndpoint(s string) (conn.Endpoint, error) {
 	key, self := b.relayKey, b.selfPub
 	b.mu.RUnlock()
 
+	// Fail loudly rather than building an endpoint whose MAC the relay will
+	// reject. Without this the symptom is a relay that silently drops every
+	// frame, which looks like a network problem rather than a missing call.
+	if key == (relay.Key{}) || self.IsZero() {
+		return nil, errors.New("relay endpoint requested before SetRelayIdentity was called")
+	}
+
 	return NewRelayEndpoint(key, addr, self, peer), nil
 }
 

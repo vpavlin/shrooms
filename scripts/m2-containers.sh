@@ -19,6 +19,9 @@ BUILD=$D/build
 LD_LIB=${LD_LIB:-$D/build/lib}
 WAIT=${WAIT:-150}
 NAT_MODE=${NAT_MODE:-eim}
+# RELAY=1 configures node-pub as a relay and points the NATed nodes at it, so
+# the test measures the relay path rather than punching.
+RELAY=${RELAY:-0}
 
 echo "==> prerequisites"
 [ -e /dev/net/tun ] || { echo "no /dev/net/tun on the host"; exit 1; }
@@ -42,6 +45,16 @@ for n in a b; do
     ./bin/logos-vpn join "$KEY" --config "$RUN/$n/etc/config.toml" \
         --state "$RUN/$n/state" --name "node-$n" >/dev/null
 done
+
+if [ "$RELAY" = "1" ]; then
+    # node-pub relays; the NATed nodes fall back to it when no direct path
+    # exists. Appended rather than rewritten so the generated config is intact.
+    echo 'relay = "true"' >> "$RUN/pub/etc/config.toml"
+    for n in a b; do
+        echo 'relay_addr  = "10.90.0.10:51820"' >> "$RUN/$n/etc/config.toml"
+    done
+    echo "    relay: node-pub at 10.90.0.10:51820"
+fi
 echo "    network key: $KEY"
 
 docker build -q -t logos-vpn:test -f "$D/Dockerfile" "$BUILD/ctx" >/dev/null
@@ -52,7 +65,11 @@ NAT_MODE=$NAT_MODE docker compose -f "$D/compose-nat.yml" up -d --force-recreate
 cleanup() {
     for n in pub a b; do
         echo "==> app log (node-$n)"
-        docker logs "logos-vpn-${n}" 2>&1 | grep -E "^time=" | tail -12 || true
+        # Head as well as tail: startup lines (relay config, mode) are at the
+        # beginning and scrolled off when only the tail was shown.
+        docker logs "logos-vpn-${n}" 2>&1 | grep -E "^time=" | head -6 || true
+        echo "        ..."
+        docker logs "logos-vpn-${n}" 2>&1 | grep -E "^time=" | tail -8 || true
     done
     if [ "${KEEP:-0}" = "1" ]; then
         echo "==> KEEP=1, leaving containers up"
@@ -75,8 +92,13 @@ print('0 0')
 " 2>/dev/null || echo "0 0"
 }
 
-echo "==> waiting up to ${WAIT}s for a DIRECT path between node-a and node-b"
-echo "    (both are behind separate NATs; reaching each other needs a punch)"
+if [ "$RELAY" = "1" ]; then
+    echo "==> waiting up to ${WAIT}s for node-a <-> node-b VIA THE RELAY"
+    echo "    (both behind separate NATs; neither can reach the other directly)"
+else
+    echo "==> waiting up to ${WAIT}s for a DIRECT path between node-a and node-b"
+    echo "    (both are behind separate NATs; reaching each other needs a punch)"
+fi
 deadline=$((SECONDS + WAIT))
 discovered=0
 punched=0
@@ -108,6 +130,10 @@ if [ $discovered -ne 1 ]; then
 fi
 
 if [ $punched -ne 1 ]; then
+    if [ "$RELAY" = "1" ]; then
+        echo "FAIL: relay configured but node-a and node-b never handshaked"
+        exit 1
+    fi
     if [ "$NAT_MODE" = "edm" ]; then
         echo "M2 EXPECTED FAIL: no direct path under endpoint-dependent NAT."
         echo "  This is the case the relay exists for. Implement M3."
@@ -128,7 +154,11 @@ echo
 echo "==> pinging node-b across the overlay (NAT to NAT)"
 if docker exec logos-vpn-a ping -c 3 -W 5 "$PEER"; then
     echo
-    echo "M2 PASS: two NATed nodes punched through and carry traffic directly"
+    if [ "$RELAY" = "1" ]; then
+        echo "M3 PASS: two NATed nodes carry traffic through the relay"
+    else
+        echo "M2 PASS: two NATed nodes punched through and carry traffic directly"
+    fi
 else
     echo
     echo "FAIL: direct path reported but the overlay ping did not get through"
