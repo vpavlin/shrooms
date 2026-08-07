@@ -392,6 +392,32 @@ func (m *Mesh) handle(ev waku.Event) {
 	m.requestResync()
 }
 
+// bootstrapEndpoint picks the announced candidate most likely to be reachable
+// from here, for a peer we have never probed successfully.
+//
+// Globally-routable addresses first. A peer announces every address it has, and
+// taking the list head meant a LAN address could be chosen over a public one
+// purely because of interface ordering on the far side.
+func bootstrapEndpoint(candidates []string) string {
+	var fallback string
+	for _, c := range candidates {
+		ap, err := netip.ParseAddrPort(c)
+		if err != nil {
+			continue
+		}
+		if ap.Addr().IsGlobalUnicast() && !ap.Addr().IsPrivate() &&
+			!ap.Addr().IsLinkLocalUnicast() && !ap.Addr().IsLoopback() {
+			return c
+		}
+		if fallback == "" {
+			fallback = c
+		}
+	}
+	// A private address is still worth trying when it is all we have: two nodes
+	// on the same LAN reach each other that way and nothing else.
+	return fallback
+}
+
 func hasBest(m *Mesh, id string, now time.Time) bool {
 	_, ok := m.prober.Best(id, now)
 	return ok
@@ -404,10 +430,23 @@ func (m *Mesh) syncPeers() error {
 
 	now := time.Now()
 	rl := m.selectRelay(now)
+	// The data-plane view, so we can tell a peer we have never reached from one
+	// whose endpoint WireGuard already learned and which must not be clobbered.
+	stats, _ := m.dev.PeerStats()
+
 	for _, p := range peers {
-		// Prefer a path that has actually answered a probe. Fall back to the
-		// first announced candidate so a directly-reachable peer still works
-		// before probing completes — that is the M1 behaviour.
+		// A peer with no announce for OfflineAfter and no live tunnel is gone;
+		// keeping it configured means transmitting at a dead address forever.
+		//
+		// Both conditions, not just the first: rendezvous and the data plane
+		// fail independently, so a peer that has gone quiet on Waku while its
+		// tunnel still works must be kept. Tearing tunnels down because the
+		// fleet went away is exactly what DESIGN §2 forbids.
+		st, haveStats := stats[p.WGPub.String()]
+		if !p.Online(now) && !(haveStats && st.Live(now)) {
+			continue
+		}
+
 		peer := wg.Peer{
 			WGPub:     p.WGPub,
 			AllowedIP: p.Overlay,
@@ -425,10 +464,23 @@ func (m *Mesh) syncPeers() error {
 			// peer unreachable — failing over is just an endpoint swap, with no
 			// tunnel teardown or rehandshake.
 			peer.RelayVia = wg.NewRelayEndpoint(m.relayKey, rl.addr, m.st.Identity.WGPub, p.WGPub)
-		case len(p.Endpoints) > 0:
-			// Nothing probed and no relay: try what was announced. This is the
-			// M1 behaviour and works whenever one side is directly reachable.
-			peer.Endpoint = p.Endpoints[0]
+		case haveStats && st.Live(now):
+			// Nothing probed and no relay, but the tunnel is working. Leave the
+			// endpoint alone.
+			//
+			// This is the bug that took a mesh down for fourteen minutes: the
+			// fallback below wrote an announced candidate over an endpoint that
+			// was carrying traffic. Peers announce every address they have,
+			// including LAN ones, so the "candidate" was 192.168.0.151 — routable
+			// only from the announcer's own house. ADR-009 says never set an
+			// endpoint that has not answered a probe; this case is where that
+			// rule was being broken.
+			peer.KeepEndpoint = true
+		case bootstrapEndpoint(p.Endpoints) != "":
+			// Never reached this peer and have no relay: try what was announced.
+			// This is a bootstrap guess, so prefer an address that could
+			// plausibly work from here over one that certainly cannot.
+			peer.Endpoint = bootstrapEndpoint(p.Endpoints)
 		}
 		out = append(out, peer)
 	}

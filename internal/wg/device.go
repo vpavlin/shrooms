@@ -25,6 +25,14 @@ type Peer struct {
 	// median is 35s.
 	Keepalive int
 
+	// KeepEndpoint leaves the peer's current endpoint untouched.
+	//
+	// Writing `endpoint=` overwrites whatever WireGuard has, including an
+	// address it learned from an authenticated packet. When we have nothing
+	// better than an unvalidated announced candidate, saying nothing is
+	// strictly better than replacing a working endpoint with a guess.
+	KeepEndpoint bool
+
 	// RelayVia routes this peer through a relay instead of a direct endpoint.
 	// Mutually exclusive with Endpoint; when set, WireGuard is told to send to
 	// the relay and the Bind wraps each packet.
@@ -111,6 +119,8 @@ func (d *Device) SetPeers(peers []Peer) error {
 			fmt.Fprintf(&b, "preshared_key=%s\n", hex.EncodeToString(p.PSK[:]))
 		}
 		switch {
+		case p.KeepEndpoint:
+			// Deliberately emits no endpoint line.
 		case p.RelayVia != nil:
 			// Our own endpoint form, which Bind.ParseEndpoint turns back into a
 			// RelayEndpoint. WireGuard treats the string as opaque.
@@ -151,7 +161,8 @@ func samePeers(a, b []Peer) bool {
 	for _, p := range b {
 		prev, ok := idx[p.WGPub]
 		if !ok || prev.Endpoint != p.Endpoint || prev.PSK != p.PSK ||
-			prev.AllowedIP != p.AllowedIP || prev.Keepalive != p.Keepalive {
+			prev.AllowedIP != p.AllowedIP || prev.Keepalive != p.Keepalive ||
+			prev.KeepEndpoint != p.KeepEndpoint {
 			return false
 		}
 		// Relay endpoints compare by their serialised form, which encodes both
