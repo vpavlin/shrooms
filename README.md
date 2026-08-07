@@ -1,10 +1,10 @@
 # logos-vpn
 
 An overlay mesh VPN between your own machines, using
-[Logos Messaging](https://github.com/logos-messaging) (Waku) for rendezvous
+[Logos Messaging](https://github.com/logos-messaging) for rendezvous
 instead of a coordination server.
 
-WireGuard carries the traffic. Waku is only used to find each other — cold
+WireGuard carries the traffic. Logos Messaging is only used to find each other — cold
 start, roaming, and repair. Once tunnels exist they sustain themselves, so
 there is nothing to keep running and nothing to pay for.
 
@@ -43,7 +43,7 @@ See [Status](#status) for what is proven and what is not.
 Three planes, deliberately separate:
 
 - **Data** — userspace WireGuard, direct peer-to-peer where NAT allows.
-- **Rendezvous** — Waku pub/sub, used intermittently: cold start, network
+- **Rendezvous** — Logos Messaging pub/sub, used intermittently: cold start, network
   change, partition repair.
 - **Steady state** — WireGuard relearns a peer's endpoint from any
   authenticated packet, so a node that roams and sends first needs no signalling
@@ -217,7 +217,7 @@ vps   fd48:d107:3fce:a332:855c:1059:8060:59d7 online    up      203.0.113.4:5182
 $ ping fd48:d107:3fce:a332:855c:1059:8060:59d7
 ```
 
-Expect discovery in 15–25 s from cold (most of it the Waku node joining the
+Expect discovery in 15–25 s from cold (most of it the messaging node joining the
 fleet) and a handshake shortly after.
 
 ### 5. What to look at
@@ -332,7 +332,7 @@ generates its own device identity, so no private key ever crosses the wire.
 | **S1** cgo binding to liblogosdelivery | ✅ publish→receive over the real fleet |
 | **S3** rotating topics stay on one shard | ✅ 6 epochs, all to `/waku/2/rs/2/3` |
 | **M0** WireGuard sharing a socket with control traffic | ✅ tunnel + control packets, no root |
-| **M1** Waku-discovered peers replace static config | ✅ **verified over the real internet**: NATed laptop ↔ VPS, direct tunnel, ssh across it |
+| **M1** discovered peers replace static config | ✅ **verified over the real internet**: NATed laptop ↔ VPS, direct tunnel, ssh across it |
 | **M2** NAT traversal | 🟨 reflexive discovery proven on real NAT; punching between two NATed nodes unproven |
 | **M3** relay fallback | 🟨 auto-discovered and working in containers; untested on real infrastructure |
 | **M6** name resolution | 🟨 `logos-vpn hosts` **verified for real** (`ssh root@vps.mesh`); DNS server planned |
@@ -383,7 +383,7 @@ short version:
   The first — one-time invite tokens, so the copy/pasted secret stops being
   permanent — is small, has no dependencies, and should land before this runs
   anywhere exposed.
-- Some things leak inherently and cannot be fixed here: Waku leaves the content
+- Some things leak inherently and cannot be fixed here: the messaging layer leaves the content
   topic and timestamp in cleartext, relay peers see your IP, and WireGuard is
   identifiable as WireGuard.
 
@@ -403,7 +403,7 @@ short version:
 ## Scope
 
 Linux first. Android is designed for but deliberately deferred — see DESIGN §6,
-which covers the constraints that decide it (Doze tears down Waku connections on
+which covers the constraints that decide it (Doze tears down messaging connections on
 every cycle, so intermittency is forced rather than chosen). **iOS is out of
 scope**: its NetworkExtension memory cap makes an embedded libp2p node
 impractical.

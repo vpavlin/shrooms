@@ -95,15 +95,12 @@ func cmdStatus(args []string) error {
 	// online", and sends you debugging the wrong plane. This is the line that
 	// distinguishes them.
 	if !st.Rendezvous.OK {
-		fmt.Printf("\n!! rendezvous: %s\n", st.Rendezvous.Problem)
-		fmt.Printf("   logos.dev status=%s, %d topics", st.Rendezvous.Status, st.Rendezvous.Topics)
-		if st.Rendezvous.LastMsgAgeS > 0 {
-			fmt.Printf(", last message %s ago", shortDur(st.Rendezvous.LastMsgAgeS))
+		fmt.Printf("\n!! rendezvous: %s", st.Rendezvous.Problem)
+		if st.Rendezvous.Detail != "" {
+			fmt.Printf(" (%s)", st.Rendezvous.Detail)
 		}
 		fmt.Println()
-		fmt.Println("   Peer discovery and endpoint updates are stalled.")
-		fmt.Println("   Tunnels already established are NOT affected — Waku is only")
-		fmt.Println("   used to find peers, not to carry traffic.")
+		fmt.Println("   Peer discovery is stalled; established tunnels are unaffected.")
 	}
 	fmt.Println()
 

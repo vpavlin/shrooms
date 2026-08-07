@@ -1,6 +1,7 @@
 package mesh
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -71,5 +72,57 @@ func TestHealthBeforeFirstMessage(t *testing.T) {
 	}
 	if got := h.snapshot().Problem(now); got == "" {
 		t.Error("no problem string before the first message")
+	}
+}
+
+// The warning line must state each fact once. An earlier version said the
+// condition, the evidence and the consequence twice each, which is how a
+// warning trains people to skip it.
+func TestHealthMessageDoesNotRepeatItself(t *testing.T) {
+	now := time.Now()
+
+	cases := []struct {
+		name string
+		h    Health
+	}{
+		{"disconnected", Health{Status: "Disconnected", Topics: 3, LastMessage: now.Add(-19 * time.Second)}},
+		{"silent shard", Health{Status: "Connected", Topics: 3, LastMessage: now.Add(-RendezvousStale - time.Minute)}},
+		{"nothing yet", Health{Status: "Connected", Topics: 3}},
+		{"no topics", Health{Status: "Connected"}},
+	}
+
+	for _, c := range cases {
+		problem, detail := c.h.Problem(now), c.h.Detail(now)
+		if problem == "" {
+			t.Errorf("%s: no problem reported for an unhealthy state", c.name)
+			continue
+		}
+
+		// Nothing in the evidence may restate the condition.
+		for _, w := range []string{"connected", "Connected", "topics"} {
+			if strings.Contains(problem, w) && strings.Contains(detail, w) {
+				t.Errorf("%s: %q appears in both problem (%q) and detail (%q)", c.name, w, problem, detail)
+			}
+		}
+
+		// The consequence is the caller's to state, once.
+		for _, w := range []string{"tunnel", "unaffected", "stalled", "discovery"} {
+			if strings.Contains(strings.ToLower(problem+detail), w) {
+				t.Errorf("%s: %q leaked into the condition/evidence: %q (%q)", c.name, w, problem, detail)
+			}
+		}
+	}
+}
+
+// "0 topics" alongside "not subscribed to any topics" is the same fact twice.
+func TestHealthDetailOmitsWhatProblemSaid(t *testing.T) {
+	now := time.Now()
+	h := Health{Status: "Connected"} // no topics, nothing received
+
+	if got := h.Problem(now); got != "not subscribed to any topics" {
+		t.Errorf("problem = %q", got)
+	}
+	if got := h.Detail(now); strings.Contains(got, "topics") {
+		t.Errorf("detail %q repeats the topic count the problem already gave", got)
 	}
 }

@@ -80,12 +80,12 @@ func cmdDaemon(args []string) error {
 	// --- rendezvous plane ---
 	node, err := waku.New(waku.Config{"mode": cfg.Mode, "preset": cfg.Preset})
 	if err != nil {
-		return fmt.Errorf("waku: %w", err)
+		return fmt.Errorf("rendezvous plane: %w", err)
 	}
 	defer node.Close()
 
 	if err := node.Start(); err != nil {
-		return fmt.Errorf("waku start: %w", err)
+		return fmt.Errorf("start rendezvous plane: %w", err)
 	}
 	log.Info("rendezvous plane up", "preset", cfg.Preset, "mode", cfg.Mode)
 
@@ -141,6 +141,7 @@ type rendezvousStatus struct {
 	Status      string `json:"status"` // Connected, PartiallyConnected, Disconnected, unknown
 	OK          bool   `json:"ok"`
 	Problem     string `json:"problem,omitempty"`
+	Detail      string `json:"detail,omitempty"`
 	Topics      int    `json:"topics"`
 	LastMessage string `json:"last_message,omitempty"`
 	LastMsgAgeS int64  `json:"last_message_age_s,omitempty"`
@@ -209,6 +210,7 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Me
 			Status:  h.Status,
 			OK:      h.OK(now),
 			Problem: h.Problem(now),
+			Detail:  h.Detail(now),
 			Topics:  h.Topics,
 		}
 		if !h.LastMessage.IsZero() {

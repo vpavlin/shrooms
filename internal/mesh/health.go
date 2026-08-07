@@ -2,6 +2,8 @@ package mesh
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -55,23 +57,46 @@ func (h Health) OK(now time.Time) bool {
 	return !h.LastMessage.IsZero() && now.Sub(h.LastMessage) < RendezvousStale
 }
 
-// Problem returns a short human explanation when the rendezvous plane is
-// unhealthy, or "" when it is fine.
+// Problem states the condition, and only the condition. It returns "" when the
+// rendezvous plane is fine.
 //
-// Phrased to say what it means rather than what was observed: "no fleet peers"
-// rather than "connectionStatus=Disconnected".
+// Deliberately says what it means rather than what was observed — "not
+// connected to any logos.dev peers", not "connectionStatus=Disconnected" — and
+// deliberately says nothing about consequences. The consequence is the same
+// whatever the cause, so the caller states it once instead of every branch
+// repeating it.
 func (h Health) Problem(now time.Time) string {
 	switch {
 	case h.Status == "Disconnected":
-		return "not connected to any logos.dev peers — discovery is down, existing tunnels are unaffected"
+		return "not connected to any logos.dev peers"
 	case h.Topics == 0:
-		return "no rendezvous subscriptions"
+		return "not subscribed to any topics"
 	case h.LastMessage.IsZero():
-		return "connected, but nothing has arrived yet — still joining the shard"
+		return "nothing has arrived yet"
 	case now.Sub(h.LastMessage) >= RendezvousStale:
-		return "nothing received for " + now.Sub(h.LastMessage).Round(time.Second).String() + " — the shard may be unreachable"
+		return "nothing received for " + now.Sub(h.LastMessage).Round(time.Second).String()
 	}
 	return ""
+}
+
+// Detail is the supporting evidence for Problem, as a short parenthetical.
+//
+// Only carries what Problem has not already said: repeating "Disconnected"
+// after "not connected to any peers" is noise, and noise is what makes people
+// stop reading warnings.
+func (h Health) Detail(now time.Time) string {
+	var parts []string
+	// Each field is omitted when Problem has already conveyed it.
+	if h.Status != "Disconnected" && h.Status != "unknown" {
+		parts = append(parts, h.Status)
+	}
+	if h.Topics > 0 {
+		parts = append(parts, fmt.Sprintf("%d topics", h.Topics))
+	}
+	if !h.LastMessage.IsZero() && now.Sub(h.LastMessage) < RendezvousStale {
+		parts = append(parts, "last message "+now.Sub(h.LastMessage).Round(time.Second).String()+" ago")
+	}
+	return strings.Join(parts, ", ")
 }
 
 // health is the mutable half, updated from the event loop.
