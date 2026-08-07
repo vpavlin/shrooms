@@ -9,7 +9,7 @@ start, roaming, and repair. Once tunnels exist they sustain themselves, so
 there is nothing to keep running and nothing to pay for.
 
 **Status: working over the real internet.** A laptop behind NAT and a VPS
-discovered each other over the public logos.dev fleet and brought up a direct
+discovered each other over the public logos.test fleet and brought up a direct
 WireGuard tunnel — no coordination server, one shared key:
 
 ```
@@ -35,7 +35,7 @@ See [Status](#status) for what is proven and what is not.
         └─────────┬─────────┴─────────┬─────────┘
                   │                   │
             ┌─────┴─────┐      ┌──────┴───────┐
-            │    VPS    │      │  logos.dev   │
+            │    VPS    │      │  logos.test  │
             │   relay   │◀────▶│  rendezvous  │
             └───────────┘      └──────────────┘
 ```
@@ -202,7 +202,7 @@ $ sudo ./bin/logos-vpn daemon -v
 ```
 
 Leave that running (or `sudo make install` and use systemd here too). On first start it generates a device identity, derives its
-overlay address, connects to the logos.dev fleet, and announces itself.
+overlay address, connects to the fleet, and announces itself.
 
 ### 4. Check it works
 
@@ -284,7 +284,7 @@ one of your own machines is reachable; see
 | `!! rendezvous:` warning in `status` | the fleet is unreachable. Discovery is stalled; established tunnels keep working. Confirm with `make s1` |
 | `different clusterId reported: N vs M` in the logs | the fleet has moved cluster. Every peer connects, disagrees, and hangs up, which looks exactly like an outage. Set `cluster_id` in the config to what the peers report |
 | peer shows `stale 12m` | the tunnel is dead — the peer has not rekeyed within WireGuard's 180 s session lifetime |
-| no peers at all after 60 s | the daemon is not reaching logos.dev; check outbound connectivity |
+| no peers at all after 60 s | the daemon is not reaching the fleet; check outbound connectivity |
 | `missing liblogosdelivery.h` | run `make deps-basecamp` |
 | the daemon exits immediately | `libpq` missing — deploy the container rather than a bare binary |
 
@@ -361,7 +361,14 @@ attempted in containers, where the harness turned out to be the obstacle: plain
 Linux `MASQUERADE` is not endpoint-independent, so it tests the hard case while
 claiming to test the easy one.
 
-**Nothing has been through M4.** Roaming, restarts, a VPS reboot, logos.dev
+**A fleet migration broke everything once, silently.** On 2026-08-07 logos.dev
+moved to cluster 3 while the preset compiled into our pinned
+liblogosdelivery still said cluster 2. Every peer connected, compared metadata,
+disagreed and hung up — which looks exactly like an outage. The default is now
+`logos.test`, whose preset is correct, and `cluster_id` exists as an override
+for the next time a fleet moves ahead of the library. `make s1` detects this.
+
+**Nothing has been through M4.** Roaming, restarts, a VPS reboot, the fleet
 being briefly unreachable — none of it is tested. Treat this as working rather
 than dependable.
 

@@ -149,7 +149,7 @@ while [ $((SECONDS - started)) -lt "$WAIT" ]; do
         online=$(echo "$line" | python3 -c 'import json,sys; print(json.load(sys.stdin)["online"])')
         hs=$(echo "$line" | python3 -c 'import json,sys; print(json.load(sys.stdin)["hs"])')
         if [ "$online" = "True" ] && [ $seen -eq 0 ]; then
-            echo "    discovered over logos.dev after $((SECONDS - started))s"
+            echo "    discovered over the public fleet after $((SECONDS - started))s"
             seen=1
         fi
         if [ "$hs" = "True" ]; then
@@ -170,7 +170,7 @@ echo "==> local paths"
 if [ $seen -ne 1 ]; then
     echo
     echo "FAIL: '$NAME' never appeared in the roster."
-    echo "  That is discovery, not traversal — the node is not reaching logos.dev."
+    echo "  That is discovery, not traversal — the node is not reaching the fleet."
     echo "  Check: sudo docker logs logos-vpn-natted"
     exit 1
 fi

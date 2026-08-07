@@ -90,7 +90,7 @@ func cmdStatus(args []string) error {
 	fmt.Printf("self     %s  %s\n", st.Name, st.Overlay)
 
 	// The rendezvous plane is reported whenever it is unhealthy, and quietly
-	// otherwise. When logos.dev is unreachable, tunnels keep working and the
+	// otherwise. When the fleet is unreachable, tunnels keep working and the
 	// roster simply stops changing — which looks exactly like "nobody else is
 	// online", and sends you debugging the wrong plane. This is the line that
 	// distinguishes them.

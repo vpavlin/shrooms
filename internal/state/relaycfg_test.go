@@ -54,26 +54,41 @@ func TestRelayConfigRoundTrip(t *testing.T) {
 	}
 }
 
-// A config written before cluster_id existed must still load. The fleet moved
-// clusters, so a node that silently kept the old default would connect to every
-// peer and be hung up on — the exact failure this field exists to prevent.
-func TestConfigWithoutClusterIDGetsDefault(t *testing.T) {
+// A config written before cluster_id existed must still load, and must leave
+// the cluster unset.
+//
+// Unset is not a missing value to be filled in: passing any clusterId activates
+// a legacy cluster-to-network mapping in the library, where 2 means logos.dev
+// whatever the preset says. Defaulting it would silently move logos.test nodes
+// onto logos.dev.
+func TestConfigWithoutClusterIDLeavesItUnset(t *testing.T) {
 	c, err := parseConfig(`
 network_key = "P27KNQ2HDSIUFIXZAGYDBSU2GU3PE4M52POFBUBOWHUZEWYSCP5A"
 name        = "old"
 interface   = "logos0"
 listen_port = 51820
-preset      = "logos.dev"
+preset      = "logos.test"
 mode        = "Core"
 `)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if c.ClusterID != DefaultClusterID {
-		t.Errorf("cluster_id = %d, want the default %d", c.ClusterID, DefaultClusterID)
+	if c.ClusterID != 0 {
+		t.Errorf("cluster_id = %d, want 0 (let the preset decide)", c.ClusterID)
 	}
 	if err := c.Validate(); err != nil {
 		t.Errorf("a pre-cluster_id config failed validation: %v", err)
+	}
+}
+
+// The default must be a network that actually works without an override.
+func TestDefaultPresetNeedsNoClusterOverride(t *testing.T) {
+	c := DefaultConfig()
+	if c.Preset != DefaultPreset {
+		t.Errorf("default preset = %q, want %q", c.Preset, DefaultPreset)
+	}
+	if c.ClusterID != 0 {
+		t.Errorf("default sets cluster_id = %d; it should let the preset decide", c.ClusterID)
 	}
 }
 

@@ -81,9 +81,12 @@ func cmdDaemon(args []string) error {
 	// clusterId alongside preset, not instead of it: the preset is what loads
 	// the fleet's entry nodes, and the explicit cluster is what stops those
 	// nodes hanging up on us. See state.DefaultClusterID.
-	nodeCfg := waku.Config{
-		"mode":      cfg.Mode,
-		"clusterId": cfg.ClusterID,
+	nodeCfg := waku.Config{"mode": cfg.Mode}
+	// Only when explicitly set. Passing clusterId at all activates a legacy
+	// cluster-to-network mapping in the library that overrides the preset, so
+	// "helpfully" always sending it sends some nodes to the wrong fleet.
+	if cfg.ClusterID != 0 {
+		nodeCfg["clusterId"] = cfg.ClusterID
 	}
 	if cfg.Preset != "" {
 		nodeCfg["preset"] = cfg.Preset
@@ -132,7 +135,7 @@ type statusPayload struct {
 	Peers   []peerStatus `json:"peers"`
 
 	// Rendezvous is the health of the Waku side. Reported separately from
-	// peers because the two planes fail independently: logos.dev can be
+	// peers because the two planes fail independently: the fleet can be
 	// unreachable while every tunnel keeps working, and without this that
 	// situation is indistinguishable from "nobody else is online".
 	Rendezvous rendezvousStatus `json:"rendezvous"`

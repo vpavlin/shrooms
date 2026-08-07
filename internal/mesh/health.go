@@ -22,7 +22,7 @@ const RendezvousStale = 4 * AnnounceInterval
 // plane, as opposed to the data plane.
 //
 // This exists because the two fail independently and look identical from the
-// outside. When logos.dev is unreachable, existing tunnels keep working — by
+// outside. When the fleet is unreachable, existing tunnels keep working — by
 // design, Waku is rendezvous and not a control plane — so `status` shows
 // healthy tunnels and an empty or frozen roster, with nothing to say why. The
 // answer "the fleet is down, your tunnels are fine" is the one piece of
@@ -61,14 +61,14 @@ func (h Health) OK(now time.Time) bool {
 // rendezvous plane is fine.
 //
 // Deliberately says what it means rather than what was observed — "not
-// connected to any logos.dev peers", not "connectionStatus=Disconnected" — and
+// connected to any fleet peers", not "connectionStatus=Disconnected" — and
 // deliberately says nothing about consequences. The consequence is the same
 // whatever the cause, so the caller states it once instead of every branch
 // repeating it.
 func (h Health) Problem(now time.Time) string {
 	switch {
 	case h.Status == "Disconnected":
-		return "not connected to any logos.dev peers"
+		return "not connected to any fleet peers"
 	case h.Topics == 0:
 		return "not subscribed to any topics"
 	case h.LastMessage.IsZero():

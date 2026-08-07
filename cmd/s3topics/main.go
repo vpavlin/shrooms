@@ -31,7 +31,7 @@ func main() {
 	var (
 		epochs  = flag.Int("epochs", 6, "consecutive epochs to publish to")
 		preset  = flag.String("preset", "logos.dev", "network preset")
-		cluster = flag.Int("cluster", 3, "cluster id, for the locally computed expectation")
+		cluster = flag.Int("cluster", 2, "cluster id, for the locally computed expectation")
 		settle  = flag.Duration("settle", 20*time.Second, "wait for peers before publishing")
 	)
 	flag.Parse()

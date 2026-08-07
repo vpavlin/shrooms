@@ -2,7 +2,7 @@
 # M1 end-to-end test in containers.
 #
 # Two mesh nodes in separate network namespaces discover each other over the
-# public logos.dev fleet and bring up a WireGuard tunnel, then we ping across
+# public Logos Messaging fleet and bring up a WireGuard tunnel, then we ping across
 # the overlay.
 #
 # Requires: docker, /dev/net/tun on the host, and outbound internet.
@@ -154,7 +154,7 @@ docker exec logos-vpn-a ip -6 route show || true
 
 if [ $ping_rc -eq 0 ]; then
     echo
-    echo "M1 PASS: discovery over logos.dev, tunnel up, overlay ping works"
+    echo "M1 PASS: discovery over the public fleet, tunnel up, overlay ping works"
 else
     echo
     echo "FAIL: peer discovered but the overlay ping did not get through"

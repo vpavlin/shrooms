@@ -27,12 +27,14 @@ const (
 	DefaultStateDir   = "/var/lib/logos-vpn"
 )
 
-// DefaultClusterID is the cluster the logos.dev fleet runs on.
+// DefaultPreset is the network to join.
 //
-// Verified 2026-08-07 against six live fleet peers, all reporting
-// remoteClusterId=ok(3). Our pinned liblogosdelivery's preset still says
-// cluster 2, which it was until the fleet migrated.
-const DefaultClusterID = 3
+// logos.test, not logos.dev: it is what the messaging team recommends, and as
+// of 2026-08-07 it is also the one that works. logos.dev has migrated to
+// cluster 3 while the preset compiled into our pinned liblogosdelivery still
+// says cluster 2, so a logos.dev node is hung up on by every peer it meets.
+// logos.test is cluster 2 and the preset agrees, so it needs no override.
+const DefaultPreset = "logos.test"
 
 // Config is the human-edited configuration.
 type Config struct {
@@ -74,19 +76,25 @@ type Config struct {
 	// without waiting for a library rebuild.
 	EntryNodes []string
 
-	// ClusterID overrides the cluster the preset would select.
+	// ClusterID overrides the cluster the preset would select. Zero means
+	// "let the preset decide", which is normally right.
 	//
-	// Required, and not merely an override, because the preset baked into our
-	// pinned liblogosdelivery is out of date: it still reports logos.dev as
-	// cluster 2, while every live fleet peer now reports cluster 3. A node on
-	// the wrong cluster does not fail loudly — it connects to each peer, the
-	// metadata exchange disagrees, and the peer hangs up:
+	// Set it only when a fleet has migrated and the library has not caught up.
+	// That is the state logos.dev is in as of 2026-08-07: its peers report
+	// cluster 3, our preset says 2, and the mismatch does not fail loudly — the
+	// node connects to each peer, the metadata exchange disagrees, and the peer
+	// hangs up:
 	//
 	//   Received WakuMetadata request  remoteClusterId=ok(3) localClusterId=2
 	//   disconnecting from peer  reason="different clusterId reported: 2 vs 3"
 	//
 	// which presents as "the fleet is down" rather than as a version skew.
-	// Configurable so the next migration is a config edit, not a rebuild.
+	//
+	// Passing it is NOT free: a non-zero clusterId activates a legacy
+	// cluster-to-network mapping inside the library, where 2 means logos.dev.
+	// So setting cluster_id = 2 alongside preset = "logos.test" silently
+	// bootstraps off logos.dev instead. Leave it at zero unless you have
+	// measured that you need it.
 	ClusterID uint16
 
 	// Mode is the Waku node mode: Core on always-on machines.
@@ -130,8 +138,7 @@ func DefaultConfig() Config {
 		Name:        host,
 		ListenPort:  51820,
 		Interface:   "logos0",
-		Preset:      "logos.dev",
-		ClusterID:   DefaultClusterID,
+		Preset:      DefaultPreset,
 		Mode:        "Core",
 		HostsSuffix: "mesh",
 	}
@@ -156,9 +163,6 @@ func (c *Config) Validate() error {
 	}
 	if c.Preset == "" && len(c.EntryNodes) == 0 {
 		return errors.New("preset is empty and no entry_nodes are set — the node would have nowhere to bootstrap from")
-	}
-	if c.ClusterID == 0 {
-		return errors.New("cluster_id is 0 — the fleet uses a non-zero cluster")
 	}
 	return nil
 }
@@ -402,11 +406,13 @@ func WriteConfig(path string, c Config) error {
 	fmt.Fprintf(&b, "interface   = %q\n", c.Interface)
 	fmt.Fprintf(&b, "listen_port = %d\n", c.ListenPort)
 	fmt.Fprintf(&b, "preset      = %q\n", c.Preset)
-	b.WriteString("\n# The cluster the fleet runs on. Must match, or every peer connects,\n")
-	b.WriteString("# compares metadata, disagrees, and hangs up — which looks exactly like\n")
-	b.WriteString("# the fleet being down. Set explicitly because the preset compiled into\n")
-	b.WriteString("# liblogosdelivery is older than the fleet's migration to cluster 3.\n")
-	fmt.Fprintf(&b, "cluster_id  = %d\n", c.ClusterID)
+	if c.ClusterID != 0 {
+		b.WriteString("\n# Overrides the cluster the preset selects. Only needed when a fleet has\n")
+		b.WriteString("# migrated and the library has not caught up (logos.dev is on cluster 3).\n")
+		b.WriteString("# Careful: a non-zero value also activates a legacy cluster-to-network\n")
+		b.WriteString("# mapping, where 2 means logos.dev regardless of the preset.\n")
+		fmt.Fprintf(&b, "cluster_id  = %d\n", c.ClusterID)
+	}
 	if len(c.EntryNodes) > 0 {
 		b.WriteString("\n# Explicit bootstrap addresses, used instead of the preset's.\n")
 		fmt.Fprintf(&b, "entry_nodes = %s\n", formatArray(c.EntryNodes))
