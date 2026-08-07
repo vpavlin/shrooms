@@ -169,7 +169,10 @@ m3:
 ## M3 over the real internet: run a NATed node on a remote relay host and
 ## measure the tunnel from here. Containers prove the mechanism; only a real
 ## path proves the system. Needs a deployed relay: make m3-remote HOST=user@vps
-m3-remote:
+## Depends on logos-vpn: the script ships this binary to the remote host and
+## also queries the local daemon with it. Running a stale bin/ against fresh
+## sources has produced two confusing failures already.
+m3-remote: logos-vpn
 	@[ -n "$(HOST)" ] || { echo "usage: make m3-remote HOST=user@vps"; exit 1; }
 	./scripts/m3-remote.sh $(HOST) $(M3_ARGS)
 

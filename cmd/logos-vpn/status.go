@@ -3,11 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
+	"strings"
+	"syscall"
 	"text/tabwriter"
 	"time"
 )
@@ -25,6 +28,20 @@ func fetchStatus(sock string) (statusPayload, error) {
 
 	resp, err := client.Get("http://unix/status")
 	if err != nil {
+		// The daemon needs CAP_NET_ADMIN, so it usually runs as root and the
+		// socket is root:root 0660. "permission denied" then means the daemon
+		// is fine and you are not root — a completely different problem from
+		// the daemon being down, and worth saying so rather than making
+		// everyone work it out from errno.
+		if errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EACCES) {
+			return statusPayload{}, fmt.Errorf(
+				"cannot read %s: permission denied.\nThe daemon runs as root; try: sudo %s",
+				sock, strings.Join(os.Args, " "))
+		}
+		if errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED) {
+			return statusPayload{}, fmt.Errorf(
+				"no daemon listening on %s — is `logos-vpn daemon` running?", sock)
+		}
 		return statusPayload{}, fmt.Errorf("cannot reach the daemon on %s: %w", sock, err)
 	}
 	defer resp.Body.Close()

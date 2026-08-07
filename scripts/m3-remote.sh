@@ -73,15 +73,31 @@ fi
 # Preflight. Every check here is one that produces a confusing failure later.
 # ---------------------------------------------------------------------------
 
+# The daemon needs CAP_NET_ADMIN, so it normally runs as root and its socket is
+# root:root 0660. Reading it therefore usually needs sudo — but not always (a
+# developer running unprivileged with a custom socket does not). Work out which
+# once, here, instead of sprinkling sudo through every later call.
+SUDO=""
+localVPN() { ${SUDO:+sudo} ./bin/logos-vpn "$@"; }
+
 echo "==> checking this machine"
 [ -S "$LOCAL_SOCK" ] || {
     echo "no control socket at $LOCAL_SOCK — is the local daemon running?"
     echo "this test measures the tunnel from HERE, so the local node must be up"
     exit 1
 }
-./bin/logos-vpn status --socket "$LOCAL_SOCK" >/dev/null 2>&1 || {
-    echo "the local daemon is not answering on $LOCAL_SOCK"; exit 1; }
-echo "  local daemon up"
+if ! ./bin/logos-vpn status --socket "$LOCAL_SOCK" >/dev/null 2>&1; then
+    # May prompt for a password; that is expected and better than failing with
+    # "the daemon is not answering" when the daemon is answering fine.
+    if sudo ./bin/logos-vpn status --socket "$LOCAL_SOCK" >/dev/null 2>&1; then
+        SUDO=1
+    else
+        echo "the local daemon is not answering on $LOCAL_SOCK"
+        echo "try:  sudo ./bin/logos-vpn status --socket $LOCAL_SOCK"
+        exit 1
+    fi
+fi
+echo "  local daemon up${SUDO:+ (reading its socket via sudo)}"
 
 echo "==> checking $HOST"
 ssh "$HOST" 'command -v docker >/dev/null || { echo "docker is not installed"; exit 1; }
@@ -126,7 +142,7 @@ ssh "$HOST" "cd $REMOTE_DIR && sudo docker compose -f compose.yml up -d --force-
 # ---------------------------------------------------------------------------
 
 peerField() {
-    ./bin/logos-vpn status --json --socket "$LOCAL_SOCK" 2>/dev/null | python3 -c "
+    localVPN status --json --socket "$LOCAL_SOCK" 2>/dev/null | python3 -c "
 import json,sys
 try: d=json.load(sys.stdin)
 except Exception: sys.exit()
@@ -163,9 +179,9 @@ done
 
 echo
 echo "==> local status"
-./bin/logos-vpn status --socket "$LOCAL_SOCK" || true
+localVPN status --socket "$LOCAL_SOCK" || true
 echo "==> local paths"
-./bin/logos-vpn paths --socket "$LOCAL_SOCK" || true
+localVPN paths --socket "$LOCAL_SOCK" || true
 
 if [ $seen -ne 1 ]; then
     echo
@@ -217,7 +233,7 @@ esac
 cat <<EOF
 
 Overlay ping (the honest end-to-end check):
-  ping6 -c3 \$(./bin/logos-vpn status --socket $LOCAL_SOCK | awk '/^$NAME/{print \$2}')
+  ping6 -c3 \$(${SUDO:+sudo }./bin/logos-vpn status --socket $LOCAL_SOCK | awk '/^$NAME/{print \$2}')
 
 On $HOST:
   sudo docker logs -f logos-vpn-natted
