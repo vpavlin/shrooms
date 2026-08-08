@@ -8,11 +8,13 @@ import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -64,6 +66,11 @@ class MainActivity : ComponentActivity() {
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* the tunnel works either way */ }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Edge to edge, then inset the content ourselves. Android 15 makes this
+        // the default whether or not an app asks, so a layout that ignores the
+        // insets has its header under the status bar — which is where the
+        // version line went.
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -79,7 +86,10 @@ class MainActivity : ComponentActivity() {
                 var configured by remember { mutableStateOf(Mobile.configured(dir)) }
                 val snap by MeshState.snapshot.collectAsStateWithLifecycle()
 
-                Surface(color = Palette.Void, modifier = Modifier.fillMaxSize()) {
+                Surface(
+                    color = Palette.Void,
+                    modifier = Modifier.fillMaxSize().safeDrawingPadding(),
+                ) {
                     if (!configured) {
                         JoinScreen(dir, onScan = ::scanInvite) { configured = true }
                     } else {

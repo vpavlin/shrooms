@@ -281,6 +281,7 @@ one of your own machines is reachable; see
 |---|---|
 | `tun: ... (need CAP_NET_ADMIN)` | run with `sudo`, or the host has no `/dev/net/tun` |
 | peer `online` but `no handshake` | traversal, not discovery — check `paths` and whether the port is open |
+| `.mesh` names do not resolve on Linux | the resolver is running but not registered with the host. `resolvectl status <iface>` should show it under DNS Servers with `~mesh` as the domain; if not, the daemon log says why |
 | `!! rendezvous:` warning in `status` | the fleet is unreachable. Discovery is stalled; established tunnels keep working. Confirm with `make s1` |
 | `!! rendezvous: peers connect and are dropped immediately` | preset or `cluster_id` mismatch — you are on a different cluster than the fleet. Confirm with `different clusterId reported: N vs M` in the daemon log |
 | peer shows `stale 12m` | the tunnel is dead — the peer has not rekeyed within WireGuard's 180 s session lifetime |

@@ -138,6 +138,21 @@ func cmdDaemon(args []string) error {
 			}
 		}()
 		log.Info("name resolution up", "address", self, "suffix", cfg.HostsSuffix)
+
+		// Serving DNS and being asked are different things; the daemon used to
+		// do only the first and report success. Scoped to the suffix, so the
+		// system's own resolvers keep everything else.
+		if err := dnssrv.Register(ctx, cfg.Interface, self, cfg.HostsSuffix); err != nil {
+			log.Warn("could not register the resolver with the host; "+
+				"mesh names will not resolve system-wide",
+				"err", err,
+				"hint", fmt.Sprintf("resolvectl dns %s %s && resolvectl domain %s '~%s'",
+					cfg.Interface, self, cfg.Interface, cfg.HostsSuffix))
+		} else {
+			log.Info("resolver registered with the host",
+				"interface", cfg.Interface, "domain", "~"+cfg.HostsSuffix)
+			defer dnssrv.Unregister(cfg.Interface)
+		}
 	}
 
 	log.Info("running", "socket", *sock)
