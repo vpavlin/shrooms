@@ -157,7 +157,7 @@ func TestStatsCounted(t *testing.T) {
 	s := testServer()
 	s.answer(query(t, "laptop.mesh.", dnsmessage.TypeAAAA))
 	s.answer(query(t, "example.com.", dnsmessage.TypeAAAA))
-	q, a, r := s.Stats()
+	q, a, r, _, _ := s.Stats()
 	if q != 2 || a != 1 || r != 1 {
 		t.Errorf("queries=%d answers=%d refused=%d, want 2/1/1", q, a, r)
 	}

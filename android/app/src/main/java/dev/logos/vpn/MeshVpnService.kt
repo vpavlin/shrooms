@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
 import android.net.VpnService
 import android.os.Build
 import android.util.Log
@@ -98,7 +99,7 @@ class MeshVpnService : VpnService() {
                 tunnel = pfd
 
                 // Go dups this, so closing it here later is safe.
-                Mobile.start(pfd.fd.toLong(), dir, protector, logger)
+                Mobile.start(pfd.fd.toLong(), dir, underlyingDnsServers(), protector, logger)
 
                 MeshState.connected(overlay)
                 notify("Connected · $overlay")
@@ -114,6 +115,26 @@ class MeshVpnService : VpnService() {
                 stop()
             }
         }
+    }
+
+    /**
+     * The resolvers of the network underneath the tunnel.
+     *
+     * Read before establish() would also work, but it must be the UNDERLYING
+     * network rather than ours: querying our own resolver through itself is a
+     * loop. Android has no split-DNS, so we receive every query the device
+     * makes and must forward what is not ours — without these the phone loses
+     * name resolution entirely the moment the VPN comes up.
+     */
+    private fun underlyingDnsServers(): String {
+        val cm = getSystemService(ConnectivityManager::class.java) ?: return ""
+        // activeNetwork is still the physical one at this point; once our VPN
+        // is up it becomes the VPN, whose resolver is us.
+        val net = cm.activeNetwork ?: return ""
+        val props = cm.getLinkProperties(net) ?: return ""
+        val servers = props.dnsServers.mapNotNull { it.hostAddress }
+        Log.i(TAG, "upstream resolvers: $servers")
+        return servers.joinToString(",")
     }
 
     /**

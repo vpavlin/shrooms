@@ -129,7 +129,7 @@ func NetworkKey(configDir string) string {
 //
 // The descriptor is dup'd, because Go's os.File takes ownership and would close
 // the caller's copy — leaving Android holding a closed interface.
-func Start(tunFd int, configDir string, p Protector, l Logger) error {
+func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger) error {
 	mu.Lock()
 	defer mu.Unlock()
 	if running != nil {
@@ -214,11 +214,25 @@ func Start(tunFd int, configDir string, p Protector, l Logger) error {
 	// privileged, and losing names is smaller than losing the tunnel.
 	selfAddr := identity.OverlayAddr(mustKey(cfg), st.Identity.DevicePub)
 	var dnsConn net.PacketConn
-	if pc, derr := dnssrv.Listen(selfAddr); derr != nil {
-		log.Warn("name resolution unavailable", "err", derr)
-	} else {
-		dnsConn = pc
-		log.Info("name resolution up", "address", selfAddr, "suffix", cfg.HostsSuffix)
+	var forward func([]byte) ([]byte, error)
+
+	// Refuse to take over DNS unless we can also forward. Android sends us
+	// every query, so a resolver that only knows .mesh removes the device's
+	// name resolution — no browsing, no app updates. Better to have no mesh
+	// names than no names at all.
+	fw, ferr := newForwarder(dnsServers, p)
+	switch {
+	case ferr != nil:
+		log.Warn("name resolution disabled: no usable upstream resolvers", "err", ferr)
+	default:
+		forward = fw
+		if pc, derr := dnssrv.Listen(selfAddr); derr != nil {
+			log.Warn("name resolution unavailable", "err", derr)
+		} else {
+			dnsConn = pc
+			log.Info("name resolution up", "address", selfAddr,
+				"suffix", cfg.HostsSuffix, "upstream", dnsServers)
+		}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -236,7 +250,11 @@ func Start(tunFd int, configDir string, p Protector, l Logger) error {
 		}
 	}()
 	if dnsConn != nil {
-		resolver := &dnssrv.Server{Suffix: cfg.HostsSuffix, Lookup: m.Lookup}
+		resolver := &dnssrv.Server{
+			Suffix:   cfg.HostsSuffix,
+			Lookup:   m.Lookup,
+			Upstream: forward,
+		}
 		go func() {
 			if err := resolver.Serve(ctx, dnsConn); err != nil && ctx.Err() == nil {
 				log.Error("name resolution stopped", "err", err)

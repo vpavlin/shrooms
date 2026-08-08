@@ -44,17 +44,36 @@ type Server struct {
 	// Log receives one line per interesting event; may be nil.
 	Log func(msg string, args ...any)
 
-	mu      sync.Mutex
-	queries uint64
-	answers uint64
-	refused uint64
+	// Upstream forwards a query we are not authoritative for, returning the
+	// raw response.
+	//
+	// Required on Android and unwanted anywhere else. Android has no split-DNS:
+	// a VpnService that sets a DNS server receives EVERY query, so refusing
+	// non-mesh names takes the device's name resolution away entirely — no
+	// browsing, no app updates, nothing. Forwarding is the only way to hold the
+	// mesh names without holding the rest hostage.
+	//
+	// Nil means refuse, which is right for the Linux daemon: there the resolver
+	// is reached only for the domain it is configured for, so a query outside
+	// it is a misconfiguration rather than ordinary traffic.
+	//
+	// Queries passing through here are proxied verbatim and never logged. It is
+	// a pipe, not an observation point.
+	Upstream func(query []byte) ([]byte, error)
+
+	mu          sync.Mutex
+	queries     uint64
+	answers     uint64
+	refused     uint64
+	forwarded   uint64
+	forwardFail uint64
 }
 
 // Stats reports what the server has seen, for `status`.
-func (s *Server) Stats() (queries, answers, refused uint64) {
+func (s *Server) Stats() (queries, answers, refused, forwarded, forwardFail uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.queries, s.answers, s.refused
+	return s.queries, s.answers, s.refused, s.forwarded, s.forwardFail
 }
 
 // Serve reads queries until the context is cancelled.
@@ -126,6 +145,22 @@ func (s *Server) answer(query []byte) ([]byte, error) {
 	name := strings.TrimSuffix(strings.ToLower(q.Name.String()), ".")
 	host, ok := s.hostWithinSuffix(name)
 	if !ok {
+		if s.Upstream != nil {
+			// Not ours: hand it on unchanged. Failing to reach upstream is
+			// SERVFAIL, which tells the client to try another resolver, rather
+			// than REFUSED, which many clients treat as final.
+			resp, err := s.Upstream(query)
+			if err != nil {
+				s.mu.Lock()
+				s.forwardFail++
+				s.mu.Unlock()
+				return s.rcode(header, q, dnsmessage.RCodeServerFailure)
+			}
+			s.mu.Lock()
+			s.forwarded++
+			s.mu.Unlock()
+			return resp, nil
+		}
 		// Outside our suffix. REFUSED rather than NXDOMAIN: NXDOMAIN asserts
 		// the name does not exist anywhere, which we are in no position to say.
 		s.mu.Lock()

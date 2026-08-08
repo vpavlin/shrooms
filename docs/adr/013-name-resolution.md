@@ -45,6 +45,20 @@ the ordering is the opposite of intuition:
 platform in every other respect. No root, no file editing, no resolver daemon to
 negotiate with.
 
+**Correction, found by shipping it.** Android is the easiest place to *install*
+a resolver and the hardest place to scope one. `VpnService` has no split-DNS:
+`addDnsServer` makes the tunnel's resolver receive **every** query the device
+makes, and `addSearchDomain` does not narrow that. A resolver that answers only
+for the mesh therefore removes the device's name resolution entirely — no
+browsing, no app updates — which is what happened on the first build that
+enabled it.
+
+So on Android the resolver **must forward** what is not its own, and the
+forwarding socket must be protected or it routes into the tunnel it is resolving
+for. The queries are proxied verbatim and never logged; it is a pipe, not an
+observation point. The "no forwarding" rule below still holds everywhere the
+resolver is reached only for its own domain, which is every other platform.
+
 The decisive property is that it is **live**: the roster is already in memory, so
 a peer becomes resolvable the moment it announces, with nothing to regenerate.
 
@@ -57,9 +71,12 @@ first — more work than the DNS server, and worse.
 
 ## Constraints on the implementation
 
-**Authoritative for the mesh domain only.** NXDOMAIN for everything else, and no
-forwarding. A VPN that quietly becomes the system resolver is a surprise nobody
-wants and a privacy leak besides — every query you make would traverse it.
+**Authoritative for the mesh domain only**, and refusing everything else where
+the platform allows it to be scoped. A VPN that quietly becomes the system
+resolver is a surprise nobody wants and a privacy leak besides. Android cannot
+be scoped, so there it forwards instead — see the correction above. Names
+outside the suffix are REFUSED rather than NXDOMAIN: REFUSED says "not mine",
+NXDOMAIN would assert the name exists nowhere, which we cannot know.
 
 **Bind port 53 on the overlay address only**, so it cannot clash with a resolver
 on localhost. That needs `CAP_NET_BIND_SERVICE` alongside the existing
