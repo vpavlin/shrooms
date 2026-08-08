@@ -9,6 +9,7 @@ import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.VpnService
 import android.os.Build
+import android.system.OsConstants
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -79,6 +80,22 @@ class MeshVpnService : VpnService() {
                     .addRoute(prefix, 48)
                     .setMtu(MTU)
                     .setBlocking(false)
+
+                // Let everything that is not the mesh bypass the tunnel.
+                //
+                // This is the trap that cost three builds and looked like a DNS
+                // bug every time. A VpnService BLOCKS an address family it has
+                // an address for unless traffic matches a route — and it blocks
+                // families it has no address for outright. Ours is IPv6-only
+                // and routes one /48, so every IPv4 packet on the device was
+                // being dropped: name servers are usually IPv4, so it presented
+                // as "DNS does not work" while the actual fault was that
+                // nothing but the mesh could send anything at all.
+                //
+                // allowFamily lets each family bypass; the /48 route still
+                // captures the mesh, because routes take precedence.
+                builder.allowFamily(OsConstants.AF_INET)
+                builder.allowFamily(OsConstants.AF_INET6)
 
                 // DNS is OFF on Android, deliberately, until the resolver can
                 // actually be reached.

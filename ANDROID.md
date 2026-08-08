@@ -165,6 +165,26 @@ vanished.
 
 No accounts, no telemetry, no cloud. There is no server to have one.
 
+## The one that looked like DNS three times
+
+`VpnService` **blocks** an address family it holds an address for unless the
+traffic matches a route, and blocks families it has no address for outright.
+This tunnel is IPv6-only and routes a single /48, so every IPv4 packet on the
+device was being dropped.
+
+Name servers are almost always IPv4, so it presented as "DNS does not work" —
+three times, through three unrelated fixes, while the actual fault was that
+nothing except the mesh could send anything at all. It survived removing the
+resolver entirely, which is what finally ruled DNS out.
+
+`allowFamily(AF_INET)` and `allowFamily(AF_INET6)` let everything that is not
+the mesh bypass the tunnel. The /48 route still captures the mesh, because
+routes take precedence over the bypass.
+
+The lesson is not about Android. Three fixes in a row addressed where the error
+appeared rather than where the decision was made, and each looked like progress
+because the symptom was unchanged for a different reason each time.
+
 ## DNS on Android: why it is harder than ADR-013 said
 
 Three attempts, each of which took the phone's internet away. Recorded so the
