@@ -209,14 +209,20 @@ private fun MeshScreen(snap: Snapshot, dir: String, onConnect: () -> Unit, onDis
                 )
             }
             Spacer(Modifier.height(12.dp))
+            val self = snap.overlay.ifEmpty { Mobile.overlayAddress(dir) }
+            var selfCopied by remember { mutableStateOf(false) }
+            LaunchedEffect(selfCopied) {
+                if (selfCopied) { kotlinx.coroutines.delay(1200); selfCopied = false }
+            }
             Text(
-                snap.overlay.ifEmpty { Mobile.overlayAddress(dir) },
+                if (selfCopied) "copied" else self,
                 style = MaterialTheme.typography.bodyMedium,
-                color = Palette.Bone,
+                color = if (selfCopied) Palette.Phosphor else Palette.Bone,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.clickable {
-                    clipboard.setText(AnnotatedString(snap.overlay.ifEmpty { Mobile.overlayAddress(dir) }))
+                    clipboard.setText(AnnotatedString(self))
+                    selfCopied = true
                 },
             )
             if (snap.name.isNotEmpty()) {
@@ -325,11 +331,16 @@ private fun PeerRow(p: Peer) {
 
         if (open) {
             Spacer(Modifier.height(12.dp))
-            Detail("address", p.overlay)
+            // Copyable, because the address is the only way to reach this peer
+            // until there is a resolver, and retyping 32 hex characters from a
+            // phone screen is not a plan.
+            CopyableDetail("address", p.overlay)
             Detail("path", if (p.relayed) "through a relay" else p.how)
             if (p.handshakeAgeS > 0) Detail("handshake", "${shortDuration(p.handshakeAgeS)} ago")
             if (p.tunnelAfterS > 0) Detail("connected in", "%.1fs".format(p.tunnelAfterS))
             Detail("traffic", "${humanBytes(p.rxBytes)} in · ${humanBytes(p.txBytes)} out")
+            Spacer(Modifier.height(8.dp))
+            CopyableDetail("ping", "ping6 -c3 ${p.overlay}")
         }
     }
 }
@@ -338,6 +349,39 @@ private fun PeerRow(p: Peer) {
 
 @Composable private fun Label(text: String) =
     Text(text, style = MaterialTheme.typography.labelSmall, color = Palette.Ash)
+
+/**
+ * A detail row that copies on tap and says so.
+ *
+ * A copy with no feedback is indistinguishable from a tap that missed, which is
+ * how you end up pasting the previous thing you copied.
+ */
+@Composable
+private fun CopyableDetail(key: String, value: String) {
+    val clipboard = LocalClipboardManager.current
+    var copied by remember { mutableStateOf(false) }
+    LaunchedEffect(copied) { if (copied) { kotlinx.coroutines.delay(1200); copied = false } }
+
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 2.dp).clickable {
+            clipboard.setText(AnnotatedString(value))
+            copied = true
+        },
+    ) {
+        Text(
+            if (copied) "copied" else key,
+            style = MaterialTheme.typography.bodySmall,
+            color = if (copied) Palette.Phosphor else Palette.Ash,
+            modifier = Modifier.width(110.dp),
+        )
+        Text(
+            value,
+            style = MaterialTheme.typography.bodySmall,
+            color = Palette.Bone,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
 
 @Composable
 private fun Detail(key: String, value: String) {

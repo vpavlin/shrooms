@@ -52,6 +52,18 @@ type Logger interface {
 var (
 	mu      sync.Mutex
 	running *session
+
+	// node outlives a disconnect, deliberately.
+	//
+	// liblogosdelivery keeps process-global state that its destroy does not
+	// release: creating a second node in the same process fails with
+	// "Failed to initialize persistency instance - persistency already
+	// initialized". On a phone, connect/disconnect/connect is the normal thing
+	// to do, so the node is created once and only stopped and started again.
+	//
+	// The cost is that it is never destroyed while the process lives, which is
+	// what Android does to processes anyway.
+	node *waku.Node
 )
 
 type session struct {
@@ -61,7 +73,6 @@ type session struct {
 
 	mesh   *mesh.Mesh
 	dev    *wg.Device
-	node   *waku.Node
 	cancel context.CancelFunc
 	done   chan struct{}
 }
@@ -172,13 +183,17 @@ func Start(tunFd int, configDir string, p Protector, l Logger) error {
 	}
 	log.Info("data plane up", "port", cfg.ListenPort, "protected_sockets", len(fds))
 
-	node, err := waku.New(nodeConfig(cfg))
-	if err != nil {
-		dev.Close()
-		return fmt.Errorf("rendezvous plane: %w", err)
+	// Reuse the node across reconnects; see the comment on the package
+	// variable. Only the first connect creates one.
+	if node == nil {
+		n, err := waku.New(nodeConfig(cfg))
+		if err != nil {
+			dev.Close()
+			return fmt.Errorf("rendezvous plane: %w", err)
+		}
+		node = n
 	}
 	if err := node.Start(); err != nil {
-		node.Close()
 		dev.Close()
 		return fmt.Errorf("start rendezvous plane: %w", err)
 	}
@@ -186,7 +201,7 @@ func Start(tunFd int, configDir string, p Protector, l Logger) error {
 
 	m, err := mesh.New(log, cfg, st, node, dev)
 	if err != nil {
-		node.Close()
+		_ = node.Stop()
 		dev.Close()
 		return err
 	}
@@ -197,7 +212,7 @@ func Start(tunFd int, configDir string, p Protector, l Logger) error {
 		name:    cfg.Name,
 		overlay: identity.OverlayAddr(nk, st.Identity.DevicePub).String(),
 		prefix:  nk.Prefix().String(),
-		mesh:    m, dev: dev, node: node, cancel: cancel, done: make(chan struct{}),
+		mesh:    m, dev: dev, cancel: cancel, done: make(chan struct{}),
 	}
 	go func() {
 		defer close(s.done)
@@ -223,10 +238,13 @@ func Stop() error {
 	select {
 	case <-s.done:
 	case <-time.After(5 * time.Second):
-		// Do not block the UI thread on a shutdown that is stuck; the process
-		// is going away regardless.
+		// Do not block the UI thread on a shutdown that is stuck.
 	}
-	s.node.Close()
+	// Stop, never destroy: destroying leaves state behind that stops the next
+	// node being created at all.
+	if node != nil {
+		_ = node.Stop()
+	}
 	return s.dev.Close()
 }
 
