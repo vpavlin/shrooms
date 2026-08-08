@@ -359,6 +359,19 @@ $ curl -fsSLO https://raw.githubusercontent.com/vpavlin/logos-vpn/master/scripts
 $ sudo bash install.sh join <NETWORK-KEY> --name laptop
 ```
 
+To set a machine up **without the key passing through whoever is doing the
+setup** — a colleague, a script, an AI agent — prepare it and paste the key
+yourself afterwards:
+
+```console
+$ sudo bash install.sh prepare --name nas --relay
+# then edit the network_key line in /etc/logos-vpn/config.toml
+$ sudo systemctl start logos-vpn
+```
+
+The device identity is generated during `prepare`, so the machine's overlay
+address is settled before the key arrives and does not change when it does.
+
 Or to create a new mesh, on the first machine:
 
 ```console

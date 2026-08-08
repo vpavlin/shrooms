@@ -138,6 +138,54 @@ func setup(cfgPath, stateDir string, nk identity.NetworkKey, name string, port u
 	return nil
 }
 
+// cmdPrepare writes everything except the key.
+//
+// For setting a machine up without the key passing through whoever — or
+// whatever — is doing the setting up. The device identity is generated here, so
+// the machine has its own keys from the start; only the mesh key is left blank.
+func cmdPrepare(args []string) error {
+	fs := flag.NewFlagSet("prepare", flag.ExitOnError)
+	cfgPath, stateDir := commonFlags(fs)
+	name := fs.String("name", "", "device name (default: hostname)")
+	port := fs.Uint("port", 51820, "UDP listen port")
+	advertise := fs.String("advertise", "", "public endpoint, only if it is not on a local interface")
+	relay := fs.Bool("relay", false, "forward traffic for peers that cannot reach each other")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	cfg := state.DefaultConfig()
+	if *name != "" {
+		cfg.Name = *name
+	}
+	cfg.ListenPort = uint16(*port)
+	cfg.Relay = *relay
+	if *advertise != "" {
+		cfg.Advertise = []string{*advertise}
+	}
+	cfg.NetworkKey = state.KeyPlaceholder
+
+	if err := state.WriteConfig(*cfgPath, cfg); err != nil {
+		return err
+	}
+	// Generated now so the identity — and the overlay address derived from it —
+	// is settled before the key arrives, and does not change when it does.
+	if _, err := state.LoadOrCreateState(*stateDir); err != nil {
+		return err
+	}
+
+	fmt.Printf("Prepared %s for %q.\n\n", *cfgPath, cfg.Name)
+	fmt.Println("The mesh key is not set. Add it yourself:")
+	fmt.Printf("  sudo sed -i 's|%s|<YOUR-KEY>|' %s\n\n", state.KeyPlaceholder, *cfgPath)
+	fmt.Println("or edit the network_key line by hand. Get the key from a machine")
+	fmt.Println("already on the mesh:")
+	fmt.Println("  logos-vpn key show          # or --qr to scan it")
+	fmt.Println()
+	fmt.Println("Then start it:")
+	fmt.Println("  sudo systemctl start logos-vpn")
+	return nil
+}
+
 func cmdKey(args []string) error {
 	// Strip the sub-subcommand before parsing: Go's flag package stops at the
 	// first positional argument, so `key show --config X` would otherwise leave

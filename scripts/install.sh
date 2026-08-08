@@ -35,10 +35,12 @@ FORCE=0
 
 usage() {
     cat <<EOF
-usage: $0 [--image REF] [--force] (init | join <NETWORK-KEY>) [flags...]
+usage: $0 [--image REF] [--force] (init | join <NETWORK-KEY> | prepare) [flags...]
 
   init                 create a new mesh and print its key
   join KEY             join an existing mesh
+  prepare              write the config with the key left blank, for setting a
+                       machine up without the key passing through anyone else
 
 Everything after init/join is passed straight to logos-vpn, so its flags are
 whatever that version supports:
@@ -78,8 +80,8 @@ done
 
 [ $# -gt 0 ] || usage
 case "$1" in
-    init|join) ;;
-    *) echo "expected 'init' or 'join', got '$1'"; usage ;;
+    init|join|prepare) ;;
+    *) echo "expected 'init', 'join' or 'prepare', got '$1'"; usage ;;
 esac
 SETUP=("$@")
 
@@ -190,6 +192,24 @@ chmod 755 /usr/local/bin/logos-vpn
 
 systemctl daemon-reload
 systemctl enable logos-vpn >/dev/null 2>&1
+
+# A prepared machine has no key yet, so starting it would only fail. Everything
+# else is installed and enabled; it comes up on the first start and on boot
+# after that.
+if [ "${SETUP[0]}" = "prepare" ]; then
+    cat <<EOF
+
+Installed and enabled, but NOT started: the mesh key is not set yet.
+
+  sudo nano /etc/logos-vpn/config.toml     # replace the network_key placeholder
+  sudo systemctl start logos-vpn
+  logos-vpn status
+
+Get the key from a machine already on the mesh — \`logos-vpn key show\`, or
+\`--qr\` to scan it. It never needs to pass through anyone else.
+EOF
+    exit 0
+fi
 # Not `enable --now ... || enable`: that swallowed a failed start and left the
 # script reporting success over a node that never came up.
 if ! systemctl restart logos-vpn; then

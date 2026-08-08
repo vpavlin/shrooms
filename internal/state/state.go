@@ -27,6 +27,14 @@ const (
 	DefaultStateDir   = "/var/lib/logos-vpn"
 )
 
+// KeyPlaceholder marks a config prepared without its key.
+//
+// It exists so a machine can be set up by someone — or something — that must
+// never see the key: everything else is written, and the key is typed in
+// afterwards by whoever holds it. The key is a bearer credential (ADR-008), so
+// the fewer places it travels, the better.
+const KeyPlaceholder = "PASTE-THE-NETWORK-KEY-HERE"
+
 // DefaultPreset is the network to join.
 //
 // logos.test, not logos.dev: it is what the messaging team recommends, and as
@@ -148,6 +156,11 @@ func DefaultConfig() Config {
 func (c *Config) Validate() error {
 	if c.NetworkKey == "" {
 		return errors.New("network_key is not set — run `logos-vpn init` or `logos-vpn join`")
+	}
+	if c.NetworkKey == KeyPlaceholder {
+		// Named specifically: "invalid base32" would send someone hunting a
+		// corrupt file rather than the line they were told to edit.
+		return errors.New("network_key is still the placeholder — edit the config and paste the mesh key")
 	}
 	if _, err := identity.ParseNetworkKey(c.NetworkKey); err != nil {
 		return fmt.Errorf("network_key: %w", err)

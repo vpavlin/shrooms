@@ -22,6 +22,8 @@ func main() {
 	switch os.Args[1] {
 	case "init":
 		err = cmdInit(os.Args[2:])
+	case "prepare":
+		err = cmdPrepare(os.Args[2:])
 	case "join":
 		err = cmdJoin(os.Args[2:])
 	case "daemon":
@@ -55,6 +57,9 @@ func usage() {
 Usage:
   logos-vpn init [--name N] [--relay]  create a new mesh, print its network key
   logos-vpn join KEY [--name N] [--relay]  join an existing mesh
+  logos-vpn prepare [--name N] [--relay]  write a config with the key left blank,
+                                          for setting a machine up without the
+                                          key passing through anyone else
   logos-vpn daemon                     run the mesh node
   logos-vpn status [--json]            show the roster and tunnel state
   logos-vpn paths [NAME]               show probed candidates and which won
