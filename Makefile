@@ -25,7 +25,7 @@ GO ?= go
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 .PHONY: all deps deps-basecamp check-lib logos-vpn wakuspike s3topics m0demo \
-        s1 s3 probe m0 m1 m2 m2-edm m3 m3-remote dist image push-image deps-release install uninstall build-all vet-cgo test test-unit fmt clean
+        s1 s3 probe m0 m1 m2 m2-edm m3 m3-remote dist image push-image deps-release install uninstall build-all vet-cgo test test-unit android-deps android-core fmt clean
 
 all: logos-vpn
 
@@ -193,6 +193,25 @@ test-unit:
 		./internal/topic/... ./internal/control/... ./internal/wg/... \
 		./internal/disco/... ./internal/relay/... ./internal/state/... \
 		./internal/hosts/...
+
+## --- android ---
+
+NDK      ?= $(HOME)/Android/Sdk/ndk/android-ndk-r27c
+ANDROID_API ?= 24
+ANDROID_CC  = $(NDK)/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android$(ANDROID_API)-clang
+ANDROID_LIB = $(abspath android/libs)
+
+## Fetch the arm64 liblogosdelivery. arm64 only: there is no x86_64 build, so
+## an emulator has no node.
+android-deps:
+	./scripts/fetch-android-lib.sh
+
+## Cross-compile the core for android/arm64. This is the check that matters —
+## if the cgo core does not link here, no amount of Kotlin helps.
+android-core: android-deps
+	@test -x "$(ANDROID_CC)" || { echo "no NDK clang at $(ANDROID_CC); set NDK="; exit 1; }
+	GOOS=android GOARCH=arm64 CGO_ENABLED=1 		CC="$(ANDROID_CC)" 		CGO_CFLAGS="-I$(ANDROID_LIB)" 		CGO_LDFLAGS="-L$(ANDROID_LIB)/arm64-v8a -llogosdelivery" 		$(GO) build ./internal/... ./mobile/
+	@echo "core and mobile binding build for android/arm64"
 
 ## Build every package. test-unit skips the cgo-bound ones, so without this an
 ## API change can break a command without any check noticing — which is exactly

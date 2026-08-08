@@ -237,6 +237,37 @@ func (b *Bind) SendControl(sub Sub, payload []byte, ep conn.Endpoint) error {
 // Stats reports control packets received and sent, and packets sent via a relay.
 func (b *Bind) Stats() (rx, tx, relayed uint64) { return b.ctrlRx, b.ctrlTx, b.relayTx }
 
+// fdPeeker is implemented by wireguard-go's StdNetBind on Android only
+// (conn/boundif_android.go). Asserted rather than build-tagged so this file
+// compiles everywhere and simply finds nothing on other platforms.
+type fdPeeker interface {
+	PeekLookAtSocketFd4() (fd int, err error)
+	PeekLookAtSocketFd6() (fd int, err error)
+}
+
+// SocketFds returns the UDP socket descriptors, for VpnService.protect.
+//
+// Android routes a socket created inside a VpnService through the tunnel. Ours
+// carries the rendezvous and disco traffic that the tunnel depends on, so
+// without protecting it the interface feeds itself and nothing works — with no
+// error anywhere, and no equivalent failure on any other platform.
+//
+// Returns nothing on platforms where the question does not arise.
+func (b *Bind) SocketFds() []int {
+	peeker, ok := b.inner.(fdPeeker)
+	if !ok {
+		return nil
+	}
+	var fds []int
+	if fd, err := peeker.PeekLookAtSocketFd4(); err == nil && fd > 0 {
+		fds = append(fds, fd)
+	}
+	if fd, err := peeker.PeekLookAtSocketFd6(); err == nil && fd > 0 {
+		fds = append(fds, fd)
+	}
+	return fds
+}
+
 // Unknown reports packets WireGuard will reject as an unknown message type, and
 // the source of the most recent one.
 func (b *Bind) Unknown() (n uint64, last string) { return b.unknownRx, b.lastUnknown }

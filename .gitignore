@@ -3,3 +3,6 @@ bin/
 whitepaper.pdf
 docker/build/
 docker/run/
+
+# Android native libraries, fetched by make android-deps (29MB+).
+android/libs/

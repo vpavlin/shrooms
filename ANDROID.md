@@ -66,9 +66,18 @@ Each stage is independently checkable, and the risky ones are first.
 **Done when:** `gomobile bind` produces an `.aar` containing `arm64-v8a` and the
 native libraries, and a trivial app calls `StatusJSON()` without crashing.
 
-Risk: cgo + gomobile + a prebuilt 29 MB `.so`. If `gomobile bind` fights us, the
-fallback is `-buildmode=c-shared` and a small hand-written JNI entry point —
-more work, more control.
+**Status: the risky half is done.** `make android-core` cross-compiles every
+package in `internal/` plus the `mobile/` binding for android/arm64, linking
+against the prebuilt library. That was the question the whole approach rested
+on, and cgo, wireguard-go and liblogosdelivery all came through unchanged.
+
+Remaining for A1: `gomobile bind` packaging, which needs a JDK — the native
+libraries must be placed in `jniLibs/arm64-v8a` alongside the generated `.aar`,
+since gomobile does not know about them.
+
+Risk if `gomobile bind` fights the prebuilt `.so`: fall back to
+`-buildmode=c-shared` and a small hand-written JNI entry point — more work, more
+control.
 
 ### A2 — a node that talks
 
