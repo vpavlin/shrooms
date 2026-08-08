@@ -8,10 +8,14 @@ Wants=network-online.target
 Type=simple
 ExecStart=/usr/local/bin/logos-vpn daemon
 
-# CAP_NET_ADMIN is needed to create the TUN device and configure its address
-# and route. Everything else runs unprivileged.
-AmbientCapabilities=CAP_NET_ADMIN
-CapabilityBoundingSet=CAP_NET_ADMIN
+# CAP_NET_ADMIN to create the TUN device and configure its address and route.
+#
+# CAP_NET_BIND_SERVICE for the resolver on port 53. Running as root is not
+# enough: the bounding set removes every capability not listed, so without this
+# the bind fails with EACCES on a process that is otherwise privileged — which
+# reads as a permissions bug in the wrong place entirely.
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 
 StateDirectory=logos-vpn
 StateDirectoryMode=0700
