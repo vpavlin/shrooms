@@ -106,6 +106,7 @@ func dupFd(fd int) (int, error) {
 
 type statusPeer struct {
 	Name             string  `json:"name"`
+	DNSName          string  `json:"dns_name,omitempty"`
 	Overlay          string  `json:"overlay"`
 	Online           bool    `json:"online"`
 	Relay            bool    `json:"relay,omitempty"`
@@ -122,6 +123,7 @@ type statusPeer struct {
 
 type statusPayload struct {
 	Name       string       `json:"name"`
+	DNSName    string       `json:"dns_name,omitempty"`
 	Overlay    string       `json:"overlay"`
 	Prefix     string       `json:"prefix"`
 	Peers      []statusPeer `json:"peers"`
@@ -133,7 +135,7 @@ type statusPayload struct {
 	} `json:"rendezvous"`
 }
 
-func snapshot(m *mesh.Mesh) statusPayload {
+func snapshot(m *mesh.Mesh, suffix string) statusPayload {
 	now := time.Now()
 	var out statusPayload
 
@@ -147,6 +149,7 @@ func snapshot(m *mesh.Mesh) statusPayload {
 	for _, p := range m.Roster().Peers() {
 		sp := statusPeer{
 			Name:    p.Name,
+			DNSName: mesh.DNSName(p.Name, suffix),
 			Overlay: p.Overlay.String(),
 			Online:  p.Online(now),
 			Relay:   p.Relay,

@@ -110,6 +110,12 @@ func (s *Server) Serve(ctx context.Context, pc net.PacketConn) error {
 	}
 }
 
+// Answer builds a response for a raw query.
+//
+// Exported for the tun intercept, which has a query and needs a response
+// without a socket between them.
+func (s *Server) Answer(query []byte) ([]byte, error) { return s.answer(query) }
+
 // answer builds a response for a query.
 func (s *Server) answer(query []byte) ([]byte, error) {
 	var p dnsmessage.Parser

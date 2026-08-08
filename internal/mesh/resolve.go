@@ -59,6 +59,22 @@ func sanitiseName(s string) string {
 	return strings.Trim(b.String(), "-")
 }
 
+// DNSName is the name a peer answers to, as the resolver and the hosts file
+// both render it. Empty when the name sanitises to nothing.
+//
+// Computed here so the app does not reimplement the sanitising and drift from
+// what actually resolves.
+func DNSName(name, suffix string) string {
+	h := sanitiseName(name)
+	if h == "" {
+		return ""
+	}
+	if suffix == "" {
+		suffix = "mesh"
+	}
+	return h + "." + strings.Trim(suffix, ".")
+}
+
 // Lookup is the resolver handed to the DNS server: this device first, then
 // peers.
 func (m *Mesh) Lookup(host string) (netip.Addr, bool) {

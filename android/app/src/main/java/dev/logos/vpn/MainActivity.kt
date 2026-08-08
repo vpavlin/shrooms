@@ -225,7 +225,21 @@ private fun MeshScreen(snap: Snapshot, dir: String, onConnect: () -> Unit, onDis
                     selfCopied = true
                 },
             )
-            if (snap.name.isNotEmpty()) {
+            if (snap.dnsName.isNotEmpty()) {
+                var nameCopied by remember { mutableStateOf(false) }
+                LaunchedEffect(nameCopied) {
+                    if (nameCopied) { kotlinx.coroutines.delay(1200); nameCopied = false }
+                }
+                Text(
+                    if (nameCopied) "copied" else snap.dnsName,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (nameCopied) Palette.Phosphor else Palette.Ash,
+                    modifier = Modifier.clickable {
+                        clipboard.setText(AnnotatedString(snap.dnsName))
+                        nameCopied = true
+                    },
+                )
+            } else if (snap.name.isNotEmpty()) {
                 Text(snap.name, style = MaterialTheme.typography.bodySmall, color = Palette.Ash)
             }
         }
@@ -274,16 +288,50 @@ private fun MeshScreen(snap: Snapshot, dir: String, onConnect: () -> Unit, onDis
             )
         }
 
-        Box(Modifier.weight(1f)) {
-            if (snap.peers.isEmpty()) {
+        var asGraph by remember { mutableStateOf(true) }
+        var selected by remember { mutableStateOf<Peer?>(null) }
+
+        if (snap.peers.isNotEmpty()) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.End,
+            ) {
                 Text(
+                    if (asGraph) "list" else "graph",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Palette.Ash,
+                    modifier = Modifier.clickable { asGraph = !asGraph; selected = null },
+                )
+            }
+        }
+
+        Box(Modifier.weight(1f)) {
+            when {
+                snap.peers.isEmpty() -> Text(
                     if (snap.connected) "looking for peers…" else "not connected",
                     style = MaterialTheme.typography.bodySmall,
                     color = Palette.Ash,
                     modifier = Modifier.align(Alignment.Center),
                 )
-            } else {
-                LazyColumn(contentPadding = PaddingValues(horizontal = 16.dp)) {
+
+                asGraph -> {
+                    MeshGraph(snap, onSelect = { selected = it })
+                    selected?.let { peer ->
+                        // The detail for a tapped node, over the graph rather
+                        // than replacing it: the shape is the context.
+                        Box(
+                            Modifier.align(Alignment.BottomCenter)
+                                .padding(16.dp)
+                                .background(Palette.Panel, RoundedCornerShape(10.dp))
+                                .border(1.dp, Palette.Line, RoundedCornerShape(10.dp))
+                                .padding(14.dp),
+                        ) {
+                            Column { PeerDetails(peer) }
+                        }
+                    }
+                }
+
+                else -> LazyColumn(contentPadding = PaddingValues(horizontal = 16.dp)) {
                     items(snap.peers) { PeerRow(it) }
                 }
             }
@@ -331,17 +379,25 @@ private fun PeerRow(p: Peer) {
 
         if (open) {
             Spacer(Modifier.height(12.dp))
-            // Copyable, because the address is the only way to reach this peer
-            // until there is a resolver, and retyping 32 hex characters from a
-            // phone screen is not a plan.
-            CopyableDetail("address", p.overlay)
-            Detail("path", if (p.relayed) "through a relay" else p.how)
-            if (p.handshakeAgeS > 0) Detail("handshake", "${shortDuration(p.handshakeAgeS)} ago")
-            if (p.tunnelAfterS > 0) Detail("connected in", "%.1fs".format(p.tunnelAfterS))
-            Detail("traffic", "${humanBytes(p.rxBytes)} in · ${humanBytes(p.txBytes)} out")
-            Spacer(Modifier.height(8.dp))
-            CopyableDetail("ping", "ping6 -c3 ${p.overlay}")
+            PeerDetails(p)
         }
+    }
+}
+
+/** The facts about one peer, shared by the list and the graph. */
+@Composable
+private fun PeerDetails(p: Peer) {
+    Column {
+        // Copyable: these are the two ways to reach the peer, and retyping
+        // either off a phone screen is not a plan.
+        if (p.dnsName.isNotEmpty()) CopyableDetail("name", p.dnsName)
+        CopyableDetail("address", p.overlay)
+        Detail("path", if (p.relayed) "through a relay" else p.how)
+        if (p.handshakeAgeS > 0) Detail("handshake", "${shortDuration(p.handshakeAgeS)} ago")
+        if (p.tunnelAfterS > 0) Detail("connected in", "%.1fs".format(p.tunnelAfterS))
+        Detail("traffic", "${humanBytes(p.rxBytes)} in · ${humanBytes(p.txBytes)} out")
+        Spacer(Modifier.height(8.dp))
+        CopyableDetail("ping", "ping6 -c3 " + p.dnsName.ifEmpty { p.overlay })
     }
 }
 

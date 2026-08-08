@@ -12,6 +12,8 @@ import org.json.JSONObject
  */
 data class Peer(
     val name: String,
+    /** What this peer answers to on the mesh, e.g. `laptop.mesh`. */
+    val dnsName: String,
     val overlay: String,
     val online: Boolean,
     val live: Boolean,
@@ -50,6 +52,7 @@ data class Rendezvous(val status: String, val ok: Boolean, val problem: String, 
 data class Snapshot(
     val connected: Boolean = false,
     val name: String = "",
+    val dnsName: String = "",
     val overlay: String = "",
     val prefix: String = "",
     val peers: List<Peer> = emptyList(),
@@ -109,6 +112,7 @@ object MeshState {
                 val p = arr.getJSONObject(i)
                 peers += Peer(
                     name = p.optString("name"),
+                    dnsName = p.optString("dns_name"),
                     overlay = p.optString("overlay"),
                     online = p.optBoolean("online"),
                     live = p.optBoolean("live"),
@@ -126,6 +130,7 @@ object MeshState {
         val r = o.optJSONObject("rendezvous")
         return Snapshot(
             name = o.optString("name"),
+            dnsName = o.optString("dns_name"),
             overlay = o.optString("overlay"),
             prefix = o.optString("prefix"),
             peers = peers.sortedBy { it.name },

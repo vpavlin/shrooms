@@ -18,10 +18,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -70,6 +70,7 @@ var (
 
 type session struct {
 	name    string
+	suffix  string
 	overlay string
 	prefix  string
 
@@ -158,11 +159,27 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 	//
 	// It takes ownership of the descriptor, which is why we hand it the dup
 	// rather than Android's copy.
-	tunDev, _, err := tun.CreateUnmonitoredTUNFromFD(dupped)
+	rawTun, _, err := tun.CreateUnmonitoredTUNFromFD(dupped)
 	if err != nil {
 		syscall.Close(dupped)
 		return fmt.Errorf("tun from fd %d: %w", tunFd, err)
 	}
+
+	// Answer DNS in the tun read path.
+	//
+	// The wrapper has to exist before the WireGuard device, but the resolver
+	// needs the mesh, which needs the device. So the wrapper holds a pointer
+	// that is filled in once the mesh exists; queries arriving in that window
+	// are dropped rather than answered wrongly, and the client retries.
+	selfAddr := identity.OverlayAddr(mustKey(cfg), st.Identity.DevicePub)
+	var resolver atomic.Pointer[dnssrv.Server]
+	tunDev := dnssrv.NewIntercept(rawTun, selfAddr, func(q []byte) ([]byte, error) {
+		r := resolver.Load()
+		if r == nil {
+			return nil, errors.New("resolver not ready")
+		}
+		return r.Answer(q)
+	})
 
 	dev, err := wg.NewDevice(tunDev, st.Identity.WGPriv, cfg.ListenPort,
 		device.NewLogger(device.LogLevelError, "[wg] "))
@@ -212,33 +229,21 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 	// no hosts file to write, and VpnService.Builder.addDnsServer is a
 	// first-class API (ADR-013). Not fatal if the bind is refused — port 53 is
 	// privileged, and losing names is smaller than losing the tunnel.
-	selfAddr := identity.OverlayAddr(mustKey(cfg), st.Identity.DevicePub)
-	var dnsConn net.PacketConn
+	// Refuse to answer DNS at all unless we can forward what is not ours.
+	// Android sends us every query, so a resolver that only knows .mesh takes
+	// the device's name resolution away — no browsing, no app updates.
 	var forward func([]byte) ([]byte, error)
-
-	// Refuse to take over DNS unless we can also forward. Android sends us
-	// every query, so a resolver that only knows .mesh removes the device's
-	// name resolution — no browsing, no app updates. Better to have no mesh
-	// names than no names at all.
-	fw, ferr := newForwarder(dnsServers, p)
-	switch {
-	case ferr != nil:
+	if fw, ferr := newForwarder(dnsServers, p); ferr != nil {
 		log.Warn("name resolution disabled: no usable upstream resolvers", "err", ferr)
-	default:
+	} else {
 		forward = fw
-		if pc, derr := dnssrv.Listen(selfAddr); derr != nil {
-			log.Warn("name resolution unavailable", "err", derr)
-		} else {
-			dnsConn = pc
-			log.Info("name resolution up", "address", selfAddr,
-				"suffix", cfg.HostsSuffix, "upstream", dnsServers)
-		}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	nk, _ := cfg.Key()
 	s := &session{
 		name:    cfg.Name,
+		suffix:  cfg.HostsSuffix,
 		overlay: identity.OverlayAddr(nk, st.Identity.DevicePub).String(),
 		prefix:  nk.Prefix().String(),
 		mesh:    m, dev: dev, cancel: cancel, done: make(chan struct{}),
@@ -249,17 +254,14 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 			log.Error("mesh stopped", "err", err)
 		}
 	}()
-	if dnsConn != nil {
-		resolver := &dnssrv.Server{
+	if forward != nil {
+		// No socket and no port: the intercept already holds the packets.
+		resolver.Store(&dnssrv.Server{
 			Suffix:   cfg.HostsSuffix,
 			Lookup:   m.Lookup,
 			Upstream: forward,
-		}
-		go func() {
-			if err := resolver.Serve(ctx, dnsConn); err != nil && ctx.Err() == nil {
-				log.Error("name resolution stopped", "err", err)
-			}
-		}()
+		})
+		log.Info("name resolution up", "address", selfAddr, "suffix", cfg.HostsSuffix)
 	}
 	running = s
 	return nil
@@ -305,8 +307,9 @@ func StatusJSON() string {
 	if s == nil {
 		return "{}"
 	}
-	snap := snapshot(s.mesh)
+	snap := snapshot(s.mesh, s.suffix)
 	snap.Name, snap.Overlay, snap.Prefix = s.name, s.overlay, s.prefix
+	snap.DNSName = mesh.DNSName(s.name, s.suffix)
 	b, err := json.Marshal(snap)
 	if err != nil {
 		return "{}"

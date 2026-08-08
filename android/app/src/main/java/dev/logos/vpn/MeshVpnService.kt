@@ -97,23 +97,22 @@ class MeshVpnService : VpnService() {
                 builder.allowFamily(OsConstants.AF_INET)
                 builder.allowFamily(OsConstants.AF_INET6)
 
-                // DNS is OFF on Android, deliberately, until the resolver can
-                // actually be reached.
+                // Names. The resolver answers in the tun read path, before
+                // WireGuard sees the packet — Android routes queries for a
+                // VPN's DNS server through the VPN, so a socket bound to our
+                // own address could never receive them.
                 //
-                // Android routes queries for a VPN's DNS server THROUGH the
-                // VPN. The query is therefore written into our tun, where
-                // wireguard-go looks for a peer owning the destination address
-                // — which is our own — finds none, and drops it. The resolver
-                // is listening on an address nothing can deliver to, so every
-                // mesh name times out, and because addDnsServer hands us every
-                // query the device makes, so does everything else.
-                //
-                // Making this work needs the query intercepted in the tun read
-                // path before WireGuard sees it, which is how Tailscale does
-                // it. Until that exists, taking DNS over can only break things.
-                @Suppress("UNUSED_VARIABLE")
-                val upstream = ""
-                Log.i(TAG, "DNS not claimed; mesh names resolve by address only")
+                // Only claimed when we can also forward: addDnsServer hands us
+                // EVERY query the device makes, so a resolver that only knows
+                // .mesh removes name resolution entirely.
+                val upstream = underlyingDnsServers()
+                if (upstream.isNotEmpty()) {
+                    builder.addDnsServer(overlay)
+                    builder.addSearchDomain(Mobile.dnsSuffix(dir))
+                } else {
+                    Log.w(TAG, "no upstream resolvers; leaving DNS alone")
+                    MeshState.log("WARN", "mesh names unavailable: could not read the network's resolvers")
+                }
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     // Our own traffic must not be captured by our own tunnel.
