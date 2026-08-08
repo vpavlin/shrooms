@@ -6,3 +6,6 @@ docker/run/
 
 # Android native libraries, fetched by make android-deps (29MB+).
 android/libs/
+
+# Built by make aar (18MB).
+android/*.aar

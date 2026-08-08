@@ -66,18 +66,34 @@ Each stage is independently checkable, and the risky ones are first.
 **Done when:** `gomobile bind` produces an `.aar` containing `arm64-v8a` and the
 native libraries, and a trivial app calls `StatusJSON()` without crashing.
 
-**Status: the risky half is done.** `make android-core` cross-compiles every
-package in `internal/` plus the `mobile/` binding for android/arm64, linking
-against the prebuilt library. That was the question the whole approach rested
-on, and cgo, wireguard-go and liblogosdelivery all came through unchanged.
+**✅ A1 done.** `make aar` produces an 18 MB `android/logosvpn.aar`:
 
-Remaining for A1: `gomobile bind` packaging, which needs a JDK — the native
-libraries must be placed in `jniLibs/arm64-v8a` alongside the generated `.aar`,
-since gomobile does not know about them.
+```
+classes.jar                        mobile.Mobile, Protector, Logger
+jni/arm64-v8a/libgojni.so           5.9 MB   the Go core
+jni/arm64-v8a/liblogosdelivery.so  27.6 MB   the node
+jni/arm64-v8a/librln.so             6.1 MB
+jni/arm64-v8a/libc++_shared.so      1.7 MB
+```
 
-Risk if `gomobile bind` fights the prebuilt `.so`: fall back to
-`-buildmode=c-shared` and a small hand-written JNI entry point — more work, more
-control.
+Two things this cost, both worth knowing:
+
+**The binding lives in its own module** (`mobile/go.mod`). `gomobile bind`
+requires `golang.org/x/mobile` in the module holding the bound package, and
+adding it to the root bumped the go directive to 1.25 and upgraded `x/sys`,
+`x/sync` and `x/tools` — moving wireguard-go's dependency graph as a side effect
+of wanting an `.aar`. The core's dependencies are the ones its tests ran
+against. Nested modules are excluded from the parent's `./...` patterns, so the
+root build and test are untouched.
+
+**gomobile packages only what it built**, so the three prebuilt libraries are
+injected afterwards. Without them the `.aar` loads and dies at the first call
+into liblogosdelivery — which presents as a Go bug. `build-aar.sh` fails if any
+of the four is missing, because the alternative is discovering it on a phone.
+
+The build runs in a container: gomobile needs a JDK and Go ≥ 1.25, neither of
+which the core requires, and the host SDK/NDK is mounted rather than
+re-downloaded.
 
 ### A2 — a node that talks
 
