@@ -169,6 +169,11 @@ No accounts, no telemetry, no cloud. There is no server to have one.
 
 - **arm64 only.** No public x86_64 `liblogosdelivery.so`, so the emulator has no
   node. A real phone is required; CI can build but not run.
+- **`CreateUnmonitoredTUNFromFD`, never `CreateTUNFromFile`.** The latter also
+  opens a netlink socket to watch for route and MTU changes, which an ordinary
+  app has no privilege for. It fails with EPERM on a descriptor that is
+  perfectly usable, reported as "tun from fd: permission denied" — an error that
+  points at the descriptor rather than at the monitoring nobody asked for.
 - **The overlay is IPv6-only.** `VpnService` must be configured for that, and
   route only the mesh prefix.
 - **Battery.** wireguard-go's persistent keepalive is 25s and disco probes every

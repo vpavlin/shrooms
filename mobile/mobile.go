@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	"golang.zx2c4.com/wireguard/device"
@@ -132,9 +133,22 @@ func Start(tunFd int, configDir string, p Protector, l Logger) error {
 	if err != nil {
 		return fmt.Errorf("dup tun fd: %w", err)
 	}
-	tunDev, err := tun.CreateTUNFromFile(os.NewFile(uintptr(dupped), "/dev/tun"), wg.DefaultMTU)
+
+	// CreateUnmonitoredTUNFromFD, not CreateTUNFromFile.
+	//
+	// The latter also opens a netlink socket to watch for route and MTU
+	// changes, which an ordinary Android app has no privilege for: it fails
+	// with EPERM, reported as "tun from fd: permission denied" on a descriptor
+	// that is perfectly usable. The unmonitored variant is what
+	// wireguard-android uses, and the monitoring is not wanted here anyway —
+	// the interface is ours and its MTU is fixed.
+	//
+	// It takes ownership of the descriptor, which is why we hand it the dup
+	// rather than Android's copy.
+	tunDev, _, err := tun.CreateUnmonitoredTUNFromFD(dupped)
 	if err != nil {
-		return fmt.Errorf("tun from fd: %w", err)
+		syscall.Close(dupped)
+		return fmt.Errorf("tun from fd %d: %w", tunFd, err)
 	}
 
 	dev, err := wg.NewDevice(tunDev, st.Identity.WGPriv, cfg.ListenPort,
