@@ -336,6 +336,19 @@ is reimplemented. See [ANDROID.md](ANDROID.md) for the plan and
 
 Prototype in progress.
 
+## Desktop monitoring
+
+A read-only Basecamp view — the same graph and list as the phone. Enable the
+snapshot the view reads:
+
+```toml
+status_file = "/run/logos-vpn/status.json"
+```
+
+then install `basecamp/` as a module. It never changes the mesh, so it cannot
+break it. `make basecamp-check` loads the view offscreen against a fixture and
+asserts it read one, which is what caught both of its first bugs.
+
 ## Status
 
 | | |

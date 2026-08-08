@@ -1,0 +1,16 @@
+{
+  "name": "logos_vpn",
+  "display_name": "logos-vpn",
+  "version": "0.1.0",
+  "type": "ui_qml",
+  "category": "network",
+  "description": "Monitor an overlay mesh between your own devices. Shows which peers are reachable, whether each is direct or relayed, throughput, and how long each took to connect. Read-only: the daemon does the work, this watches it.",
+  "view": "Main.qml",
+  "icon": "icon.png",
+  "dependencies": [],
+  "nix": {
+    "packages": { "build": [], "runtime": [] },
+    "external_libraries": [],
+    "cmake": { "find_packages": [] }
+  }
+}

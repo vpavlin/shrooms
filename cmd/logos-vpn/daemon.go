@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -200,7 +201,15 @@ type rendezvousStatus struct {
 }
 
 type peerStatus struct {
-	Name      string   `json:"name"`
+	Name string `json:"name"`
+	// DNSName, Relayed and RTTMs exist so a viewer never has to re-derive what
+	// the daemon already knows — parsing "relay:" out of an endpoint string, or
+	// reimplementing name sanitising, is how a front-end drifts from what
+	// actually resolves.
+	DNSName string `json:"dns_name,omitempty"`
+	Relayed bool   `json:"relayed"`
+	RTTMs   int64  `json:"rtt_ms,omitempty"`
+
 	Overlay   string   `json:"overlay"`
 	Endpoints []string `json:"endpoints"`
 	Seq       uint64   `json:"seq"`
@@ -330,6 +339,10 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Me
 				LastSeen:  p.LastSeen.Format(time.RFC3339),
 				Online:    p.Online(now),
 				Relay:     p.Relay,
+				DNSName:   mesh.DNSName(p.Name, cfg.HostsSuffix),
+			}
+			if best, ok := m.BestPath(p.ID(), now); ok {
+				ps.RTTMs = best.RTT.Milliseconds()
 			}
 			if r := m.Rate(p.ID()); r.RxBps > 0 || r.TxBps > 0 || len(r.RxHistory) > 0 {
 				ps.RxBps, ps.TxBps = r.RxBps, r.TxBps
@@ -353,6 +366,9 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Me
 				ps.Endpoint = st.Endpoint
 				ps.RxBytes = st.RxBytes
 				ps.TxBytes = st.TxBytes
+				// A relayed endpoint serialises with a relay: prefix; say so as
+				// a field so no viewer has to parse the string.
+				ps.Relayed = strings.HasPrefix(st.Endpoint, "relay:")
 				if st.Handshaked() {
 					ps.Handshaked = true
 					ps.LastHandshake = st.LastHandshake.Format(time.RFC3339)

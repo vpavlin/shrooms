@@ -25,7 +25,7 @@ GO ?= go
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 .PHONY: all deps deps-basecamp check-lib logos-vpn wakuspike s3topics m0demo \
-        s1 s3 probe m0 m1 m2 m2-edm m3 m3-remote dist image push-image deps-release install uninstall build-all vet-cgo test test-unit android-deps android-core aar apk fdroid fmt clean
+        s1 s3 probe m0 m1 m2 m2-edm m3 m3-remote dist image push-image deps-release install uninstall build-all vet-cgo test test-unit android-deps android-core aar apk fdroid basecamp-check fmt clean
 
 all: logos-vpn
 
@@ -215,6 +215,12 @@ android-core: android-deps
 	@# from inside it rather than by a ./... pattern from here.
 	cd mobile && GOOS=android GOARCH=arm64 CGO_ENABLED=1 		CC="$(ANDROID_CC)" 		CGO_CFLAGS="-I$(ANDROID_LIB)" 		CGO_LDFLAGS="-L$(ANDROID_LIB)/arm64-v8a -llogosdelivery" 		$(GO) build ./...
 	@echo "core and mobile binding build for android/arm64"
+
+## Load the Basecamp view offscreen and assert it reads a status snapshot.
+## There is no display here, but the QML runtime does not need one — and "the
+## QML looks right" is not a test.
+basecamp-check:
+	./basecamp/test/check.sh
 
 ## Build the .aar for the Android app. Container-based: gomobile needs a JDK
 ## and Go >= 1.25, which the core deliberately does not.
