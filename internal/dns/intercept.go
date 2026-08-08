@@ -26,6 +26,9 @@ import (
 type Intercept struct {
 	tun.Device
 
+	// self is the address the resolver answers ON — dns.ServiceAddr, not this
+	// device's own address. See ServiceAddr for why that distinction is the
+	// whole reason this works.
 	self netip.Addr
 	// answer takes a DNS query payload and returns a response payload.
 	answer func([]byte) ([]byte, error)

@@ -106,9 +106,13 @@ class MeshVpnService : VpnService() {
                 // EVERY query the device makes, so a resolver that only knows
                 // .mesh removes name resolution entirely.
                 val upstream = underlyingDnsServers()
-                if (upstream.isNotEmpty()) {
-                    builder.addDnsServer(overlay)
+                val dnsAddr = Mobile.dnsAddress(dir)
+                if (upstream.isNotEmpty() && dnsAddr.isNotEmpty()) {
+                    // NOT our own address: one the interface holds is delivered
+                    // locally and never reaches the tun, so nothing could answer.
+                    builder.addDnsServer(dnsAddr)
                     builder.addSearchDomain(Mobile.dnsSuffix(dir))
+                    Log.i(TAG, "resolver at $dnsAddr")
                 } else {
                     Log.w(TAG, "no upstream resolvers; leaving DNS alone")
                     MeshState.log("WARN", "mesh names unavailable: could not read the network's resolvers")

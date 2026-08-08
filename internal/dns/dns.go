@@ -31,6 +31,27 @@ const Port = 53
 // state that produced it.
 const TTL = 30
 
+// ServiceAddr is the address the resolver answers on: the mesh prefix with a
+// host part of ::53.
+//
+// Deliberately NOT this device's own address, which was the mistake. A packet
+// addressed to an address assigned to the interface is delivered locally by the
+// kernel and never traverses the tun — so neither a socket nor the read-path
+// intercept ever sees it. Tailscale uses 100.100.100.100 for the same reason.
+//
+// This address is inside the routed prefix but assigned to nothing, so packets
+// for it go into the tun, where the intercept is waiting. Collision with a
+// peer is not a concern: host parts are 80-bit hashes of device keys.
+func ServiceAddr(prefix netip.Prefix) netip.Addr {
+	a := prefix.Addr().As16()
+	// Clear the host part, then set ::53.
+	for i := 6; i < 16; i++ {
+		a[i] = 0
+	}
+	a[15] = 0x53
+	return netip.AddrFrom16(a)
+}
+
 // Lookup resolves a single label — "laptop" — to an overlay address.
 // Returning false means the name is not in this mesh.
 type Lookup func(host string) (netip.Addr, bool)

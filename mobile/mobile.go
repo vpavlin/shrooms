@@ -171,9 +171,12 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 	// needs the mesh, which needs the device. So the wrapper holds a pointer
 	// that is filled in once the mesh exists; queries arriving in that window
 	// are dropped rather than answered wrongly, and the client retries.
-	selfAddr := identity.OverlayAddr(mustKey(cfg), st.Identity.DevicePub)
+	// Answered on the service address, not this device's: a packet to an
+	// address the interface holds is delivered locally and never reaches the
+	// tun, so nothing could answer it there.
+	dnsAddr := dnssrv.ServiceAddr(mustKey(cfg).Prefix())
 	var resolver atomic.Pointer[dnssrv.Server]
-	tunDev := dnssrv.NewIntercept(rawTun, selfAddr, func(q []byte) ([]byte, error) {
+	tunDev := dnssrv.NewIntercept(rawTun, dnsAddr, func(q []byte) ([]byte, error) {
 		r := resolver.Load()
 		if r == nil {
 			return nil, errors.New("resolver not ready")
@@ -261,7 +264,7 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 			Lookup:   m.Lookup,
 			Upstream: forward,
 		})
-		log.Info("name resolution up", "address", selfAddr, "suffix", cfg.HostsSuffix)
+		log.Info("name resolution up", "address", dnsAddr, "suffix", cfg.HostsSuffix)
 	}
 	running = s
 	return nil

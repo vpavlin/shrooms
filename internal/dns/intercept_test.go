@@ -223,3 +223,49 @@ func TestTruncatedPacketsAreNotAnswered(t *testing.T) {
 		}
 	}
 }
+
+// The resolver must answer on an address that is routed but not assigned.
+//
+// The first attempt used the device's own overlay address, and nothing ever
+// arrived: the kernel delivers packets addressed to a local interface address
+// locally, so they never traverse the tun where the intercept waits.
+func TestServiceAddrIsInsideThePrefixAndNotADeviceAddress(t *testing.T) {
+	prefix := netip.MustParsePrefix("fd3b:ffe9:f81::/48")
+	svc := ServiceAddr(prefix)
+
+	if !prefix.Contains(svc) {
+		t.Fatalf("%v is outside %v, so it would not be routed into the tunnel", svc, prefix)
+	}
+	if svc == self {
+		t.Fatal("service address equals a device address; the kernel would deliver locally")
+	}
+	if got := svc.String(); got != "fd3b:ffe9:f81::53" {
+		t.Errorf("service address = %s, want fd3b:ffe9:f81::53", got)
+	}
+}
+
+// And the intercept must answer for it.
+func TestInterceptAnswersOnTheServiceAddress(t *testing.T) {
+	svc := ServiceAddr(netip.MustParsePrefix("fd3b:ffe9:f81::/48"))
+	pkt := udpPacket(client, svc, 40000, Port, []byte("Q"))
+
+	ft := &fakeTun{batch: [][]byte{pkt}}
+	ic := NewIntercept(ft, svc, func([]byte) ([]byte, error) { return []byte("R"), nil })
+
+	bufs := [][]byte{make([]byte, 2048)}
+	sizes := make([]int, 1)
+	n, err := ic.Read(bufs, sizes, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Error("passed the query to WireGuard instead of answering it")
+	}
+	if len(ft.written) != 1 {
+		t.Fatal("no reply written")
+	}
+	src, _ := netip.AddrFromSlice(ft.written[0][8:24])
+	if src != svc {
+		t.Errorf("reply came from %v, want the service address %v", src, svc)
+	}
+}

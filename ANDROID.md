@@ -203,7 +203,14 @@ wireguard-go looks for a peer owning the destination address — our own — fin
 none, and drops it. The resolver is listening on an address nothing can deliver
 to.
 
-That last one is the real obstacle, and it is not fixable from Kotlin. The query
+**And the resolver must not answer on this device's own address.** A packet
+addressed to an address the interface holds is delivered locally by the kernel
+and never traverses the tun — so neither a socket nor the read-path intercept
+ever sees it. The resolver answers on `<mesh prefix>::53` instead: inside the
+routed prefix, assigned to nothing, so packets for it go into the tun where the
+intercept is waiting. Tailscale uses 100.100.100.100 for exactly this reason.
+
+The intercept obstacle below is real, and it is not fixable from Kotlin. The query
 has to be intercepted in the **tun read path**, before WireGuard sees it: wrap
 `tun.Device`, and for packets addressed to our own overlay address on UDP/53,
 answer locally and write the reply back into the tun. This is how Tailscale does

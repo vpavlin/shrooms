@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	dnssrv "github.com/vpavlin/logos-vpn/internal/dns"
 	"github.com/vpavlin/logos-vpn/internal/identity"
 	"github.com/vpavlin/logos-vpn/internal/mesh"
 	"github.com/vpavlin/logos-vpn/internal/state"
@@ -229,4 +230,21 @@ func DNSSuffix(configDir string) string {
 		return "mesh"
 	}
 	return cfg.HostsSuffix
+}
+
+// DNSAddress is the address the app must hand to VpnService.Builder.
+//
+// Not this device's overlay address: an address the interface holds is
+// delivered locally by the kernel and never reaches the tun, so nothing can
+// answer it. See dns.ServiceAddr.
+func DNSAddress(configDir string) string {
+	cfg, _, err := load(configDir)
+	if err != nil {
+		return ""
+	}
+	nk, err := cfg.Key()
+	if err != nil {
+		return ""
+	}
+	return dnssrv.ServiceAddr(nk.Prefix()).String()
 }
