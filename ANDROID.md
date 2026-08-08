@@ -165,6 +165,33 @@ vanished.
 
 No accounts, no telemetry, no cloud. There is no server to have one.
 
+## DNS on Android: why it is harder than ADR-013 said
+
+Three attempts, each of which took the phone's internet away. Recorded so the
+fourth does not.
+
+**Android has no split-DNS.** `addDnsServer` makes the tunnel's resolver receive
+*every* query the device makes; `addSearchDomain` does not narrow it. A resolver
+answering only `.mesh` therefore removes name resolution entirely.
+
+**So it must forward** — which means the forwarding socket has to be protected,
+or it routes into the tunnel it is resolving for.
+
+**And even then the resolver is unreachable.** Android routes queries for a
+VPN's DNS server *through* the VPN. The query is written into our tun, where
+wireguard-go looks for a peer owning the destination address — our own — finds
+none, and drops it. The resolver is listening on an address nothing can deliver
+to.
+
+That last one is the real obstacle, and it is not fixable from Kotlin. The query
+has to be intercepted in the **tun read path**, before WireGuard sees it: wrap
+`tun.Device`, and for packets addressed to our own overlay address on UDP/53,
+answer locally and write the reply back into the tun. This is how Tailscale does
+it. Until that exists, claiming DNS can only break things, so the app does not.
+
+The Linux daemon is unaffected: there the address is on a real interface and the
+kernel delivers locally, which is why the same code works.
+
 ## Known before starting
 
 - **arm64 only.** No public x86_64 `liblogosdelivery.so`, so the emulator has no
