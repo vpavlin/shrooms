@@ -298,7 +298,9 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Me
 	nk, _ := cfg.Key()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+	// One snapshot builder, read by the CLI over the unix socket and by the
+	// status file. Two copies is how two front-ends quietly drift.
+	snapshot := func() statusPayload {
 		now := time.Now()
 		out := statusPayload{
 			Name:    cfg.Name,
@@ -363,9 +365,24 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Me
 		for _, ap := range m.Reflexive() {
 			out.Reflexive = append(out.Reflexive, ap.String())
 		}
+		return out
+	}
+
+	mux.HandleFunc("/status", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(out)
+		json.NewEncoder(w).Encode(snapshot())
 	})
+
+	// A file, not a port: QML can read a file and cannot open a unix socket,
+	// and access is then decided by file permissions rather than by a listener
+	// a VPN daemon has no other reason to run.
+	if cfg.StatusFile != "" {
+		if err := writeStatusFile(ctx, log, cfg.StatusFile, snapshot); err != nil {
+			log.Warn("could not write the status file", "path", cfg.StatusFile, "err", err)
+		} else {
+			log.Info("status file up", "path", cfg.StatusFile)
+		}
+	}
 
 	if cfg.UIListen != "" {
 		if err := serveUI(ctx, log, cfg.UIListen, mux); err != nil {

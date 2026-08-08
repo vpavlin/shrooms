@@ -351,6 +351,10 @@ Prototype in progress.
 
 `make m0` / `make m1` / `make m3` / `make s1` / `make s3` reproduce these.
 
+[TESTING.md](TESTING.md) has the scenarios worth running by hand — the ones
+containers cannot honestly reproduce, including the one that settles whether
+hole punching works between two real NATs.
+
 ### Adding a machine
 
 On the machine itself, with only docker installed:

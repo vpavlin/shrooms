@@ -120,12 +120,21 @@ type Config struct {
 	// or forcing a particular relay while debugging.
 	RelayAddr string
 
-	// UIListen optionally serves the status JSON over HTTP, for a monitoring
-	// view that cannot open a unix socket — QML's XMLHttpRequest cannot.
+	// StatusFile optionally writes the status JSON to a file, for a monitoring
+	// view that can read a file but not open a unix socket — QML can do the
+	// first and not the second.
 	//
-	// Off by default and loopback-only when set: the payload names every
-	// device and address on the mesh, so it is not something to bind widely by
-	// accident.
+	// Preferred over UIListen: no port is opened at all, and access is decided
+	// by file permissions, which is a mechanism the operating system already
+	// has and everyone already understands.
+	StatusFile string
+
+	// UIListen optionally serves the status JSON over HTTP, for a viewer that
+	// can do neither. A fallback, not the default: it opens a port on a VPN
+	// daemon, which wants a better reason than convenience.
+	//
+	// Loopback-only when set. The payload names every device and address on
+	// the mesh, so it is not something to bind widely by accident.
 	UIListen string
 
 	// ManageHosts lets the daemon keep /etc/hosts current as the roster
@@ -359,6 +368,8 @@ func parseConfig(text string) (Config, error) {
 			c.Relay = unquote(val) == "true"
 		case "relay_addr":
 			c.RelayAddr = unquote(val)
+		case "status_file":
+			c.StatusFile = unquote(val)
 		case "ui_listen":
 			c.UIListen = unquote(val)
 		case "manage_hosts":
@@ -449,6 +460,10 @@ func WriteConfig(path string, c Config) error {
 		b.WriteString("\n# Pins a relay, overriding discovery. Not normally needed: relays are\n")
 		b.WriteString("# found from their announces like any other peer.\n")
 		fmt.Fprintf(&b, "relay_addr  = %q\n", c.RelayAddr)
+	}
+	if c.StatusFile != "" {
+		b.WriteString("\n# Write the status JSON here for a monitoring view.\n")
+		fmt.Fprintf(&b, "status_file = %q\n", c.StatusFile)
 	}
 	if c.UIListen != "" {
 		b.WriteString("\n# Serve the status JSON over HTTP for a monitoring view.\n")
