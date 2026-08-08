@@ -326,6 +326,15 @@ generates its own device identity, so no private key ever crosses the wire.
 
 ---
 
+## Android
+
+A phone as a full mesh participant, not a client of something else. The app is a
+Compose UI and a `VpnService` around the same Go core — nothing in `internal/`
+is reimplemented. See [ANDROID.md](ANDROID.md) for the plan and
+[ADR-016](docs/adr/016-android-reuses-the-go-core.md) for why.
+
+Prototype in progress.
+
 ## Status
 
 | | |
