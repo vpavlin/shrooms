@@ -25,7 +25,7 @@ GO ?= go
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 .PHONY: all deps deps-basecamp check-lib logos-vpn wakuspike s3topics m0demo \
-        s1 s3 probe m0 m1 m2 m2-edm m3 m3-remote dist image push-image deps-release install uninstall build-all vet-cgo test test-unit android-deps android-core aar fmt clean
+        s1 s3 probe m0 m1 m2 m2-edm m3 m3-remote dist image push-image deps-release install uninstall build-all vet-cgo test test-unit android-deps android-core aar apk fmt clean
 
 all: logos-vpn
 
@@ -217,6 +217,10 @@ android-core: android-deps
 ## and Go >= 1.25, which the core deliberately does not.
 aar: android-deps
 	./scripts/build-aar.sh
+
+## Build the Android app to an installable APK.
+apk: aar
+	./scripts/build-apk.sh
 
 ## Build every package. test-unit skips the cgo-bound ones, so without this an
 ## API change can break a command without any check noticing — which is exactly

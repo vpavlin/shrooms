@@ -95,15 +95,30 @@ The build runs in a container: gomobile needs a JDK and Go ≥ 1.25, neither of
 which the core requires, and the host SDK/NDK is mounted rather than
 re-downloaded.
 
-### A2 — a node that talks
+### A2 + A3 — the app
 
-No VPN yet. A foreground service starts the mesh, announces, and shows peers.
-This isolates the rendezvous plane from every VPN complication.
+**🟨 Built, not yet run on hardware.** `make apk` produces a 51 MB
+`android/logos-vpn.apk`: arm64 only, all four native libraries, no stray ABIs.
 
-**Done when:** the phone appears in `logos-vpn status` on the laptop, and the
-phone lists the laptop and VPS.
+Merged because the split was for isolating failures during debugging, and with
+no phone here the useful artefact is one that does the whole thing. The
+telemetry makes a failure attributable anyway: discovery, path and tunnel are
+reported separately, so "which stage" is answerable from the app itself.
 
-### A3 — the tunnel
+What is in it:
+
+- `MeshVpnService`, a foreground service holding the tunnel. `Builder` adds the
+  derived /128, routes **only** the mesh /48, MTU 1280, and excludes our own
+  package so the app's traffic is not captured by its own tunnel.
+- `Protector` forwarding `VpnService.protect`; Go refuses to start if it returns
+  false or no socket is exposed.
+- The TUN descriptor is dup'd in Go, so closing it here is safe.
+- A Compose UI over the same `status --json` schema the CLI reads.
+
+**Done when:** the phone appears in `logos-vpn status` on the laptop, `ping6`
+works between phone and VPS, and ssh from the phone works.
+
+### A3 — the tunnel (folded into A2 above)
 
 `VpnService.Builder`: the derived /128 address, a route for the mesh /48 only
 (not a full tunnel), MTU 1280. `tun.CreateTUNFromFile` on the descriptor.
