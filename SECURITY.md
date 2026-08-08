@@ -81,6 +81,12 @@ all) at the cost of N² topics.
 
 ## Roadmap
 
+The destination is [ADR-018](docs/adr/018-credentials-instead-of-a-shared-key.md):
+no shared key at all, membership by admin-signed credential, and revocation that
+costs one device rather than the whole mesh. [ADR-017](docs/adr/017-invite-tokens.md)
+is its enrolment half and is worth building first.
+
+
 The bearer key is the weakest part of the system and it is not a design
 position — it is a v1 shortcut with a planned replacement. Sequenced by
 value-per-effort, not by tidiness.

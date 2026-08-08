@@ -27,3 +27,4 @@ number appears, its source is named.
 | [015](015-multiple-meshes-one-daemon.md) | Multiple meshes in one daemon | accepted |
 | [016](016-android-reuses-the-go-core.md) | Android reuses the Go core | accepted |
 | [017](017-invite-tokens.md) | Invite tokens | proposed |
+| [018](018-credentials-instead-of-a-shared-key.md) | Credentials instead of a shared key | proposed |

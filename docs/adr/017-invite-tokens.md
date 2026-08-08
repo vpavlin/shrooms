@@ -1,6 +1,6 @@
 # 017. Invite tokens
 
-**Status:** proposed
+**Status:** proposed — the enrolment half of [ADR-018](018-credentials-instead-of-a-shared-key.md)
 
 ## Context
 
@@ -77,14 +77,16 @@ token addresses a topic nobody is listening on.
 
 ## What this does not fix
 
-Stated plainly, because an invite scheme is easy to mistake for a credential
-system.
+**It does not remove the shared key**, which is the thing actually worth
+removing. A joined device holds the same network key it would have been sent by
+hand, so a leak from any device is still total and revocation still means
+rotating for everyone. Invites reduce how far the credential travels; they do
+not change what it is.
 
-**Revocation is unchanged.** A joined device holds the mesh key exactly as
-before, and removing it still means rotating. Invites reduce how far the key
-travels; they do not make membership revocable. That needs per-device
-credentials and an admin signature — M5, and it needs this first, because you
-cannot revoke a device that has no distinct identity.
+[ADR-018](018-credentials-instead-of-a-shared-key.md) is the design that does,
+and this is its enrolment half — the exchange below is exactly where a
+credential would be issued instead of a key. Worth building first because it is
+useful either way and much smaller, but it should not be mistaken for the fix.
 
 **Anyone with the token can join.** The token *is* the authorisation, so an
 attacker who photographs the QR within the window can enrol. Expiry and

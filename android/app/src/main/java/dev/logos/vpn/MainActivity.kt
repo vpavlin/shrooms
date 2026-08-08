@@ -138,7 +138,7 @@ private fun JoinScreen(dir: String, onScan: ((String) -> Unit) -> Unit, onDone: 
             style = MaterialTheme.typography.bodySmall, color = Palette.Ash,
         )
         Spacer(Modifier.height(4.dp))
-        Text(buildLabel(), style = MaterialTheme.typography.bodySmall, color = Palette.Line)
+        Text(buildLabel(), style = MaterialTheme.typography.bodySmall, color = Palette.Ash)
 
         Spacer(Modifier.height(40.dp))
         Label("NETWORK KEY")
@@ -254,6 +254,8 @@ private fun MeshScreen(snap: Snapshot, dir: String, onConnect: () -> Unit, onDis
             } else if (snap.name.isNotEmpty()) {
                 Text(snap.name, style = MaterialTheme.typography.bodySmall, color = Palette.Ash)
             }
+            Spacer(Modifier.height(6.dp))
+            Text(buildLabel(), style = MaterialTheme.typography.labelSmall, color = Palette.Ash)
         }
 
         if (snap.error.isNotEmpty()) Banner(snap.error, Palette.Rust)
@@ -352,7 +354,7 @@ private fun MeshScreen(snap: Snapshot, dir: String, onConnect: () -> Unit, onDis
         Text(
             buildLabel(),
             style = MaterialTheme.typography.bodySmall,
-            color = Palette.Line,
+            color = Palette.Ash,
             modifier = Modifier.padding(start = 24.dp, top = 4.dp),
         )
         Box(Modifier.padding(start = 24.dp, end = 24.dp, top = 4.dp, bottom = 24.dp)) {

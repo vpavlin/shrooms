@@ -1,0 +1,131 @@
+# 018. Credentials instead of a shared key
+
+**Status:** proposed — the destination ADR-017 is a step toward
+
+## Context
+
+Everything protecting the mesh derives from one secret. The network key gives
+the rendezvous topics, the announce payload key, the pairwise WireGuard PSKs and
+the address prefix (ADR-008), so every member must hold it — and holding it is
+what membership *is*.
+
+That conflation is the flaw, not the sharing. **The credential that grants
+membership is the same object that must live on every device.** So:
+
+- A leak from any device compromises the whole mesh, including devices that
+  never went anywhere near the leak.
+- Removing one device means rotating the key, which ejects every device and
+  requires re-enrolling each by hand.
+- Every member can enrol members, because every member holds the thing that
+  authorises enrolment.
+- The blast radius of the least-protected device is the entire mesh. Today that
+  is a phone.
+
+ADR-017's invites reduce how far the key *travels*. They do not change any of
+the above, because the joined device ends up holding the same key. Worth being
+blunt about: an invite scheme is easy to mistake for a credential system.
+
+## Decision
+
+**Separate authority from participation.**
+
+| | today | proposed |
+|---|---|---|
+| mesh identity | secret key | admin **public** key |
+| membership | knowing the secret | an admin-signed credential |
+| announce privacy | shared payload key | encrypted per recipient |
+| WireGuard PSK | derived from the secret | derived pairwise |
+| revocation | rotate, re-enrol everything | sign a revocation for one device |
+| what lives on a device | the thing that grants membership | only its own credential |
+
+The decisive property: **the admin key never has to be on a participating
+device.** It is needed only to enrol and to revoke, so it can live offline — on
+one laptop, in a password manager, on a hardware key. Today's network key must
+be on every device *and* is what grants membership. Splitting those two roles is
+the whole idea; everything below follows from it.
+
+### What derives from what
+
+```
+admin keypair            created once; the public half IS the mesh identity
+  ↓ signs
+credential               {device_pub, mesh_id, issued, expires?, sig}
+                         held by one device, proves membership, secret to nobody
+
+mesh_id = SHA256(admin_pub)      public
+prefix  = fd || mesh_id[0:5]     public, as today
+topics  = f(mesh_id)             public
+```
+
+Topics and the prefix becoming public loses nothing: they are already visible to
+anyone watching the shard, and they never protected anything. What they gain is
+that a new device can compute them from the mesh id alone, before it has any
+secret at all.
+
+### Announces without a shared key
+
+An announce is encrypted to a fresh symmetric key, and that key is wrapped to
+each current member's X25519 key. Members are known — their credentials carry
+their public keys.
+
+Costs about 48 bytes per member. For a personal mesh that is nothing, and the
+fixed padding (ADR §control-plane) becomes a function of membership size rather
+than a constant, which is a small metadata leak worth naming: an observer learns
+roughly how many devices are in the mesh. Padding to buckets blunts it.
+
+This is the part that scales worst, and the reason this design suits a personal
+mesh of tens of devices rather than an organisation of thousands. That is the
+mesh this project is for.
+
+### Revocation that means something
+
+The admin signs `{revoked: device_pub, serial, not_before}` and publishes it on
+the rendezvous topic. Members drop the device from the roster, stop wrapping
+announce keys to it, and remove its WireGuard peer.
+
+The revoked device keeps whatever it already had — nothing can reach into it —
+but it stops receiving announces, so it cannot follow anyone who moves, and no
+member will establish a new tunnel with it. Monotonic serials, as with
+announces, so a revocation cannot be rolled back by replay.
+
+## What this costs
+
+**The admin key becomes a single point of failure.** Losing it means no more
+enrolment or revocation, and rebuilding the mesh. Mitigated by keeping a second
+admin key offline from the start and honouring both — cheap to do now,
+impossible to retrofit once devices hold credentials naming only one.
+
+**More moving parts.** A key that must not be lost, credentials with lifetimes,
+a revocation list to distribute and persist. The current design's one virtue is
+that it is trivial to reason about, and that is genuinely worth something.
+
+**Migration.** Existing meshes hold a shared key and nothing else. The path is
+to enrol each device with a credential while the shared key still works, then
+retire the key — which needs both schemes live at once, briefly.
+
+## Alternatives
+
+**Keep the shared key; make rotation cheap.** Credentials would let devices
+re-enrol automatically after a rotation, so revocation becomes "rotate, everyone
+but the revoked device recovers by itself". Much less work, and it still leaves
+every device holding the thing that grants membership. Worth considering if this
+design proves too heavy, but it treats the symptom.
+
+**Per-pair manual trust, no authority at all.** Every device explicitly approves
+every other. Truly no central secret, and the work grows with the square of the
+mesh. Reasonable for three machines, unreasonable for ten.
+
+**An existing framework — SPIFFE, X.509, Macaroons.** Correct instincts, all far
+heavier than a mesh of personal devices needs, and each drags in a trust model
+larger than the problem. The scheme above is roughly "X.509 with one CA and no
+path building", stated in a page.
+
+## Consequences
+
+- A compromised device costs that device.
+- The mesh key stops existing, so it cannot leak, be photographed, or be pasted.
+- ADR-017's invites become the enrolment channel: the exchange that hands over a
+  network key today is exactly where a credential is issued instead. Its wire
+  format should leave room for one rather than being minimal now.
+- `join <KEY>` disappears eventually. Bootstrapping the first device becomes
+  `init`, which mints the admin key, and every device after that is invited.
