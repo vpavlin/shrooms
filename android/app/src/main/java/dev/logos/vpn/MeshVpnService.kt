@@ -96,7 +96,12 @@ class MeshVpnService : VpnService() {
                 poll()
             } catch (t: Throwable) {
                 Log.e(TAG, "start failed", t)
-                MeshState.fail(t.message ?: t.toString())
+                // The class name matters as much as the message: a null message
+                // on a bare exception otherwise reports nothing at all.
+                val what = t.message.takeUnless { it.isNullOrBlank() } ?: t.javaClass.simpleName
+                MeshState.fail(what)
+                MeshState.log("ERROR", "start failed: $what")
+                t.stackTrace.take(4).forEach { MeshState.log("ERROR", "  at $it") }
                 stop()
             }
         }
@@ -111,7 +116,10 @@ class MeshVpnService : VpnService() {
      */
     private val protector = object : mobile.Protector {
         override fun protect(fd: Long): Boolean {
-            val ok = protect(fd.toInt())
+            // Qualified deliberately: an unqualified protect() here reads as a
+            // call to this very method, and the day Kotlin resolves it that way
+            // it is an infinite recursion rather than a socket being protected.
+            val ok = this@MeshVpnService.protect(fd.toInt())
             if (!ok) Log.e(TAG, "failed to protect socket $fd")
             return ok
         }
@@ -190,7 +198,7 @@ class MeshVpnService : VpnService() {
         return Notification.Builder(this, CHANNEL)
             .setContentTitle("logos-vpn")
             .setContentText(text)
-            .setSmallIcon(android.R.drawable.ic_lock_lock)
+            .setSmallIcon(R.drawable.ic_mesh)
             .setContentIntent(open)
             .addAction(Notification.Action.Builder(null, "Disconnect", disconnect).build())
             .setOngoing(true)

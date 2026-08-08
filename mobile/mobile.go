@@ -28,6 +28,7 @@ import (
 
 	"github.com/vpavlin/logos-vpn/internal/identity"
 	"github.com/vpavlin/logos-vpn/internal/mesh"
+	"github.com/vpavlin/logos-vpn/internal/state"
 	"github.com/vpavlin/logos-vpn/internal/waku"
 	"github.com/vpavlin/logos-vpn/internal/wg"
 )
@@ -238,4 +239,23 @@ func StatusJSON() string {
 		return "{}"
 	}
 	return string(b)
+}
+
+// InviteKey extracts a network key from a scanned QR code or pasted text.
+//
+// Parsing lives here rather than in Kotlin so the invitation format has one
+// implementation: the CLI writes it, the app reads it, and neither can drift.
+// Accepts a full invite URI or a bare key, because people paste bare keys.
+func InviteKey(scanned string) (string, error) {
+	key, _, err := state.ParseInvite(scanned)
+	return key, err
+}
+
+// InviteMeshName returns the mesh name hint from an invitation, or "".
+func InviteMeshName(scanned string) string {
+	_, name, err := state.ParseInvite(scanned)
+	if err != nil {
+		return ""
+	}
+	return name
 }

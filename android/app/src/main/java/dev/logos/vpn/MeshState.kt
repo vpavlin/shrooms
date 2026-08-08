@@ -75,7 +75,11 @@ object MeshState {
     }
 
     fun disconnected() {
-        _snapshot.value = Snapshot()
+        // Keep the error. A failed start calls fail() and then stop(), and
+        // resetting to a blank Snapshot here wiped the message on its way out —
+        // leaving the UI saying "not connected" with no reason, which is the
+        // single least useful thing it could say.
+        _snapshot.value = Snapshot(error = _snapshot.value.error)
     }
 
     fun fail(message: String) {

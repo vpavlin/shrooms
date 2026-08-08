@@ -150,6 +150,7 @@ func cmdKey(args []string) error {
 	fs := flag.NewFlagSet("key "+sub, flag.ExitOnError)
 	cfgPath, stateDir := commonFlags(fs)
 	yes := fs.Bool("yes", false, "skip the confirmation prompt (rotate only)")
+	asQR := fs.Bool("qr", false, "show the key as a QR code, for scanning from a phone")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -161,6 +162,9 @@ func cmdKey(args []string) error {
 
 	switch sub {
 	case "show":
+		if *asQR {
+			return showKeyQR(cfg)
+		}
 		fmt.Println(cfg.NetworkKey)
 		return nil
 	case "rotate":

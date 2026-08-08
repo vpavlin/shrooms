@@ -32,12 +32,32 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 import mobile.Mobile
 
 class MainActivity : ComponentActivity() {
 
     private val vpnConsent = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
         if (r.resultCode == RESULT_OK) startService(connectIntent()) else MeshState.fail("VPN permission refused")
+    }
+
+    /** Set by JoinScreen so a scan result can be routed back to it. */
+    private var onScanned: ((String) -> Unit)? = null
+
+    private val scanner = registerForActivityResult(ScanContract()) { result ->
+        result.contents?.let { onScanned?.invoke(it) }
+    }
+
+    fun scanInvite(onResult: (String) -> Unit) {
+        onScanned = onResult
+        scanner.launch(
+            ScanOptions()
+                .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                .setPrompt("Scan the code from `logos-vpn key show --qr`")
+                .setBeepEnabled(false)
+                .setOrientationLocked(false)
+        )
     }
 
     private val notificationPermission =
@@ -61,7 +81,7 @@ class MainActivity : ComponentActivity() {
 
                 Surface(color = Palette.Void, modifier = Modifier.fillMaxSize()) {
                     if (!configured) {
-                        JoinScreen(dir) { configured = true }
+                        JoinScreen(dir, onScan = ::scanInvite) { configured = true }
                     } else {
                         MeshScreen(
                             snap = snap,
@@ -91,7 +111,7 @@ class MainActivity : ComponentActivity() {
 // --- screens ---------------------------------------------------------------
 
 @Composable
-private fun JoinScreen(dir: String, onDone: () -> Unit) {
+private fun JoinScreen(dir: String, onScan: ((String) -> Unit) -> Unit, onDone: () -> Unit) {
     var key by remember { mutableStateOf("") }
     var name by remember { mutableStateOf(Build.MODEL.replace(' ', '-').lowercase()) }
     var error by remember { mutableStateOf("") }
@@ -112,6 +132,18 @@ private fun JoinScreen(dir: String, onDone: () -> Unit) {
         Label("NETWORK KEY")
         Spacer(Modifier.height(8.dp))
         KeyField(key) { key = it.trim() }
+
+        Spacer(Modifier.height(12.dp))
+        Action("SCAN A CODE", enabled = !busy) {
+            error = ""
+            onScan { scanned ->
+                // Parsed in Go, so the invitation format has one implementation
+                // and the app cannot drift from what the CLI writes.
+                runCatching { Mobile.inviteKey(scanned) }
+                    .onSuccess { key = it }
+                    .onFailure { error = it.message ?: "that is not a mesh invitation" }
+            }
+        }
 
         Spacer(Modifier.height(20.dp))
         Label("THIS DEVICE")
@@ -193,6 +225,38 @@ private fun MeshScreen(snap: Snapshot, dir: String, onConnect: () -> Unit, onDis
         }
 
         if (snap.error.isNotEmpty()) Banner(snap.error, Palette.Rust)
+
+        // A log tail in the app, because the alternative is asking someone to
+        // run adb logcat — and a failure nobody can read is a failure nobody
+        // can report.
+        val logs by MeshState.logs.collectAsStateWithLifecycle()
+        var showLogs by remember { mutableStateOf(false) }
+        if (logs.isNotEmpty()) {
+            Text(
+                if (showLogs) "hide log" else "show log (${logs.size})",
+                style = MaterialTheme.typography.bodySmall,
+                color = Palette.Ash,
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp)
+                    .clickable { showLogs = !showLogs },
+            )
+            if (showLogs) {
+                Column(
+                    Modifier.fillMaxWidth().heightIn(max = 220.dp)
+                        .padding(horizontal = 16.dp)
+                        .background(Palette.Panel, RoundedCornerShape(8.dp))
+                        .verticalScroll(rememberScrollState())
+                        .padding(10.dp),
+                ) {
+                    logs.takeLast(60).forEach { line ->
+                        Text(
+                            line,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (line.startsWith("ERROR")) Palette.Rust else Palette.Ash,
+                        )
+                    }
+                }
+            }
+        }
 
         // Rendezvous trouble is reported separately from peers being offline.
         // They look identical and have entirely different causes; conflating

@@ -1,0 +1,20 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+
+    <!-- links first, so nodes sit on top of them -->
+    <path android:strokeColor="#35F0A0" android:strokeWidth="2.2" android:strokeAlpha="0.55"
+        android:pathData="M54,34 L34,66 M54,34 L74,66 M34,66 L74,66 M54,34 L54,54 M34,66 L54,54 M74,66 L54,54" />
+
+    <!-- outer nodes -->
+    <path android:fillColor="#35F0A0" android:fillAlpha="0.85"
+        android:pathData="M54,28 m-7,0 a7,7 0 1,0 14,0 a7,7 0 1,0 -14,0" />
+    <path android:fillColor="#35F0A0" android:fillAlpha="0.85"
+        android:pathData="M32,70 m-7,0 a7,7 0 1,0 14,0 a7,7 0 1,0 -14,0" />
+    <path android:fillColor="#35F0A0" android:fillAlpha="0.85"
+        android:pathData="M76,70 m-7,0 a7,7 0 1,0 14,0 a7,7 0 1,0 -14,0" />
+
+    <!-- the centre node: this device, lit -->
+    <path android:fillColor="#D6DDE3"
+        android:pathData="M54,54 m-9,0 a9,9 0 1,0 18,0 a9,9 0 1,0 -18,0" />
+</vector>

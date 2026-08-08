@@ -14,3 +14,4 @@ android/app/build/
 android/.gradle/
 android/*.apk
 android/*-sources.jar
+android/logos-vpn-unsigned.apk
