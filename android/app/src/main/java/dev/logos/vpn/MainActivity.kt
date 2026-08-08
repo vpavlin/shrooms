@@ -127,6 +127,8 @@ private fun JoinScreen(dir: String, onScan: ((String) -> Unit) -> Unit, onDone: 
             "an overlay mesh between your own devices",
             style = MaterialTheme.typography.bodySmall, color = Palette.Ash,
         )
+        Spacer(Modifier.height(4.dp))
+        Text(buildLabel(), style = MaterialTheme.typography.bodySmall, color = Palette.Line)
 
         Spacer(Modifier.height(40.dp))
         Label("NETWORK KEY")
@@ -337,7 +339,13 @@ private fun MeshScreen(snap: Snapshot, dir: String, onConnect: () -> Unit, onDis
             }
         }
 
-        Box(Modifier.padding(24.dp)) {
+        Text(
+            buildLabel(),
+            style = MaterialTheme.typography.bodySmall,
+            color = Palette.Line,
+            modifier = Modifier.padding(start = 24.dp, top = 4.dp),
+        )
+        Box(Modifier.padding(start = 24.dp, end = 24.dp, top = 4.dp, bottom = 24.dp)) {
             Action(
                 if (snap.connected) "DISCONNECT" else "CONNECT",
                 enabled = true,
@@ -400,6 +408,15 @@ private fun PeerDetails(p: Peer) {
         CopyableDetail("ping", "ping6 -c3 " + p.dnsName.ifEmpty { p.overlay })
     }
 }
+
+/**
+ * Which build this is.
+ *
+ * Shown because "did you install the fixed one?" came up on every single
+ * iteration, and neither of us could answer it from the screen.
+ */
+private fun buildLabel(): String =
+    "v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"
 
 // --- small pieces ----------------------------------------------------------
 

@@ -39,7 +39,12 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
-    buildFeatures { compose = true }
+    // BuildConfig for the version, so a screenshot or a glance says which build
+    // is installed — the question that comes up every time something is fixed.
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
 
     packaging {
         // The native libraries must stay uncompressed and page-aligned, or the

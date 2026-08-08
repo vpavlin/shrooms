@@ -12,6 +12,10 @@ import (
 	"os"
 )
 
+// version is set at build time with -X main.version. "dev" means someone built
+// this without the Makefile, which is worth being able to tell.
+var version = "dev"
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -36,6 +40,8 @@ func main() {
 		err = cmdHosts(os.Args[2:])
 	case "key":
 		err = cmdKey(os.Args[2:])
+	case "version", "--version", "-v":
+		fmt.Println(version)
 	case "-h", "--help", "help":
 		usage()
 		return
@@ -57,6 +63,7 @@ func usage() {
 Usage:
   logos-vpn init [--name N] [--relay]  create a new mesh, print its network key
   logos-vpn join KEY [--name N] [--relay]  join an existing mesh
+  logos-vpn version                       print the build this binary came from
   logos-vpn prepare [--name N] [--relay]  write a config with the key left blank,
                                           for setting a machine up without the
                                           key passing through anyone else
