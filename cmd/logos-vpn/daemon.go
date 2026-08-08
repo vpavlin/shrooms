@@ -229,6 +229,13 @@ type peerStatus struct {
 	PathAfterS       float64 `json:"path_after_s,omitempty"`
 	TunnelAfterS     float64 `json:"tunnel_after_s,omitempty"`
 
+	// Throughput, derived from WireGuard's cumulative counters. Bytes per
+	// second, smoothed; history is a short sparkline, oldest first.
+	RxBps     float64   `json:"rx_bps"`
+	TxBps     float64   `json:"tx_bps"`
+	RxHistory []float64 `json:"rx_history,omitempty"`
+	TxHistory []float64 `json:"tx_history,omitempty"`
+
 	Handshaked    bool   `json:"handshaked"`
 	Live          bool   `json:"live"`
 	HandshakeAgeS int64  `json:"handshake_age_s,omitempty"`
@@ -236,6 +243,39 @@ type peerStatus struct {
 	Endpoint      string `json:"endpoint,omitempty"`
 	RxBytes       uint64 `json:"rx_bytes"`
 	TxBytes       uint64 `json:"tx_bytes"`
+}
+
+// serveUI serves the same handler over loopback HTTP.
+//
+// Refuses anything but a loopback address. The payload names every device and
+// address on the mesh, and "0.0.0.0:8787" in a config file is an easy way to
+// publish that to the network without meaning to.
+func serveUI(ctx context.Context, log *slog.Logger, addr string, h http.Handler) error {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("ui_listen must be host:port: %w", err)
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil || !ip.IsLoopback() {
+		return fmt.Errorf("ui_listen must be a loopback address, got %q", host)
+	}
+
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	srv := &http.Server{Handler: h}
+	go func() {
+		<-ctx.Done()
+		srv.Close()
+	}()
+	go func() {
+		if err := srv.Serve(ln); err != nil && ctx.Err() == nil {
+			log.Error("monitoring endpoint stopped", "err", err)
+		}
+	}()
+	log.Info("monitoring endpoint up", "url", "http://"+addr+"/status")
+	return nil
 }
 
 // serveControl exposes status over a unix socket.
@@ -289,6 +329,10 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Me
 				Online:    p.Online(now),
 				Relay:     p.Relay,
 			}
+			if r := m.Rate(p.ID()); r.RxBps > 0 || r.TxBps > 0 || len(r.RxHistory) > 0 {
+				ps.RxBps, ps.TxBps = r.RxBps, r.TxBps
+				ps.RxHistory, ps.TxHistory = r.RxHistory, r.TxHistory
+			}
 			if t := m.Timing(p.ID()); t.DiscoveredAfter > 0 || t.TunnelAfter > 0 {
 				ps.DiscoveredAfterS = t.DiscoveredAfter.Seconds()
 				ps.PathAfterS = t.PathAfter.Seconds()
@@ -322,6 +366,12 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Me
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(out)
 	})
+
+	if cfg.UIListen != "" {
+		if err := serveUI(ctx, log, cfg.UIListen, mux); err != nil {
+			log.Warn("monitoring endpoint unavailable", "listen", cfg.UIListen, "err", err)
+		}
+	}
 
 	srv := &http.Server{Handler: mux}
 	go func() {

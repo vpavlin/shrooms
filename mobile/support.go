@@ -117,6 +117,8 @@ type statusPeer struct {
 	Relayed          bool    `json:"relayed"`
 	RxBytes          uint64  `json:"rx_bytes"`
 	TxBytes          uint64  `json:"tx_bytes"`
+	RxBps            float64 `json:"rx_bps"`
+	TxBps            float64 `json:"tx_bps"`
 	RTTMs            int64   `json:"rtt_ms,omitempty"`
 	DiscoveredAfterS float64 `json:"discovered_after_s,omitempty"`
 	TunnelAfterS     float64 `json:"tunnel_after_s,omitempty"`
@@ -165,6 +167,9 @@ func snapshot(m *mesh.Mesh, suffix string) statusPayload {
 			// A relayed endpoint is serialised with a relay: prefix; the app
 			// shows it differently, so it must not have to parse the string.
 			sp.Relayed = len(st.Endpoint) > 6 && st.Endpoint[:6] == "relay:"
+		}
+		if r := m.Rate(p.ID()); r.RxBps > 0 || r.TxBps > 0 {
+			sp.RxBps, sp.TxBps = r.RxBps, r.TxBps
 		}
 		if best, ok := m.BestPath(p.ID(), now); ok {
 			sp.RTTMs = best.RTT.Milliseconds()

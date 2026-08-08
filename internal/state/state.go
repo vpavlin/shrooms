@@ -120,6 +120,14 @@ type Config struct {
 	// or forcing a particular relay while debugging.
 	RelayAddr string
 
+	// UIListen optionally serves the status JSON over HTTP, for a monitoring
+	// view that cannot open a unix socket — QML's XMLHttpRequest cannot.
+	//
+	// Off by default and loopback-only when set: the payload names every
+	// device and address on the mesh, so it is not something to bind widely by
+	// accident.
+	UIListen string
+
 	// ManageHosts lets the daemon keep /etc/hosts current as the roster
 	// changes, so peers stay reachable by name without re-running anything.
 	//
@@ -351,6 +359,8 @@ func parseConfig(text string) (Config, error) {
 			c.Relay = unquote(val) == "true"
 		case "relay_addr":
 			c.RelayAddr = unquote(val)
+		case "ui_listen":
+			c.UIListen = unquote(val)
 		case "manage_hosts":
 			c.ManageHosts = unquote(val) == "true"
 		case "hosts_suffix":
@@ -439,6 +449,10 @@ func WriteConfig(path string, c Config) error {
 		b.WriteString("\n# Pins a relay, overriding discovery. Not normally needed: relays are\n")
 		b.WriteString("# found from their announces like any other peer.\n")
 		fmt.Fprintf(&b, "relay_addr  = %q\n", c.RelayAddr)
+	}
+	if c.UIListen != "" {
+		b.WriteString("\n# Serve the status JSON over HTTP for a monitoring view.\n")
+		fmt.Fprintf(&b, "ui_listen   = %q\n", c.UIListen)
 	}
 	b.WriteString("\n# Keep /etc/hosts current as peers come and go, so `ssh vps.mesh` works\n")
 	b.WriteString("# without re-running anything. Off by default: this edits a system file.\n")

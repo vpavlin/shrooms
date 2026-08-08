@@ -104,6 +104,9 @@ type Mesh struct {
 	// timing records how long each peer took to reach each stage.
 	timing *timings
 
+	// rates turns WireGuard's cumulative byte counters into throughput.
+	rates *rates
+
 	// reannounce is poked when a newly-discovered peer should be told we
 	// exist. Like resync, it is signalled from the receive path and acted on
 	// in the main loop, because publishing is a network call.
@@ -142,6 +145,7 @@ func New(log *slog.Logger, cfg state.Config, st *state.State, node *waku.Node, d
 		repliedTo:  make(map[string]time.Time),
 		health:     newHealth(),
 		timing:     newTimings(time.Now()),
+		rates:      newRates(),
 		subscribed: make(map[string]bool),
 	}
 	if cfg.Relay {
@@ -244,6 +248,7 @@ func (m *Mesh) Run(ctx context.Context) error {
 			m.registerWithRelay()
 			m.reportUnknown()
 			m.checkTunnels(now)
+			m.sampleRates(now)
 		case now := <-ticker.C:
 			// Resubscribe first: near an epoch boundary the next topic must be
 			// live before we publish to it.
