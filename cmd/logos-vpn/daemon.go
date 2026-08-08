@@ -18,6 +18,7 @@ import (
 
 	"golang.zx2c4.com/wireguard/device"
 
+	dnssrv "github.com/vpavlin/logos-vpn/internal/dns"
 	"github.com/vpavlin/logos-vpn/internal/identity"
 	"github.com/vpavlin/logos-vpn/internal/mesh"
 	"github.com/vpavlin/logos-vpn/internal/state"
@@ -118,6 +119,26 @@ func cmdDaemon(args []string) error {
 		return err
 	}
 	defer srv.Close()
+
+	// Names, on the overlay address only. Port 53 needs CAP_NET_BIND_SERVICE;
+	// a failure here is logged and not fatal, because losing name resolution
+	// is a much smaller thing than losing the tunnel.
+	if pc, err := dnssrv.Listen(self); err != nil {
+		log.Warn("name resolution unavailable", "err", err,
+			"hint", "port 53 needs CAP_NET_BIND_SERVICE")
+	} else {
+		resolver := &dnssrv.Server{
+			Suffix: cfg.HostsSuffix,
+			Lookup: m.Lookup,
+			Log:    func(msg string, args ...any) { log.Debug(msg, args...) },
+		}
+		go func() {
+			if err := resolver.Serve(ctx, pc); err != nil {
+				log.Error("name resolution stopped", "err", err)
+			}
+		}()
+		log.Info("name resolution up", "address", self, "suffix", cfg.HostsSuffix)
+	}
 
 	log.Info("running", "socket", *sock)
 	if err := m.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {

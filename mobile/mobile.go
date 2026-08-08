@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"sync"
@@ -27,6 +28,7 @@ import (
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun"
 
+	dnssrv "github.com/vpavlin/logos-vpn/internal/dns"
 	"github.com/vpavlin/logos-vpn/internal/identity"
 	"github.com/vpavlin/logos-vpn/internal/mesh"
 	"github.com/vpavlin/logos-vpn/internal/state"
@@ -206,6 +208,19 @@ func Start(tunFd int, configDir string, p Protector, l Logger) error {
 		return err
 	}
 
+	// Names. On Android this is what makes `laptop.mesh` work at all: there is
+	// no hosts file to write, and VpnService.Builder.addDnsServer is a
+	// first-class API (ADR-013). Not fatal if the bind is refused — port 53 is
+	// privileged, and losing names is smaller than losing the tunnel.
+	selfAddr := identity.OverlayAddr(mustKey(cfg), st.Identity.DevicePub)
+	var dnsConn net.PacketConn
+	if pc, derr := dnssrv.Listen(selfAddr); derr != nil {
+		log.Warn("name resolution unavailable", "err", derr)
+	} else {
+		dnsConn = pc
+		log.Info("name resolution up", "address", selfAddr, "suffix", cfg.HostsSuffix)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	nk, _ := cfg.Key()
 	s := &session{
@@ -220,6 +235,14 @@ func Start(tunFd int, configDir string, p Protector, l Logger) error {
 			log.Error("mesh stopped", "err", err)
 		}
 	}()
+	if dnsConn != nil {
+		resolver := &dnssrv.Server{Suffix: cfg.HostsSuffix, Lookup: m.Lookup}
+		go func() {
+			if err := resolver.Serve(ctx, dnsConn); err != nil && ctx.Err() == nil {
+				log.Error("name resolution stopped", "err", err)
+			}
+		}()
+	}
 	running = s
 	return nil
 }

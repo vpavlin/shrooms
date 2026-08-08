@@ -78,6 +78,15 @@ class MeshVpnService : VpnService() {
                     .addRoute(prefix, 48)
                     .setMtu(MTU)
                     .setBlocking(false)
+                    // Names. The resolver runs in-process on our own overlay
+                    // address, and the search domain is what makes bare
+                    // `laptop` work as well as `laptop.mesh`.
+                    //
+                    // Domain-scoped by construction: Android sends only queries
+                    // for this suffix here, and the resolver refuses everything
+                    // else anyway, so it never sees the device's other traffic.
+                    .addDnsServer(overlay)
+                    .addSearchDomain(Mobile.dnsSuffix(dir))
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     // Our own traffic must not be captured by our own tunnel.
