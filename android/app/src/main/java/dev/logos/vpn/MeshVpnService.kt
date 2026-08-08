@@ -79,15 +79,22 @@ class MeshVpnService : VpnService() {
                     .addRoute(prefix, 48)
                     .setMtu(MTU)
                     .setBlocking(false)
-                    // Names. The resolver runs in-process on our own overlay
-                    // address, and the search domain is what makes bare
-                    // `laptop` work as well as `laptop.mesh`.
-                    //
-                    // Domain-scoped by construction: Android sends only queries
-                    // for this suffix here, and the resolver refuses everything
-                    // else anyway, so it never sees the device's other traffic.
-                    .addDnsServer(overlay)
-                    .addSearchDomain(Mobile.dnsSuffix(dir))
+
+                // Only take DNS over when we can forward what is not ours.
+                //
+                // VpnService has no split-DNS: addDnsServer sends us EVERY
+                // query the device makes. Installing a resolver that can only
+                // answer .mesh removes the phone's name resolution entirely —
+                // no browsing, no app updates. Without upstreams, no mesh names
+                // is the far smaller loss.
+                val upstream = underlyingDnsServers()
+                if (upstream.isNotEmpty()) {
+                    builder.addDnsServer(overlay)
+                    builder.addSearchDomain(Mobile.dnsSuffix(dir))
+                } else {
+                    Log.w(TAG, "no upstream resolvers; leaving DNS alone")
+                    MeshState.log("WARN", "names unavailable: could not read the network's resolvers")
+                }
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     // Our own traffic must not be captured by our own tunnel.
@@ -99,7 +106,7 @@ class MeshVpnService : VpnService() {
                 tunnel = pfd
 
                 // Go dups this, so closing it here later is safe.
-                Mobile.start(pfd.fd.toLong(), dir, underlyingDnsServers(), protector, logger)
+                Mobile.start(pfd.fd.toLong(), dir, upstream, protector, logger)
 
                 MeshState.connected(overlay)
                 notify("Connected · $overlay")
@@ -126,15 +133,20 @@ class MeshVpnService : VpnService() {
      * makes and must forward what is not ours — without these the phone loses
      * name resolution entirely the moment the VPN comes up.
      */
-    private fun underlyingDnsServers(): String {
-        val cm = getSystemService(ConnectivityManager::class.java) ?: return ""
+    private fun underlyingDnsServers(): String = try {
+        val cm = getSystemService(ConnectivityManager::class.java)
         // activeNetwork is still the physical one at this point; once our VPN
         // is up it becomes the VPN, whose resolver is us.
-        val net = cm.activeNetwork ?: return ""
-        val props = cm.getLinkProperties(net) ?: return ""
-        val servers = props.dnsServers.mapNotNull { it.hostAddress }
+        val net = cm?.activeNetwork
+        val props = net?.let { cm.getLinkProperties(it) }
+        val servers = props?.dnsServers?.mapNotNull { it.hostAddress } ?: emptyList()
         Log.i(TAG, "upstream resolvers: $servers")
-        return servers.joinToString(",")
+        servers.joinToString(",")
+    } catch (t: Throwable) {
+        // Needs ACCESS_NETWORK_STATE, and a SecurityException here must not
+        // take the tunnel down — it only means no mesh names.
+        Log.w(TAG, "could not read upstream resolvers: ${t.message}")
+        ""
     }
 
     /**

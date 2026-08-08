@@ -2,6 +2,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- To read the underlying network's DNS servers. Without it
+         getLinkProperties throws, and a resolver that cannot forward must not
+         be installed at all — see MeshVpnService.underlyingDnsServers. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Only to scan a network key from another device's screen. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
