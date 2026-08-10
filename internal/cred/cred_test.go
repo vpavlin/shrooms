@@ -349,3 +349,114 @@ func TestLifetimeIsChosenByTheIssuerAndSigned(t *testing.T) {
 		t.Error("renewal would start before the credential was issued")
 	}
 }
+
+// The mesh id commits to the whole set of admin keys, and the address prefix
+// derives from the mesh id. So the set is fixed at mint: adding a key later
+// changes every address on every node. That is why two keys exist from birth —
+// one for recovery, one to become the renewal key.
+func TestAuthorityIsFixedAtMint(t *testing.T) {
+	root, _ := NewAdmin()
+	backup, _ := NewAdmin()
+
+	one, err := NewAuthority(root.Pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, err := NewAuthority(root.Pub, backup.Pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if one.ID() == two.ID() {
+		t.Fatal("adding an admin key did not change the mesh id; the id does not commit to the set")
+	}
+	if one.ID().Prefix() == two.ID().Prefix() {
+		t.Error("two different meshes derived the same prefix")
+	}
+
+	// Order must not matter, or the same set would name two meshes depending on
+	// how it happened to be assembled.
+	flipped, err := NewAuthority(backup.Pub, root.Pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flipped.ID() != two.ID() {
+		t.Error("the mesh id depends on the order the keys were given")
+	}
+
+	if _, err := NewAuthority(); err == nil {
+		t.Error("a mesh with no admin key was accepted")
+	}
+	if _, err := NewAuthority(root.Pub, root.Pub); err == nil {
+		t.Error("the same key twice was accepted")
+	}
+}
+
+// Any trusted key may sign membership: the root that enrolled a device, or the
+// renewal key that later extended it. A verifier does not care which.
+func TestAnyTrustedKeyMaySignMembership(t *testing.T) {
+	root, _ := NewAdmin()
+	renewer, _ := NewAdmin()
+	stranger, _ := NewAdmin()
+	dev, wg := device(t)
+	now := time.Now()
+
+	auth, err := NewAuthority(root.Pub, renewer.Pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Both trusted keys issue for this mesh. The mesh id is the authority's, not
+	// the signer's, so each must name it.
+	for _, signer := range []*Admin{root, renewer} {
+		c, err := signer.Issue(dev, wg, "laptop", 1, now, time.Hour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.MeshID = auth.ID()
+		d, _ := c.Digest()
+		c.Sig = signRaw(signer, d)
+
+		if err := VerifyBy(auth, c, now); err != nil {
+			t.Errorf("a credential from a trusted key was rejected: %v", err)
+		}
+	}
+
+	// And a key the mesh never trusted cannot.
+	c, _ := stranger.Issue(dev, wg, "laptop", 1, now, time.Hour)
+	c.MeshID = auth.ID()
+	d, _ := c.Digest()
+	c.Sig = signRaw(stranger, d)
+	if err := VerifyBy(auth, c, now); !errors.Is(err, ErrBadSignature) {
+		t.Errorf("an untrusted key signed membership: %v", err)
+	}
+}
+
+func signRaw(a *Admin, d [32]byte) []byte { return ed25519.Sign(a.Priv, d[:]) }
+
+// Signing a digest rather than the body is what lets the root live on a
+// Keycard: a card signs a fixed-size input with an algorithm chosen per call,
+// so 32 bytes works whatever it supports.
+func TestSignatureCoversADigestOfEverything(t *testing.T) {
+	admin, _ := NewAdmin()
+	dev, wg := device(t)
+	now := time.Now()
+
+	c, err := admin.Issue(dev, wg, "laptop", 1, now, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := c.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d) != 32 {
+		t.Fatalf("digest is %d bytes; a card signs 32", len(d))
+	}
+	// The digest must move when any signed field does, or it would not cover it.
+	before := d
+	c.Serial = 99
+	after, _ := c.Digest()
+	if before == after {
+		t.Error("the digest did not change when a signed field did")
+	}
+}

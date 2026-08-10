@@ -19,6 +19,7 @@
 package cred
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
@@ -27,6 +28,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"sort"
 	"strings"
 	"time"
 )
@@ -83,12 +85,77 @@ func NewAdmin() (*Admin, error) {
 // sharing a secret.
 type MeshID [MeshIDLen]byte
 
-// Mesh returns the identity of the mesh this key governs.
-func MeshOf(pub ed25519.PublicKey) MeshID {
-	sum := sha256.Sum256(append([]byte("mesh/v2/id"), pub...))
+// Authority is the set of keys a mesh trusts to sign membership.
+//
+// A set rather than one key, decided at mint and never afterwards, because the
+// mesh id commits to it and the address prefix derives from the mesh id.
+// Adding a key later would change every address on every node. ADR-018 puts it
+// plainly: keeping a second key from the start is cheap to do now and
+// impossible to retrofit.
+//
+// Two keys earn their place immediately. One is recovery — losing the only
+// admin key means never enrolling or revoking again. The other is the renewal
+// key that lets credentials refresh without the root being present, which is
+// the only way an offline root and hands-off renewal can both be true.
+//
+// With a Keycard these are derivation paths on one card rather than separate
+// artefacts, so "two keys" costs a path, not a second device.
+type Authority struct {
+	Keys []ed25519.PublicKey
+}
+
+// NewAuthority orders the keys canonically, so the same set always names the
+// same mesh however it was assembled.
+func NewAuthority(keys ...ed25519.PublicKey) (*Authority, error) {
+	if len(keys) == 0 {
+		return nil, errors.New("a mesh needs at least one admin key")
+	}
+	out := make([]ed25519.PublicKey, 0, len(keys))
+	for _, k := range keys {
+		if len(k) != ed25519.PublicKeySize {
+			return nil, fmt.Errorf("admin key is %d bytes, want %d", len(k), ed25519.PublicKeySize)
+		}
+		out = append(out, append(ed25519.PublicKey(nil), k...))
+	}
+	sort.Slice(out, func(i, j int) bool { return bytes.Compare(out[i], out[j]) < 0 })
+	for i := 1; i < len(out); i++ {
+		if bytes.Equal(out[i], out[i-1]) {
+			return nil, errors.New("the same admin key was given twice")
+		}
+	}
+	return &Authority{Keys: out}, nil
+}
+
+// ID names the mesh: a hash over every trusted key, in canonical order.
+func (a *Authority) ID() MeshID {
+	h := sha256.New()
+	h.Write([]byte("mesh/v2/id"))
+	for _, k := range a.Keys {
+		h.Write(k)
+	}
 	var id MeshID
-	copy(id[:], sum[:MeshIDLen])
+	copy(id[:], h.Sum(nil)[:MeshIDLen])
 	return id
+}
+
+// Trusts reports whether a key may sign membership for this mesh.
+func (a *Authority) Trusts(pub ed25519.PublicKey) bool {
+	for _, k := range a.Keys {
+		if bytes.Equal(k, pub) {
+			return true
+		}
+	}
+	return false
+}
+
+// MeshOf names the mesh governed by exactly one key. A convenience for the
+// single-key case; the mesh id is the same as NewAuthority(pub).ID().
+func MeshOf(pub ed25519.PublicKey) MeshID {
+	a, err := NewAuthority(pub)
+	if err != nil {
+		return MeshID{}
+	}
+	return a.ID()
 }
 
 func (m MeshID) String() string { return b32.EncodeToString(m[:]) }
@@ -160,6 +227,21 @@ const (
 	sigLen      = ed25519.SignatureSize
 	maxNameLen  = 64
 )
+
+// Digest is what is actually signed: SHA-256 over the canonical body.
+//
+// Signing a digest rather than the body is what lets the root live on a
+// Keycard. A card signs a fixed-size input, and its algorithm is chosen per
+// call (P2SignEdDSAEd25519, P2SignECDSA, ...) — so a 32-byte digest works
+// whatever the card supports, and the body can be any length. It also keeps the
+// signature scheme swappable without changing what is covered.
+func (c *Credential) Digest() ([32]byte, error) {
+	body, err := c.signedBytes()
+	if err != nil {
+		return [32]byte{}, err
+	}
+	return sha256.Sum256(append([]byte("shrooms/cred/v1"), body...)), nil
+}
 
 // signedBytes is everything the signature covers: the credential without it.
 func (c *Credential) signedBytes() ([]byte, error) {
@@ -258,11 +340,11 @@ func (a *Admin) Issue(devicePub, wgPub []byte, name string, serial uint64, now t
 		NotBefore: now.Add(-time.Minute).Unix(),
 		NotAfter:  now.Add(life).Unix(),
 	}
-	raw, err := c.signedBytes()
+	d, err := c.Digest()
 	if err != nil {
 		return nil, err
 	}
-	c.Sig = ed25519.Sign(a.Priv, raw)
+	c.Sig = ed25519.Sign(a.Priv, d[:])
 	return c, nil
 }
 
@@ -276,6 +358,46 @@ var (
 	ErrRevoked      = errors.New("credential has been revoked")
 )
 
+// VerifyBy checks a credential against every key a mesh trusts.
+//
+// Any trusted key may have signed it: the root that enrolled the device, or a
+// renewal key that extended it. Which one signed is not interesting to a
+// verifier — that it was one of them, and that the credential names this mesh,
+// is the whole question.
+func VerifyBy(auth *Authority, c *Credential, now time.Time) error {
+	if auth == nil || len(auth.Keys) == 0 {
+		return errors.New("no admin keys to verify against")
+	}
+	if c == nil {
+		return errors.New("no credential")
+	}
+	d, err := c.Digest()
+	if err != nil {
+		return fmt.Errorf("credential is malformed: %w", err)
+	}
+
+	signed := false
+	for _, k := range auth.Keys {
+		if ed25519.Verify(k, d[:], c.Sig) {
+			signed = true
+			break
+		}
+	}
+	if !signed {
+		return ErrBadSignature
+	}
+	if c.MeshID != auth.ID() {
+		return ErrWrongMesh
+	}
+	if now.Unix() < c.NotBefore {
+		return ErrNotYetValid
+	}
+	if now.Unix() >= c.NotAfter {
+		return ErrExpired
+	}
+	return nil
+}
+
 // Verify checks a credential against an admin public key and a clock.
 //
 // The order matters: the signature first, then everything else. Reporting
@@ -285,15 +407,12 @@ func Verify(adminPub ed25519.PublicKey, c *Credential, now time.Time) error {
 	if c == nil {
 		return errors.New("no credential")
 	}
-	raw, err := c.signedBytes()
+	d, err := c.Digest()
 	if err != nil {
 		return fmt.Errorf("credential is malformed: %w", err)
 	}
-	if !ed25519.Verify(adminPub, raw, c.Sig) {
+	if !ed25519.Verify(adminPub, d[:], c.Sig) {
 		return ErrBadSignature
-	}
-	if c.MeshID != MeshOf(adminPub) {
-		return ErrWrongMesh
 	}
 	if now.Unix() < c.NotBefore {
 		return ErrNotYetValid
@@ -332,6 +451,15 @@ func (r *Revocation) signedBytes() ([]byte, error) {
 	b = binary.BigEndian.AppendUint64(b, r.Serial)
 	b = binary.BigEndian.AppendUint64(b, uint64(r.Issued))
 	return b, nil
+}
+
+// Digest is what is signed, for the same reason as a credential's.
+func (r *Revocation) Digest() ([32]byte, error) {
+	body, err := r.signedBytes()
+	if err != nil {
+		return [32]byte{}, err
+	}
+	return sha256.Sum256(append([]byte("shrooms/revoke/v1"), body...)), nil
 }
 
 // MarshalBinary renders a revocation for the wire.
@@ -376,11 +504,11 @@ func (a *Admin) Revoke(devicePub []byte, serial uint64, now time.Time) (*Revocat
 		Serial:    serial,
 		Issued:    now.Unix(),
 	}
-	raw, err := r.signedBytes()
+	d, err := r.Digest()
 	if err != nil {
 		return nil, err
 	}
-	r.Sig = ed25519.Sign(a.Priv, raw)
+	r.Sig = ed25519.Sign(a.Priv, d[:])
 	return r, nil
 }
 
@@ -389,15 +517,12 @@ func VerifyRevocation(adminPub ed25519.PublicKey, r *Revocation) error {
 	if r == nil {
 		return errors.New("no revocation")
 	}
-	raw, err := r.signedBytes()
+	d, err := r.Digest()
 	if err != nil {
 		return fmt.Errorf("revocation is malformed: %w", err)
 	}
-	if !ed25519.Verify(adminPub, raw, r.Sig) {
+	if !ed25519.Verify(adminPub, d[:], r.Sig) {
 		return ErrBadSignature
-	}
-	if r.MeshID != MeshOf(adminPub) {
-		return ErrWrongMesh
 	}
 	return nil
 }

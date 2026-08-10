@@ -25,6 +25,15 @@ ADR-017's invites reduce how far the key *travels*. They do not change any of
 the above, because the joined device ends up holding the same key. Worth being
 blunt about: an invite scheme is easy to mistake for a credential system.
 
+> **Two keys from birth, and a card can hold them.** The mesh id commits to a
+> *set* of admin keys, fixed at mint, because the address prefix derives from it
+> — adding one later re-addresses every node. Two earn their place immediately:
+> recovery, and the renewal key that lets credentials refresh while the root
+> stays offline. Signatures cover a SHA-256 digest rather than the body, so a
+> Keycard can hold the root: a card signs a fixed-size input with the algorithm
+> chosen per call (`P2SignEdDSAEd25519`), and with BIP-32 the keys are
+> derivation paths on one card rather than separate artefacts.
+>
 > **Scope note (see [ADR-020](020-membership-is-a-seam.md)).** The
 > per-recipient announce encryption below is *not* being built. It is the
 > largest piece of this design, it scales worst, and it is exactly what MLS
