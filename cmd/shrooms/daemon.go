@@ -354,6 +354,20 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Me
 	if err := os.Chmod(path, 0o660); err != nil {
 		log.Warn("chmod control socket", "err", err)
 	}
+	// 0660 is only useful with a group somebody is in. The daemon needs
+	// CAP_NET_ADMIN and so runs as root; without this the socket is root:root
+	// and every `shrooms status` needs sudo — including, every time, right
+	// after a restart has quietly reset whatever chgrp you did by hand.
+	if cfg.SocketGroup != "" {
+		if gid, err := lookupGroup(cfg.SocketGroup); err != nil {
+			log.Warn("socket group not applied; status will need root",
+				"group", cfg.SocketGroup, "err", err)
+		} else if err := os.Chown(path, -1, gid); err != nil {
+			log.Warn("could not set the group on the control socket", "err", err)
+		} else {
+			log.Info("control socket readable by group", "group", cfg.SocketGroup)
+		}
+	}
 
 	nk, _ := cfg.Key()
 

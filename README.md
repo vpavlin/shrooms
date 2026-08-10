@@ -298,6 +298,19 @@ traffic falls back to the relay — which is exactly why the relay exists.
 (WireGuard handshake completed). If a peer is online but has no handshake, the
 problem is traversal, not discovery. A relayed peer shows a `relay:…` endpoint.
 
+### 5b. Stop needing sudo to look at it
+
+The daemon needs `CAP_NET_ADMIN`, so it runs as root and its control socket is
+`root:root`. Name a group and `shrooms status` works as you:
+
+```toml
+socket_group = "your-username"      # in /etc/shrooms/config.toml
+```
+
+The socket has always been `0660`; this is what makes the group half of that
+mean anything. Doing it by hand with `chgrp` works too, and is undone by the
+next restart — which is how this ended up in the config.
+
 ### 6. Use names instead of addresses
 
 Nothing to do — the daemon runs a resolver for the mesh and registers it with

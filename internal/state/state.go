@@ -208,6 +208,14 @@ type Config struct {
 	// has and everyone already understands.
 	StatusFile string
 
+	// SocketGroup is the group allowed to use the control socket, by name or
+	// numeric gid. Empty means the daemon's own group, which is root.
+	//
+	// Without it every `shrooms status` needs sudo, because the daemon needs
+	// CAP_NET_ADMIN and therefore runs as root. The socket is 0660 either way;
+	// this is what makes the group half of that mean something.
+	SocketGroup string
+
 	// StatusFileGroup is the group allowed to read StatusFile, by name or
 	// numeric gid. Empty means the daemon's own group, which is root.
 	//
@@ -525,6 +533,8 @@ func parseConfig(text string) (Config, error) {
 			c.Relay = unquote(val) == "true"
 		case "relay_addr":
 			c.RelayAddr = unquote(val)
+		case "socket_group":
+			c.SocketGroup = unquote(val)
 		case "status_file_group":
 			c.StatusFileGroup = unquote(val)
 		case "status_file":
@@ -662,6 +672,14 @@ func WriteConfig(path string, c Config) error {
 			fmt.Fprintf(&b, "%q", a)
 		}
 		b.WriteString("]\n")
+	}
+
+	b.WriteString("\n# The group allowed to use the control socket. The daemon runs as root,\n")
+	b.WriteString("# so without this every `shrooms status` needs sudo.\n")
+	if c.SocketGroup != "" {
+		fmt.Fprintf(&b, "socket_group = %q\n", c.SocketGroup)
+	} else {
+		b.WriteString("# socket_group = \"your-username\"\n")
 	}
 
 	b.WriteString("\n# Publish local ports on the mesh under their own names. \"immich:2283\"\n")
