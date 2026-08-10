@@ -36,19 +36,31 @@ run() {
     QML_IMPORT_PATH="$QMLDIR" QML2_IMPORT_PATH="$QMLDIR" "$@" 2>&1
 }
 
-echo "==> view loads and reads the fixture"
+echo "==> reads a status file sitting beside the view (the Basecamp case)"
 out=$(QML_XHR_ALLOW_FILE_READ=1 run "$QML" -I "$work" "$work/Harness.qml" "$work/status.json")
 echo "$out" | grep -E "^qml: (PEERS|  )" || true
 peers=$(echo "$out" | sed -n 's/.*PEERS=\([0-9]*\).*/\1/p' | head -1)
 [ "${peers:-0}" -gt 0 ] || { echo "FAIL: the view loaded but read no peers"; echo "$out" | head -20; exit 1; }
 echo "$out" | grep -q "TypeError\|ReferenceError\|is not a" && { echo "FAIL: script errors"; echo "$out"; exit 1; }
 
-echo "==> falls back to the endpoint when the file cannot be read"
-# The view asks for /status, which is what the daemon serves. A static server
-# has no such route, so the fixture is copied to that exact name — without it
-# the server answers 404, the view reads zero peers, and the failure looks like
-# a bug in the view rather than in the harness.
-cp "$FIXTURE" "$work/status"
+# Inside Basecamp only the sibling file resolves; the two below are for running
+# outside it, where there is no sandbox. Removing the sibling is what forces
+# the view past its first source.
+rm -f "$work/status.json"
+
+echo "==> falls back to an absolute path when there is no sibling file"
+cp "$FIXTURE" "$work/absolute.json"
+out=$(QML_XHR_ALLOW_FILE_READ=1 run "$QML" -I "$work" "$work/Harness.qml" "$work/absolute.json")
+echo "$out" | grep -E "^qml: PEERS" || true
+peers=$(echo "$out" | sed -n 's/.*PEERS=\([0-9]*\).*/\1/p' | head -1)
+[ "${peers:-0}" -gt 0 ] || { echo "FAIL: did not fall back to the absolute path"; echo "$out" | head -20; exit 1; }
+rm -f "$work/absolute.json"
+
+echo "==> falls back to the endpoint when no file can be read"
+# Served under the name the harness points the view at, which is deliberately
+# not "status.json" — that is the sibling file source 0 tries, and serving it
+# here would mean the endpoint was never actually exercised.
+cp "$FIXTURE" "$work/endpoint.json"
 
 # The port is baked into the view, so it cannot simply be moved. Anything
 # already holding it will answer instead of us and the test would report a

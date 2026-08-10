@@ -44,22 +44,47 @@ Item {
     // and not ours to choose — so when that is off, the daemon's loopback
     // endpoint is the only thing left. Found by running this offscreen rather
     // than by reading the documentation.
+    // Sources tried in order, because the one that works depends on where this
+    // view is running.
+    //
+    // Inside Basecamp a ui_qml app is sandboxed (Basecamp spec, "QML App
+    // Sandboxing"): a deny-all network manager blocks every HTTP request, and
+    // a URL interceptor resolves local files only under an allow-list of roots
+    // — chiefly the app's own install directory. So the absolute path and the
+    // loopback endpoint are both refused there, however the file is permissioned
+    // and whatever port the daemon opens. What does resolve is a file beside
+    // this one, which is why it is first: point the daemon's status_file at
+    // this module's directory and no server is involved at all.
+    //
+    // The other two are for running outside Basecamp — the offscreen harness,
+    // or a plain qml runtime — where the sandbox does not apply.
+    property var sources: [
+        { url: "status.json", file: true },              // beside Main.qml
+        { url: "file://" + statusPath, file: true },     // an absolute path
+        { url: statusUrl, file: false },                 // the daemon's endpoint
+    ]
     property string statusPath: "/run/logos-vpn/status.json"
     property string statusUrl: "http://127.0.0.1:8787/status"
-    property bool fileBlocked: false
+    property int source: 0
     property bool everLoaded: false
     property int attempts: 0
 
+    // fileBlocked says we gave up on reading a file and moved to the endpoint.
+    // Deliberately not "and nothing loaded": a successful endpoint read does
+    // not mean the file worked, and the trouble line exists to say which
+    // transport is actually carrying this.
+    readonly property bool fileBlocked: !sources[source].file
+
     function reload() {
         attempts++
-        // Escalate on elapsed attempts rather than on an error.
-        //
-        // When QML refuses a file:// read it does not deliver a failed request
-        // — the handler simply never runs — so waiting for an error waits
-        // forever. After two fruitless tries, assume the file is unreachable
-        // for whatever reason and use the endpoint instead.
-        if (!everLoaded && !fileBlocked && attempts > 2) fileBlocked = true
-        fetch(fileBlocked ? statusUrl : "file://" + statusPath, !fileBlocked)
+        // Advance on elapsed attempts rather than on an error. A refused
+        // file:// read does not deliver a failed request — the handler simply
+        // never runs — so waiting for an error waits forever.
+        if (!everLoaded && attempts > 2 * (source + 1) && source < sources.length - 1) {
+            source++
+        }
+        var s = sources[source]
+        fetch(s.url, s.file)
     }
 
     function fetch(url, isFile) {
