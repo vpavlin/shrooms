@@ -7,6 +7,7 @@
 package mesh
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/vpavlin/shrooms/internal/control"
+	"github.com/vpavlin/shrooms/internal/cred"
 	"github.com/vpavlin/shrooms/internal/disco"
 	"github.com/vpavlin/shrooms/internal/hosts"
 	"github.com/vpavlin/shrooms/internal/identity"
@@ -114,6 +116,11 @@ type Mesh struct {
 	reannounce   chan struct{}
 	lastAnnounce time.Time
 
+	// authority is the set of admin keys this mesh trusts, or nil when
+	// membership is still the network key alone. Both worlds run at once
+	// during migration (ADR-018): nil behaves exactly as before.
+	authority *cred.Authority
+
 	// lastRendezvousOK is the previous health verdict, so a recovery can be
 	// noticed. See repairRendezvous.
 	lastRendezvousOK bool
@@ -133,6 +140,10 @@ type Mesh struct {
 // New assembles a mesh node. The Waku node and WireGuard device are owned by
 // the caller and must outlive the Mesh.
 func New(log *slog.Logger, cfg state.Config, st *state.State, node *waku.Node, dev *wg.Device) (*Mesh, error) {
+	auth, err := cfg.Authority()
+	if err != nil {
+		return nil, err
+	}
 	nk, err := cfg.Key()
 	if err != nil {
 		return nil, err
@@ -145,6 +156,7 @@ func New(log *slog.Logger, cfg state.Config, st *state.State, node *waku.Node, d
 		node:       node,
 		dev:        dev,
 		roster:     NewRoster(nk, st.Identity.DevicePub),
+		authority:  auth,
 		guard:      control.NewReplayGuard(),
 		self:       identity.OverlayAddr(nk, st.Identity.DevicePub),
 		discoKey:   disco.DeriveKey(nk),
@@ -354,6 +366,40 @@ func needsRendezvousRepair(h Health, lastOK bool, now time.Time) (why string, ne
 	return "", false
 }
 
+// checkMembership admits a peer only if it can prove the admin let it in.
+//
+// Both schemes run at once, which is what makes this deployable. With no
+// authority configured the network key alone decides membership, exactly as
+// every mesh works today — this returns nil and nothing changes. With an
+// authority, a peer must present a credential that authority signed, naming
+// the device key that signed the announce.
+//
+// That last check is the one that matters. A credential is public and travels
+// on a public bus, so anyone can copy one; binding it to the announce's signing
+// key is what stops a copied credential being replayed by someone else.
+func (m *Mesh) checkMembership(a *control.Announce, now time.Time) error {
+	if m.authority == nil {
+		return nil
+	}
+	if len(a.Credential) == 0 {
+		return errors.New("no credential")
+	}
+	c, err := cred.UnmarshalCredential(a.Credential)
+	if err != nil {
+		return fmt.Errorf("unreadable credential: %w", err)
+	}
+	if err := cred.VerifyBy(m.authority, c, now); err != nil {
+		return err
+	}
+	if !bytes.Equal(c.DevicePub, a.DevicePub) {
+		return errors.New("credential names a different device than the one that signed")
+	}
+	if !bytes.Equal(c.WGPub, a.WGPub) {
+		return errors.New("credential names a different tunnel key")
+	}
+	return nil
+}
+
 // reportUnknown logs packets WireGuard rejected as an unknown message type.
 //
 // wireguard-go logs these itself but without a source, which is what made them
@@ -475,15 +521,16 @@ func (m *Mesh) announceWith(now time.Time, fresh bool) error {
 	}
 
 	a := &control.Announce{
-		Kind:      control.KindAnnounce,
-		DevicePub: m.st.Identity.DevicePub,
-		WGPub:     m.st.Identity.WGPub[:],
-		Name:      m.cfg.Name,
-		Endpoints: m.candidates(),
-		Seq:       seq,
-		Timestamp: now.Unix(),
-		Relay:     m.cfg.Relay,
-		Fresh:     fresh,
+		Kind:       control.KindAnnounce,
+		DevicePub:  m.st.Identity.DevicePub,
+		WGPub:      m.st.Identity.WGPub[:],
+		Name:       m.cfg.Name,
+		Endpoints:  m.candidates(),
+		Seq:        seq,
+		Timestamp:  now.Unix(),
+		Relay:      m.cfg.Relay,
+		Fresh:      fresh,
+		Credential: m.st.Credential,
 	}
 
 	// Trim until it fits. The announce is padded to a fixed size and Seal
@@ -651,6 +698,14 @@ func (m *Mesh) handle(ev waku.Event) {
 	}
 
 	m.health.announceOpened(now)
+
+	// Membership, when this mesh has an authority. Before the replay guard so a
+	// peer we will not admit cannot consume a sequence number.
+	if err := m.checkMembership(a, now); err != nil {
+		m.log.Warn("refusing a peer without valid membership",
+			"peer", hex.EncodeToString(a.DevicePub)[:16], "err", err)
+		return
+	}
 
 	if !m.guard.Accept(a) {
 		m.log.Warn("rejected replayed or stale announce",

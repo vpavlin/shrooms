@@ -1,0 +1,294 @@
+package main
+
+import (
+	"crypto/ed25519"
+	"encoding/base32"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/vpavlin/shrooms/internal/cred"
+	"github.com/vpavlin/shrooms/internal/state"
+)
+
+// The admin keys are the authority for a mesh, and they are the one thing here
+// that is worth stealing: whoever holds them can admit a device. They live
+// wherever you put them, deliberately — not on a participating node, which is
+// the entire point of separating authority from participation (ADR-018).
+//
+// This file is the "somewhere" of last resort: a file you keep. It is written
+// 0600, and the recovery key is printed once and not stored, so losing the file
+// is survivable and finding the file is not sufficient.
+const adminFileName = "admin.json"
+
+var b32 = base32.StdEncoding.WithPadding(base32.NoPadding)
+
+type adminFile struct {
+	// Priv is the day-to-day signing key: enrolling and revoking.
+	Priv string `json:"priv"`
+	// Keys are every public key the mesh trusts, including ones whose private
+	// halves are elsewhere — the recovery key, and later a renewal key.
+	Keys []string `json:"keys"`
+}
+
+func adminPath(dir string) string { return filepath.Join(dir, adminFileName) }
+
+func cmdAdmin(args []string) error {
+	if len(args) < 1 {
+		return errors.New("usage: shrooms admin {init|issue|revoke|show} [flags]")
+	}
+	switch args[0] {
+	case "init":
+		return cmdAdminInit(args[1:])
+	case "issue":
+		return cmdAdminIssue(args[1:])
+	case "revoke":
+		return cmdAdminRevoke(args[1:])
+	case "show":
+		return cmdAdminShow(args[1:])
+	default:
+		return fmt.Errorf("unknown admin command %q", args[0])
+	}
+}
+
+// cmdAdminInit mints a mesh: two admin keys, of which only one is kept here.
+//
+// Two, always, because the set is fixed at mint — the mesh id commits to it and
+// the address prefix derives from the id, so adding a key later re-addresses
+// every node. One is for use; the other is recovery, printed once and never
+// written, so that losing this file is not the end of the mesh.
+func cmdAdminInit(args []string) error {
+	fs := flag.NewFlagSet("admin init", flag.ExitOnError)
+	dir := fs.String("dir", defaultAdminDir(), "where to keep the admin key")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	if _, err := os.Stat(adminPath(*dir)); err == nil {
+		return fmt.Errorf("%s already exists; minting again would create a different mesh",
+			adminPath(*dir))
+	}
+
+	primary, err := cred.NewAdmin()
+	if err != nil {
+		return err
+	}
+	recovery, err := cred.NewAdmin()
+	if err != nil {
+		return err
+	}
+	auth, err := cred.NewAuthority(primary.Pub, recovery.Pub)
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(*dir, 0o700); err != nil {
+		return err
+	}
+	af := adminFile{
+		Priv: base64.StdEncoding.EncodeToString(primary.Priv),
+		Keys: []string{b32.EncodeToString(primary.Pub), b32.EncodeToString(recovery.Pub)},
+	}
+	raw, err := json.MarshalIndent(af, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(adminPath(*dir), append(raw, '\n'), 0o600); err != nil {
+		return err
+	}
+
+	fmt.Printf("Minted a mesh.\n\n")
+	fmt.Printf("  mesh id     %s\n", auth.ID())
+	fmt.Printf("  prefix      %s\n", auth.ID().Prefix())
+	fmt.Printf("  admin key   %s\n", adminPath(*dir))
+	fmt.Println()
+	fmt.Println("Put this in every node's config — these are public values:")
+	fmt.Printf("  admin_keys = [%q, %q]\n", af.Keys[0], af.Keys[1])
+	fmt.Println()
+	fmt.Println("RECOVERY KEY — written down now or never. It is not saved anywhere,")
+	fmt.Println("and it is what lets you keep this mesh if the admin key above is lost:")
+	fmt.Printf("\n  %s\n\n", base64.StdEncoding.EncodeToString(recovery.Priv))
+	fmt.Println("Store it away from this machine. A password manager, a Keycard, paper.")
+	return nil
+}
+
+func loadAdmin(dir string) (*cred.Admin, *cred.Authority, error) {
+	raw, err := os.ReadFile(adminPath(dir))
+	if err != nil {
+		return nil, nil, fmt.Errorf("no admin key at %s — run `shrooms admin init`", adminPath(dir))
+	}
+	var af adminFile
+	if err := json.Unmarshal(raw, &af); err != nil {
+		return nil, nil, fmt.Errorf("parse %s: %w", adminPath(dir), err)
+	}
+	priv, err := base64.StdEncoding.DecodeString(af.Priv)
+	if err != nil || len(priv) != ed25519.PrivateKeySize {
+		return nil, nil, errors.New("admin key is unreadable")
+	}
+	keys := make([]ed25519.PublicKey, 0, len(af.Keys))
+	for _, k := range af.Keys {
+		b, err := b32.DecodeString(strings.ToUpper(k))
+		if err != nil {
+			return nil, nil, fmt.Errorf("admin key %q: %w", k, err)
+		}
+		keys = append(keys, ed25519.PublicKey(b))
+	}
+	auth, err := cred.NewAuthority(keys...)
+	if err != nil {
+		return nil, nil, err
+	}
+	a := &cred.Admin{Priv: ed25519.PrivateKey(priv)}
+	a.Pub = a.Priv.Public().(ed25519.PublicKey)
+	if !auth.Trusts(a.Pub) {
+		return nil, nil, errors.New("the stored admin key is not one this mesh trusts")
+	}
+	return a, auth, nil
+}
+
+// cmdAdminIssue signs a credential for one device.
+//
+// The device's own keys are its state directory's, so this is run where that
+// device is — or given the keys by hand, which is what --device and --wg are
+// for when enrolling something remote.
+func cmdAdminIssue(args []string) error {
+	fs := flag.NewFlagSet("admin issue", flag.ExitOnError)
+	dir := fs.String("dir", defaultAdminDir(), "where the admin key is kept")
+	stateDir := fs.String("state", state.DefaultStateDir, "the device's state directory")
+	name := fs.String("name", "", "the device's name")
+	life := fs.Duration("life", cred.DefaultLife, "how long the credential is valid")
+	serial := fs.Uint64("serial", 0, "credential serial; must increase per device")
+	write := fs.Bool("write", true, "store the credential in the device's state")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	admin, auth, err := loadAdmin(*dir)
+	if err != nil {
+		return err
+	}
+	st, err := state.LoadOrCreateState(*stateDir)
+	if err != nil {
+		return err
+	}
+	if *name == "" {
+		return errors.New("--name is required: a credential names the device it admits")
+	}
+
+	now := time.Now()
+	c, err := admin.Issue(st.Identity.DevicePub, st.Identity.WGPub[:], *name, *serial, now, *life)
+	if err != nil {
+		return err
+	}
+	// The mesh id is the authority's, not the signer's: a credential says which
+	// mesh it admits you to, and this admin is one key among that mesh's set.
+	c.MeshID = auth.ID()
+	d, err := c.Digest()
+	if err != nil {
+		return err
+	}
+	c.Sig = ed25519.Sign(admin.Priv, d[:])
+
+	raw, err := c.MarshalBinary()
+	if err != nil {
+		return err
+	}
+	if *write {
+		if err := st.SetCredential(raw); err != nil {
+			return err
+		}
+	}
+	fmt.Printf("Issued a credential for %q.\n\n", *name)
+	fmt.Printf("  mesh     %s\n", auth.ID())
+	fmt.Printf("  device   %x\n", st.Identity.DevicePub[:8])
+	fmt.Printf("  serial   %d\n", c.Serial)
+	fmt.Printf("  expires  %s (in %s)\n", time.Unix(c.NotAfter, 0).Format(time.RFC3339), *life)
+	if *write {
+		fmt.Printf("\nStored in %s. Restart the daemon to announce it.\n", *stateDir)
+	} else {
+		fmt.Printf("\n  %s\n", base64.StdEncoding.EncodeToString(raw))
+	}
+	return nil
+}
+
+// cmdAdminRevoke withdraws a device before its credential expires.
+//
+// Revocation is a signed statement that peers keep and check themselves, so it
+// cannot be undone by a compromised node. Expiry remains the backstop: anyone
+// can suppress a message on a gossip bus, and nobody can suppress a clock.
+func cmdAdminRevoke(args []string) error {
+	fs := flag.NewFlagSet("admin revoke", flag.ExitOnError)
+	dir := fs.String("dir", defaultAdminDir(), "where the admin key is kept")
+	devHex := fs.String("device", "", "the device's public key, hex")
+	serial := fs.Uint64("serial", 0, "revoke this serial and everything below it")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	admin, auth, err := loadAdmin(*dir)
+	if err != nil {
+		return err
+	}
+	if *devHex == "" {
+		return errors.New("--device is required")
+	}
+	var dev []byte
+	if _, err := fmt.Sscanf(*devHex, "%x", &dev); err != nil || len(dev) != ed25519.PublicKeySize {
+		return fmt.Errorf("--device must be a %d-byte hex key", ed25519.PublicKeySize)
+	}
+
+	r, err := admin.Revoke(dev, *serial, time.Now())
+	if err != nil {
+		return err
+	}
+	r.MeshID = auth.ID()
+	d, err := r.Digest()
+	if err != nil {
+		return err
+	}
+	r.Sig = ed25519.Sign(admin.Priv, d[:])
+	raw, err := r.MarshalBinary()
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Revoked %x, serial %d and below.\n\n", dev[:8], *serial)
+	fmt.Printf("  %s\n\n", base64.StdEncoding.EncodeToString(raw))
+	fmt.Println("Distribution over the mesh is not built yet, so this has to be")
+	fmt.Println("carried by hand for now. The device stays out either way once its")
+	fmt.Println("credential expires, which is what expiry is for.")
+	return nil
+}
+
+func cmdAdminShow(args []string) error {
+	fs := flag.NewFlagSet("admin show", flag.ExitOnError)
+	dir := fs.String("dir", defaultAdminDir(), "where the admin key is kept")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	_, auth, err := loadAdmin(*dir)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("mesh id  %s\n", auth.ID())
+	fmt.Printf("prefix   %s\n", auth.ID().Prefix())
+	fmt.Printf("keys     %d trusted\n", len(auth.Keys))
+	fmt.Println()
+	fmt.Println("admin_keys = [")
+	for _, k := range auth.Keys {
+		fmt.Printf("  %q,\n", b32.EncodeToString(k))
+	}
+	fmt.Println("]")
+	return nil
+}
+
+func defaultAdminDir() string {
+	if h, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(h, ".config", "shrooms")
+	}
+	return "."
+}

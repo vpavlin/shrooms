@@ -9,6 +9,7 @@ package state
 
 import (
 	"crypto/ed25519"
+	"encoding/base32"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -17,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/vpavlin/shrooms/internal/cred"
 	"github.com/vpavlin/shrooms/internal/identity"
 	"github.com/vpavlin/shrooms/internal/service"
 )
@@ -265,6 +267,21 @@ type Config struct {
 	// HostsSuffix is the domain appended to peer names.
 	HostsSuffix string
 
+	// AdminKeys are the admin public keys this mesh trusts to sign membership,
+	// base32, as printed by `shrooms admin init`. Public values: they belong in
+	// a config file, in git, on a sticker.
+	//
+	// Empty means membership is the network key alone, which is how every mesh
+	// works today and what ADR-018 replaces. Both schemes run at once during
+	// migration: with no admin keys a node behaves exactly as before, and with
+	// them it additionally requires every peer to present a credential the set
+	// signed.
+	//
+	// The set is fixed when the mesh is minted, because the mesh id commits to
+	// it and the address prefix derives from the id. Adding one later
+	// re-addresses every node.
+	AdminKeys []string
+
 	// AdminPK is reserved for M5 (admin-signed credentials) and ignored while
 	// empty. Present now so adding it later is not a config break.
 	AdminPK string
@@ -327,13 +344,45 @@ func (c *Config) Validate() error {
 	if _, err := service.ParseSpecs(c.Services); err != nil {
 		return fmt.Errorf("services: %w", err)
 	}
+	// Rejected at load: a mistyped admin key would otherwise surface much later
+	// as a mesh where every peer is refused, which looks like a network fault.
+	if _, err := c.Authority(); err != nil {
+		return err
+	}
 	return nil
+}
+
+// Authority returns the admin keys this mesh trusts, or nil when membership is
+// still the network key alone.
+//
+// nil is not an error: it is the pre-credential world, and every node lives
+// there until a mesh is minted with admin keys.
+func (c *Config) Authority() (*cred.Authority, error) {
+	if len(c.AdminKeys) == 0 {
+		return nil, nil
+	}
+	keys := make([]ed25519.PublicKey, 0, len(c.AdminKeys))
+	for _, s := range c.AdminKeys {
+		raw, err := base32.StdEncoding.WithPadding(base32.NoPadding).
+			DecodeString(strings.ToUpper(strings.TrimSpace(s)))
+		if err != nil {
+			return nil, fmt.Errorf("admin_keys: %q: %w", s, err)
+		}
+		keys = append(keys, ed25519.PublicKey(raw))
+	}
+	return cred.NewAuthority(keys...)
 }
 
 // ServiceSpecs returns the parsed services. Validate has already checked them,
 // so an error here is a caller that skipped it.
 func (c *Config) ServiceSpecs() ([]service.Spec, error) {
 	return service.ParseSpecs(c.Services)
+}
+
+// SetCredential stores this device's membership and persists it.
+func (s *State) SetCredential(raw []byte) error {
+	s.Credential = append([]byte(nil), raw...)
+	return s.Save()
 }
 
 // Key returns the parsed network key.
@@ -346,6 +395,12 @@ type stateFile struct {
 	DevicePriv string `json:"device_priv"` // base64, ed25519 seed+pub
 	WGPriv     string `json:"wg_priv"`     // base64, curve25519
 	Seq        uint64 `json:"seq"`
+
+	// Credential is this device's membership, base64 of the wire form. Not a
+	// secret — it is published in every announce — but it belongs with the
+	// identity it names, and a device that lost it would be unable to prove
+	// membership until re-enrolled.
+	Credential string `json:"credential,omitempty"`
 }
 
 // State is the daemon-owned persistent state.
@@ -353,6 +408,9 @@ type State struct {
 	dir string
 
 	Identity *identity.Identity
+
+	// Credential is this device's membership, or nil before it has one.
+	Credential []byte
 
 	// Seq is the announce sequence number. It MUST persist across restarts: a
 	// device that restarts and resets Seq to 1 is rejected by every peer's
@@ -413,7 +471,19 @@ func LoadOrCreateState(dir string) (*State, error) {
 	}
 	id.WGPub = pub
 
-	return &State{dir: dir, Identity: id, Seq: sf.Seq}, nil
+	st := &State{dir: dir, Identity: id, Seq: sf.Seq}
+	if sf.Credential != "" {
+		c, err := base64.StdEncoding.DecodeString(sf.Credential)
+		if err != nil {
+			// Not fatal: a device without a readable credential can still run,
+			// and on a mesh that does not use them it is irrelevant. Losing the
+			// tunnel over it would be a worse outcome than being asked to
+			// re-enrol.
+			return st, nil
+		}
+		st.Credential = c
+	}
+	return st, nil
 }
 
 // Save writes state atomically. The sequence number changes on every announce,
@@ -423,6 +493,9 @@ func (s *State) Save() error {
 		DevicePriv: base64.StdEncoding.EncodeToString(s.Identity.DevicePriv),
 		WGPriv:     base64.StdEncoding.EncodeToString(s.Identity.WGPriv[:]),
 		Seq:        s.Seq,
+	}
+	if len(s.Credential) > 0 {
+		sf.Credential = base64.StdEncoding.EncodeToString(s.Credential)
 	}
 	raw, err := json.MarshalIndent(sf, "", "  ")
 	if err != nil {
@@ -529,6 +602,8 @@ func parseConfig(text string) (Config, error) {
 			c.Mode = unquote(val)
 		case "admin_pk":
 			c.AdminPK = unquote(val)
+		case "admin_keys":
+			c.AdminKeys = parseArray(val)
 		case "relay":
 			c.Relay = unquote(val) == "true"
 		case "relay_addr":
@@ -672,6 +747,12 @@ func WriteConfig(path string, c Config) error {
 			fmt.Fprintf(&b, "%q", a)
 		}
 		b.WriteString("]\n")
+	}
+
+	if len(c.AdminKeys) > 0 {
+		b.WriteString("\n# The admin keys this mesh trusts to sign membership. Public values,\n")
+		b.WriteString("# fixed when the mesh was minted: the mesh id commits to the set.\n")
+		fmt.Fprintf(&b, "admin_keys = %s\n", formatArray(c.AdminKeys))
 	}
 
 	b.WriteString("\n# The group allowed to use the control socket. The daemon runs as root,\n")

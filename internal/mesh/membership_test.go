@@ -1,0 +1,111 @@
+package mesh
+
+import (
+	"crypto/ed25519"
+	"testing"
+	"time"
+
+	"github.com/vpavlin/shrooms/internal/control"
+	"github.com/vpavlin/shrooms/internal/cred"
+	"github.com/vpavlin/shrooms/internal/identity"
+)
+
+func announceFor(t *testing.T, id *identity.Identity, c []byte) *control.Announce {
+	t.Helper()
+	return &control.Announce{
+		Kind: control.KindAnnounce, DevicePub: id.DevicePub, WGPub: id.WGPub[:],
+		Name: "peer", Seq: 1, Timestamp: time.Now().Unix(), Credential: c,
+	}
+}
+
+// Both schemes run at once, which is the whole migration story: a mesh with no
+// admin keys behaves exactly as it does today.
+func TestWithoutAnAuthorityEveryPeerIsAdmitted(t *testing.T) {
+	id, _ := identity.New()
+	m := &Mesh{}
+	if err := m.checkMembership(announceFor(t, id, nil), time.Now()); err != nil {
+		t.Errorf("a mesh without admin keys refused a peer: %v", err)
+	}
+}
+
+func TestWithAnAuthorityACredentialIsRequired(t *testing.T) {
+	admin, _ := cred.NewAdmin()
+	auth, _ := cred.NewAuthority(admin.Pub)
+	id, _ := identity.New()
+	now := time.Now()
+	m := &Mesh{authority: auth}
+
+	// No credential at all.
+	if err := m.checkMembership(announceFor(t, id, nil), now); err == nil {
+		t.Error("admitted a peer with no credential")
+	}
+
+	// A genuine one, for this device.
+	c, err := admin.Issue(id.DevicePub, id.WGPub[:], "peer", 1, now, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.MeshID = auth.ID()
+	d, _ := c.Digest()
+	c.Sig = signWith(admin, d)
+	raw, _ := c.MarshalBinary()
+	if err := m.checkMembership(announceFor(t, id, raw), now); err != nil {
+		t.Errorf("refused a validly credentialled peer: %v", err)
+	}
+
+	// Expired.
+	if err := m.checkMembership(announceFor(t, id, raw), now.Add(2*time.Hour)); err == nil {
+		t.Error("admitted a peer whose credential had expired")
+	}
+}
+
+// A credential is public and rides a public bus, so anyone can copy one.
+// Binding it to the key that signed the announce is what stops a copied
+// credential being replayed by another device.
+func TestACopiedCredentialDoesNotAdmitAnotherDevice(t *testing.T) {
+	admin, _ := cred.NewAdmin()
+	auth, _ := cred.NewAuthority(admin.Pub)
+	member, _ := identity.New()
+	thief, _ := identity.New()
+	now := time.Now()
+	m := &Mesh{authority: auth}
+
+	c, _ := admin.Issue(member.DevicePub, member.WGPub[:], "member", 1, now, time.Hour)
+	c.MeshID = auth.ID()
+	d, _ := c.Digest()
+	c.Sig = signWith(admin, d)
+	raw, _ := c.MarshalBinary()
+
+	// The thief announces with its own keys and the member's credential.
+	if err := m.checkMembership(announceFor(t, thief, raw), now); err == nil {
+		t.Error("a copied credential admitted a different device")
+	}
+
+	// And swapping only the tunnel key is refused too, or a member could point
+	// its membership at someone else's tunnel.
+	swapped := announceFor(t, member, raw)
+	swapped.WGPub = thief.WGPub[:]
+	if err := m.checkMembership(swapped, now); err == nil {
+		t.Error("a credential admitted an announce naming a different tunnel key")
+	}
+}
+
+// A credential from an authority this mesh does not trust is not membership,
+// however well formed it is.
+func TestAnotherMeshsCredentialIsRefused(t *testing.T) {
+	ours, _ := cred.NewAdmin()
+	theirs, _ := cred.NewAdmin()
+	auth, _ := cred.NewAuthority(ours.Pub)
+	id, _ := identity.New()
+	now := time.Now()
+
+	c, _ := theirs.Issue(id.DevicePub, id.WGPub[:], "peer", 1, now, time.Hour)
+	raw, _ := c.MarshalBinary()
+
+	m := &Mesh{authority: auth}
+	if err := m.checkMembership(announceFor(t, id, raw), now); err == nil {
+		t.Error("admitted a peer credentialled by another mesh")
+	}
+}
+
+func signWith(a *cred.Admin, d [32]byte) []byte { return ed25519.Sign(a.Priv, d[:]) }

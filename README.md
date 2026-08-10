@@ -527,6 +527,54 @@ action — direct on wifi, relayed on the carrier's CGNAT, and the transition
 survived in both directions. Built with `make apk`, or published to an F-Droid
 repo with `make fdroid`.
 
+## Membership without a shared secret
+
+Today one secret does everything: the network key derives the topics, the
+payload key, the pairwise PSKs and the address prefix — so every device holds
+it, and **holding it is what membership is**. A leak from any device is a leak
+of the mesh, revocation means rotating for everyone, and every member can enrol
+members. That is the largest weakness in the system and it is documented rather
+than defended ([SECURITY.md](SECURITY.md)).
+
+[ADR-018](docs/adr/018-credentials-instead-of-a-shared-key.md) separates the two
+things the key conflates. The mesh's identity becomes an admin **public** key,
+membership becomes an admin-signed credential naming one device, and the admin
+key is needed only to enrol and revoke — so it can live offline, on a Keycard or
+in a drawer, never on a participating node.
+
+```console
+$ shrooms admin init                       # mints a mesh: two keys, one kept
+$ shrooms admin issue --name laptop        # sign this device's membership
+$ shrooms admin revoke --device <hex>      # withdraw one before it expires
+```
+
+`init` prints a **recovery key once and never stores it**, and puts both public
+keys in your config:
+
+```toml
+admin_keys = ["EGRWTGUF…", "3Y5HMGWB…"]    # public; belongs in git if you like
+```
+
+**Two keys, always, because the set is fixed at mint.** The mesh id commits to
+it and the address prefix derives from the id, so adding a key later
+re-addresses every node. One is recovery; the other becomes the renewal key that
+lets credentials refresh while the root stays offline.
+
+**Both schemes run at once.** A mesh with no `admin_keys` behaves exactly as it
+does today. With them, a peer must also present a credential the set signed,
+naming the same device and tunnel keys as the announce that carried it — so a
+copied credential admits nobody, since credentials are public and travel on a
+public bus.
+
+**Credentials expire, and that is the point.** A gossip bus lets an attacker
+suppress a revocation it cannot forge; expiry is what bounds that, and gossiped
+revocation is only the fast path. The lifetime is the admin's choice per device
+(30 days by default) and lives inside the signature, so a device cannot extend
+its own membership.
+
+Not built yet: distributing revocations over the mesh, and automatic renewal.
+Until then a revocation is carried by hand and expiry does the work.
+
 ## Bandwidth, and what a node contributes
 
 A node joins a **public, shared cluster**, and by default it relays for it. That
@@ -640,7 +688,7 @@ download.
 | **services** | ✅ local ports and LAN devices published by name, including things that never joined the mesh |
 | **Android** | ✅ a full participant, in daily use — tunnels, names, roaming between wifi and mobile data |
 | **M4** seamless operation | 🟨 roaming survives and the mesh repairs itself after a rendezvous outage; switching networks is still rough on the phone |
-| **M5** credentials | ⬜ designed ([ADR-017](docs/adr/017-invite-tokens.md), [ADR-018](docs/adr/018-credentials-instead-of-a-shared-key.md)), not built — the network key is still a shared bearer secret |
+| **M5** credentials | 🟨 issued, carried and verified ([ADR-018](docs/adr/018-credentials-instead-of-a-shared-key.md)); revocation is not yet distributed and renewal is manual |
 | **Basecamp view** | ✅ published, with `shrooms_core` reading the daemon from outside the QML sandbox |
 
 `make m0` / `make m1` / `make m3` / `make s1` / `make s3` reproduce these.

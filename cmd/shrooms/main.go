@@ -40,6 +40,8 @@ func main() {
 		err = cmdHosts(os.Args[2:])
 	case "key":
 		err = cmdKey(os.Args[2:])
+	case "admin":
+		err = cmdAdmin(os.Args[2:])
 	case "set-key":
 		err = cmdSetKey(os.Args[2:])
 	// Not "-v": the daemon uses it for verbose, so `shrooms -v` expecting
@@ -72,6 +74,10 @@ Usage:
   shrooms prepare [--name N] [--relay]  write a config with the key left blank,
                                           for setting a machine up without the
                                           key passing through anyone else
+  shrooms admin init                      mint a mesh: two admin keys, one kept
+  shrooms admin issue --name N            sign a credential for this device
+  shrooms admin revoke --device HEX       withdraw one before it expires
+  shrooms admin show                      the mesh id and its trusted keys
   shrooms set-key                       write the key into a prepared config,
                                           read from a prompt or stdin so it
                                           never reaches shell history
