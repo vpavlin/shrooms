@@ -1,5 +1,7 @@
 # Shrooms 🍄
 
+<img src="assets/logo.png" alt="Shrooms" width="128" align="right">
+
 **The mycelial mesh VPN.** Nodes find each other through the network's own
 gossip and move data directly between one another. No coordination server, no
 account, no vendor in the path.

@@ -356,11 +356,13 @@ private fun MeshScreen(snap: Snapshot, dir: String, onConnect: () -> Unit, onDis
 
         Box(Modifier.weight(1f)) {
             when {
-                snap.peers.isEmpty() -> Text(
-                    if (snap.connected) "looking for peers…" else "not connected",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Palette.Ash,
+                // Nothing to draw yet, so draw the thing that is actually
+                // happening: spores drifting and finding each other. It also
+                // makes the difference between "connected, nobody found" and
+                // "not connected" legible without reading the label.
+                snap.peers.isEmpty() -> SporeField(
                     modifier = Modifier.align(Alignment.Center),
+                    label = if (snap.connected) "looking for peers…" else "not connected",
                 )
 
                 asGraph -> {
