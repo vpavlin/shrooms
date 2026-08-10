@@ -35,6 +35,28 @@ import (
 // beyond collision by accident and short enough to read aloud once.
 const MeshIDLen = 16
 
+// DefaultLife is how long an issued credential is valid unless the admin says
+// otherwise.
+//
+// The lifetime is a real trade and it is the admin's to make, per device:
+// shorter means a suppressed revocation dies sooner, longer means a device that
+// was switched off does not lock itself out. Thirty days suits a personal mesh
+// where a phone can be in a drawer for a fortnight; a always-on VPS could take
+// far longer, and a device you are unsure about far less.
+//
+// It lives in the signature, so it is chosen at issue and cannot be changed by
+// the holder — a device able to configure its own expiry could extend its own
+// membership, which is the whole of revocation undone. Nothing on the verifying
+// side is configurable for the same reason.
+const DefaultLife = 30 * 24 * time.Hour
+
+// RenewBefore is how long before expiry a device should ask for a new
+// credential, when there is something to ask.
+//
+// A third of the lifetime, so a device that is offline for two of every three
+// renewal windows still refreshes before it lapses.
+func RenewBefore(life time.Duration) time.Duration { return life / 3 }
+
 var b32 = base32.StdEncoding.WithPadding(base32.NoPadding)
 
 // Admin is the authority for one mesh. The private half enrols and revokes;

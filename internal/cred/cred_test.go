@@ -308,3 +308,44 @@ func TestRevocationRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// The lifetime is the admin's to choose, per device, and lives inside the
+// signature — so a holder cannot extend it. That is the property revocation
+// depends on: a device able to configure its own expiry has undone it.
+func TestLifetimeIsChosenByTheIssuerAndSigned(t *testing.T) {
+	admin, _ := NewAdmin()
+	dev, wg := device(t)
+	now := time.Now()
+
+	short, err := admin.Issue(dev, wg, "phone", 1, now, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	long, err := admin.Issue(dev, wg, "vps", 2, now, 365*24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if long.NotAfter <= short.NotAfter {
+		t.Error("a longer lifetime did not produce a later expiry")
+	}
+
+	// Both are honoured as issued: the library does not impose a policy the
+	// admin did not ask for.
+	if err := Verify(admin.Pub, short, now.Add(30*time.Minute)); err != nil {
+		t.Errorf("a short-lived credential was rejected inside its window: %v", err)
+	}
+	if err := Verify(admin.Pub, long, now.Add(300*24*time.Hour)); err != nil {
+		t.Errorf("a long-lived credential was rejected inside its window: %v", err)
+	}
+
+	// And the holder cannot extend it.
+	stretched := *short
+	stretched.NotAfter = now.Add(10 * 365 * 24 * time.Hour).Unix()
+	if err := Verify(admin.Pub, &stretched, now); err == nil {
+		t.Error("a holder extended its own expiry")
+	}
+
+	if RenewBefore(DefaultLife) >= DefaultLife {
+		t.Error("renewal would start before the credential was issued")
+	}
+}
