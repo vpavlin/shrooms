@@ -44,42 +44,81 @@ Item {
     // and not ours to choose — so when that is off, the daemon's loopback
     // endpoint is the only thing left. Found by running this offscreen rather
     // than by reading the documentation.
-    // Sources tried in order, because the one that works depends on where this
-    // view is running.
+    // Where the status comes from, in order of what actually works.
     //
-    // Inside Basecamp a ui_qml app is sandboxed (Basecamp spec, "QML App
-    // Sandboxing"): a deny-all network manager blocks every HTTP request, and
-    // a URL interceptor resolves local files only under an allow-list of roots
-    // — chiefly the app's own install directory. So the absolute path and the
-    // loopback endpoint are both refused there, however the file is permissioned
-    // and whatever port the daemon opens. What does resolve is a file beside
-    // this one, which is why it is first: point the daemon's status_file at
-    // this module's directory and no server is involved at all.
+    // Inside Basecamp the only route is the core module. A ui_qml app is
+    // sandboxed: a deny-all network manager blocks every HTTP request, and
+    // XMLHttpRequest refuses local files outright unless the host sets
+    // QML_XHR_ALLOW_FILE_READ, which Basecamp does not. So neither a file nor a
+    // port is reachable from here however either is permissioned — the log says
+    // so plainly, in two different ways, and it took three wrong guesses before
+    // anyone read it.
     //
-    // The other two are for running outside Basecamp — the offscreen harness,
-    // or a plain qml runtime — where the sandbox does not apply.
+    // shrooms_core runs in its own process, unsandboxed, and reads the daemon's
+    // control socket. That is what Basecamp's own spec prescribes: UI apps
+    // reach the outside indirectly, through Logos Modules.
+    //
+    // The file and endpoint remain for running this outside Basecamp — the
+    // offscreen check, or a plain qml runtime — where the sandbox does not
+    // apply and the core module does not exist.
+    property string statusPath: "/run/shrooms/status.json"
+    property string statusUrl: "http://127.0.0.1:8787/status"
     property var sources: [
         { url: "status.json", file: true },              // beside Main.qml
         { url: "file://" + statusPath, file: true },     // an absolute path
         { url: statusUrl, file: false },                 // the daemon's endpoint
     ]
-    property string statusPath: "/run/logos-vpn/status.json"
-    property string statusUrl: "http://127.0.0.1:8787/status"
     property int source: 0
     property bool everLoaded: false
     property int attempts: 0
 
-    // fileBlocked says we gave up on reading a file and moved to the endpoint.
-    // Deliberately not "and nothing loaded": a successful endpoint read does
-    // not mean the file worked, and the trouble line exists to say which
-    // transport is actually carrying this.
     readonly property bool fileBlocked: !sources[source].file
+
+    /** True when the core module is present, which is the Basecamp case. */
+    readonly property bool haveCore: typeof logos !== "undefined" && !!logos.callModule
+
+    function callCore(method, args) {
+        if (!haveCore) return ""
+        try {
+            return String(logos.callModule("shrooms_core", method, args || []))
+        } catch (e) {
+            return ""
+        }
+    }
 
     function reload() {
         attempts++
-        // Advance on elapsed attempts rather than on an error. A refused
-        // file:// read does not deliver a failed request — the handler simply
-        // never runs — so waiting for an error waits forever.
+
+        if (haveCore) {
+            var raw = callCore("status", [])
+            // The bridge may hand back a JSON string that is itself quoted;
+            // qaku unwraps the same way. Unwrap, then parse.
+            var t = String(raw || "").trim()
+            for (var i = 0; i < 2 && t.charAt(0) === '"'; i++) {
+                try { t = String(JSON.parse(t)).trim() } catch (e) { break }
+            }
+            if (t.charAt(0) === "{") {
+                try {
+                    var d = JSON.parse(t)
+                    if (d.error) {
+                        root.problem = d.error + (d.detail ? "\n" + d.detail : "")
+                        root.peers = []
+                    } else {
+                        root.st = d
+                        root.peers = d.peers || []
+                        root.problem = ""
+                        root.everLoaded = true
+                    }
+                    return
+                } catch (e) { /* fall through to the file transports */ }
+            }
+            root.problem = "shrooms_core returned nothing readable"
+            return
+        }
+
+        // Advance on elapsed attempts rather than on an error: a refused
+        // file:// read does not deliver a failed request, so waiting for one
+        // waits forever.
         if (!everLoaded && attempts > 2 * (source + 1) && source < sources.length - 1) {
             source++
         }
