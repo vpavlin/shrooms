@@ -34,7 +34,7 @@ import (
 
 	"golang.org/x/crypto/hkdf"
 
-	"github.com/vpavlin/logos-vpn/internal/identity"
+	"github.com/vpavlin/shrooms/internal/identity"
 )
 
 // Type identifies a relay frame.

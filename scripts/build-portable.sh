@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Produce a portable logos-vpn distribution.
+# Produce a portable shrooms distribution.
 #
 #   dist/
-#     bin/logos-vpn      built against an older glibc, rpath $ORIGIN/../lib
+#     bin/shrooms      built against an older glibc, rpath $ORIGIN/../lib
 #     lib/*.so           liblogosdelivery and friends
-#     logos-vpn.service  systemd unit
+#     shrooms.service  systemd unit
 #
 # Everything is built in containers, so the result does not depend on the
 # developer machine's toolchain or glibc.
@@ -58,21 +58,21 @@ esac
 
 echo "==> staged $(ls "$STAGE/lib" | wc -l) files"
 
-echo "==> building logos-vpn against an older glibc"
+echo "==> building shrooms against an older glibc"
 docker build -f docker/build-vpn.Dockerfile \
     --build-arg "VERSION=$VERSION" \
     --target dist -o "$DIST" .
 
-cp packaging/logos-vpn.service "$DIST/"
+cp packaging/shrooms.service "$DIST/"
 
 echo
 echo "==> $DIST"
 find "$DIST" -maxdepth 2 -type f -printf '  %P\n' | sort
 echo
 echo "glibc requirement:"
-objdump -T "$DIST/bin/logos-vpn" 2>/dev/null \
+objdump -T "$DIST/bin/shrooms" 2>/dev/null \
     | grep -oE 'GLIBC_[0-9.]+' | sort -Vu | tail -1 | sed 's/^/  /'
 echo
 echo "Install on a target:"
-echo "  scp -r $DIST/* host:/opt/logos-vpn/"
-echo "  ssh host 'ln -sf /opt/logos-vpn/bin/logos-vpn /usr/bin/logos-vpn'"
+echo "  scp -r $DIST/* host:/opt/shrooms/"
+echo "  ssh host 'ln -sf /opt/shrooms/bin/shrooms /usr/bin/shrooms'"

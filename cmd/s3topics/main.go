@@ -22,9 +22,9 @@ import (
 	"log"
 	"time"
 
-	"github.com/vpavlin/logos-vpn/internal/identity"
-	"github.com/vpavlin/logos-vpn/internal/topic"
-	"github.com/vpavlin/logos-vpn/internal/waku"
+	"github.com/vpavlin/shrooms/internal/identity"
+	"github.com/vpavlin/shrooms/internal/topic"
+	"github.com/vpavlin/shrooms/internal/waku"
 )
 
 func main() {

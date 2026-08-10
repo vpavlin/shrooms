@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vpavlin/logos-vpn/internal/identity"
+	"github.com/vpavlin/shrooms/internal/identity"
 )
 
 func fixture(t *testing.T) (identity.NetworkKey, *identity.Identity, *Announce) {

@@ -1,12 +1,12 @@
 [Unit]
-Description=logos-vpn overlay mesh
-Documentation=https://github.com/vpavlin/logos-vpn
+Description=shrooms overlay mesh
+Documentation=https://github.com/vpavlin/shrooms
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/logos-vpn daemon
+ExecStart=/usr/local/bin/shrooms daemon
 
 # CAP_NET_ADMIN to create the TUN device and configure its address and route.
 #
@@ -17,15 +17,15 @@ ExecStart=/usr/local/bin/logos-vpn daemon
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 
-StateDirectory=logos-vpn
+StateDirectory=shrooms
 StateDirectoryMode=0700
-ConfigurationDirectory=logos-vpn
-RuntimeDirectory=logos-vpn
+ConfigurationDirectory=shrooms
+RuntimeDirectory=shrooms
 RuntimeDirectoryMode=0750
 
 # liblogosdelivery and friends are installed alongside the binary rather than
 # into a system library path, so they do not collide with anything.
-Environment=LD_LIBRARY_PATH=/usr/local/lib/logos-vpn
+Environment=LD_LIBRARY_PATH=/usr/local/lib/shrooms
 
 NoNewPrivileges=yes
 ProtectSystem=strict

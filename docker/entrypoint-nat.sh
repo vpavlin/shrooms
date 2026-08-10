@@ -20,4 +20,4 @@ fi
 
 echo "route:"; ip route show | sed 's/^/  /'
 
-exec /usr/bin/logos-vpn "${@:-daemon}" -v
+exec /usr/bin/shrooms "${@:-daemon}" -v

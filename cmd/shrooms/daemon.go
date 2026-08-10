@@ -20,18 +20,22 @@ import (
 
 	"golang.zx2c4.com/wireguard/device"
 
-	dnssrv "github.com/vpavlin/logos-vpn/internal/dns"
-	"github.com/vpavlin/logos-vpn/internal/identity"
-	"github.com/vpavlin/logos-vpn/internal/mesh"
-	"github.com/vpavlin/logos-vpn/internal/service"
-	"github.com/vpavlin/logos-vpn/internal/state"
-	"github.com/vpavlin/logos-vpn/internal/waku"
-	"github.com/vpavlin/logos-vpn/internal/wg"
+	dnssrv "github.com/vpavlin/shrooms/internal/dns"
+	"github.com/vpavlin/shrooms/internal/identity"
+	"github.com/vpavlin/shrooms/internal/mesh"
+	"github.com/vpavlin/shrooms/internal/service"
+	"github.com/vpavlin/shrooms/internal/state"
+	"github.com/vpavlin/shrooms/internal/waku"
+	"github.com/vpavlin/shrooms/internal/wg"
 )
 
 // DefaultSocket is the daemon's control socket. The CLI is a thin client over
 // it, which also gives monitoring a hook for free.
-const DefaultSocket = "/run/logos-vpn/logos-vpn.sock"
+const DefaultSocket = "/run/shrooms/shrooms.sock"
+
+// LegacySocket is where the daemon listened before the rename. The CLI falls
+// back to it so a running pre-rename daemon stays reachable from a new binary.
+const LegacySocket = "/run/logos-vpn/logos-vpn.sock"
 
 func cmdDaemon(args []string) error {
 	fs := flag.NewFlagSet("daemon", flag.ExitOnError)

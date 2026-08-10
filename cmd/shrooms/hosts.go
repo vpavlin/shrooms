@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/vpavlin/logos-vpn/internal/hosts"
+	"github.com/vpavlin/shrooms/internal/hosts"
 )
 
 func cmdHosts(args []string) error {
@@ -31,7 +31,7 @@ func cmdHosts(args []string) error {
 	if !*write {
 		fmt.Print(block)
 		if len(st.Peers) > 0 {
-			fmt.Fprintf(os.Stderr, "\n# to apply: sudo logos-vpn hosts --write\n")
+			fmt.Fprintf(os.Stderr, "\n# to apply: sudo shrooms hosts --write\n")
 		}
 		return nil
 	}

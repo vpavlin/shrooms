@@ -58,12 +58,20 @@ design that fixes this; it is not built yet.
 [Status](#status) for exactly what is proven and what is not, and
 [SECURITY.md](SECURITY.md) for what is deliberately deferred.
 
-**The code is still called `logos-vpn`.** The binary, the config at
-`/etc/logos-vpn`, the systemd unit and the Android package all keep that name,
-and every command below is real and current. Renaming them is a migration —
-config paths, a published Android application id, an F-Droid repo, existing
-installs — and worth doing deliberately rather than as a side effect of picking
-a name.
+**Migrating from `logos-vpn`?** Nothing breaks. The daemon prefers
+`/etc/shrooms` and `/var/lib/shrooms` but keeps using the pre-rename paths when
+only those exist — which matters, because `/var/lib/logos-vpn` holds the device
+identity, and losing it gives a node a new overlay address and makes it a
+stranger to every peer. Move the files when convenient:
+
+```console
+$ sudo systemctl stop shrooms
+$ sudo mv /etc/logos-vpn /etc/shrooms && sudo mv /var/lib/logos-vpn /var/lib/shrooms
+$ sudo systemctl start shrooms
+```
+
+The Android application id is still `dev.logos.vpn`, renamed separately: it
+means an uninstall and a rejoin rather than an update.
 
 ---
 
@@ -101,7 +109,7 @@ prefix derived from the network key, so every node computes every other node's
 address locally. No allocation, no conflicts, no split-brain.
 
 **No coordination server.** Every node holds the full roster, assembled from the
-announce stream. `logos-vpn status` is a real control plane with nothing
+announce stream. `shrooms status` is a real control plane with nothing
 authoritative behind it.
 
 ---
@@ -156,7 +164,7 @@ has an illegal effect: NestedPoll
 So the library exists only where Logos Basecamp is installed — which would
 make a fresh machine, CI, or a VPS unable to build at all. `make deps-release`
 works around that by downloading a repackaged copy from
-[this repo's releases](https://github.com/vpavlin/logos-vpn/releases/tag/deps-v1)
+[this repo's releases](https://github.com/vpavlin/shrooms/releases/tag/deps-v1)
 (Apache-2.0 OR MIT, unmodified).
 
 Note the *toolchain* problem is solved: building in Debian bookworm (git 2.39)
@@ -173,13 +181,13 @@ and relays; the laptop joins.
 ### 1. Build
 
 ```console
-$ git clone https://github.com/vpavlin/logos-vpn
-$ cd logos-vpn
+$ git clone https://github.com/vpavlin/shrooms
+$ cd shrooms
 
 $ make deps-basecamp \
     HDR=$(find ~ -name liblogosdelivery.h 2>/dev/null | head -1)
 
-$ make logos-vpn
+$ make shrooms
 $ make test-unit          # optional, ~5s
 ```
 
@@ -190,17 +198,17 @@ glibc ≥ 2.38 — the simplest path is to build there directly, with no docker 
 nothing to ship:
 
 ```console
-$ git clone https://github.com/vpavlin/logos-vpn && cd logos-vpn
-$ make deps-release && make logos-vpn
+$ git clone https://github.com/vpavlin/shrooms && cd shrooms
+$ make deps-release && make shrooms
 $ sudo make install                       # binary, libraries, systemd unit
-$ sudo logos-vpn init --relay --name vps
-$ sudo systemctl enable --now logos-vpn
+$ sudo shrooms init --relay --name vps
+$ sudo systemctl enable --now shrooms
 ```
 
 `make install` relinks the binary with an rpath pointing at
-`/usr/local/lib/logos-vpn`, so it keeps working after you delete the checkout.
+`/usr/local/lib/shrooms`, so it keeps working after you delete the checkout.
 To run it in the foreground instead, skip the install and use
-`sudo ./bin/logos-vpn daemon -v`.
+`sudo ./bin/shrooms daemon -v`.
 
 **Otherwise, push from your machine** with `deploy.sh`, which builds a container
 image and ships it over ssh:
@@ -229,7 +237,7 @@ $ ./scripts/deploy.sh root@HOST --init --relay --name home \
 address it says so, and otherwise stays quiet.
 
 This checks the host, builds and ships a container image, writes
-`/etc/logos-vpn/config.toml`, and starts it. **Copy the network key it prints** —
+`/etc/shrooms/config.toml`, and starts it. **Copy the network key it prints** —
 it is the only secret, and until the security roadmap's phase 1 lands it is a
 permanent bearer credential.
 
@@ -242,8 +250,8 @@ $ ssh root@VPS_IP 'ufw allow 51820/udp'    # or your firewall's equivalent
 ### 3. Join from your laptop
 
 ```console
-$ sudo ./bin/logos-vpn join <NETWORK-KEY> --name laptop
-$ sudo ./bin/logos-vpn daemon -v
+$ sudo ./bin/shrooms join <NETWORK-KEY> --name laptop
+$ sudo ./bin/shrooms daemon -v
 ```
 
 Leave that running (or `sudo make install` and use systemd here too). On first start it generates a device identity, derives its
@@ -252,7 +260,7 @@ overlay address, connects to the fleet, and announces itself.
 ### 4. Check it works
 
 ```console
-$ sudo ./bin/logos-vpn status
+$ sudo ./bin/shrooms status
 network  fd48:d107:3fce::/48          peers 1 (1 up)
 self     laptop  fd48:d107:3fce:2b84:226b:ac:f2c3:9f30
 
@@ -268,7 +276,7 @@ fleet) and a handshake shortly after.
 ### 5. What to look at
 
 ```console
-$ sudo ./bin/logos-vpn paths
+$ sudo ./bin/shrooms paths
 reflexive addresses (as peers observe us):
   203.0.113.9:41001
 ```
@@ -285,8 +293,8 @@ problem is traversal, not discovery. A relayed peer shows a `relay:…` endpoint
 ### 6. Use names instead of addresses
 
 ```console
-$ sudo logos-vpn hosts            # preview
-$ sudo logos-vpn hosts --write    # update /etc/hosts
+$ sudo shrooms hosts            # preview
+$ sudo shrooms hosts --write    # update /etc/hosts
 
 $ ssh root@vps.mesh
 ```
@@ -296,7 +304,7 @@ Entries go in a marked block, written atomically, and re-running is safe.
 To keep it current without re-running anything, let the daemon do it:
 
 ```toml
-manage_hosts = "true"      # in /etc/logos-vpn/config.toml
+manage_hosts = "true"      # in /etc/shrooms/config.toml
 ```
 
 It rewrites the block whenever the roster changes, and leaves the file alone
@@ -312,7 +320,7 @@ A machine can publish what it runs, so it is reached by name rather than by a
 port number someone has to remember:
 
 ```toml
-# in /etc/logos-vpn/config.toml on the machine that runs them
+# in /etc/shrooms/config.toml on the machine that runs them
 services = ["immich:2283", "jellyfin:8096"]
 ```
 
@@ -385,7 +393,7 @@ bare name. Publishing on 8080 leaves 80 to the router, and you get both
 > a local user can reach them. Listing one under `services` makes every device
 > holding the network key a local user. Publish deliberately.
 
-Services are not announced, so `logos-vpn status` lists what *this* machine
+Services are not announced, so `shrooms status` lists what *this* machine
 publishes and no node knows what any other one runs. That is why a name for a
 service that does not exist still resolves — to the machine that would run it —
 where an HTTP request gets a 404 listing the names that do exist. Adding a
@@ -402,7 +410,7 @@ needs a change to how addresses are derived; that is
 ### 7. Add more machines
 
 ```console
-$ sudo ./bin/logos-vpn join <NETWORK-KEY> --name office     # locally
+$ sudo ./bin/shrooms join <NETWORK-KEY> --name office     # locally
 $ ./scripts/deploy.sh user@host --key <NETWORK-KEY> --name nas   # remotely
 ```
 
@@ -497,7 +505,7 @@ reason is in the metadata exchange — `localShards="[0,1,2,3,4,5,6,7]"` — a C
 node subscribes to every shard in the cluster, so it carries the cluster, not
 your mesh.
 
-By comparison logos-vpn's own traffic is nothing: a 512-byte announce every 45s,
+By comparison shrooms's own traffic is nothing: a 512-byte announce every 45s,
 a 104-byte probe per working path every 5s, and a WireGuard keepalive every 25s.
 A three-node mesh sits well under 1 MB/h. The rendezvous relay costs 20–30× the
 protocol it exists to serve.
@@ -538,7 +546,7 @@ changes the mesh, so it cannot break it.
 Basecamp can read from:
 
 ```toml
-status_file       = "/home/you/.local/share/Logos/LogosBasecamp/plugins/logos_vpn/status.json"
+status_file       = "/home/you/.local/share/Logos/LogosBasecamp/plugins/shrooms/status.json"
 status_file_group = "you"
 ```
 
@@ -584,7 +592,7 @@ download.
 | **M1** discovered peers replace static config | ✅ **verified over the real internet**: NATed laptop ↔ VPS, direct tunnel, ssh across it |
 | **M2** NAT traversal | 🟨 reflexive discovery proven on real NAT; punching between two NATed nodes unproven |
 | **M3** relay fallback | 🟨 auto-discovered and working in containers; untested on real infrastructure |
-| **M6** name resolution | 🟨 `logos-vpn hosts` **verified for real** (`ssh root@vps.mesh`); DNS server planned |
+| **M6** name resolution | 🟨 `shrooms hosts` **verified for real** (`ssh root@vps.mesh`); DNS server planned |
 | **M4** seamless operation · **M5** credentials | ⬜ not started |
 
 `make m0` / `make m1` / `make m3` / `make s1` / `make s3` reproduce these.
@@ -598,7 +606,7 @@ hole punching works between two real NATs.
 On the machine itself, with only docker installed:
 
 ```console
-$ curl -fsSLO https://raw.githubusercontent.com/vpavlin/logos-vpn/master/scripts/install.sh
+$ curl -fsSLO https://raw.githubusercontent.com/vpavlin/shrooms/master/scripts/install.sh
 $ sudo bash install.sh join <NETWORK-KEY> --name laptop
 ```
 
@@ -608,8 +616,8 @@ yourself afterwards:
 
 ```console
 $ sudo bash install.sh prepare --name nas --relay
-# then edit the network_key line in /etc/logos-vpn/config.toml
-$ sudo systemctl start logos-vpn
+# then edit the network_key line in /etc/shrooms/config.toml
+$ sudo systemctl start shrooms
 ```
 
 The device identity is generated during `prepare`, so the machine's overlay
@@ -621,7 +629,7 @@ Or to create a new mesh, on the first machine:
 $ sudo bash install.sh init --relay
 ```
 
-Everything after `init`/`join` goes straight to `logos-vpn`, so its flags are
+Everything after `init`/`join` goes straight to `shrooms`, so its flags are
 whatever that version supports — `--name`, `--relay`, `--advertise`, `--port` —
 rather than a copy in the script that drifts out of date. The device name
 defaults to this machine's hostname.
@@ -631,7 +639,7 @@ systemd unit and **starts the daemon**, which then comes up on boot. There is no
 separate step to run it. `init` and `join` are the setup performed inside, not
 something you invoke separately.
 
-It also installs a `logos-vpn` wrapper so `logos-vpn status` works on the host. No Go toolchain,
+It also installs a `shrooms` wrapper so `shrooms status` works on the host. No Go toolchain,
 no checkout, no liblogosdelivery — everything is in the image. Re-running is
 safe: the device identity is never replaced by accident, because losing it means
 a new overlay address and looking like a different device to every peer.
@@ -639,9 +647,9 @@ a new overlay address and looking like a different device to every peer.
 Afterwards:
 
 ```console
-$ systemctl status logos-vpn      # is it up
-$ logos-vpn status                # who is on the mesh
-$ journalctl -u logos-vpn -f      # follow the log
+$ systemctl status shrooms      # is it up
+$ shrooms status                # who is on the mesh
+$ journalctl -u shrooms -f      # follow the log
 ```
 
 Read the script before running it as root, as you should with anything fetched
@@ -650,7 +658,7 @@ this way.
 Use `scripts/deploy.sh` instead when you want to push to a remote host *from* a
 machine that has the repo — for example to deploy an unpushed change.
 
-CI publishes a container image to `ghcr.io/vpavlin/logos-vpn` on every push to
+CI publishes a container image to `ghcr.io/vpavlin/shrooms` on every push to
 `master`, so `deploy.sh` and `m3-remote` pull it rather than building locally
 and pushing ~200 MB over ssh. Set `BUILD_IMAGE=1` (or `FORCE_IMAGE=1`) to build
 from your working tree instead — which you want whenever you are testing changes
@@ -700,7 +708,7 @@ short version:
   fixed-rate, on a rotating topic, and not archived.
 - The network key is a **bearer credential**: anyone holding it is a member,
   permanently. There is no per-device revocation and no expiry.
-  `logos-vpn key rotate` re-creates the mesh and forces everyone to re-join —
+  `shrooms key rotate` re-creates the mesh and forces everyone to re-join —
   blunt, and the only option today. **Treat the key as the whole security of
   the mesh.**
 - There is a [concrete plan to fix this](SECURITY.md#roadmap), in four phases.

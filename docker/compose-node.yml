@@ -13,9 +13,9 @@
 # device identity — and its announce sequence number — survive a redeploy.
 
 services:
-  logos-vpn:
-    image: logos-vpn:latest
-    container_name: logos-vpn
+  shrooms:
+    image: shrooms:latest
+    container_name: shrooms
     restart: unless-stopped
 
     network_mode: host
@@ -27,12 +27,12 @@ services:
       - /dev/net/tun:/dev/net/tun
 
     volumes:
-      - /etc/logos-vpn:/etc/logos-vpn
-      - /var/lib/logos-vpn:/var/lib/logos-vpn
-      # The control socket, so `logos-vpn status` works from the host.
-      - /run/logos-vpn:/run/logos-vpn
+      - /etc/shrooms:/etc/shrooms
+      - /var/lib/shrooms:/var/lib/shrooms
+      # The control socket, so `shrooms status` works from the host.
+      - /run/shrooms:/run/shrooms
 
-    command: ["daemon", "--socket", "/run/logos-vpn/logos-vpn.sock"]
+    command: ["daemon", "--socket", "/run/shrooms/shrooms.sock"]
 
     logging:
       driver: json-file

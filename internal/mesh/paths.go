@@ -10,9 +10,9 @@ import (
 
 	"golang.zx2c4.com/wireguard/conn"
 
-	"github.com/vpavlin/logos-vpn/internal/disco"
-	"github.com/vpavlin/logos-vpn/internal/relay"
-	"github.com/vpavlin/logos-vpn/internal/wg"
+	"github.com/vpavlin/shrooms/internal/disco"
+	"github.com/vpavlin/shrooms/internal/relay"
+	"github.com/vpavlin/shrooms/internal/wg"
 )
 
 // handleControl dispatches a packet that arrived on the shared WireGuard socket

@@ -4,8 +4,8 @@ import (
 	"net/netip"
 	"testing"
 
-	"github.com/vpavlin/logos-vpn/internal/identity"
-	"github.com/vpavlin/logos-vpn/internal/relay"
+	"github.com/vpavlin/shrooms/internal/identity"
+	"github.com/vpavlin/shrooms/internal/relay"
 )
 
 func testRelayKey(t *testing.T) relay.Key {

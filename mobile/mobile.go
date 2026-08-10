@@ -28,12 +28,12 @@ import (
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun"
 
-	dnssrv "github.com/vpavlin/logos-vpn/internal/dns"
-	"github.com/vpavlin/logos-vpn/internal/identity"
-	"github.com/vpavlin/logos-vpn/internal/mesh"
-	"github.com/vpavlin/logos-vpn/internal/state"
-	"github.com/vpavlin/logos-vpn/internal/waku"
-	"github.com/vpavlin/logos-vpn/internal/wg"
+	dnssrv "github.com/vpavlin/shrooms/internal/dns"
+	"github.com/vpavlin/shrooms/internal/identity"
+	"github.com/vpavlin/shrooms/internal/mesh"
+	"github.com/vpavlin/shrooms/internal/state"
+	"github.com/vpavlin/shrooms/internal/waku"
+	"github.com/vpavlin/shrooms/internal/wg"
 )
 
 // Protector is implemented by the Android side, forwarding to

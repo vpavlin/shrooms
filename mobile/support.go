@@ -8,11 +8,11 @@ import (
 	"syscall"
 	"time"
 
-	dnssrv "github.com/vpavlin/logos-vpn/internal/dns"
-	"github.com/vpavlin/logos-vpn/internal/identity"
-	"github.com/vpavlin/logos-vpn/internal/mesh"
-	"github.com/vpavlin/logos-vpn/internal/state"
-	"github.com/vpavlin/logos-vpn/internal/waku"
+	dnssrv "github.com/vpavlin/shrooms/internal/dns"
+	"github.com/vpavlin/shrooms/internal/identity"
+	"github.com/vpavlin/shrooms/internal/mesh"
+	"github.com/vpavlin/shrooms/internal/state"
+	"github.com/vpavlin/shrooms/internal/waku"
 )
 
 // paths keeps config and state together under the app's private directory.

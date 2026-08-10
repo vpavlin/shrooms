@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vpavlin/logos-vpn/internal/identity"
-	"github.com/vpavlin/logos-vpn/internal/state"
+	"github.com/vpavlin/shrooms/internal/identity"
+	"github.com/vpavlin/shrooms/internal/state"
 )
 
 func TestResolveFindsPeerByName(t *testing.T) {

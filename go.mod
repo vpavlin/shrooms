@@ -1,4 +1,4 @@
-module github.com/vpavlin/logos-vpn
+module github.com/vpavlin/shrooms
 
 go 1.23.1
 

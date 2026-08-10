@@ -6,8 +6,8 @@ import (
 
 	"golang.zx2c4.com/wireguard/conn"
 
-	"github.com/vpavlin/logos-vpn/internal/identity"
-	"github.com/vpavlin/logos-vpn/internal/relay"
+	"github.com/vpavlin/shrooms/internal/identity"
+	"github.com/vpavlin/shrooms/internal/relay"
 )
 
 // RelayEndpoint is a conn.Endpoint that routes a peer's traffic through a relay.

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/vpavlin/logos-vpn/internal/waku"
+	"github.com/vpavlin/shrooms/internal/waku"
 )
 
 // RendezvousStale is how long without a received message before the rendezvous

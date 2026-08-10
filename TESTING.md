@@ -9,8 +9,8 @@ test told us nothing three separate times.
 (discovered / path / tunnel) precisely so a failure names its layer.
 
 ```console
-$ logos-vpn status          # who, how, how fast, and how long it took
-$ logos-vpn paths           # which candidates answered, and which is in use
+$ shrooms status          # who, how, how fast, and how long it took
+$ shrooms paths           # which candidates answered, and which is in use
 ```
 
 ---
@@ -29,7 +29,7 @@ produce it:
 
 Those look identical from the outside and mean opposite things about the code.
 
-**The distinguishing evidence is already collected.** `logos-vpn paths` prints
+**The distinguishing evidence is already collected.** `shrooms paths` prints
 the reflexive addresses a node has been told about:
 
 ```
@@ -55,7 +55,7 @@ Run **T3** below to settle it.
 The baseline. If this is slow or flaky, nothing further is worth diagnosing.
 
 **Setup:** two hosts with public addresses, e.g. two VPSes.
-**Watch:** `logos-vpn status` on both.
+**Watch:** `shrooms status` on both.
 **Pass:** both `up`, endpoint is the peer's public address with no `relay:`
 prefix, `CONNECTED IN` a few seconds.
 
@@ -79,7 +79,7 @@ The case containers cannot honestly reproduce, because a NAT built by a test
 harness is a NAT built to be cooperative.
 
 **Setup:** phone on mobile data, laptop on home wifi. Nothing else changes.
-**Watch:** `logos-vpn paths` on both, and the endpoint in `status`.
+**Watch:** `shrooms paths` on both, and the endpoint in `status`.
 
 **Pass — either outcome, provided it is the honest one:**
 
@@ -137,7 +137,7 @@ failure mode `status` was changed to make visible; the handshake age tells you.
 
 ## T7 — restart, and reconnect time
 
-**Do:** restart one side. `sudo systemctl restart logos-vpn`, or force-stop the
+**Do:** restart one side. `sudo systemctl restart shrooms`, or force-stop the
 app.
 **Pass:** reconnects in seconds, and `tunnel established` reports it:
 
@@ -173,7 +173,7 @@ out a long backoff.
 
 **Do:** `ping6 <peer>.mesh`, then `curl https://github.com`.
 **Pass:** the first resolves through the mesh resolver, the second through the
-system's. `resolvectl query <peer>.mesh` should name `logos0` as the link.
+system's. `resolvectl query <peer>.mesh` should name `shrooms0` as the link.
 
 **Watch for:** the second failing. A resolver that takes over everything and
 answers only for the mesh removes the device's name resolution — that happened
@@ -193,7 +193,7 @@ application, or `python3 -m http.server 8000 --bind 127.0.0.1`. Then:
 services = ["test:8000"]      # in that machine's config, then restart
 ```
 
-**Watch:** `logos-vpn status` on that machine lists it under *services
+**Watch:** `shrooms status` on that machine lists it under *services
 published here*, with the name to type.
 
 **Pass:** from another device, both of these return the page:
@@ -248,11 +248,11 @@ actual test.
 ## Tearing down
 
 ```console
-$ sudo systemctl stop logos-vpn && sudo systemctl disable logos-vpn
-$ sudo rm -rf /etc/logos-vpn /var/lib/logos-vpn
+$ sudo systemctl stop shrooms && sudo systemctl disable shrooms
+$ sudo rm -rf /etc/shrooms /var/lib/shrooms
 ```
 
-Removing `/var/lib/logos-vpn` discards the device identity, so the machine
+Removing `/var/lib/shrooms` discards the device identity, so the machine
 returns as a **new** device with a different overlay address if it rejoins.
 Keep it to keep the identity — which is usually what you want when testing
 repeatedly, or every run pollutes every other node's roster with a peer that

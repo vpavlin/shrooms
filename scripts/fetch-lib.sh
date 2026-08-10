@@ -11,7 +11,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-REPO=${REPO:-vpavlin/logos-vpn}
+REPO=${REPO:-vpavlin/shrooms}
 TAG=${DEPS_TAG:-deps-v1}
 ASSET=liblogosdelivery-linux-amd64.tar.gz
 DEST=${LD_DIR:-docker/build/lib}
@@ -47,4 +47,4 @@ cp -f --no-preserve=mode "$tmp"/lib/* "$DEST/" 2>/dev/null || {
 
 echo "==> $(ls "$DEST" | wc -l) files in $DEST"
 echo "    glibc required: $(objdump -T "$DEST/liblogosdelivery.so" 2>/dev/null | grep -oE 'GLIBC_[0-9.]+' | sort -Vu | tail -1)"
-echo "    now run: make logos-vpn"
+echo "    now run: make shrooms"

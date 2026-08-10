@@ -6,7 +6,7 @@ import (
 
 	"rsc.io/qr"
 
-	"github.com/vpavlin/logos-vpn/internal/state"
+	"github.com/vpavlin/shrooms/internal/state"
 )
 
 // renderQR draws a QR code with half-block characters, two rows per line.
@@ -68,7 +68,7 @@ func showKeyQR(cfg state.Config) error {
 	// Said plainly, because a QR code on a screen is a credential in the room.
 	// Until M5 replaces this with one-time invites, the only mitigation is not
 	// leaving it up.
-	fmt.Println("  Scan this from the logos-vpn app to join the mesh.")
+	fmt.Println("  Scan this from the shrooms app to join the mesh.")
 	fmt.Println("  It is the mesh key, not a one-time invite: anyone who")
 	fmt.Println("  photographs it is a member until the key is rotated.")
 	fmt.Println()

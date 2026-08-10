@@ -24,7 +24,7 @@
 # behaviour.
 
 x-node: &node
-  image: logos-vpn:test
+  image: shrooms:test
   cap_add: [NET_ADMIN]
   devices:
     - /dev/net/tun:/dev/net/tun
@@ -35,14 +35,14 @@ x-node: &node
 services:
   # Reachable node: no NAT, a stable address on the public segment.
   node-pub:
-    image: logos-vpn:test
-    container_name: logos-vpn-pub
+    image: shrooms:test
+    container_name: shrooms-pub
     cap_add: [NET_ADMIN]
     devices:
       - /dev/net/tun:/dev/net/tun
     volumes:
-      - ./run/pub/etc:/etc/logos-vpn
-      - ./run/pub/state:/var/lib/logos-vpn
+      - ./run/pub/etc:/etc/shrooms
+      - ./run/pub/state:/var/lib/shrooms
     networks:
       public:
         ipv4_address: 10.90.0.10
@@ -52,8 +52,8 @@ services:
     # it does not depend on punching working at all.
 
   gw-a:
-    image: logos-vpn:test
-    container_name: logos-vpn-gw-a
+    image: shrooms:test
+    container_name: shrooms-gw-a
     cap_add: [NET_ADMIN]
     # Declared rather than left to gateway.sh's own sysctl call: some engines
     # mount /proc/sys read-only, and the gateway then forwards nothing.
@@ -66,8 +66,8 @@ services:
         ipv4_address: 10.91.0.2
 
   gw-b:
-    image: logos-vpn:test
-    container_name: logos-vpn-gw-b
+    image: shrooms:test
+    container_name: shrooms-gw-b
     cap_add: [NET_ADMIN]
     sysctls: {net.ipv4.ip_forward: 1}
     entrypoint: ["/usr/bin/gateway.sh"]
@@ -79,26 +79,26 @@ services:
 
   node-a:
     <<: *node
-    container_name: logos-vpn-a
+    container_name: shrooms-a
     depends_on: [gw-a]
     environment:
       NAT_GW: 10.91.0.2
     volumes:
-      - ./run/a/etc:/etc/logos-vpn
-      - ./run/a/state:/var/lib/logos-vpn
+      - ./run/a/etc:/etc/shrooms
+      - ./run/a/state:/var/lib/shrooms
     networks:
       lan-a:
         ipv4_address: 10.91.0.100
 
   node-b:
     <<: *node
-    container_name: logos-vpn-b
+    container_name: shrooms-b
     depends_on: [gw-b]
     environment:
       NAT_GW: 10.92.0.2
     volumes:
-      - ./run/b/etc:/etc/logos-vpn
-      - ./run/b/state:/var/lib/logos-vpn
+      - ./run/b/etc:/etc/shrooms
+      - ./run/b/state:/var/lib/shrooms
     networks:
       lan-b:
         ipv4_address: 10.92.0.100

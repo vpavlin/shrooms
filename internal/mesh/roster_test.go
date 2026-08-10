@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vpavlin/logos-vpn/internal/control"
-	"github.com/vpavlin/logos-vpn/internal/identity"
+	"github.com/vpavlin/shrooms/internal/control"
+	"github.com/vpavlin/shrooms/internal/identity"
 )
 
 func newAnnounce(t *testing.T, id *identity.Identity, name string, eps []string, seq uint64) *control.Announce {

@@ -108,7 +108,7 @@ value-per-effort, not by tidiness.
 It lands in shell history, clipboard managers, and whatever you pasted it into.
 Anyone who ever sees it is a member forever.
 
-**Change:** `logos-vpn invite` emits a token valid ~15 minutes, single
+**Change:** `shrooms invite` emits a token valid ~15 minutes, single
 redemption. The joining device generates its own keys, redeems the token, and
 receives the network key over the resulting authenticated channel.
 
@@ -144,7 +144,7 @@ defeated by dropping packets.
 
 ### Phase 3 — revocation
 
-**Change:** `logos-vpn revoke <name>` publishes a signed revocation with a
+**Change:** `shrooms revoke <name>` publishes a signed revocation with a
 monotonic serial, republished on every epoch rotation and on join. Peers **tear
 down live tunnels** on receipt.
 
@@ -198,11 +198,11 @@ a machine you do not fully control, holding a credential that never expires.
    you keep.
 2. **The control socket is mode 0660.** Anyone in its group can read the roster
    and every peer's endpoints. Check the group on a multi-user host.
-3. **Rotate the network key if a device is lost** — `logos-vpn key rotate` —
+3. **Rotate the network key if a device is lost** — `shrooms key rotate` —
    and re-enrol the rest. That is the only revocation available until phase 2,
    and it is blunt: the key derives the mesh prefix, so every overlay address
    changes and every device must re-join. It is closer to creating a new mesh
    than to rotating a credential, which is precisely what credentials fix.
-4. **`logos-vpn paths` reports reflexive addresses.** More than one distinct
+4. **`shrooms paths` reports reflexive addresses.** More than one distinct
    value means endpoint-dependent NAT — useful diagnostically, but it also
    means peers learn several of your external addresses.

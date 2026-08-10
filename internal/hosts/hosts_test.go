@@ -228,7 +228,7 @@ func TestUnlabelledEntriesRenderBare(t *testing.T) {
 // The machine's hostname normally resolves to 127.0.1.1, and daemons that look
 // themselves up — PAM session setup, web servers, mail — expect a local
 // address. An overlay address under the same name gives them a ULA that RFC
-// 6724 will often prefer, and that is unroutable entirely until logos0 exists,
+// 6724 will often prefer, and that is unroutable entirely until shrooms0 exists,
 // which is the state every boot starts in.
 func TestSelfDoesNotShadowTheHostname(t *testing.T) {
 	block := Render([]Entry{

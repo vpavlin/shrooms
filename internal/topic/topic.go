@@ -27,7 +27,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vpavlin/logos-vpn/internal/identity"
+	"github.com/vpavlin/shrooms/internal/identity"
 )
 
 // EpochSeconds is the rendezvous rotation period.

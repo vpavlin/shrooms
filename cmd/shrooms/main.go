@@ -1,10 +1,10 @@
-// Command logos-vpn is the mesh daemon and CLI.
+// Command shrooms is the mesh daemon and CLI.
 //
-//	logos-vpn init [--name N]        generate identity and a new network
-//	logos-vpn join <KEY> [--name N]  generate identity, join an existing network
-//	logos-vpn daemon                 run the mesh
-//	logos-vpn status                 roster and tunnel state
-//	logos-vpn key show               print the network key
+//	shrooms init [--name N]        generate identity and a new network
+//	shrooms join <KEY> [--name N]  generate identity, join an existing network
+//	shrooms daemon                 run the mesh
+//	shrooms status                 roster and tunnel state
+//	shrooms key show               print the network key
 package main
 
 import (
@@ -42,7 +42,7 @@ func main() {
 		err = cmdKey(os.Args[2:])
 	case "set-key":
 		err = cmdSetKey(os.Args[2:])
-	// Not "-v": the daemon uses it for verbose, so `logos-vpn -v` expecting
+	// Not "-v": the daemon uses it for verbose, so `shrooms -v` expecting
 	// more logging printed a version string and exited. One letter, two
 	// meanings, and the wrong one is silent.
 	case "version", "--version":
@@ -63,30 +63,30 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `logos-vpn — overlay mesh over Logos Delivery
+	fmt.Fprint(os.Stderr, `shrooms — overlay mesh over Logos Delivery
 
 Usage:
-  logos-vpn init [--name N] [--relay]  create a new mesh, print its network key
-  logos-vpn join KEY [--name N] [--relay]  join an existing mesh
-  logos-vpn version                       print the build this binary came from
-  logos-vpn prepare [--name N] [--relay]  write a config with the key left blank,
+  shrooms init [--name N] [--relay]  create a new mesh, print its network key
+  shrooms join KEY [--name N] [--relay]  join an existing mesh
+  shrooms version                       print the build this binary came from
+  shrooms prepare [--name N] [--relay]  write a config with the key left blank,
                                           for setting a machine up without the
                                           key passing through anyone else
-  logos-vpn set-key                       write the key into a prepared config,
+  shrooms set-key                       write the key into a prepared config,
                                           read from a prompt or stdin so it
                                           never reaches shell history
-  logos-vpn daemon                     run the mesh node
-  logos-vpn status [--json]            show the roster and tunnel state
-  logos-vpn paths [NAME]               show probed candidates and which won
-  logos-vpn hosts [--write]            /etc/hosts entries, so you can use names
-  logos-vpn key show                   print the network key
-  logos-vpn key rotate                 replace it (the only revocation before M5)
+  shrooms daemon                     run the mesh node
+  shrooms status [--json]            show the roster and tunnel state
+  shrooms paths [NAME]               show probed candidates and which won
+  shrooms hosts [--write]            /etc/hosts entries, so you can use names
+  shrooms key show                   print the network key
+  shrooms key rotate                 replace it (the only revocation before M5)
 
 Common flags:
-  --config PATH    config file (default /etc/logos-vpn/config.toml)
-  --state PATH     state directory (default /var/lib/logos-vpn)
+  --config PATH    config file (default /etc/shrooms/config.toml)
+  --state PATH     state directory (default /var/lib/shrooms)
 
 The network key is the only secret. Copy it to your other machines with
-`+"`logos-vpn join`"+`.
+`+"`shrooms join`"+`.
 `)
 }

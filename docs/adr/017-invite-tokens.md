@@ -20,7 +20,7 @@ rather than theoretical:
 - **Every member can mint members.** Any machine holding the key can enrol more,
   so one compromise is total.
 
-`logos-vpn prepare` narrows who *handles* the key during setup. It does not
+`shrooms prepare` narrows who *handles* the key during setup. It does not
 change any of the above.
 
 ## Decision
@@ -32,11 +32,11 @@ device alone.
 ```
 existing member                              joining device
 ──────────────                               ─────────────
-logos-vpn invite
+shrooms invite
   → prints a token + QR, valid 15 minutes
   → subscribes to a topic derived from it
                         ── token, by QR or typed ──▶
-                                             logos-vpn join --invite <token>
+                                             shrooms join --invite <token>
                         ◀── request: device pubkey, sealed ──
 verifies, marks the invite used
   → replies with the mesh key, sealed to
@@ -118,7 +118,7 @@ is a shared key that every member already has.
   once, encrypted, to one device.
 - Enrolment gains a liveness requirement: the inviter must be running. Worth
   saying in the interface, since "nothing happened" is otherwise the failure.
-- `logos-vpn join <KEY>` stays, because bootstrapping the first machines and
+- `shrooms join <KEY>` stays, because bootstrapping the first machines and
   recovering a mesh both need it.
 - The invite exchange is the natural place for M5 to issue a credential, so the
   wire format should leave room for one rather than being minimal now.

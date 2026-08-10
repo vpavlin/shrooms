@@ -24,12 +24,12 @@ if [ "${RELEASE:-0}" = "1" ]; then
     TASK=assembleRelease
     ARGS="-PversionCode=${VERSION_CODE:-1} -PversionName=${VERSION_NAME:-0.1-prototype}"
     BUILT=android/app/build/outputs/apk/release/app-release-unsigned.apk
-    OUTPUT=android/logos-vpn-unsigned.apk
+    OUTPUT=android/shrooms-unsigned.apk
 else
     TASK=assembleDebug
     ARGS=""
     BUILT=android/app/build/outputs/apk/debug/app-debug.apk
-    OUTPUT=android/logos-vpn.apk
+    OUTPUT=android/shrooms.apk
 fi
 
 echo "==> building the APK ($TASK)"

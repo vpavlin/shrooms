@@ -18,6 +18,15 @@ import (
 
 // fetchStatus reads the daemon's status over its unix socket.
 func fetchStatus(sock string) (statusPayload, error) {
+	// A new CLI against a daemon that predates the rename: the old socket is
+	// still there and still serving, so use it rather than reporting nothing.
+	if sock == DefaultSocket {
+		if _, err := os.Stat(sock); err != nil {
+			if _, err := os.Stat(LegacySocket); err == nil {
+				sock = LegacySocket
+			}
+		}
+	}
 	client := &http.Client{
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
@@ -41,7 +50,7 @@ func fetchStatus(sock string) (statusPayload, error) {
 		}
 		if errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED) {
 			return statusPayload{}, fmt.Errorf(
-				"no daemon listening on %s — is `logos-vpn daemon` running?", sock)
+				"no daemon listening on %s — is `shrooms daemon` running?", sock)
 		}
 		return statusPayload{}, fmt.Errorf("cannot reach the daemon on %s: %w", sock, err)
 	}

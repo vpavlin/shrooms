@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/vpavlin/logos-vpn/internal/control"
-	"github.com/vpavlin/logos-vpn/internal/identity"
+	"github.com/vpavlin/shrooms/internal/control"
+	"github.com/vpavlin/shrooms/internal/identity"
 )
 
 // OfflineAfter is how long without an announce before a peer is shown offline.

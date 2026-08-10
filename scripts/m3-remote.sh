@@ -46,7 +46,7 @@ shift
 NAME=natted
 WAIT=180
 DOWN=0
-LOCAL_SOCK=${LOGOS_VPN_SOCKET:-/run/logos-vpn/logos-vpn.sock}
+LOCAL_SOCK=${LOGOS_VPN_SOCKET:-/run/shrooms/shrooms.sock}
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -57,13 +57,13 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-REMOTE_DIR=/etc/logos-vpn/m3-remote
+REMOTE_DIR=/etc/shrooms/m3-remote
 
 if [ $DOWN -eq 1 ]; then
     echo "==> removing the test node from $HOST"
     ssh "$HOST" "REMOTE_DIR=$REMOTE_DIR bash -s" <<'REMOTE'
 S=""; [ "$(id -u)" -eq 0 ] || S=sudo
-$S docker rm -f logos-vpn-natted logos-vpn-testgw 2>/dev/null || echo "  no containers"
+$S docker rm -f shrooms-natted shrooms-testgw 2>/dev/null || echo "  no containers"
 $S docker network rm m3-lan m3-wan 2>/dev/null || true
 $S rm -rf "$REMOTE_DIR"
 echo "  removed"
@@ -83,7 +83,7 @@ fi
 # developer running unprivileged with a custom socket does not). Work out which
 # once, here, instead of sprinkling sudo through every later call.
 SUDO=""
-localVPN() { ${SUDO:+sudo} ./bin/logos-vpn "$@"; }
+localVPN() { ${SUDO:+sudo} ./bin/shrooms "$@"; }
 
 echo "==> checking this machine"
 [ -S "$LOCAL_SOCK" ] || {
@@ -91,10 +91,10 @@ echo "==> checking this machine"
     echo "this test measures the tunnel from HERE, so the local node must be up"
     exit 1
 }
-if ! ./bin/logos-vpn status --socket "$LOCAL_SOCK" >/dev/null 2>&1; then
+if ! ./bin/shrooms status --socket "$LOCAL_SOCK" >/dev/null 2>&1; then
     # May prompt for a password; that is expected and better than failing with
     # "the daemon is not answering" when the daemon is answering fine.
-    if sudo ./bin/logos-vpn status --socket "$LOCAL_SOCK" >/dev/null 2>&1; then
+    if sudo ./bin/shrooms status --socket "$LOCAL_SOCK" >/dev/null 2>&1; then
         SUDO=1
     elif [ -S "$LOCAL_SOCK" ] && ! sudo -n true 2>/dev/null; then
         # The socket exists, so the daemon is almost certainly fine — we just
@@ -106,7 +106,7 @@ if ! ./bin/logos-vpn status --socket "$LOCAL_SOCK" >/dev/null 2>&1; then
         exit 1
     else
         echo "the local daemon is not answering on $LOCAL_SOCK"
-        echo "try:  sudo ./bin/logos-vpn status --socket $LOCAL_SOCK"
+        echo "try:  sudo ./bin/shrooms status --socket $LOCAL_SOCK"
         exit 1
     fi
 fi
@@ -119,17 +119,17 @@ ssh "$HOST" '
 S=""; [ "$(id -u)" -eq 0 ] || S=sudo
 command -v docker >/dev/null || { echo "docker is not installed"; exit 1; }
 [ -e /dev/net/tun ] || { echo "no /dev/net/tun"; exit 1; }
-$S test -f /etc/logos-vpn/config.toml || { echo "no /etc/logos-vpn/config.toml — this host is not a mesh node"; exit 1; }
-$S grep -q "^relay *= *\"true\"" /etc/logos-vpn/config.toml || { echo "this host is not configured as a relay (relay = \"true\") — nothing would forward"; exit 1; }
+$S test -f /etc/shrooms/config.toml || { echo "no /etc/shrooms/config.toml — this host is not a mesh node"; exit 1; }
+$S grep -q "^relay *= *\"true\"" /etc/shrooms/config.toml || { echo "this host is not configured as a relay (relay = \"true\") — nothing would forward"; exit 1; }
 
 # The relay may run natively or in a container; both are supported deployments,
 # and requiring one silently excluded the other.
-if $S docker inspect logos-vpn >/dev/null 2>&1; then
+if $S docker inspect shrooms >/dev/null 2>&1; then
     echo "  relay: container"
-elif pgrep -f "logos-vpn daemon" >/dev/null; then
+elif pgrep -f "shrooms daemon" >/dev/null; then
     echo "  relay: native process"
 else
-    echo "no logos-vpn daemon running (neither a container named logos-vpn nor a native process)"; exit 1
+    echo "no shrooms daemon running (neither a container named shrooms nor a native process)"; exit 1
 fi
 if docker version 2>/dev/null | grep -qi podman || docker --version 2>&1 | grep -qi podman; then
     echo "  container engine: podman"
@@ -140,10 +140,10 @@ fi'
 echo "==> reading the network key from $HOST"
 KEY=$(ssh "$HOST" '
 S=""; [ "$(id -u)" -eq 0 ] || S=sudo
-if command -v logos-vpn >/dev/null; then
-    $S logos-vpn key show --config /etc/logos-vpn/config.toml
+if command -v shrooms >/dev/null; then
+    $S shrooms key show --config /etc/shrooms/config.toml
 else
-    $S docker exec logos-vpn logos-vpn key show --config /etc/logos-vpn/config.toml
+    $S docker exec shrooms shrooms key show --config /etc/shrooms/config.toml
 fi' | tr -d '\r\n')
 [ -n "$KEY" ] || { echo "could not read the network key"; exit 1; }
 echo "  ${KEY:0:8}… (joining the same mesh as the relay)"
@@ -151,10 +151,10 @@ echo "  ${KEY:0:8}… (joining the same mesh as the relay)"
 # The test node runs in a container regardless of how the relay runs — it needs
 # a NAT topology, which is the whole point. Ship the image if it is not there.
 echo "==> ensuring the image exists on $HOST"
-REGISTRY_IMAGE=${REGISTRY_IMAGE:-ghcr.io/vpavlin/logos-vpn:latest}
-if [ "${FORCE_IMAGE:-0}" != "1" ] && ssh "$HOST" 'S=""; [ "$(id -u)" -eq 0 ] || S=sudo; $S docker image inspect logos-vpn:test >/dev/null 2>&1'; then
-    echo "  logos-vpn:test already present (FORCE_IMAGE=1 to replace)"
-elif ssh "$HOST" "S=\"\"; [ \"\$(id -u)\" -eq 0 ] || S=sudo; \$S docker pull -q $REGISTRY_IMAGE >/dev/null 2>&1 && \$S docker tag $REGISTRY_IMAGE logos-vpn:test"; then
+REGISTRY_IMAGE=${REGISTRY_IMAGE:-ghcr.io/vpavlin/shrooms:latest}
+if [ "${FORCE_IMAGE:-0}" != "1" ] && ssh "$HOST" 'S=""; [ "$(id -u)" -eq 0 ] || S=sudo; $S docker image inspect shrooms:test >/dev/null 2>&1'; then
+    echo "  shrooms:test already present (FORCE_IMAGE=1 to replace)"
+elif ssh "$HOST" "S=\"\"; [ \"\$(id -u)\" -eq 0 ] || S=sudo; \$S docker pull -q $REGISTRY_IMAGE >/dev/null 2>&1 && \$S docker tag $REGISTRY_IMAGE shrooms:test"; then
     # Pulling beats building and pushing ~200MB over ssh, which is by far the
     # slowest step here. Falls through to that when the registry is
     # unreachable or the package is still private.
@@ -165,11 +165,11 @@ else
     echo "  building locally"
     CTX=docker/build/m3remote
     rm -rf "$CTX"; mkdir -p "$CTX/lib"
-    cp bin/logos-vpn docker/gateway.sh docker/entrypoint-nat.sh "$CTX/"
+    cp bin/shrooms docker/gateway.sh docker/entrypoint-nat.sh "$CTX/"
     cp "$LD_LIB"/*.so "$LD_LIB"/*.so.* "$CTX/lib/" 2>/dev/null || true
-    docker build -q -t logos-vpn:test -f docker/Dockerfile "$CTX" >/dev/null
+    docker build -q -t shrooms:test -f docker/Dockerfile "$CTX" >/dev/null
     echo "  shipping (this is the slow part)"
-    docker save logos-vpn:test | gzip -1 | ssh "$HOST" 'S=""; [ "$(id -u)" -eq 0 ] || S=sudo; gunzip | $S docker load' | tail -1
+    docker save shrooms:test | gzip -1 | ssh "$HOST" 'S=""; [ "$(id -u)" -eq 0 ] || S=sudo; gunzip | $S docker load' | tail -1
 fi
 
 # ---------------------------------------------------------------------------
@@ -178,7 +178,7 @@ fi
 
 echo "==> generating the node's config"
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
-./bin/logos-vpn join "$KEY" --config "$TMP/config.toml" --state "$TMP/state" --name "$NAME" >/dev/null
+./bin/shrooms join "$KEY" --config "$TMP/config.toml" --state "$TMP/state" --name "$NAME" >/dev/null
 # No advertise, no relay_addr: this node must discover the relay from its
 # announce, which is half of what the test is for.
 
@@ -210,7 +210,7 @@ $S install -m 600 "$REMOTE_CFG" "$REMOTE_DIR/nat/etc/config.toml"
 rm -f "$REMOTE_CFG"
 
 # Idempotent: a previous run must not block this one.
-$S docker rm -f logos-vpn-natted logos-vpn-testgw >/dev/null 2>&1 || true
+$S docker rm -f shrooms-natted shrooms-testgw >/dev/null 2>&1 || true
 $S docker network rm m3-lan m3-wan >/dev/null 2>&1 || true
 
 $S docker network create m3-wan >/dev/null
@@ -222,21 +222,21 @@ $S docker network create --internal --subnet 10.93.0.0/24 m3-lan >/dev/null
 # --sysctl because podman mounts /proc/sys read-only, so gateway.sh cannot
 # enable forwarding from inside. Without it the gateway starts and forwards
 # nothing, and everything behind it loses connectivity.
-$S docker create --name logos-vpn-testgw --cap-add NET_ADMIN \
+$S docker create --name shrooms-testgw --cap-add NET_ADMIN \
     --sysctl net.ipv4.ip_forward=1 \
-    --network m3-wan --entrypoint /usr/bin/gateway.sh logos-vpn:test >/dev/null
-$S docker network connect --ip 10.93.0.2 m3-lan logos-vpn-testgw
-$S docker start logos-vpn-testgw >/dev/null
+    --network m3-wan --entrypoint /usr/bin/gateway.sh shrooms:test >/dev/null
+$S docker network connect --ip 10.93.0.2 m3-lan shrooms-testgw
+$S docker start shrooms-testgw >/dev/null
 echo "  gateway up"
 
-$S docker create --name logos-vpn-natted --cap-add NET_ADMIN \
+$S docker create --name shrooms-natted --cap-add NET_ADMIN \
     --device /dev/net/tun \
     -e NAT_GW=10.93.0.2 \
     --network m3-lan --ip 10.93.0.100 \
-    -v "$REMOTE_DIR/nat/etc:/etc/logos-vpn$Z" \
-    -v "$REMOTE_DIR/nat/state:/var/lib/logos-vpn$Z" \
-    --entrypoint /usr/bin/entrypoint-nat.sh logos-vpn:test daemon -v >/dev/null
-$S docker start logos-vpn-natted >/dev/null
+    -v "$REMOTE_DIR/nat/etc:/etc/shrooms$Z" \
+    -v "$REMOTE_DIR/nat/state:/var/lib/shrooms$Z" \
+    --entrypoint /usr/bin/entrypoint-nat.sh shrooms:test daemon -v >/dev/null
+$S docker start shrooms-natted >/dev/null
 echo "  NATed node up"
 REMOTE
 
@@ -291,7 +291,7 @@ if [ $seen -ne 1 ]; then
     echo
     echo "FAIL: '$NAME' never appeared in the roster."
     echo "  That is discovery, not traversal — the node is not reaching the fleet."
-    echo "  Check: sudo docker logs logos-vpn-natted"
+    echo "  Check: sudo docker logs shrooms-natted"
     exit 1
 fi
 
@@ -299,8 +299,8 @@ if [ $up -ne 1 ]; then
     echo
     echo "FAIL: '$NAME' is online but no tunnel came up within ${WAIT}s."
     echo "  Discovery works, so this is the relay path. Check, on $HOST:"
-    echo "    sudo docker logs logos-vpn-natted 2>&1 | grep -E 'relay|path'"
-    echo "    sudo docker logs logos-vpn        2>&1 | grep -E 'relay'"
+    echo "    sudo docker logs shrooms-natted 2>&1 | grep -E 'relay|path'"
+    echo "    sudo docker logs shrooms        2>&1 | grep -E 'relay'"
     echo "  and here, whether the endpoint shows relay:… above."
     exit 1
 fi
@@ -337,11 +337,11 @@ esac
 cat <<EOF
 
 Overlay ping (the honest end-to-end check):
-  ping6 -c3 \$(${SUDO:+sudo }./bin/logos-vpn status --socket $LOCAL_SOCK | awk '/^$NAME/{print \$2}')
+  ping6 -c3 \$(${SUDO:+sudo }./bin/shrooms status --socket $LOCAL_SOCK | awk '/^$NAME/{print \$2}')
 
 On $HOST:
-  sudo docker logs -f logos-vpn-natted
-  sudo docker exec logos-vpn-natted logos-vpn status --socket /run/logos-vpn/logos-vpn.sock
+  sudo docker logs -f shrooms-natted
+  sudo docker exec shrooms-natted shrooms status --socket /run/shrooms/shrooms.sock
 
 Remove the test node when done:
   $0 $HOST --down

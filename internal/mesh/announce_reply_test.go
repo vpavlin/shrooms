@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vpavlin/logos-vpn/internal/control"
-	"github.com/vpavlin/logos-vpn/internal/identity"
+	"github.com/vpavlin/shrooms/internal/control"
+	"github.com/vpavlin/shrooms/internal/identity"
 )
 
 // requestAnnounce runs on the packet receive path and must never block, however

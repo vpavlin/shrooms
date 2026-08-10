@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vpavlin/logos-vpn/internal/identity"
+	"github.com/vpavlin/shrooms/internal/identity"
 )
 
 // fakeNet couples two probers so packets sent by one arrive at the other,

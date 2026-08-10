@@ -6,7 +6,7 @@ import (
 	"net/netip"
 	"testing"
 
-	"github.com/vpavlin/logos-vpn/internal/identity"
+	"github.com/vpavlin/shrooms/internal/identity"
 )
 
 func fixture(t *testing.T) (Key, ed25519.PublicKey, TxID) {

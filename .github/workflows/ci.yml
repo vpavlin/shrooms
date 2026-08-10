@@ -170,12 +170,12 @@ jobs:
             -f docker/build-vpn.Dockerfile \
             --build-arg VERSION=${GITHUB_REF_NAME:-dev} \
             --target dist -o dist .
-          cp packaging/logos-vpn.service dist/
+          cp packaging/shrooms.service dist/
 
       - name: Report glibc requirement
         run: |
           echo "max glibc symbol required:"
-          objdump -T dist/bin/logos-vpn | grep -oE 'GLIBC_[0-9.]+' | sort -Vu | tail -1
+          objdump -T dist/bin/shrooms | grep -oE 'GLIBC_[0-9.]+' | sort -Vu | tail -1
 
       - uses: actions/upload-artifact@v4
         with:

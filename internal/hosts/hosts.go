@@ -41,7 +41,7 @@ type Entry struct {
 	// itself up — PAM session setup, mail, web servers — expects a local
 	// address. Adding an overlay address under the same name gives them a ULA
 	// instead, which RFC 6724 will often *prefer*, and which is unroutable
-	// entirely until logos0 exists. That happens on every boot, before this
+	// entirely until shrooms0 exists. That happens on every boot, before this
 	// daemon has started.
 	//
 	// The qualified name is kept because it is useful and shadows nothing.

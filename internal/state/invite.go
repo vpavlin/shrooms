@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/vpavlin/logos-vpn/internal/identity"
+	"github.com/vpavlin/shrooms/internal/identity"
 )
 
 // InviteScheme is the URI a QR code carries.

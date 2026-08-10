@@ -33,8 +33,8 @@ import (
 
 	"golang.zx2c4.com/wireguard/conn"
 
-	"github.com/vpavlin/logos-vpn/internal/identity"
-	"github.com/vpavlin/logos-vpn/internal/relay"
+	"github.com/vpavlin/shrooms/internal/identity"
+	"github.com/vpavlin/shrooms/internal/relay"
 )
 
 // relayScheme prefixes an endpoint routed through a relay. WireGuard treats

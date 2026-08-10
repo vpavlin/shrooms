@@ -29,21 +29,21 @@ echo "==> prerequisites"
 [ -f "$LD_LIB/liblogosdelivery.so" ] || { echo "no liblogosdelivery.so in $LD_LIB — run 'make deps-release'"; exit 1; }
 
 echo "==> building"
-make logos-vpn >/dev/null
+make shrooms >/dev/null
 
 echo "==> staging image"
 rm -rf "$BUILD/ctx" "$RUN"
 mkdir -p "$BUILD/ctx/lib" "$RUN"/{a,b,pub}/{etc,state}
-cp bin/logos-vpn "$BUILD/ctx/"
+cp bin/shrooms "$BUILD/ctx/"
 cp "$D"/gateway.sh "$D"/entrypoint-nat.sh "$BUILD/ctx/"
 cp "$LD_LIB"/*.so "$LD_LIB"/*.so.* "$BUILD/ctx/lib/" 2>/dev/null || true
 
 echo "==> generating configs (one network, three devices)"
-./bin/logos-vpn init --config "$RUN/pub/etc/config.toml" --state "$RUN/pub/state" \
+./bin/shrooms init --config "$RUN/pub/etc/config.toml" --state "$RUN/pub/state" \
     --name node-pub --advertise 10.90.0.10:51820 >/dev/null
-KEY=$(./bin/logos-vpn key show --config "$RUN/pub/etc/config.toml")
+KEY=$(./bin/shrooms key show --config "$RUN/pub/etc/config.toml")
 for n in a b; do
-    ./bin/logos-vpn join "$KEY" --config "$RUN/$n/etc/config.toml" \
+    ./bin/shrooms join "$KEY" --config "$RUN/$n/etc/config.toml" \
         --state "$RUN/$n/state" --name "node-$n" >/dev/null
 done
 
@@ -59,7 +59,7 @@ if [ "$RELAY" = "1" ]; then
 fi
 echo "    network key: $KEY"
 
-docker build -q -t logos-vpn:test -f "$D/Dockerfile" "$BUILD/ctx" >/dev/null
+docker build -q -t shrooms:test -f "$D/Dockerfile" "$BUILD/ctx" >/dev/null
 
 echo "==> starting topology (NAT_MODE=$NAT_MODE)"
 NAT_MODE=$NAT_MODE docker compose -f "$D/compose-nat.yml" up -d --force-recreate >/dev/null
@@ -69,9 +69,9 @@ cleanup() {
         echo "==> app log (node-$n)"
         # Head as well as tail: startup lines (relay config, mode) are at the
         # beginning and scrolled off when only the tail was shown.
-        docker logs "logos-vpn-${n}" 2>&1 | grep -E "^time=" | head -6 || true
+        docker logs "shrooms-${n}" 2>&1 | grep -E "^time=" | head -6 || true
         echo "        ..."
-        docker logs "logos-vpn-${n}" 2>&1 | grep -E "^time=" | tail -8 || true
+        docker logs "shrooms-${n}" 2>&1 | grep -E "^time=" | tail -8 || true
     done
     if [ "${KEEP:-0}" = "1" ]; then
         echo "==> KEEP=1, leaving containers up"
@@ -86,7 +86,7 @@ trap cleanup EXIT
 # `live`, not `handshaked`: the latter is true forever once a handshake has ever
 # completed, so a test could pass on a tunnel that died minutes ago.
 peerState() {
-    docker exec "$1" logos-vpn status --json 2>/dev/null | python3 -c "
+    docker exec "$1" shrooms status --json 2>/dev/null | python3 -c "
 import json,sys
 try: d=json.load(sys.stdin)
 except Exception: print('0 0'); sys.exit()
@@ -113,7 +113,7 @@ discovered=0
 punched=0
 while [ $SECONDS -lt $deadline ]; do
     set +e
-    read -r on hs <<<"$(peerState logos-vpn-a node-b)"
+    read -r on hs <<<"$(peerState shrooms-a node-b)"
     set -e
     if [ "$on" = "1" ] && [ $discovered -eq 0 ]; then
         echo "    node-a discovered node-b after $((SECONDS - started))s"
@@ -129,9 +129,9 @@ done
 
 echo
 echo "==> node-a status"
-docker exec logos-vpn-a logos-vpn status || true
+docker exec shrooms-a shrooms status || true
 echo "==> node-a paths"
-docker exec logos-vpn-a logos-vpn paths || true
+docker exec shrooms-a shrooms paths || true
 
 if [ $discovered -ne 1 ]; then
     echo "FAIL: node-a never saw node-b's announce — discovery is broken, not traversal"
@@ -152,7 +152,7 @@ if [ $punched -ne 1 ]; then
     exit 1
 fi
 
-PEER=$(docker exec logos-vpn-a logos-vpn status --json 2>/dev/null \
+PEER=$(docker exec shrooms-a shrooms status --json 2>/dev/null \
     | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
@@ -161,7 +161,7 @@ print(next((p['overlay'] for p in d.get('peers',[]) if p['name']=='node-b'), '')
 
 echo
 echo "==> pinging node-b across the overlay (NAT to NAT)"
-if docker exec logos-vpn-a ping -c 3 -W 5 "$PEER"; then
+if docker exec shrooms-a ping -c 3 -W 5 "$PEER"; then
     echo
     if [ "$RELAY" = "1" ]; then
         echo "M3 PASS: two NATed nodes carry traffic through the relay"

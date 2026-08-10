@@ -62,7 +62,7 @@ echo "==> rebuilding the Go binding"
 echo "==> building an unsigned release APK"
 RELEASE=1 VERSION_CODE="$VERSION_CODE" VERSION_NAME="$VERSION_NAME" ./scripts/build-apk.sh
 
-APK=android/logos-vpn-unsigned.apk
+APK=android/shrooms-unsigned.apk
 [ -f "$APK" ] || { echo "no unsigned APK"; exit 1; }
 
 echo "==> shipping to $HOST"
@@ -97,8 +97,8 @@ case "$ks" in /*) ;; *) ks="$FD/$ks" ;; esac
 "$BT/apksigner" sign \
     --ks "$ks" --ks-key-alias "$alias" \
     --ks-pass env:KSPASS --key-pass env:KEYPASS \
-    --out "/tmp/logos-vpn-$VERSION_CODE.apk" "$STAGE/aligned.apk"
-"$BT/apksigner" verify --print-certs "/tmp/logos-vpn-$VERSION_CODE.apk" | head -2
+    --out "/tmp/shrooms-$VERSION_CODE.apk" "$STAGE/aligned.apk"
+"$BT/apksigner" verify --print-certs "/tmp/shrooms-$VERSION_CODE.apk" | head -2
 rm -rf "$STAGE"
 REMOTE
 
@@ -115,7 +115,7 @@ ssh "$HOST" "cat > fdroid/metadata/$APP_ID.yml" <<'META'
 Categories:
   - Internet
   - Security
-Name: logos-vpn
+Name: shrooms
 Summary: Overlay mesh VPN between your own devices
 Description: |
   An encrypted overlay network between your own machines, with no coordination
@@ -132,8 +132,8 @@ Description: |
   Prototype. Requires a network key from another device on your mesh.
 License: MIT
 AuthorName: vpavlin
-SourceCode: https://github.com/vpavlin/logos-vpn
-IssueTracker: https://github.com/vpavlin/logos-vpn/issues
+SourceCode: https://github.com/vpavlin/shrooms
+IssueTracker: https://github.com/vpavlin/shrooms/issues
 META
 
 echo "==> publishing"
@@ -141,13 +141,13 @@ ssh "$HOST" "FDROID_DIR='$FDROID_DIR' FDROID_BIN='$FDROID_BIN' VERSION_CODE='$VE
 set -eu
 eval FD="$FDROID_DIR"
 eval BIN="$FDROID_BIN"
-mv "/tmp/logos-vpn-$VERSION_CODE.apk" "$FD/repo/"
+mv "/tmp/shrooms-$VERSION_CODE.apk" "$FD/repo/"
 
 # Keep only the most recent builds. F-Droid publishes whatever APKs are
 # present, and this repo already carries every build of another app ever made —
 # 2.4GB of them. At ~48MB each this would get there quickly.
-ls -1 "$FD"/repo/logos-vpn-*.apk 2>/dev/null \
-    | sed 's/.*logos-vpn-\([0-9]*\)\.apk/\1 &/' | sort -rn | tail -n +$((KEEP + 1)) \
+ls -1 "$FD"/repo/shrooms-*.apk 2>/dev/null \
+    | sed 's/.*shrooms-\([0-9]*\)\.apk/\1 &/' | sort -rn | tail -n +$((KEEP + 1)) \
     | cut -d' ' -f2- | while read -r old; do
         echo "    pruning $(basename "$old")"
         rm -f "$old"

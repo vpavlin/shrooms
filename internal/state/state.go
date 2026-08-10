@@ -17,16 +17,64 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/vpavlin/logos-vpn/internal/identity"
-	"github.com/vpavlin/logos-vpn/internal/service"
+	"github.com/vpavlin/shrooms/internal/identity"
+	"github.com/vpavlin/shrooms/internal/service"
 )
 
 // Default locations. Overridable so a developer can run several nodes on one
 // machine without root.
 const (
-	DefaultConfigPath = "/etc/logos-vpn/config.toml"
-	DefaultStateDir   = "/var/lib/logos-vpn"
+	DefaultConfigPath = "/etc/shrooms/config.toml"
+	DefaultStateDir   = "/var/lib/shrooms"
+
+	// The paths used before the project was renamed to Shrooms. Still honoured
+	// when they exist and the new ones do not, because /var/lib/logos-vpn holds
+	// the device identity: a node that silently failed to find it would come
+	// back as a different device with a different overlay address, and every
+	// peer would have to learn it. Migration is therefore `mv`, at leisure,
+	// per node.
+	LegacyConfigPath = "/etc/logos-vpn/config.toml"
+	LegacyStateDir   = "/var/lib/logos-vpn"
 )
+
+// ConfigPath returns the config to read: the Shrooms path when it exists, the
+// pre-rename path when only that does.
+//
+// Only consulted for the default. An explicit --config is used as given, since
+// someone naming a path means that path.
+func ConfigPath(explicit string) string {
+	return pickPath(explicit, DefaultConfigPath, LegacyConfigPath, func(p string) bool {
+		_, err := os.Stat(p)
+		return err == nil
+	})
+}
+
+// pickPath is the choice itself, with the filesystem passed in so it can be
+// tested without one — the previous test asserted "neither exists" on a machine
+// where one did, and passed or failed depending on whose laptop ran it.
+func pickPath(explicit, preferred, legacy string, exists func(string) bool) string {
+	if explicit != preferred {
+		return explicit // naming a path means that path
+	}
+	if exists(preferred) {
+		return preferred
+	}
+	if exists(legacy) {
+		return legacy
+	}
+	return preferred
+}
+
+// StateDir returns the state directory to use, preferring the Shrooms path but
+// keeping an existing pre-rename one — which is where the device identity is.
+func StateDir(explicit string) string {
+	// state.json, not the directory: an empty directory left by a package
+	// manager must not win over one that actually holds an identity.
+	return pickPath(explicit, DefaultStateDir, LegacyStateDir, func(p string) bool {
+		_, err := os.Stat(filepath.Join(p, "state.json"))
+		return err == nil
+	})
+}
 
 // KeyPlaceholder marks a config prepared without its key.
 //
@@ -223,7 +271,7 @@ func DefaultConfig() Config {
 	return Config{
 		Name:        host,
 		ListenPort:  51820,
-		Interface:   "logos0",
+		Interface:   "shrooms0",
 		Preset:      DefaultPreset,
 		Mode:        "Core",
 		HostsSuffix: "mesh",
@@ -307,6 +355,10 @@ type State struct {
 
 // LoadOrCreateState reads device state, generating a fresh identity on first run.
 func LoadOrCreateState(dir string) (*State, error) {
+	// Keeps an existing pre-rename state directory, because it holds the device
+	// identity. Creating a new one instead would give this node a new overlay
+	// address and make it a stranger to every peer.
+	dir = StateDir(dir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("create state dir: %w", err)
 	}
@@ -398,6 +450,10 @@ func (s *State) NextSeq() (uint64, error) {
 
 // LoadConfig reads and validates a config file.
 func LoadConfig(path string) (Config, error) {
+	// Resolved here rather than at every call site: this is the function that
+	// touches the filesystem, so it is the one place the pre-rename fallback
+	// can be applied without every command remembering to.
+	path = ConfigPath(path)
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return Config{}, fmt.Errorf("read config: %w", err)
@@ -418,6 +474,7 @@ func LoadConfig(path string) (Config, error) {
 // operates on a `prepare`d file whose key is still the placeholder, and
 // LoadConfig would refuse it for exactly that reason.
 func LoadConfigUnvalidated(path string) (Config, error) {
+	path = ConfigPath(path)
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return Config{}, fmt.Errorf("read config: %w", err)

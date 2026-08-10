@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/vpavlin/logos-vpn/internal/identity"
+	"github.com/vpavlin/shrooms/internal/identity"
 )
 
 // RegistrationTTL is how long a mapping survives without a refresh. Clients

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Ship logos-vpn to a remote host and run it.
+# Ship shrooms to a remote host and run it.
 #
 #   ./scripts/deploy.sh user@vps.example.com                    # join an existing mesh
 #   ./scripts/deploy.sh user@vps --init                         # create a new mesh
@@ -12,10 +12,10 @@
 # does.
 #
 # What this touches on the remote host:
-#   /etc/logos-vpn/       config
-#   /var/lib/logos-vpn/   device identity and announce sequence number
-#   /run/logos-vpn/       control socket
-#   a `logos-vpn` container, and a TUN interface
+#   /etc/shrooms/       config
+#   /var/lib/shrooms/   device identity and announce sequence number
+#   /run/shrooms/       control socket
+#   a `shrooms` container, and a TUN interface
 #
 # Nothing is destroyed: an existing config is left alone unless you pass --force.
 set -euo pipefail
@@ -46,7 +46,7 @@ while [ $# -gt 0 ]; do
 done
 
 LD_LIB=${LD_LIB:-docker/build/lib}
-IMAGE=logos-vpn:latest
+IMAGE=shrooms:latest
 
 echo "==> checking the remote host"
 ssh "$HOST" 'command -v docker >/dev/null || { echo "docker is not installed"; exit 1; }
@@ -55,7 +55,7 @@ ssh "$HOST" 'command -v docker >/dev/null || { echo "docker is not installed"; e
 
 # Pull from the registry when we can: building and shipping the image is by far
 # the slowest step, and CI publishes one on every push to master.
-REGISTRY_IMAGE=${REGISTRY_IMAGE:-ghcr.io/vpavlin/logos-vpn:latest}
+REGISTRY_IMAGE=${REGISTRY_IMAGE:-ghcr.io/vpavlin/shrooms:latest}
 if [ "${BUILD_IMAGE:-0}" != "1" ] && \
    ssh "$HOST" "sudo docker pull -q $REGISTRY_IMAGE >/dev/null 2>&1 && sudo docker tag $REGISTRY_IMAGE $IMAGE"; then
     echo "==> pulled $REGISTRY_IMAGE on the remote host (BUILD_IMAGE=1 to build locally instead)"
@@ -67,11 +67,11 @@ fi
 if [ "$SKIP_SHIP" = "0" ]; then
 echo "==> building image"
 [ -f "$LD_LIB/liblogosdelivery.so" ] || { echo "no liblogosdelivery.so in $LD_LIB — run 'make deps-release'"; exit 1; }
-make logos-vpn >/dev/null
+make shrooms >/dev/null
 
 CTX=docker/build/deploy
 rm -rf "$CTX"; mkdir -p "$CTX/lib"
-cp bin/logos-vpn "$CTX/"
+cp bin/shrooms "$CTX/"
 cp docker/gateway.sh docker/entrypoint-nat.sh "$CTX/" 2>/dev/null || true
 cp "$LD_LIB"/*.so "$LD_LIB"/*.so.* "$CTX/lib/" 2>/dev/null || true
 docker build -q -t "$IMAGE" -f docker/Dockerfile "$CTX" >/dev/null
@@ -82,12 +82,12 @@ docker save "$IMAGE" | gzip -1 | ssh "$HOST" 'gunzip | docker load' | tail -1
 fi
 
 echo "==> preparing directories"
-ssh "$HOST" 'sudo mkdir -p /etc/logos-vpn /var/lib/logos-vpn /run/logos-vpn
-             sudo chmod 700 /etc/logos-vpn /var/lib/logos-vpn'
+ssh "$HOST" 'sudo mkdir -p /etc/shrooms /var/lib/shrooms /run/shrooms
+             sudo chmod 700 /etc/shrooms /var/lib/shrooms'
 
 # Generate the config locally so the network key never has to be typed on the
 # remote host, then copy it over.
-if ssh "$HOST" 'sudo test -f /etc/logos-vpn/config.toml' && [ $FORCE -eq 0 ]; then
+if ssh "$HOST" 'sudo test -f /etc/shrooms/config.toml' && [ $FORCE -eq 0 ]; then
     echo "==> config already present on $HOST, leaving it alone (use --force to replace)"
 else
     echo "==> generating config"
@@ -97,10 +97,10 @@ else
     [ -n "$ADVERTISE" ] && ARGS+=(--advertise "$ADVERTISE")
 
     if [ $INIT -eq 1 ]; then
-        ./bin/logos-vpn init "${ARGS[@]}"
+        ./bin/shrooms init "${ARGS[@]}"
     else
         [ -n "$KEY" ] || { echo "need a network key: pass --key KEY, set LOGOS_VPN_KEY, or use --init"; exit 1; }
-        ./bin/logos-vpn join "$KEY" "${ARGS[@]}"
+        ./bin/shrooms join "$KEY" "${ARGS[@]}"
     fi
 
     if [ $RELAY -eq 1 ]; then
@@ -118,31 +118,31 @@ else
     # every local user on the remote for the window between landing and chmod.
     # `install -m600` creates it with the right mode from the start, so there is
     # no window at all.
-    ssh "$HOST" 'sudo install -d -m 755 /etc/logos-vpn &&
-                 sudo install -m 600 /dev/stdin /etc/logos-vpn/config.toml' \
+    ssh "$HOST" 'sudo install -d -m 755 /etc/shrooms &&
+                 sudo install -m 600 /dev/stdin /etc/shrooms/config.toml' \
         < "$TMP/config.toml"
 fi
 
 echo "==> installing compose file"
-ssh "$HOST" 'sudo install -d -m 755 /etc/logos-vpn &&
-             sudo install -m 644 /dev/stdin /etc/logos-vpn/compose.yml' \
+ssh "$HOST" 'sudo install -d -m 755 /etc/shrooms &&
+             sudo install -m 644 /dev/stdin /etc/shrooms/compose.yml' \
     < docker/compose-node.yml
 
 echo "==> starting"
-ssh "$HOST" 'cd /etc/logos-vpn && sudo docker compose -f compose.yml up -d --force-recreate' 2>&1 | tail -3
+ssh "$HOST" 'cd /etc/shrooms && sudo docker compose -f compose.yml up -d --force-recreate' 2>&1 | tail -3
 
 echo
 echo "==> status (give it ~20s to reach the fleet)"
 sleep 20
-ssh "$HOST" 'sudo docker exec logos-vpn logos-vpn status --socket /run/logos-vpn/logos-vpn.sock' 2>&1 | head -12 || \
-    ssh "$HOST" 'sudo docker logs logos-vpn 2>&1 | grep "^time=" | tail -10'
+ssh "$HOST" 'sudo docker exec shrooms shrooms status --socket /run/shrooms/shrooms.sock' 2>&1 | head -12 || \
+    ssh "$HOST" 'sudo docker logs shrooms 2>&1 | grep "^time=" | tail -10'
 
 cat <<EOF
 
 Useful on $HOST:
-  sudo docker exec logos-vpn logos-vpn status --socket /run/logos-vpn/logos-vpn.sock
-  sudo docker exec logos-vpn logos-vpn paths  --socket /run/logos-vpn/logos-vpn.sock
-  sudo docker logs -f logos-vpn
+  sudo docker exec shrooms shrooms status --socket /run/shrooms/shrooms.sock
+  sudo docker exec shrooms shrooms paths  --socket /run/shrooms/shrooms.sock
+  sudo docker logs -f shrooms
 
 If this node is publicly reachable, open its UDP port:
   sudo ufw allow 51820/udp        # or the equivalent for your firewall

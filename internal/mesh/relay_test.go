@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vpavlin/logos-vpn/internal/control"
-	"github.com/vpavlin/logos-vpn/internal/disco"
-	"github.com/vpavlin/logos-vpn/internal/identity"
-	"github.com/vpavlin/logos-vpn/internal/relay"
+	"github.com/vpavlin/shrooms/internal/control"
+	"github.com/vpavlin/shrooms/internal/disco"
+	"github.com/vpavlin/shrooms/internal/identity"
+	"github.com/vpavlin/shrooms/internal/relay"
 )
 
 // confirmPath drives a full ping/pong exchange so the prober records addr as a

@@ -98,7 +98,7 @@ re-downloaded.
 ### A2 + A3 — the app
 
 **🟨 Built, not yet run on hardware.** `make apk` produces a 51 MB
-`android/logos-vpn.apk`: arm64 only, all four native libraries, no stray ABIs.
+`android/shrooms.apk`: arm64 only, all four native libraries, no stray ABIs.
 
 Merged because the split was for isolating failures during debugging, and with
 no phone here the useful artefact is one that does the whole thing. The
@@ -115,7 +115,7 @@ What is in it:
 - The TUN descriptor is dup'd in Go, so closing it here is safe.
 - A Compose UI over the same `status --json` schema the CLI reads.
 
-**Done when:** the phone appears in `logos-vpn status` on the laptop, `ping6`
+**Done when:** the phone appears in `shrooms status` on the laptop, `ping6`
 works between phone and VPS, and ssh from the phone works.
 
 ### A3 — the tunnel (folded into A2 above)

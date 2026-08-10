@@ -10,9 +10,9 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/vpavlin/logos-vpn/internal/identity"
-	"github.com/vpavlin/logos-vpn/internal/mesh"
-	"github.com/vpavlin/logos-vpn/internal/state"
+	"github.com/vpavlin/shrooms/internal/identity"
+	"github.com/vpavlin/shrooms/internal/mesh"
+	"github.com/vpavlin/shrooms/internal/state"
 )
 
 // commonFlags registers --config and --state on a flag set.
@@ -49,7 +49,7 @@ func cmdJoin(args []string) error {
 	// it. Go's flag package stops parsing at the first positional, so pull the
 	// key off before parsing the flags.
 	if len(args) < 1 || strings.HasPrefix(args[0], "-") {
-		return fmt.Errorf("usage: logos-vpn join <NETWORK-KEY> [flags]")
+		return fmt.Errorf("usage: shrooms join <NETWORK-KEY> [flags]")
 	}
 	keyArg := args[0]
 
@@ -130,14 +130,14 @@ func setup(cfgPath, stateDir string, nk identity.NetworkKey, name string, port u
 	}
 	// Only suggest systemd if the unit is actually installed. Telling someone
 	// to enable a service that does not exist is worse than saying nothing.
-	if _, err := os.Stat("/etc/systemd/system/logos-vpn.service"); err == nil {
+	if _, err := os.Stat("/etc/systemd/system/shrooms.service"); err == nil {
 		fmt.Printf("\nNext:\n")
-		fmt.Printf("  sudo systemctl enable --now logos-vpn\n")
+		fmt.Printf("  sudo systemctl enable --now shrooms\n")
 	} else {
 		fmt.Printf("\nNext, run it:\n")
-		fmt.Printf("  sudo logos-vpn daemon -v\n")
+		fmt.Printf("  sudo shrooms daemon -v\n")
 		fmt.Printf("\nOr install it as a service first:\n")
-		fmt.Printf("  sudo make install && sudo systemctl enable --now logos-vpn\n")
+		fmt.Printf("  sudo make install && sudo systemctl enable --now shrooms\n")
 	}
 	return nil
 }
@@ -180,15 +180,15 @@ func cmdPrepare(args []string) error {
 
 	fmt.Printf("Prepared %s for %q.\n\n", *cfgPath, cfg.Name)
 	fmt.Println("The mesh key is not set. Add it yourself:")
-	fmt.Println("  sudo logos-vpn set-key")
+	fmt.Println("  sudo shrooms set-key")
 	fmt.Println()
 	fmt.Println("That reads the key from a prompt or stdin and validates it, so it")
 	fmt.Println("never appears in your shell history or in a command line other")
 	fmt.Println("processes can see. Get it from a machine already on the mesh:")
-	fmt.Println("  logos-vpn key show          # or --qr to scan it")
+	fmt.Println("  shrooms key show          # or --qr to scan it")
 	fmt.Println()
 	fmt.Println("Then start it:")
-	fmt.Println("  sudo systemctl start logos-vpn")
+	fmt.Println("  sudo systemctl start shrooms")
 	return nil
 }
 
@@ -238,12 +238,12 @@ func cmdSetKey(args []string) error {
 		fmt.Println("Replaced the existing key. Every peer must hold the same one,")
 		fmt.Println("so any machine still using the old key will not be seen.")
 	}
-	fmt.Printf("Key written to %s.\n\nStart it:\n  sudo systemctl start logos-vpn\n", *cfgPath)
+	fmt.Printf("Key written to %s.\n\nStart it:\n  sudo systemctl start shrooms\n", *cfgPath)
 	return nil
 }
 
 // readSecret reads one line without echoing it, falling back to plain input
-// when there is no terminal — which is what makes `... | logos-vpn set-key`
+// when there is no terminal — which is what makes `... | shrooms set-key`
 // work in a script.
 func readSecret(prompt string) (string, error) {
 	if term.IsTerminal(int(os.Stdin.Fd())) {
@@ -265,7 +265,7 @@ func cmdKey(args []string) error {
 	// first positional argument, so `key show --config X` would otherwise leave
 	// --config unparsed.
 	if len(args) < 1 {
-		return fmt.Errorf("usage: logos-vpn key {show|rotate} [--config PATH]")
+		return fmt.Errorf("usage: shrooms key {show|rotate} [--config PATH]")
 	}
 	sub := args[0]
 
@@ -292,7 +292,7 @@ func cmdKey(args []string) error {
 	case "rotate":
 		return rotateKey(*cfgPath, *stateDir, cfg, *yes)
 	default:
-		return fmt.Errorf("usage: logos-vpn key {show|rotate} [--config PATH]")
+		return fmt.Errorf("usage: shrooms key {show|rotate} [--config PATH]")
 	}
 }
 
@@ -343,8 +343,8 @@ func rotateKey(cfgPath, stateDir string, cfg state.Config, yes bool) error {
 	fmt.Printf("This device:  %s\n", identity.OverlayAddr(newKey, st.Identity.DevicePub))
 	fmt.Printf("Mesh prefix:  %s\n\n", newKey.Prefix())
 	fmt.Printf("On every other device:\n")
-	fmt.Printf("  logos-vpn join %s --name <NAME>\n", newKey)
-	fmt.Printf("  systemctl restart logos-vpn\n\n")
-	fmt.Printf("Then restart this one:  systemctl restart logos-vpn\n")
+	fmt.Printf("  shrooms join %s --name <NAME>\n", newKey)
+	fmt.Printf("  systemctl restart shrooms\n\n")
+	fmt.Printf("Then restart this one:  systemctl restart shrooms\n")
 	return nil
 }

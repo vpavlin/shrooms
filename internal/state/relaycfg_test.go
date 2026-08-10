@@ -65,7 +65,7 @@ func TestConfigWithoutClusterIDLeavesItUnset(t *testing.T) {
 	c, err := parseConfig(`
 network_key = "P27KNQ2HDSIUFIXZAGYDBSU2GU3PE4M52POFBUBOWHUZEWYSCP5A"
 name        = "old"
-interface   = "logos0"
+interface   = "shrooms0"
 listen_port = 51820
 preset      = "logos.test"
 mode        = "Core"

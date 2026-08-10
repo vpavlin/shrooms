@@ -16,7 +16,7 @@ independent by construction, with no shared mutable state to get wrong.
 Running one daemon per mesh therefore almost works today. It was rejected: it
 multiplies configs, state directories, TUN interfaces, ports, control sockets
 and Logos Messaging nodes, and the last of those is the expensive one. The
-requirement is that `logos-vpn join` can be run more than once and that be the
+requirement is that `shrooms join` can be run more than once and that be the
 end of it.
 
 ## Decision
@@ -53,7 +53,7 @@ mesh_id = SHA256("mesh/v1/meshid" || NK)[0:8]
 ### Mesh names are local labels
 
 ```
-logos-vpn join <KEY> --mesh shared
+shrooms join <KEY> --mesh shared
 ```
 
 Optional; defaults to a short rendering of `mesh_id`. Names are **local to the

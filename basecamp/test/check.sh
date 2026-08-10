@@ -6,7 +6,7 @@
 # load, and one that loads but understands nothing.
 #
 #   make basecamp-check                    # uses the checked-in fixture
-#   FIXTURE=/run/logos-vpn/status.json make basecamp-check
+#   FIXTURE=/run/shrooms/status.json make basecamp-check
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 

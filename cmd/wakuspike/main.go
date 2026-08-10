@@ -20,7 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/vpavlin/logos-vpn/internal/waku"
+	"github.com/vpavlin/shrooms/internal/waku"
 )
 
 func main() {

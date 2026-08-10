@@ -15,7 +15,7 @@ the information exists. The question is only how to expose it to the resolver.
 
 Two layers.
 
-**Now: `logos-vpn hosts`** writes `/etc/hosts` entries in a marked block.
+**Now: `shrooms hosts`** writes `/etc/hosts` entries in a marked block.
 Zero dependencies, works immediately, useful for a fixed set of machines.
 
 **Next (M6): a DNS server in the daemon**, authoritative for the mesh domain

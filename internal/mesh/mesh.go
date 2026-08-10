@@ -16,15 +16,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/vpavlin/logos-vpn/internal/control"
-	"github.com/vpavlin/logos-vpn/internal/disco"
-	"github.com/vpavlin/logos-vpn/internal/hosts"
-	"github.com/vpavlin/logos-vpn/internal/identity"
-	"github.com/vpavlin/logos-vpn/internal/relay"
-	"github.com/vpavlin/logos-vpn/internal/state"
-	"github.com/vpavlin/logos-vpn/internal/topic"
-	"github.com/vpavlin/logos-vpn/internal/waku"
-	"github.com/vpavlin/logos-vpn/internal/wg"
+	"github.com/vpavlin/shrooms/internal/control"
+	"github.com/vpavlin/shrooms/internal/disco"
+	"github.com/vpavlin/shrooms/internal/hosts"
+	"github.com/vpavlin/shrooms/internal/identity"
+	"github.com/vpavlin/shrooms/internal/relay"
+	"github.com/vpavlin/shrooms/internal/state"
+	"github.com/vpavlin/shrooms/internal/topic"
+	"github.com/vpavlin/shrooms/internal/waku"
+	"github.com/vpavlin/shrooms/internal/wg"
 )
 
 // AnnounceInterval is the heartbeat period. Fixed-rate, fixed-size announces

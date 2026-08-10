@@ -41,7 +41,7 @@ secret need not also grant membership.
 - Membership becomes ~100 bytes of admin-signed CBOR over `{device_pk, wg_pk,
   name, overlay_ip, not_before, not_after, caps}`, verified against `admin_pk`
   — a *public* value in config.
-- `logos-vpn invite` emits a **one-time, ~15-minute** token. This is the
+- `shrooms invite` emits a **one-time, ~15-minute** token. This is the
   highest-value single change: a leaked clipboard stops being worth anything.
 - Revocation is gossiped and tears down live tunnels. Nebula's documented gap is
   that its blocklist is not distributed at all; ours is.

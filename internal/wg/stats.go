@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vpavlin/logos-vpn/internal/identity"
+	"github.com/vpavlin/shrooms/internal/identity"
 )
 
 // PeerStat is the data-plane view of a peer, read back from wireguard-go.

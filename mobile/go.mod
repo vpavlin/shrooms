@@ -8,12 +8,12 @@
 //
 // Nested modules are excluded from the parent's ./... patterns automatically,
 // so the root build and test are untouched.
-module github.com/vpavlin/logos-vpn/mobile
+module github.com/vpavlin/shrooms/mobile
 
 go 1.25.0
 
 require (
-	github.com/vpavlin/logos-vpn v0.0.0
+	github.com/vpavlin/shrooms v0.0.0
 	golang.zx2c4.com/wireguard v0.0.0-20260522210424-ecfc5a8d5446
 )
 
@@ -28,6 +28,6 @@ require (
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
 )
 
-replace github.com/vpavlin/logos-vpn => ../
+replace github.com/vpavlin/shrooms => ../
 
 tool golang.org/x/mobile/cmd/gobind

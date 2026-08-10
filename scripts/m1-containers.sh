@@ -26,13 +26,13 @@ echo "==> checking prerequisites"
 [ -e /dev/net/tun ] || { echo "no /dev/net/tun on the host"; exit 1; }
 [ -f "$LD_LIB/liblogosdelivery.so" ] || { echo "no liblogosdelivery.so in $LD_LIB — run 'make deps-release'"; exit 1; }
 
-echo "==> building logos-vpn"
-make logos-vpn >/dev/null
+echo "==> building shrooms"
+make shrooms >/dev/null
 
 echo "==> staging image context"
 rm -rf "$CTX" "$RUN"
 mkdir -p "$CTX/lib" "$RUN"/{a,b}/{etc,state}
-cp bin/logos-vpn "$CTX/"
+cp bin/shrooms "$CTX/"
 cp docker/gateway.sh docker/entrypoint-nat.sh "$CTX/"
 # Copy every shared library Basecamp ships alongside liblogosdelivery, not just
 # the obvious two: the library dlopen()s libpq at runtime for the Store backend,
@@ -44,17 +44,17 @@ echo "    staged $(ls "$CTX/lib" | wc -l) libraries"
 echo "==> generating configs"
 # Generated on the host so both containers share one network key. State dirs
 # are per-node, so each gets its own device identity.
-./bin/logos-vpn init \
+./bin/shrooms init \
     --config "$RUN/a/etc/config.toml" --state "$RUN/a/state" \
     --name node-a >/dev/null
-KEY=$(./bin/logos-vpn key show --config "$RUN/a/etc/config.toml")
-./bin/logos-vpn join "$KEY" \
+KEY=$(./bin/shrooms key show --config "$RUN/a/etc/config.toml")
+./bin/shrooms join "$KEY" \
     --config "$RUN/b/etc/config.toml" --state "$RUN/b/state" \
     --name node-b >/dev/null
 echo "    network key: $KEY"
 
 echo "==> building image"
-docker build -q -t logos-vpn:test -f "$D/Dockerfile" "$CTX" >/dev/null
+docker build -q -t shrooms:test -f "$D/Dockerfile" "$CTX" >/dev/null
 
 echo "==> starting nodes"
 docker compose -f "$D/compose.yml" up -d --force-recreate >/dev/null
@@ -64,12 +64,12 @@ cleanup() {
     # relay/filter noise buries the application layer.
     for n in a b; do
         echo "==> app log (node-$n)"
-        docker logs "logos-vpn-$n" 2>&1 | grep -E "^time=" | tail -20 || true
+        docker logs "shrooms-$n" 2>&1 | grep -E "^time=" | tail -20 || true
     done
     if [ "${KEEP:-0}" = "1" ]; then
         echo "==> KEEP=1, leaving containers up for inspection"
-        echo "    docker logs logos-vpn-a"
-        echo "    docker exec logos-vpn-a logos-vpn status"
+        echo "    docker logs shrooms-a"
+        echo "    docker exec shrooms-a shrooms status"
         echo "    docker compose -f $D/compose.yml down -v   # when done"
         return
     fi
@@ -86,7 +86,7 @@ discovered=0
 handshaked=0
 while [ $SECONDS -lt $deadline ]; do
     set +e
-    js=$(docker exec logos-vpn-a logos-vpn status --json 2>/dev/null)
+    js=$(docker exec shrooms-a shrooms status --json 2>/dev/null)
     set -e
     if [ -n "$js" ]; then
         # Parse rather than grep: the CLI pretty-prints, so the JSON contains
@@ -120,37 +120,37 @@ if [ $discovered -ne 1 ]; then
 fi
 if [ $handshaked -ne 1 ]; then
     echo "FAIL: peer discovered but the WireGuard handshake never completed"
-    docker exec logos-vpn-a logos-vpn status || true
+    docker exec shrooms-a shrooms status || true
     exit 1
 fi
 
 echo "==> status on node-a"
-docker exec logos-vpn-a logos-vpn status
+docker exec shrooms-a shrooms status
 
 echo "==> pinging node-b across the overlay"
 # Note: `set -e` + `pipefail` would abort inside a command substitution before
 # any error check below could run, so disable it around the extraction.
 set +e
-PEER=$(docker exec logos-vpn-a logos-vpn status --json 2>/dev/null \
+PEER=$(docker exec shrooms-a shrooms status --json 2>/dev/null \
     | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["peers"][0]["overlay"] if d.get("peers") else "")' 2>/dev/null)
 set -e
 if [ -z "$PEER" ]; then
     echo "FAIL: could not determine the peer overlay address from status --json"
-    docker exec logos-vpn-a logos-vpn status --json || true
+    docker exec shrooms-a shrooms status --json || true
     exit 1
 fi
 echo "    peer overlay: $PEER"
 
 set +e
-docker exec logos-vpn-a ping -c 3 -W 5 "$PEER"
+docker exec shrooms-a ping -c 3 -W 5 "$PEER"
 ping_rc=$?
 set -e
 
 echo "==> post-ping status (node-a)"
-docker exec logos-vpn-a logos-vpn status || true
+docker exec shrooms-a shrooms status || true
 echo "==> interface state (node-a)"
-docker exec logos-vpn-a ip -6 addr show dev logos0 || true
-docker exec logos-vpn-a ip -6 route show || true
+docker exec shrooms-a ip -6 addr show dev shrooms0 || true
+docker exec shrooms-a ip -6 route show || true
 
 if [ $ping_rc -eq 0 ]; then
     echo

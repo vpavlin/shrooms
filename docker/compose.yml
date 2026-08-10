@@ -12,8 +12,8 @@
 
 services:
   node-a:
-    image: logos-vpn:test
-    container_name: logos-vpn-a
+    image: shrooms:test
+    container_name: shrooms-a
     build:
       context: ./build
       dockerfile: ../Dockerfile
@@ -23,13 +23,13 @@ services:
     devices:
       - /dev/net/tun:/dev/net/tun
     volumes:
-      - ./run/a/etc:/etc/logos-vpn
-      - ./run/a/state:/var/lib/logos-vpn
+      - ./run/a/etc:/etc/shrooms
+      - ./run/a/state:/var/lib/shrooms
     networks: [mesh]
 
   node-b:
-    image: logos-vpn:test
-    container_name: logos-vpn-b
+    image: shrooms:test
+    container_name: shrooms-b
     build:
       context: ./build
       dockerfile: ../Dockerfile
@@ -37,8 +37,8 @@ services:
     devices:
       - /dev/net/tun:/dev/net/tun
     volumes:
-      - ./run/b/etc:/etc/logos-vpn
-      - ./run/b/state:/var/lib/logos-vpn
+      - ./run/b/etc:/etc/shrooms
+      - ./run/b/state:/var/lib/shrooms
     networks: [mesh]
 
 networks:

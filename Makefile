@@ -1,4 +1,4 @@
-# logos-vpn
+# shrooms
 #
 # Building needs liblogosdelivery (shared library + matching header). There is
 # no canonical place for it, so pick one:
@@ -24,10 +24,10 @@ export CGO_LDFLAGS += -L$(abspath $(LD_LIB)) -llogosdelivery -Wl,-rpath,$(abspat
 GO ?= go
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
-.PHONY: all deps deps-basecamp check-lib logos-vpn wakuspike s3topics m0demo \
+.PHONY: all deps deps-basecamp check-lib shrooms wakuspike s3topics m0demo \
         s1 s3 probe m0 m1 m2 m2-edm m3 m3-remote dist image push-image deps-release install uninstall build-all vet-cgo test test-unit android-deps android-core aar apk fdroid basecamp-check basecamp-lgx fmt clean
 
-all: logos-vpn
+all: shrooms
 
 ## --- dependencies ---
 
@@ -55,8 +55,8 @@ check-lib:
 
 ## --- binaries ---
 
-logos-vpn: check-lib
-	$(GO) build -trimpath -ldflags "-X main.version=$(VERSION)" -o bin/logos-vpn ./cmd/logos-vpn
+shrooms: check-lib
+	$(GO) build -trimpath -ldflags "-X main.version=$(VERSION)" -o bin/shrooms ./cmd/shrooms
 
 wakuspike: check-lib
 	$(GO) build -o bin/wakuspike ./cmd/wakuspike
@@ -78,12 +78,12 @@ dist:
 ## neither build nor run a bare binary. Publish once from a machine that has the
 ## library; every other machine pulls.
 
-IMAGE ?= ghcr.io/vpavlin/logos-vpn
+IMAGE ?= ghcr.io/vpavlin/shrooms
 TAG   ?= latest
 
-image: logos-vpn check-lib
+image: shrooms check-lib
 	@rm -rf docker/build/ctx && mkdir -p docker/build/ctx/lib
-	@cp bin/logos-vpn docker/build/ctx/
+	@cp bin/shrooms docker/build/ctx/
 	@cp docker/gateway.sh docker/entrypoint-nat.sh docker/build/ctx/
 	@cp $(LD_LIB)/*.so $(LD_LIB)/*.so.* docker/build/ctx/lib/ 2>/dev/null || true
 	docker build -t $(IMAGE):$(TAG) -f docker/Dockerfile docker/build/ctx
@@ -101,7 +101,7 @@ deps-release:
 ## --- install ---
 
 PREFIX  ?= /usr/local
-LIBDIR  ?= $(PREFIX)/lib/logos-vpn
+LIBDIR  ?= $(PREFIX)/lib/shrooms
 
 ## Install the binary, its libraries and the systemd unit.
 ##
@@ -111,27 +111,27 @@ install: check-lib
 	install -d $(DESTDIR)$(LIBDIR) $(DESTDIR)$(PREFIX)/bin
 	install -m 0644 $(LD_LIB)/*.so $(DESTDIR)$(LIBDIR)/
 	@cp $(LD_LIB)/*.so.* $(DESTDIR)$(LIBDIR)/ 2>/dev/null || true
-	CGO_LDFLAGS="-L$(abspath $(LD_LIB)) -llogosdelivery -Wl,-rpath,$(LIBDIR)" 		$(GO) build -trimpath -ldflags "-X main.version=$(VERSION)" 		-o $(DESTDIR)$(PREFIX)/bin/logos-vpn ./cmd/logos-vpn
+	CGO_LDFLAGS="-L$(abspath $(LD_LIB)) -llogosdelivery -Wl,-rpath,$(LIBDIR)" 		$(GO) build -trimpath -ldflags "-X main.version=$(VERSION)" 		-o $(DESTDIR)$(PREFIX)/bin/shrooms ./cmd/shrooms
 	install -d $(DESTDIR)/etc/systemd/system
-	install -m 0644 packaging/logos-vpn.service $(DESTDIR)/etc/systemd/system/
+	install -m 0644 packaging/shrooms.service $(DESTDIR)/etc/systemd/system/
 	@echo
 	@echo "installed:"
-	@echo "  $(PREFIX)/bin/logos-vpn"
+	@echo "  $(PREFIX)/bin/shrooms"
 	@echo "  $(LIBDIR)/"
-	@echo "  /etc/systemd/system/logos-vpn.service"
+	@echo "  /etc/systemd/system/shrooms.service"
 	@echo
 	@echo "next:"
-	@echo "  sudo logos-vpn init --relay --name $$(hostname)   # or: join <KEY>"
+	@echo "  sudo shrooms init --relay --name $$(hostname)   # or: join <KEY>"
 	@echo "  sudo systemctl daemon-reload"
-	@echo "  sudo systemctl enable --now logos-vpn"
+	@echo "  sudo systemctl enable --now shrooms"
 
 uninstall:
-	systemctl disable --now logos-vpn 2>/dev/null || true
-	rm -f $(DESTDIR)$(PREFIX)/bin/logos-vpn $(DESTDIR)/etc/systemd/system/logos-vpn.service
+	systemctl disable --now shrooms 2>/dev/null || true
+	rm -f $(DESTDIR)$(PREFIX)/bin/shrooms $(DESTDIR)/etc/systemd/system/shrooms.service
 	rm -rf $(DESTDIR)$(LIBDIR)
 	@echo "removed the binary, libraries and unit."
 	@echo "config and identity are left alone:"
-	@echo "  /etc/logos-vpn  /var/lib/logos-vpn"
+	@echo "  /etc/shrooms  /var/lib/shrooms"
 
 ## --- spikes and milestones ---
 
@@ -169,10 +169,10 @@ m3:
 ## M3 over the real internet: run a NATed node on a remote relay host and
 ## measure the tunnel from here. Containers prove the mechanism; only a real
 ## path proves the system. Needs a deployed relay: make m3-remote HOST=user@vps
-## Depends on logos-vpn: the script ships this binary to the remote host and
+## Depends on shrooms: the script ships this binary to the remote host and
 ## also queries the local daemon with it. Running a stale bin/ against fresh
 ## sources has produced two confusing failures already.
-m3-remote: logos-vpn
+m3-remote: shrooms
 	@[ -n "$(HOST)" ] || { echo "usage: make m3-remote HOST=user@vps"; exit 1; }
 	./scripts/m3-remote.sh $(HOST) $(M3_ARGS)
 

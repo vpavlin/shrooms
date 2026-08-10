@@ -1,4 +1,4 @@
-# logos-vpn — Design
+# shrooms — Design
 
 An overlay mesh VPN between personal devices (home, office, laptops, Android phones),
 using Logos Messaging (Waku) as a rendezvous substrate rather than a central
@@ -528,7 +528,7 @@ single biggest practical improvement over a bearer key, and it holds even if you
 keep a group secret. Tailscale auth keys and innernet invitations both work this
 way.
 
-`logos-vpn invite` on the admin machine emits a token valid ~15 minutes, single
+`shrooms invite` on the admin machine emits a token valid ~15 minutes, single
 redemption. The new device generates its own keys, redeems the token, and
 receives `K_rdv` plus its signed credential over the resulting authenticated
 channel. The token is dead afterwards, so a leaked clipboard is worth nothing.

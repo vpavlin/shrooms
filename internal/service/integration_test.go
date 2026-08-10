@@ -11,7 +11,7 @@ import (
 
 	"golang.org/x/net/dns/dnsmessage"
 
-	meshdns "github.com/vpavlin/logos-vpn/internal/dns"
+	meshdns "github.com/vpavlin/shrooms/internal/dns"
 )
 
 // The whole claim, end to end: type a service name, get bytes back from an
