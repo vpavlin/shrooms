@@ -113,6 +113,14 @@ type Mesh struct {
 	reannounce   chan struct{}
 	lastAnnounce time.Time
 
+	// lastRendezvousOK is the previous health verdict, so a recovery can be
+	// noticed. See repairRendezvous.
+	lastRendezvousOK bool
+
+	// relayRegistered is when we last renewed our mapping with the relay.
+	// See RelayRefresh: this used to be re-sent on every probe tick.
+	relayRegistered time.Time
+
 	// repliedTo bounds how often a single peer can draw a triggered announce.
 	replyMu   sync.Mutex
 	repliedTo map[string]time.Time
@@ -249,7 +257,12 @@ func (m *Mesh) Run(ctx context.Context) error {
 			m.reportUnknown()
 			m.checkTunnels(now)
 			m.sampleRates(now)
+			m.pruneForgotten(now)
 		case now := <-ticker.C:
+			// A rendezvous node that dropped and came back has lost its
+			// subscriptions; ours is the only side that knows they are gone.
+			m.repairRendezvous(now)
+
 			// Resubscribe first: near an epoch boundary the next topic must be
 			// live before we publish to it.
 			if err := m.resubscribe(now); err != nil {
@@ -260,6 +273,84 @@ func (m *Mesh) Run(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+// repairRendezvous re-establishes subscriptions after the rendezvous node has
+// been away.
+//
+// Subscriptions live in the delivery library, and m.subscribed is only our
+// belief about them. When that node disconnects and reconnects — a phone
+// changing network, a fleet peer dropping us — the real subscriptions are gone
+// while our map still says they exist, so resubscribe skips every topic and
+// nothing is ever received again. The mesh then decays silently: no announces
+// arrive, peers age out, and the only recovery is restarting the process. That
+// is exactly what it looked like in the field, and it is why this is a repair
+// rather than a report.
+//
+// Two triggers, because either alone misses cases:
+//
+//   - a transition from unhealthy to healthy, which is the ordinary reconnect;
+//   - being nominally healthy while nothing has arrived for RendezvousStale,
+//     which is the case where the library never told us it had dropped.
+//
+// Announcing afterwards is not optional: our peers' rosters have been ageing
+// while we were deaf, and Fresh asks them to announce back so both directions
+// recover in one round rather than waiting out an interval.
+func (m *Mesh) repairRendezvous(now time.Time) {
+	h := m.Health()
+	why, need := needsRendezvousRepair(h, m.lastRendezvousOK, now)
+	m.lastRendezvousOK = h.OK(now)
+	if !need {
+		return
+	}
+
+	m.mu.Lock()
+	had := len(m.subscribed)
+	m.subscribed = map[string]bool{}
+	m.mu.Unlock()
+
+	m.log.Info("re-establishing rendezvous subscriptions",
+		"why", why, "topics", had, "status", h.Status)
+
+	if err := m.resubscribe(now); err != nil {
+		m.log.Warn("resubscribe after repair failed", "err", err)
+		// Left cleared deliberately: a failed resubscribe must be retried on
+		// the next tick, and remembering topics we do not hold would prevent
+		// exactly that.
+		return
+	}
+	if err := m.announceFresh(now); err != nil {
+		m.log.Warn("announce after repair failed", "err", err)
+	}
+}
+
+// needsRendezvousRepair decides whether subscriptions must be re-established,
+// and why.
+//
+// Separated from the repair itself so the decision can be tested: the action
+// reaches into the delivery library, and the part that gets this wrong is the
+// trigger, not the Subscribe call.
+func needsRendezvousRepair(h Health, lastOK bool, now time.Time) (why string, need bool) {
+	ok := h.OK(now)
+	switch {
+	case h.Status == "Disconnected":
+		// Nothing to subscribe into. The recovery edge fires when it returns.
+		return "", false
+
+	case ok && !lastOK:
+		// The ordinary reconnect.
+		return "reconnected", true
+
+	case !ok && !h.LastMessage.IsZero():
+		// The library reports a connection and yet nothing has arrived for
+		// RendezvousStale. This is the case that stranded the mesh, and the
+		// reason it cannot be left to the recovery edge: Health.OK is false
+		// precisely BECAUSE nothing is arriving, so waiting for it to become
+		// true waits on a message that our missing subscription guarantees will
+		// never come. Repairing here is what breaks that circle.
+		return "silent for too long", true
+	}
+	return "", false
 }
 
 // reportUnknown logs packets WireGuard rejected as an unknown message type.
@@ -362,6 +453,21 @@ func (m *Mesh) requestAnnounce() {
 
 // announce publishes our endpoint candidates for the current epoch.
 func (m *Mesh) announce(now time.Time) error {
+	// Fresh means "I have just started, please announce back". Within the
+	// window after start that is simply true.
+	return m.announceWith(now, now.Sub(m.timing.started) < FreshWindow)
+}
+
+// announceFresh announces and asks peers to answer, whatever our uptime.
+//
+// For recovery rather than start-up: after being deaf to the rendezvous plane
+// our roster is stale in both directions, and waiting out every peer's announce
+// interval to rebuild it is the slow path this flag exists to avoid.
+func (m *Mesh) announceFresh(now time.Time) error {
+	return m.announceWith(now, true)
+}
+
+func (m *Mesh) announceWith(now time.Time, fresh bool) error {
 	seq, err := m.st.NextSeq()
 	if err != nil {
 		return fmt.Errorf("advance sequence: %w", err)
@@ -376,7 +482,7 @@ func (m *Mesh) announce(now time.Time) error {
 		Seq:       seq,
 		Timestamp: now.Unix(),
 		Relay:     m.cfg.Relay,
-		Fresh:     now.Sub(m.timing.started) < FreshWindow,
+		Fresh:     fresh,
 	}
 
 	raw, err := control.Seal(m.nk, topic.Epoch(now), m.st.Identity.DevicePriv, a)
@@ -392,6 +498,47 @@ func (m *Mesh) announce(now time.Time) error {
 	m.lastAnnounce = now
 	m.log.Debug("announced", "seq", seq, "endpoints", a.Endpoints)
 	return nil
+}
+
+// pruneForgotten drops every trace of peers that have been gone for
+// ForgetAfter.
+//
+// Each of these maps is keyed by peer id and only ever grew: the roster, the
+// replay counters, the probe paths, the connection timings, the throughput
+// history and the announce-reply debounce. A peer that never returns stayed in
+// all six until the process restarted.
+//
+// Ordered deliberately: the roster is the authority on who exists, so it
+// decides who is gone and everything else follows. Doing it the other way
+// leaves state for a peer the roster still lists.
+func (m *Mesh) pruneForgotten(now time.Time) {
+	gone := m.roster.Prune(now)
+	if len(gone) == 0 {
+		return
+	}
+	for _, id := range gone {
+		m.guard.Forget(mustHexBytes(id))
+		m.prober.Forget(id)
+		m.timing.forget(id)
+		m.rates.forget(id)
+		delete(m.repliedTo, id)
+	}
+	m.log.Info("forgot peers not seen recently", "count", len(gone), "after", ForgetAfter)
+
+	// The data plane still holds them as WireGuard peers until the next sync.
+	m.requestResync()
+}
+
+// mustHexBytes converts a peer id back to the device key it encodes. Peer ids
+// are produced by hex-encoding that key, so a failure here is impossible
+// unless that changes — in which case an empty slice is the safe answer, since
+// Forget on an unknown key does nothing.
+func mustHexBytes(id string) []byte {
+	b, err := hex.DecodeString(id)
+	if err != nil {
+		return nil
+	}
+	return b
 }
 
 // localAddrs lists routable local addresses, skipping loopback, link-local and
@@ -633,7 +780,7 @@ func (m *Mesh) refreshHosts() {
 		return
 	}
 
-	entries := []hosts.Entry{{Name: m.cfg.Name, Addr: m.self.String()}}
+	entries := []hosts.Entry{{Name: m.cfg.Name, Addr: m.self.String(), Self: true}}
 	for _, p := range m.roster.Peers() {
 		entries = append(entries, hosts.Entry{Name: p.Name, Addr: p.Overlay.String()})
 	}

@@ -1,6 +1,7 @@
 package mesh
 
 import (
+	"encoding/hex"
 	"fmt"
 	"net"
 	"net/netip"
@@ -44,22 +45,36 @@ func (m *Mesh) handleControl(sub wg.Sub, payload []byte, ep conn.Endpoint) ([]by
 		m.prober.HandlePing(msg, from)
 
 	case disco.TypePong:
-		peerID, ok := m.prober.HandlePong(msg, from, time.Now())
+		// The endpoint in use before this pong is recorded, so the resync below
+		// happens only if it actually moves. The sender's identity is on the
+		// message and is verified inside HandlePong, so it is safe to key on
+		// here — a pong that fails that check simply yields ok=false.
+		now := time.Now()
+		sender := hex.EncodeToString(msg.SenderPub[:])
+		before, _ := m.prober.Best(sender, now)
+
+		peerID, ok := m.prober.HandlePong(msg, from, now)
 		if !ok {
 			m.log.Debug("pong for an unknown probe", "from", from)
 			return nil, nil, false
 		}
-		if m.timing.mark(peerID, func(x *Milestones) *time.Time { return &x.PathConfirmed }, time.Now()) {
+		if m.timing.mark(peerID, func(x *Milestones) *time.Time { return &x.PathConfirmed }, now) {
 			m.log.Info("path confirmed", "peer", peerID[:8], "via", from,
 				"observed_us_at", msg.Observed,
 				"after", m.Timing(peerID).PathAfter.Round(time.Millisecond))
 		} else {
 			m.log.Debug("path confirmed", "peer", peerID[:8], "via", from, "observed_us_at", msg.Observed)
 		}
-		// A newly usable path may be better than what WireGuard is using, so
-		// ask the main loop to re-evaluate. Doing it here would block the
-		// receive path.
-		m.requestResync()
+		// Only when this actually changed the endpoint in use. Every pong used
+		// to request a resync, and since a confirmed path is re-probed every
+		// PathRefresh, that was a full roster rebuild plus a UAPI dump every
+		// few seconds per peer, forever, to discover nothing had changed.
+		//
+		// Doing the work here rather than in the main loop would block the
+		// receive path, so this only decides whether to ask.
+		if best, ok := m.prober.Best(peerID, now); ok && best.Addr != before.Addr {
+			m.requestResync()
+		}
 	}
 	return nil, nil, false
 }
@@ -157,13 +172,24 @@ func (m *Mesh) selectRelay(now time.Time) relayChoice {
 	return best
 }
 
+// RelayRefresh is how often a relay registration is renewed.
+//
+// Half the relay's RegistrationTTL, which is the standard way to refresh soft
+// state: late enough to be cheap, early enough that one lost packet does not
+// expire the mapping. It used to go out on every probe tick — every 3s against
+// a 2 minute TTL, about 40x more often than the mapping needed, forever, even
+// when every peer had a direct path and the relay carried nothing.
+const RelayRefresh = relay.RegistrationTTL / 2
+
 // registerWithRelay tells our relay where to reach us.
 //
-// Re-sent on every probe tick rather than once: the relay's mapping is soft
-// state with a TTL, and a NAT rebinding invalidates our address without either
-// side noticing.
+// The relay's mapping is soft state with a TTL, and a NAT rebinding invalidates
+// our address without either side noticing, so it is renewed rather than sent
+// once. A changed relay re-registers immediately: waiting out the refresh
+// interval there would leave us unreachable through it for up to a minute.
 func (m *Mesh) registerWithRelay() {
-	rl := m.selectRelay(time.Now())
+	now := time.Now()
+	rl := m.selectRelay(now)
 	if !rl.ok {
 		if m.relayNow.IsValid() {
 			m.log.Info("no relay available", "was", m.relayNow)
@@ -171,12 +197,17 @@ func (m *Mesh) registerWithRelay() {
 		}
 		return
 	}
-	if rl.addr != m.relayNow {
+	changed := rl.addr != m.relayNow
+	if changed {
 		m.log.Info("using relay", "addr", rl.addr, "discovered", rl.id != "")
 		m.relayNow = rl.addr
 		// The set of usable endpoints just changed, so the data plane is stale.
 		m.requestResync()
 	}
+	if !changed && now.Sub(m.relayRegistered) < RelayRefresh {
+		return
+	}
+	m.relayRegistered = now
 
 	ep, err := m.dev.Bind.ParseEndpoint(rl.addr.String())
 	if err != nil {
@@ -194,6 +225,11 @@ func (m *Mesh) registerWithRelay() {
 // only for finding a path: a path that is never re-probed expires, and the peer
 // then has no usable endpoint until the next probe completes. See PathRefresh.
 func (m *Mesh) probeAll(now time.Time) {
+	// Refreshed each round: this machine's addresses change when it moves
+	// network, and the prober uses them to recognise a candidate that is
+	// really us.
+	m.prober.SetSelfAddrs(localAddrs())
+
 	for _, p := range m.roster.Peers() {
 		if !p.Online(now) {
 			continue

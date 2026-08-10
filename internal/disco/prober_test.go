@@ -2,6 +2,7 @@ package disco
 
 import (
 	"crypto/ed25519"
+	"encoding/hex"
 	"net/netip"
 	"sync"
 	"testing"
@@ -68,13 +69,20 @@ func (f *fakeNet) sendFrom(src netip.AddrPort) func([]byte, netip.AddrPort) erro
 	}
 }
 
-func newTestProber(t *testing.T, key Key, f *fakeNet, at netip.AddrPort) *Prober {
+// newTestProber returns a prober and the peer id others must use to probe it.
+//
+// The id is hex of its device key, exactly as the roster derives it, because a
+// pong is now accepted only from the device that was probed. Passing a label
+// like idB would be rejected — correctly, and confusingly if the helper
+// hid it.
+func newTestProber(t *testing.T, key Key, f *fakeNet, at netip.AddrPort) (*Prober, string) {
 	t.Helper()
 	pub, _, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		t.Fatalf("keygen: %v", err)
 	}
 	p := NewProber(key, pub, f.sendFrom(at))
+	id := hex.EncodeToString(pub)
 
 	f.mu.Lock()
 	f.deliver[at] = func(pkt []byte, from netip.AddrPort) {
@@ -90,7 +98,7 @@ func newTestProber(t *testing.T, key Key, f *fakeNet, at netip.AddrPort) *Prober
 		}
 	}
 	f.mu.Unlock()
-	return p
+	return p, id
 }
 
 func testKey(t *testing.T) Key {
@@ -109,13 +117,13 @@ func TestProbeFindsWorkingPath(t *testing.T) {
 	aAddr := netip.MustParseAddrPort("10.0.0.1:51820")
 	bAddr := netip.MustParseAddrPort("10.0.0.2:51820")
 
-	a := newTestProber(t, key, f, aAddr)
-	newTestProber(t, key, f, bAddr)
+	a, _ := newTestProber(t, key, f, aAddr)
+	_, idB := newTestProber(t, key, f, bAddr)
 
 	now := time.Now()
-	a.Probe("peer-b", []netip.AddrPort{bAddr}, now)
+	a.Probe(idB, []netip.AddrPort{bAddr}, now)
 
-	if _, ok := a.Best("peer-b", time.Now()); !ok {
+	if _, ok := a.Best(idB, time.Now()); !ok {
 		t.Fatal("no working path after probing a reachable candidate")
 	}
 }
@@ -132,12 +140,12 @@ func TestDeadCandidateNotSelected(t *testing.T) {
 
 	f.drops[dead] = true
 
-	a := newTestProber(t, key, f, aAddr)
-	newTestProber(t, key, f, bAddr)
+	a, _ := newTestProber(t, key, f, aAddr)
+	_, idB := newTestProber(t, key, f, bAddr)
 
-	a.Probe("peer-b", []netip.AddrPort{dead, bAddr}, time.Now())
+	a.Probe(idB, []netip.AddrPort{dead, bAddr}, time.Now())
 
-	best, ok := a.Best("peer-b", time.Now())
+	best, ok := a.Best(idB, time.Now())
 	if !ok {
 		t.Fatal("no working path")
 	}
@@ -146,9 +154,13 @@ func TestDeadCandidateNotSelected(t *testing.T) {
 	}
 }
 
+// unprobed is any peer id: these tests never deliver a pong, so the identity
+// check that guards path acceptance is not in play.
+const unprobed = "0f1e2d3c"
+
 func TestNoPathBeforeProbing(t *testing.T) {
 	a := NewProber(testKey(t), make([]byte, 32), func([]byte, netip.AddrPort) error { return nil })
-	if _, ok := a.Best("peer-b", time.Now()); ok {
+	if _, ok := a.Best(unprobed, time.Now()); ok {
 		t.Fatal("reported a working path with no probe sent")
 	}
 }
@@ -165,10 +177,10 @@ func TestPongCarriesOurReflexiveAddress(t *testing.T) {
 
 	f.rewrite[aAddr.String()] = aPublic
 
-	a := newTestProber(t, key, f, aAddr)
-	newTestProber(t, key, f, bAddr)
+	a, _ := newTestProber(t, key, f, aAddr)
+	_, idB := newTestProber(t, key, f, bAddr)
 
-	a.Probe("peer-b", []netip.AddrPort{bAddr}, time.Now())
+	a.Probe(idB, []netip.AddrPort{bAddr}, time.Now())
 
 	refl := a.Reflexive(time.Now())
 	if len(refl) != 1 || refl[0] != aPublic {
@@ -183,14 +195,14 @@ func TestStalePathExpires(t *testing.T) {
 	aAddr := netip.MustParseAddrPort("10.0.0.1:51820")
 	bAddr := netip.MustParseAddrPort("10.0.0.2:51820")
 
-	a := newTestProber(t, key, f, aAddr)
-	newTestProber(t, key, f, bAddr)
-	a.Probe("peer-b", []netip.AddrPort{bAddr}, time.Now())
+	a, _ := newTestProber(t, key, f, aAddr)
+	_, idB := newTestProber(t, key, f, bAddr)
+	a.Probe(idB, []netip.AddrPort{bAddr}, time.Now())
 
-	if _, ok := a.Best("peer-b", time.Now()); !ok {
+	if _, ok := a.Best(idB, time.Now()); !ok {
 		t.Fatal("expected a fresh path")
 	}
-	if _, ok := a.Best("peer-b", time.Now().Add(PathFresh+time.Second)); ok {
+	if _, ok := a.Best(idB, time.Now().Add(PathFresh+time.Second)); ok {
 		t.Fatal("a stale path was still reported as usable")
 	}
 }
@@ -244,13 +256,13 @@ func TestProbeExpiry(t *testing.T) {
 	p := NewProber(key, make([]byte, 32), func([]byte, netip.AddrPort) error { sent++; return nil })
 
 	start := time.Now()
-	p.Probe("peer-b", []netip.AddrPort{netip.MustParseAddrPort("10.0.0.9:1")}, start)
+	p.Probe(unprobed, []netip.AddrPort{netip.MustParseAddrPort("10.0.0.9:1")}, start)
 	if sent != 1 {
 		t.Fatalf("sent %d probes, want 1", sent)
 	}
 
 	// A later probe round expires the earlier unanswered one.
-	p.Probe("peer-b", []netip.AddrPort{netip.MustParseAddrPort("10.0.0.9:1")}, start.Add(ProbeTimeout+time.Second))
+	p.Probe(unprobed, []netip.AddrPort{netip.MustParseAddrPort("10.0.0.9:1")}, start.Add(ProbeTimeout+time.Second))
 
 	p.mu.Lock()
 	pending := len(p.pending)
@@ -275,13 +287,13 @@ func TestPathIsRefreshedBeforeItExpires(t *testing.T) {
 	aAddr := netip.MustParseAddrPort("10.0.0.1:51820")
 	bAddr := netip.MustParseAddrPort("10.0.0.2:51820")
 
-	a := newTestProber(t, key, f, aAddr)
-	newTestProber(t, key, f, bAddr)
+	a, _ := newTestProber(t, key, f, aAddr)
+	_, idB := newTestProber(t, key, f, bAddr)
 
 	now := time.Now()
-	a.Probe("peer-b", []netip.AddrPort{bAddr}, now)
+	a.Probe(idB, []netip.AddrPort{bAddr}, now)
 
-	if a.NeedsProbe("peer-b", now) {
+	if a.NeedsProbe(idB, now) {
 		t.Error("a just-confirmed path was immediately due for renewal")
 	}
 
@@ -289,10 +301,10 @@ func TestPathIsRefreshedBeforeItExpires(t *testing.T) {
 	// handled, microseconds after `now`, so exactly PathRefresh later is
 	// marginally too early.
 	due := now.Add(PathRefresh + time.Second)
-	if !a.NeedsProbe("peer-b", due) {
+	if !a.NeedsProbe(idB, due) {
 		t.Errorf("path not due for renewal after %s", PathRefresh)
 	}
-	if _, ok := a.Best("peer-b", due); !ok {
+	if _, ok := a.Best(idB, due); !ok {
 		t.Errorf("path had already expired by renewal time — the gap this exists to close")
 	}
 }
@@ -416,5 +428,61 @@ func TestBestLeavesStaleSelection(t *testing.T) {
 	}
 	if got.Addr != fresh {
 		t.Errorf("stayed on the stale path %v", got.Addr)
+	}
+}
+
+// Probing our own address must never produce a path.
+//
+// This is a real failure, not a hypothetical. A peer announced an address this
+// machine also held — DHCP had moved the lease — so we probed ourselves, our
+// own responder answered in about a millisecond, and that beat every genuine
+// candidate. WireGuard then sent the peer's handshakes here, which reported
+// them as "Received invalid initiation". The peer sat at "no handshake" with
+// 32 KB sent and nothing received, its selected path a 1ms route to itself.
+//
+// Two things stop it: we do not probe an address we hold, and a pong is
+// accepted only from the device that was probed.
+func TestOwnAddressNeverBecomesAPath(t *testing.T) {
+	key := testKey(t)
+	f := newFakeNet()
+
+	aAddr := netip.MustParseAddrPort("10.0.0.1:51820")
+	a, _ := newTestProber(t, key, f, aAddr)
+	_, idB := newTestProber(t, key, f, netip.MustParseAddrPort("10.0.0.2:51820"))
+
+	a.SetSelfAddrs([]netip.Addr{aAddr.Addr()})
+
+	// The peer announces an address that is really ours.
+	a.Probe(idB, []netip.AddrPort{aAddr}, time.Now())
+
+	if best, ok := a.Best(idB, time.Now()); ok {
+		t.Fatalf("selected our own address %s as a path to a peer", best.Addr)
+	}
+}
+
+// Even without the self-address list, a pong from the wrong device is refused.
+// That is the check that holds when a candidate is ours but unrecognised — and
+// it is also what stops one mesh member answering for another.
+func TestPongFromTheWrongDeviceIsRejected(t *testing.T) {
+	key := testKey(t)
+	f := newFakeNet()
+
+	aAddr := netip.MustParseAddrPort("10.0.0.1:51820")
+	a, _ := newTestProber(t, key, f, aAddr)
+
+	// c answers, but we asked for b.
+	cAddr := netip.MustParseAddrPort("10.0.0.3:51820")
+	_, idC := newTestProber(t, key, f, cAddr)
+	_, idB := newTestProber(t, key, f, netip.MustParseAddrPort("10.0.0.2:51820"))
+
+	a.Probe(idB, []netip.AddrPort{cAddr}, time.Now())
+
+	if _, ok := a.Best(idB, time.Now()); ok {
+		t.Error("accepted a path to b that was answered by c")
+	}
+	// And c answering for itself is still fine.
+	a.Probe(idC, []netip.AddrPort{cAddr}, time.Now())
+	if _, ok := a.Best(idC, time.Now()); !ok {
+		t.Error("rejected a pong from the device actually probed")
 	}
 }

@@ -222,3 +222,39 @@ func TestUnlabelledEntriesRenderBare(t *testing.T) {
 		t.Errorf("empty mesh label leaked into the name:\n%s", got)
 	}
 }
+
+// A device must never write its own bare name into its own /etc/hosts.
+//
+// The machine's hostname normally resolves to 127.0.1.1, and daemons that look
+// themselves up — PAM session setup, web servers, mail — expect a local
+// address. An overlay address under the same name gives them a ULA that RFC
+// 6724 will often prefer, and that is unroutable entirely until logos0 exists,
+// which is the state every boot starts in.
+func TestSelfDoesNotShadowTheHostname(t *testing.T) {
+	block := Render([]Entry{
+		{Name: "jimmy-crib", Addr: "fd3b:ffe9:f81:891a::1", Self: true},
+		{Name: "vps", Addr: "fd3b:ffe9:f81:6f18::1"},
+	}, "mesh")
+
+	for _, line := range strings.Split(block, "\n") {
+		if !strings.Contains(line, "891a") {
+			continue
+		}
+		for _, field := range strings.Fields(line)[1:] {
+			if field == "jimmy-crib" {
+				t.Errorf("own bare hostname written to /etc/hosts:\n%s", block)
+			}
+		}
+		// The qualified name is still useful and shadows nothing.
+		if !strings.Contains(line, "jimmy-crib.mesh") {
+			t.Errorf("own qualified name is missing:\n%s", block)
+		}
+	}
+
+	// A peer's bare name is fine: it does not collide with the local hostname.
+	if !strings.Contains(block, " vps ") && !strings.HasSuffix(strings.TrimSpace(block), " vps") {
+		if !strings.Contains(block, "vps vps.mesh") {
+			t.Errorf("peer lost its short name:\n%s", block)
+		}
+	}
+}

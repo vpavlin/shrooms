@@ -1,6 +1,7 @@
 package disco
 
 import (
+	"encoding/hex"
 	"net/netip"
 	"sync"
 	"time"
@@ -91,6 +92,10 @@ type Prober struct {
 	// selected is the path currently in use per peer, so Best can keep it
 	// rather than re-racing near-equal candidates on every call.
 	selected map[string]netip.AddrPort
+
+	// selfAddrs are this machine's own addresses, so a candidate that is
+	// really us can be recognised. Set by SetSelfAddrs as interfaces change.
+	selfAddrs map[netip.Addr]bool
 }
 
 // NewProber returns a prober that sends via the given function.
@@ -103,7 +108,28 @@ func NewProber(key Key, selfPub []byte, send func([]byte, netip.AddrPort) error)
 		paths:     make(map[string]map[netip.AddrPort]*Path),
 		selected:  make(map[string]netip.AddrPort),
 		reflexive: make(map[netip.AddrPort]time.Time),
+		selfAddrs: make(map[netip.Addr]bool),
 	}
+}
+
+// SetSelfAddrs tells the prober which addresses belong to this machine.
+//
+// Kept current rather than sampled once: a laptop changes address whenever it
+// moves network, and a stale set would let the case this exists for back in.
+func (p *Prober) SetSelfAddrs(addrs []netip.Addr) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.selfAddrs = make(map[netip.Addr]bool, len(addrs))
+	for _, a := range addrs {
+		p.selfAddrs[a.Unmap()] = true
+	}
+}
+
+// isSelf reports whether an address is one of ours.
+func (p *Prober) isSelf(ap netip.AddrPort) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.selfAddrs[ap.Addr().Unmap()]
 }
 
 // Probe sends a ping to every candidate for a peer.
@@ -115,6 +141,14 @@ func NewProber(key Key, selfPub []byte, send func([]byte, netip.AddrPort) error)
 func (p *Prober) Probe(peerID string, candidates []netip.AddrPort, now time.Time) {
 	for _, addr := range candidates {
 		if !addr.IsValid() {
+			continue
+		}
+		// Never probe ourselves. A peer can announce an address we also hold —
+		// after a DHCP lease moves between machines, for instance — and
+		// probing it means talking to our own socket. HandlePong rejects the
+		// reply on identity, so this is belt and braces, but it also stops us
+		// sending traffic to ourselves at all.
+		if p.isSelf(addr) {
 			continue
 		}
 		tx, err := NewTxID()
@@ -161,6 +195,23 @@ func (p *Prober) HandlePong(m *Message, from netip.AddrPort, now time.Time) (pee
 	if !known {
 		// Unsolicited or already expired. Not an error — a late pong for a
 		// probe we gave up on looks exactly like this.
+		return "", false
+	}
+
+	// The pong must come from the device we probed.
+	//
+	// Matching on the transaction id alone is not enough, and the way it fails
+	// is spectacular: probe one of our OWN addresses and our own responder
+	// answers, in about a millisecond. That beats every real path, so it is
+	// selected, and WireGuard then sends the peer's handshakes to this machine
+	// — which reports them as "Received invalid initiation" and never connects.
+	// Observed in the field: a peer sat at "no handshake" with 32 KB sent and
+	// nothing received, its selected path a 1ms route to ourselves.
+	//
+	// SECURITY.md notes that disco authenticates mesh membership rather than
+	// device identity. This closes that for path selection specifically: a
+	// member can no longer answer for another member, by accident or design.
+	if hex.EncodeToString(m.SenderPub[:]) != pr.peerID {
 		return "", false
 	}
 	delete(p.pending, m.TxID)

@@ -237,3 +237,25 @@ func TestRelayFlagSurvivesSealOpen(t *testing.T) {
 		t.Error("relay flag did not survive the round trip")
 	}
 }
+
+// The relay registration must be renewed well inside the relay's TTL, and far
+// less often than the probe tick it used to ride on.
+//
+// It went out every ProbeInterval (3s) against a RegistrationTTL of 2 minutes —
+// about 40x more often than the mapping needed, forever, even when every peer
+// had a direct path and the relay carried none of our traffic.
+func TestRelayRefreshIsInsideTheTTL(t *testing.T) {
+	if RelayRefresh >= relay.RegistrationTTL {
+		t.Fatalf("RelayRefresh (%s) must be less than RegistrationTTL (%s), or the mapping expires",
+			RelayRefresh, relay.RegistrationTTL)
+	}
+	// Half the TTL survives a lost registration; much closer to the TTL does not.
+	if RelayRefresh > relay.RegistrationTTL/2 {
+		t.Errorf("RelayRefresh (%s) leaves no room for a lost packet before the TTL (%s)",
+			RelayRefresh, relay.RegistrationTTL)
+	}
+	if RelayRefresh <= disco.ProbeInterval {
+		t.Errorf("RelayRefresh (%s) is no better than the probe tick (%s) it replaced",
+			RelayRefresh, disco.ProbeInterval)
+	}
+}

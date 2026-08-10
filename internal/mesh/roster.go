@@ -13,8 +13,21 @@ import (
 )
 
 // OfflineAfter is how long without an announce before a peer is shown offline.
-// Announces go out every 30-60s, so this tolerates a couple of misses.
+// Announces go out every AnnounceInterval (45s), so this tolerates three
+// misses before a peer is called offline.
 const OfflineAfter = 3 * time.Minute
+
+// ForgetAfter is when a peer stops being remembered at all, as opposed to
+// being remembered as offline.
+//
+// Comfortably beyond control.MaxClockSkew (2h), and that bound is the reason
+// this is safe: forgetting a peer also forgets its replay counter, and a
+// captured announce older than the skew window is already rejected on its
+// timestamp. Dropping the counter therefore cannot reopen a replay.
+//
+// Long enough that a machine switched off for the working day comes back as
+// itself, with its timings and throughput history intact.
+const ForgetAfter = 6 * time.Hour
 
 // PeerInfo is what the mesh knows about another device.
 //
@@ -130,6 +143,32 @@ func (r *Roster) Len() int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return len(r.peers)
+}
+
+// Prune drops peers not seen for longer than ForgetAfter and returns their ids.
+//
+// Without this nothing is ever removed: Apply only inserts, Forget was wired
+// solely to revocation (unimplemented until M5), and Online() merely reports
+// false while the entry stays. Since a peer is anyone holding the network key
+// — a bearer credential — one member announcing endless distinct device keys
+// grows every node's maps until restart. Peers legitimately come and go too,
+// so this is a liveness fix as much as a hardening one.
+//
+// The caller is expected to forget the same ids elsewhere (replay, paths,
+// timings, rates), which is why the ids are returned rather than dropped
+// silently.
+func (r *Roster) Prune(now time.Time) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var gone []string
+	for id, p := range r.peers {
+		if now.Sub(p.LastSeen) > ForgetAfter {
+			delete(r.peers, id)
+			gone = append(gone, id)
+		}
+	}
+	return gone
 }
 
 // Forget drops a peer, e.g. on revocation.

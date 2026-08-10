@@ -32,6 +32,20 @@ type Entry struct {
 	// Mesh is the local label for the mesh this peer belongs to. Empty means
 	// an unlabelled single-mesh node, which renders exactly as before.
 	Mesh string
+
+	// Self marks this device's own entry, which is written differently: the
+	// bare name is omitted and only the qualified form is emitted.
+	//
+	// Writing the bare name here shadows the machine's own hostname. A host
+	// normally resolves its hostname to 127.0.1.1, and every daemon that looks
+	// itself up — PAM session setup, mail, web servers — expects a local
+	// address. Adding an overlay address under the same name gives them a ULA
+	// instead, which RFC 6724 will often *prefer*, and which is unroutable
+	// entirely until logos0 exists. That happens on every boot, before this
+	// daemon has started.
+	//
+	// The qualified name is kept because it is useful and shadows nothing.
+	Self bool
 }
 
 // Render builds the managed block.
@@ -62,7 +76,10 @@ func Render(entries []Entry, suffix string) string {
 
 	// Resolve within-mesh duplicates first, so the cross-mesh count below sees
 	// the names that will actually be written.
-	type resolved struct{ name, mesh, addr string }
+	type resolved struct {
+		name, mesh, addr string
+		self             bool
+	}
 	var out []resolved
 	seen := map[string]bool{} // mesh+name
 	for _, e := range sorted {
@@ -77,7 +94,7 @@ func Render(entries []Entry, suffix string) string {
 			}
 		}
 		seen[key] = true
-		out = append(out, resolved{name: name, mesh: sanitise(e.Mesh), addr: e.Addr})
+		out = append(out, resolved{name: name, mesh: sanitise(e.Mesh), addr: e.Addr, self: e.Self})
 	}
 
 	// A bare name is only safe if exactly one entry claims it.
@@ -95,20 +112,27 @@ func Render(entries []Entry, suffix string) string {
 		if r.mesh != "" {
 			names = append(names, r.name+"."+r.mesh)
 		}
-		if claims[r.name] == 1 {
+		// Never the bare name for ourselves: it would shadow the machine's own
+		// hostname. See Entry.Self.
+		if claims[r.name] == 1 && !r.self {
 			names = append(names, r.name)
 		}
-		if len(names) == 0 {
-			// Ambiguous and unlabelled: nothing safe to write.
-			continue
-		}
-
-		fields := make([]string, 0, len(names)*2)
+		fields := make([]string, 0, len(names)*2+1)
 		for _, n := range names {
 			fields = append(fields, n)
 			if suffix != "" {
 				fields = append(fields, n+"."+suffix)
 			}
+		}
+		// Our own entry with no mesh label has no qualified short form above,
+		// so emit name.suffix directly — otherwise a single-mesh node loses its
+		// own name entirely.
+		if r.self && r.mesh == "" && suffix != "" {
+			fields = append(fields, r.name+"."+suffix)
+		}
+		if len(fields) == 0 {
+			// Ambiguous and unlabelled: nothing safe to write.
+			continue
 		}
 		fmt.Fprintf(&b, "%s  %s\n", r.addr, strings.Join(fields, " "))
 	}

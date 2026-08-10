@@ -1,6 +1,7 @@
 package mesh
 
 import (
+	"encoding/hex"
 	"testing"
 	"time"
 
@@ -147,5 +148,53 @@ func TestRosterForget(t *testing.T) {
 	r.Forget(peer.DevicePub)
 	if r.Len() != 0 {
 		t.Fatalf("Forget left %d peers", r.Len())
+	}
+}
+
+// A peer that never comes back must eventually be forgotten, not merely
+// remembered as offline.
+//
+// Every per-peer map was insert-only, and a peer is anyone holding the network
+// key — a bearer credential — so one member announcing endless device keys grew
+// every node's maps until restart.
+func TestRosterForgetsLongGonePeers(t *testing.T) {
+	nk, _ := identity.NewNetworkKey()
+	self, _ := identity.New()
+	gone, _ := identity.New()
+	here, _ := identity.New()
+
+	r := NewRoster(nk, self.DevicePub)
+	start := time.Now()
+	r.Apply(newAnnounce(t, gone, "gone", nil, 1), start)
+	r.Apply(newAnnounce(t, here, "here", nil, 1), start)
+
+	// Offline is not forgotten: a machine switched off overnight must come back
+	// as itself, with its identity and history intact.
+	if ids := r.Prune(start.Add(OfflineAfter * 2)); len(ids) != 0 {
+		t.Errorf("pruned %d peers merely offline", len(ids))
+	}
+	if r.Len() != 2 {
+		t.Fatalf("roster has %d peers", r.Len())
+	}
+
+	// One of them keeps announcing; only the silent one goes.
+	r.Apply(newAnnounce(t, here, "here", nil, 2), start.Add(ForgetAfter))
+
+	ids := r.Prune(start.Add(ForgetAfter + time.Minute))
+	if len(ids) != 1 || ids[0] != hex.EncodeToString(gone.DevicePub) {
+		t.Fatalf("pruned %v, want just the silent peer", ids)
+	}
+	if r.Len() != 1 {
+		t.Errorf("roster has %d peers, want 1", r.Len())
+	}
+}
+
+// Forgetting a peer also forgets its replay counter, which is only safe because
+// ForgetAfter is beyond the clock-skew window: an announce old enough to be
+// replayed is already rejected on its timestamp.
+func TestForgetAfterOutlastsClockSkew(t *testing.T) {
+	if ForgetAfter <= control.MaxClockSkew {
+		t.Errorf("ForgetAfter (%s) must exceed MaxClockSkew (%s), or forgetting a peer reopens replay",
+			ForgetAfter, control.MaxClockSkew)
 	}
 }
