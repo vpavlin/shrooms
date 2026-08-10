@@ -108,3 +108,31 @@ func TestSamePeersEmpty(t *testing.T) {
 		t.Error("adding to an empty set was missed")
 	}
 }
+
+// The applied-config cache records what we last wrote, not what the device
+// holds, and those diverge: WireGuard roams a peer's endpoint to the source of
+// any authenticated packet. A peer answering over a relay therefore moves the
+// device's endpoint while the cache still says direct — and every later sync is
+// a no-op that preserves the drift.
+//
+// Observed in the field: `paths` reported the direct LAN address selected and
+// in use at 5ms while the tunnel actually ran through a VPS on another
+// continent.
+func TestInvalidateForcesTheNextWrite(t *testing.T) {
+	d := &Device{}
+
+	peers := []Peer{peer(1, "192.168.0.152:51820")}
+
+	// Pretend this configuration was already written.
+	d.applied = peers
+	if !samePeers(d.applied, peers) {
+		t.Fatal("identical configurations did not compare equal")
+	}
+
+	// After Invalidate the same configuration must no longer look applied, so
+	// the caller writes it again and overrides whatever the device drifted to.
+	d.Invalidate()
+	if d.applied != nil {
+		t.Error("Invalidate left the applied configuration in place")
+	}
+}

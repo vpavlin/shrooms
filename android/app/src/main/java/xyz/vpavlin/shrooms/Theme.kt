@@ -1,4 +1,4 @@
-package dev.logos.vpn
+package xyz.vpavlin.shrooms
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme

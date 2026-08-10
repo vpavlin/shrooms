@@ -1,4 +1,4 @@
-package dev.logos.vpn
+package xyz.vpavlin.shrooms
 
 import android.Manifest
 import android.content.Intent
@@ -56,7 +56,7 @@ class MainActivity : ComponentActivity() {
         scanner.launch(
             ScanOptions()
                 .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-                .setPrompt("Scan the code from `logos-vpn key show --qr`")
+                .setPrompt("Scan the code from `shrooms key show --qr`")
                 .setBeepEnabled(false)
                 .setOrientationLocked(false)
         )
@@ -131,7 +131,7 @@ private fun JoinScreen(dir: String, onScan: ((String) -> Unit) -> Unit, onDone: 
         Modifier.fillMaxSize().padding(24.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.Center,
     ) {
-        Text("logos-vpn", style = MaterialTheme.typography.displaySmall, color = Palette.Bone)
+        Text("Shrooms", style = MaterialTheme.typography.displaySmall, color = Palette.Bone)
         Spacer(Modifier.height(6.dp))
         Text(
             "an overlay mesh between your own devices",

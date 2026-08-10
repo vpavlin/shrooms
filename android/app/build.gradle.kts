@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "dev.logos.vpn"
+    namespace = "xyz.vpavlin.shrooms"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "dev.logos.vpn"
+        applicationId = "xyz.vpavlin.shrooms"
         // The prebuilt liblogosdelivery is compiled against API 24, so nothing
         // older can load it.
         minSdk = 26

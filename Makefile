@@ -114,20 +114,27 @@ install: check-lib
 	CGO_LDFLAGS="-L$(abspath $(LD_LIB)) -llogosdelivery -Wl,-rpath,$(LIBDIR)" 		$(GO) build -trimpath -ldflags "-X main.version=$(VERSION)" 		-o $(DESTDIR)$(PREFIX)/bin/shrooms ./cmd/shrooms
 	install -d $(DESTDIR)/etc/systemd/system
 	install -m 0644 packaging/shrooms.service $(DESTDIR)/etc/systemd/system/
+	install -d $(DESTDIR)$(PREFIX)/share/bash-completion/completions
+	install -m 0644 packaging/shrooms.bash $(DESTDIR)$(PREFIX)/share/bash-completion/completions/shrooms
 	@echo
 	@echo "installed:"
 	@echo "  $(PREFIX)/bin/shrooms"
 	@echo "  $(LIBDIR)/"
 	@echo "  /etc/systemd/system/shrooms.service"
+	@echo "  $(PREFIX)/share/bash-completion/completions/shrooms"
 	@echo
 	@echo "next:"
 	@echo "  sudo shrooms init --relay --name $$(hostname)   # or: join <KEY>"
 	@echo "  sudo systemctl daemon-reload"
 	@echo "  sudo systemctl enable --now shrooms"
+	@echo
+	@echo "completion applies to new shells; for this one:"
+	@echo "  source $(PREFIX)/share/bash-completion/completions/shrooms"
 
 uninstall:
 	systemctl disable --now shrooms 2>/dev/null || true
-	rm -f $(DESTDIR)$(PREFIX)/bin/shrooms $(DESTDIR)/etc/systemd/system/shrooms.service
+	rm -f $(DESTDIR)$(PREFIX)/bin/shrooms $(DESTDIR)/etc/systemd/system/shrooms.service \
+	      $(DESTDIR)$(PREFIX)/share/bash-completion/completions/shrooms
 	rm -rf $(DESTDIR)$(LIBDIR)
 	@echo "removed the binary, libraries and unit."
 	@echo "config and identity are left alone:"

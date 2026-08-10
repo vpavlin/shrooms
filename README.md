@@ -612,14 +612,18 @@ download.
 
 | | |
 |---|---|
-| **S1** cgo binding to liblogosdelivery | ✅ publish→receive over the real fleet |
+| **S1** cgo binding to Logos Delivery | ✅ publish→receive over the real fleet |
 | **S3** rotating topics stay on one shard | ✅ 6 epochs, all to `/waku/2/rs/2/3` |
 | **M0** WireGuard sharing a socket with control traffic | ✅ tunnel + control packets, no root |
-| **M1** discovered peers replace static config | ✅ **verified over the real internet**: NATed laptop ↔ VPS, direct tunnel, ssh across it |
-| **M2** NAT traversal | 🟨 reflexive discovery proven on real NAT; punching between two NATed nodes unproven |
-| **M3** relay fallback | 🟨 auto-discovered and working in containers; untested on real infrastructure |
-| **M6** name resolution | 🟨 `shrooms hosts` **verified for real** (`ssh root@vps.mesh`); DNS server planned |
-| **M4** seamless operation · **M5** credentials | ⬜ not started |
+| **M1** discovered peers replace static config | ✅ **over the real internet**: NATed laptop ↔ VPS, direct tunnel, ssh across it |
+| **M2** NAT traversal | 🟨 reflexive discovery proven on real NAT; punching between two NATed nodes still unproven — [T3](TESTING.md) settles it |
+| **M3** relay fallback | ✅ **carrying real traffic**: a phone on carrier NAT reaches its peers through a VPS relay it discovered itself |
+| **M6** name resolution | ✅ resolver registered with the host, on Linux and Android; `<service>.<device>.mesh` too |
+| **services** | ✅ local ports and LAN devices published by name, including things that never joined the mesh |
+| **Android** | ✅ a full participant, in daily use — tunnels, names, roaming between wifi and mobile data |
+| **M4** seamless operation | 🟨 roaming survives and the mesh repairs itself after a rendezvous outage; switching networks is still rough on the phone |
+| **M5** credentials | ⬜ designed ([ADR-017](docs/adr/017-invite-tokens.md), [ADR-018](docs/adr/018-credentials-instead-of-a-shared-key.md)), not built — the network key is still a shared bearer secret |
+| **Basecamp view** | 🟨 packaged and published; cannot read its status inside Basecamp's QML sandbox until a companion core module exists |
 
 `make m0` / `make m1` / `make m3` / `make s1` / `make s3` reproduce these.
 

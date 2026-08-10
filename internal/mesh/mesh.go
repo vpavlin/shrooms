@@ -705,6 +705,7 @@ func hasBest(m *Mesh, id string, now time.Time) bool {
 func (m *Mesh) syncPeers() error {
 	peers := m.roster.Peers()
 	out := make([]wg.Peer, 0, len(peers))
+	drifted := false
 
 	now := time.Now()
 	rl := m.selectRelay(now)
@@ -760,7 +761,25 @@ func (m *Mesh) syncPeers() error {
 			// plausibly work from here over one that certainly cannot.
 			peer.Endpoint = bootstrapEndpoint(p.Endpoints)
 		}
+		// Has the device drifted away from what we last asked for? WireGuard
+		// roams a peer's endpoint to wherever its packets arrive from, so a
+		// peer that replies over the relay moves the endpoint under us. The
+		// desired configuration is then unchanged while the device disagrees,
+		// and SetPeers would skip the write and keep the drift.
+		//
+		// Seen in the field: `paths` reported the direct LAN address selected
+		// and in use at 5ms while the tunnel ran through a VPS on another
+		// continent, because a relayed packet had rewritten the endpoint and
+		// nothing ever wrote it back.
+		if peer.Endpoint != "" && haveStats && st.Endpoint != "" && st.Endpoint != peer.Endpoint {
+			drifted = true
+		}
+
 		out = append(out, peer)
+	}
+	if drifted {
+		m.log.Info("data plane drifted from the selected paths; rewriting")
+		m.dev.Invalidate()
 	}
 	if err := m.dev.SetPeers(out); err != nil {
 		return err

@@ -1,4 +1,4 @@
-package dev.logos.vpn
+package xyz.vpavlin.shrooms
 
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode

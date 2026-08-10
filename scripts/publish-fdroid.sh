@@ -19,7 +19,7 @@ cd "$(dirname "$0")/.."
 HOST=${FDROID_HOST:-192.168.0.152}
 FDROID_DIR=${FDROID_DIR:-'~/fdroid'}
 FDROID_BIN=${FDROID_BIN:-'~/fdroid-venv/bin/fdroid'}
-APP_ID=${APP_ID:-dev.logos.vpn}
+APP_ID=${APP_ID:-xyz.vpavlin.shrooms}
 VERSION_NAME=${VERSION_NAME:-0.1-prototype}
 
 echo "==> checking $HOST"
@@ -115,11 +115,12 @@ ssh "$HOST" "cat > fdroid/metadata/$APP_ID.yml" <<'META'
 Categories:
   - Internet
   - Security
-Name: shrooms
-Summary: Overlay mesh VPN between your own devices
+Name: Shrooms
+Summary: The mycelial mesh VPN — your devices, no coordinator
 Description: |
   An encrypted overlay network between your own machines, with no coordination
-  server to trust or run.
+  server to trust or run. Nodes find each other through the network's own
+  gossip and move data directly between one another.
 
   WireGuard carries the traffic. Peers find each other over Logos Messaging,
   which is used only for rendezvous — once a tunnel exists it keeps working

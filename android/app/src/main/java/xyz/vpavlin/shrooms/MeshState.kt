@@ -1,4 +1,4 @@
-package dev.logos.vpn
+package xyz.vpavlin.shrooms
 
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow

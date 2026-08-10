@@ -1,4 +1,4 @@
-package dev.logos.vpn
+package xyz.vpavlin.shrooms
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -38,11 +38,11 @@ class MeshVpnService : VpnService() {
     private var netCallback: ConnectivityManager.NetworkCallback? = null
 
     companion object {
-        const val ACTION_CONNECT = "dev.logos.vpn.CONNECT"
-        const val ACTION_DISCONNECT = "dev.logos.vpn.DISCONNECT"
+        const val ACTION_CONNECT = "xyz.vpavlin.shrooms.CONNECT"
+        const val ACTION_DISCONNECT = "xyz.vpavlin.shrooms.DISCONNECT"
         private const val CHANNEL = "mesh"
         private const val NOTIFICATION_ID = 1
-        private const val TAG = "logos-vpn"
+        private const val TAG = "shrooms"
 
         /** MTU 1280: the IPv6 minimum, which no path may fragment below. */
         private const val MTU = 1280
@@ -83,7 +83,7 @@ class MeshVpnService : VpnService() {
                 val prefix = overlay.substringBeforeLast(":").let { MeshState.prefixOf(overlay) }
 
                 val builder = Builder()
-                    .setSession("logos-vpn")
+                    .setSession("Shrooms")
                     .addAddress(overlay, 128)
                     .addRoute(prefix, 48)
                     .setMtu(MTU)
@@ -387,7 +387,7 @@ class MeshVpnService : VpnService() {
         )
 
         return Notification.Builder(this, CHANNEL)
-            .setContentTitle("logos-vpn")
+            .setContentTitle("Shrooms")
             .setContentText(text)
             .setSmallIcon(R.drawable.ic_mesh)
             .setContentIntent(open)

@@ -86,6 +86,17 @@ func NewDevice(t tun.Device, priv identity.WGKey, listenPort uint16, logger *dev
 // Instead peers are updated in place, which preserves handshake state, and only
 // peers that have genuinely left are removed. Endpoint changes in particular
 // must not disturb an established tunnel — that is how roaming works.
+// Invalidate forgets what was last applied, so the next SetPeers writes
+// unconditionally.
+//
+// For the case where the device has changed underneath us — endpoint roaming —
+// and our idea of the configuration is therefore stale rather than wrong.
+func (d *Device) Invalidate() {
+	d.mu.Lock()
+	d.applied = nil
+	d.mu.Unlock()
+}
+
 func (d *Device) SetPeers(peers []Peer) error {
 	want := make(map[identity.WGKey]bool, len(peers))
 	for _, p := range peers {
@@ -94,6 +105,14 @@ func (d *Device) SetPeers(peers []Peer) error {
 
 	// Nothing to do if the configuration is identical. Skipping the write
 	// avoids touching the device at all on the common no-op sync.
+	//
+	// The cache is what WE last wrote, not what the device currently holds, and
+	// those diverge: WireGuard roams a peer's endpoint to the source of any
+	// authenticated packet it receives. So a peer that answers over a relay
+	// silently moves the device's endpoint while this cache still says direct,
+	// and every later sync is a no-op that preserves the drift. Invalidate
+	// makes the caller able to say "write it anyway"; see Mesh.syncPeers, which
+	// compares intent against the device's real endpoints.
 	d.mu.Lock()
 	unchanged := d.applied != nil && samePeers(d.applied, peers)
 	d.mu.Unlock()
