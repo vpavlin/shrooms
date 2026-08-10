@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bufio"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"strings"
+
+	"golang.org/x/term"
 
 	"github.com/vpavlin/logos-vpn/internal/identity"
 	"github.com/vpavlin/logos-vpn/internal/mesh"
@@ -176,14 +180,84 @@ func cmdPrepare(args []string) error {
 
 	fmt.Printf("Prepared %s for %q.\n\n", *cfgPath, cfg.Name)
 	fmt.Println("The mesh key is not set. Add it yourself:")
-	fmt.Printf("  sudo sed -i 's|%s|<YOUR-KEY>|' %s\n\n", state.KeyPlaceholder, *cfgPath)
-	fmt.Println("or edit the network_key line by hand. Get the key from a machine")
-	fmt.Println("already on the mesh:")
+	fmt.Println("  sudo logos-vpn set-key")
+	fmt.Println()
+	fmt.Println("That reads the key from a prompt or stdin and validates it, so it")
+	fmt.Println("never appears in your shell history or in a command line other")
+	fmt.Println("processes can see. Get it from a machine already on the mesh:")
 	fmt.Println("  logos-vpn key show          # or --qr to scan it")
 	fmt.Println()
 	fmt.Println("Then start it:")
 	fmt.Println("  sudo systemctl start logos-vpn")
 	return nil
+}
+
+// cmdSetKey writes the mesh key into an existing config.
+//
+// The other half of `prepare`: that sets a machine up without ever handling the
+// key, and this is how the key arrives afterwards, from whoever holds it. It
+// used to be an instruction to run sed, which put the key in shell history and
+// in a command line every other process on the box can read — the two places a
+// bearer credential should never be.
+func cmdSetKey(args []string) error {
+	fs := flag.NewFlagSet("set-key", flag.ExitOnError)
+	cfgPath, _ := commonFlags(fs)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	cfg, err := state.LoadConfigUnvalidated(*cfgPath)
+	if err != nil {
+		return err
+	}
+
+	key, err := readSecret("Mesh key: ")
+	if err != nil {
+		return err
+	}
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return errors.New("no key given")
+	}
+	// Validated before writing: a mistyped key otherwise fails much later, as
+	// a mesh where nobody appears.
+	if _, err := identity.ParseNetworkKey(key); err != nil {
+		return fmt.Errorf("that is not a mesh key: %w", err)
+	}
+
+	was := cfg.NetworkKey
+	cfg.NetworkKey = key
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	if err := state.WriteConfig(*cfgPath, cfg); err != nil {
+		return err
+	}
+
+	if was != state.KeyPlaceholder && was != key {
+		fmt.Println("Replaced the existing key. Every peer must hold the same one,")
+		fmt.Println("so any machine still using the old key will not be seen.")
+	}
+	fmt.Printf("Key written to %s.\n\nStart it:\n  sudo systemctl start logos-vpn\n", *cfgPath)
+	return nil
+}
+
+// readSecret reads one line without echoing it, falling back to plain input
+// when there is no terminal — which is what makes `... | logos-vpn set-key`
+// work in a script.
+func readSecret(prompt string) (string, error) {
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		fmt.Fprint(os.Stderr, prompt)
+		b, err := term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Fprintln(os.Stderr)
+		return string(b), err
+	}
+	r := bufio.NewReader(os.Stdin)
+	line, err := r.ReadString('\n')
+	if err != nil && line == "" {
+		return "", err
+	}
+	return line, nil
 }
 
 func cmdKey(args []string) error {

@@ -59,6 +59,17 @@ gossiped revocation, and one-time-use invite tokens so the copy/pasted artifact
 stops being a permanent secret. `admin_pk` and the announce `credential` field
 already exist (empty) so the migration is not a wire-format break.
 
+**A published service is reachable by every member.** `services` forwards a
+mesh connection to a loopback port, and a great many applications treat "bound
+to 127.0.0.1" as their access control — no password, on the reasoning that only
+a local user can connect. Publishing one makes every device holding the network
+key a local user, which is a larger change than the config line looks. The
+forwarder itself adds no authentication and is not a place to add it: what is
+missing is authentication in the application.
+→ Bounded by M5 credentials only in the sense that mesh membership itself
+becomes revocable. Nothing here makes an unauthenticated application safe to
+publish.
+
 **Disco authenticates mesh membership, not device identity.** Any mesh member
 can send a probe claiming any sender key. The consequence is bounded: disco only
 selects a *candidate path*, and WireGuard's own handshake is what actually

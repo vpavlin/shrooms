@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -103,8 +104,12 @@ func cmdStatus(args []string) error {
 		}
 	}
 
-	fmt.Printf("network  %s          peers %d (%d up)\n", st.Prefix, len(st.Peers), online)
-	fmt.Printf("self     %s  %s\n", st.Name, st.Overlay)
+	// tabwriter, not padding: the prefix and name are variable width, so
+	// hardcoded spaces line up for one mesh and not the next.
+	head := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintf(head, "network\t%s\tpeers %d (%d up)\n", st.Prefix, len(st.Peers), online)
+	fmt.Fprintf(head, "self\t%s  %s\t\n", st.Name, st.Overlay)
+	head.Flush()
 
 	// The rendezvous plane is reported whenever it is unhealthy, and quietly
 	// otherwise. When the fleet is unreachable, tunnels keep working and the
@@ -178,7 +183,61 @@ func cmdStatus(args []string) error {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s/%s\t%s\n",
 			name, p.Overlay, ann, tun, ep, human(p.RxBytes), human(p.TxBytes), took)
 	}
-	return w.Flush()
+	if err := w.Flush(); err != nil {
+		return err
+	}
+
+	printServices(os.Stdout, st.Services, st.NameRouter)
+	return nil
+}
+
+// printServices lists what this device publishes, and only this device: nothing
+// is announced, so no node knows what any other one runs. The names printed are
+// the ones to type on another machine, which is the only reason to print them.
+func printServices(out io.Writer, svcs []serviceStatus, router []routerStatus) {
+	if len(svcs) == 0 {
+		return
+	}
+	fmt.Fprintf(out, "\nservices published here\n")
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tREACHABLE AS\tFORWARDS TO\tCONNS")
+	// The bare name only works while the router holds port 80, so what is
+	// printed as "reachable as" has to depend on whether it does. Printing a
+	// URL that does not work is worse than printing a longer one that does.
+	bare := false
+	for _, r := range router {
+		if r.Port == 80 && (r.Listening || r.Direct) {
+			bare = true
+		}
+	}
+	for _, s := range svcs {
+		addr := fmt.Sprintf("%s.%s:%d", s.Name, s.DNSName, s.Port)
+		if bare {
+			addr = fmt.Sprintf("http://%s.%s", s.Name, s.DNSName)
+		}
+		state := s.Target
+		switch {
+		case s.Err != "":
+			// The service is declared and not working. Say why on the row
+			// rather than in a log the user is not reading.
+			state = "unavailable: " + s.Err
+		case s.Direct:
+			// Something else holds the port on the overlay address, which
+			// means the application binds it itself and is already reachable.
+			state = "the application itself"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%d\n", s.Name, addr, state, s.Conns)
+	}
+	w.Flush()
+
+	// Only when it is broken. Working infrastructure does not need a line, but
+	// "why do I still need the port?" needs an answer in the place the question
+	// is asked.
+	for _, r := range router {
+		if r.Err != "" {
+			fmt.Fprintf(out, "  note: port %d is not held (%s), so names need their port\n", r.Port, r.Err)
+		}
+	}
 }
 
 // cmdPaths shows candidate-level detail: which endpoints answered a probe,

@@ -2,6 +2,7 @@ package dns
 
 import (
 	"net/netip"
+	"strings"
 	"testing"
 
 	"golang.org/x/net/dns/dnsmessage"
@@ -12,9 +13,18 @@ var laptop = netip.MustParseAddr("fd3b:ffe9:f81:81a7:18bc:69b1:9bb:7e69")
 func testServer() *Server {
 	return &Server{
 		Suffix: "mesh",
+		// The server hands over everything below the suffix and does not
+		// decide which label names the device — "laptop", "laptop.home" and
+		// "immich.laptop" all arrive here whole. This fake resolves the same
+		// shapes internal/mesh does, so the split of responsibility is what is
+		// under test.
 		Lookup: func(host string) (netip.Addr, bool) {
-			if host == "laptop" {
-				return laptop, true
+			labels := strings.Split(host, ".")
+			if labels[0] == "laptop" {
+				return laptop, true // "laptop", or "laptop.home" (ADR-015)
+			}
+			if len(labels) >= 2 && labels[1] == "laptop" {
+				return laptop, true // a service on laptop
 			}
 			return netip.Addr{}, false
 		},
@@ -160,5 +170,26 @@ func TestStatsCounted(t *testing.T) {
 	q, a, r, _, _ := s.Stats()
 	if q != 2 || a != 1 || r != 1 {
 		t.Errorf("queries=%d answers=%d refused=%d, want 2/1/1", q, a, r)
+	}
+}
+
+// A service name is one label deeper and resolves to the device that runs it.
+// The resolver must not assume the leftmost label is the device, or
+// immich.laptop.mesh would be looked up as a device called "immich".
+func TestResolvesServiceName(t *testing.T) {
+	reply, err := testServer().answer(query(t, "immich.laptop.mesh.", dnsmessage.TypeAAAA))
+	if err != nil {
+		t.Fatalf("answer: %v", err)
+	}
+	h, answers := parse(t, reply)
+	if h.RCode != dnsmessage.RCodeSuccess || len(answers) != 1 {
+		t.Fatalf("rcode=%v answers=%d", h.RCode, len(answers))
+	}
+	aaaa, ok := answers[0].Body.(*dnsmessage.AAAAResource)
+	if !ok {
+		t.Fatalf("not an AAAA: %T", answers[0].Body)
+	}
+	if netip.AddrFrom16(aaaa.AAAA) != laptop {
+		t.Errorf("got %v, want the device address %v", netip.AddrFrom16(aaaa.AAAA), laptop)
 	}
 }

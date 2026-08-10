@@ -111,14 +111,22 @@ else
 
     # Ship the config; the remote generates its own device identity on first
     # start, so no private key ever crosses the wire.
-    scp -q "$TMP/config.toml" "$HOST:/tmp/logos-vpn-config.toml"
-    ssh "$HOST" 'sudo mv /tmp/logos-vpn-config.toml /etc/logos-vpn/config.toml
-                 sudo chmod 600 /etc/logos-vpn/config.toml'
+    #
+    # Piped over ssh stdin rather than scp'd to /tmp. The config carries the
+    # network key, which is a bearer credential — anyone holding it is a member
+    # — and staging it at a predictable path in shared /tmp left it readable by
+    # every local user on the remote for the window between landing and chmod.
+    # `install -m600` creates it with the right mode from the start, so there is
+    # no window at all.
+    ssh "$HOST" 'sudo install -d -m 755 /etc/logos-vpn &&
+                 sudo install -m 600 /dev/stdin /etc/logos-vpn/config.toml' \
+        < "$TMP/config.toml"
 fi
 
 echo "==> installing compose file"
-scp -q docker/compose-node.yml "$HOST:/tmp/logos-vpn-compose.yml"
-ssh "$HOST" 'sudo mv /tmp/logos-vpn-compose.yml /etc/logos-vpn/compose.yml'
+ssh "$HOST" 'sudo install -d -m 755 /etc/logos-vpn &&
+             sudo install -m 644 /dev/stdin /etc/logos-vpn/compose.yml' \
+    < docker/compose-node.yml
 
 echo "==> starting"
 ssh "$HOST" 'cd /etc/logos-vpn && sudo docker compose -f compose.yml up -d --force-recreate' 2>&1 | tail -3

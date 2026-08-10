@@ -28,3 +28,4 @@ number appears, its source is named.
 | [016](016-android-reuses-the-go-core.md) | Android reuses the Go core | accepted |
 | [017](017-invite-tokens.md) | Invite tokens | proposed |
 | [018](018-credentials-instead-of-a-shared-key.md) | Credentials instead of a shared key | proposed |
+| [019](019-service-addresses.md) | An address per service | proposed |

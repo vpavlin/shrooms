@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/vpavlin/logos-vpn/internal/identity"
+	"github.com/vpavlin/logos-vpn/internal/service"
 )
 
 // Default locations. Overridable so a developer can run several nodes on one
@@ -43,6 +44,13 @@ const KeyPlaceholder = "PASTE-THE-NETWORK-KEY-HERE"
 // says cluster 2, so a logos.dev node is hung up on by every peer it meets.
 // logos.test is cluster 2 and the preset agrees, so it needs no override.
 const DefaultPreset = "logos.test"
+
+// Node modes. Core relays for the network; Edge subscribes and forwards
+// nothing. See Config.Mode for what each costs.
+const (
+	ModeCore = "Core"
+	ModeEdge = "Edge"
+)
 
 // Config is the human-edited configuration.
 type Config struct {
@@ -105,7 +113,30 @@ type Config struct {
 	// measured that you need it.
 	ClusterID uint16
 
-	// Mode is the Waku node mode: Core on always-on machines.
+	// Mode is the rendezvous node mode: ModeCore or ModeEdge.
+	//
+	// Core relays for the network. That is the neighbourly setting and it is
+	// not cheap: a Core node subscribes to every shard in the cluster, so it
+	// carries the whole cluster's traffic and not just this mesh's. Measured
+	// idle on a home connection, against logos.test, over ten minutes:
+	//
+	//	Core   20.3 MB/h   (0.49 GB/day)   139 connections in 10 min
+	//	Edge    3.4 MB/h   (0.08 GB/day)    90 connections in 10 min
+	//
+	// In that sample 693 of 745 relayed messages belonged to another
+	// application entirely, and 14 were on this mesh's shard. By comparison
+	// everything logos-vpn itself sends — a 512-byte announce every 45s, a
+	// 104-byte probe per path every 5s — is well under 1 MB/h.
+	//
+	// Edge uses filter and lightpush instead: it subscribes to what it wants
+	// and forwards nothing. Right for anything metered or battery-powered, and
+	// on Android arguably right regardless, since Doze suspends the SoC and
+	// gossipsub tears down every connection when the keepalive loop is late
+	// (ADR-003).
+	//
+	// Still Core by default everywhere, including Android: someone has to
+	// relay, and changing what a node contributes to the network should be a
+	// decision rather than a surprise.
 	Mode string
 
 	// Relay makes this node forward traffic for peers that cannot reach each
@@ -129,6 +160,20 @@ type Config struct {
 	// has and everyone already understands.
 	StatusFile string
 
+	// StatusFileGroup is the group allowed to read StatusFile, by name or
+	// numeric gid. Empty means the daemon's own group, which is root.
+	//
+	// Required in practice, not optional: the daemon runs as root, the file is
+	// written 0640, and a desktop monitoring view runs as you. Without a group
+	// the file is readable only by root and the view reports that it cannot
+	// read it — which is precisely the state this setting exists to avoid, and
+	// which shipped for a day because "0640" was implemented and "with a group"
+	// was not.
+	//
+	//	status_file       = "/run/logos-vpn/status.json"
+	//	status_file_group = "vpavlin"
+	StatusFileGroup string
+
 	// UIListen optionally serves the status JSON over HTTP, for a viewer that
 	// can do neither. A fallback, not the default: it opens a port on a VPN
 	// daemon, which wants a better reason than convenience.
@@ -144,6 +189,22 @@ type Config struct {
 	// NetworkManager and others also touch is a surprise, and it should be the
 	// operator's choice. The DNS server (M6) removes the need for it.
 	ManageHosts bool
+
+	// Services publishes local ports on the mesh under their own names, so
+	// that what runs here is reachable as `<service>.<device>.mesh` rather than
+	// as a port number someone has to remember.
+	//
+	//	services = ["immich:2283", "jellyfin:8096", "grafana:443->3000"]
+	//
+	// Each entry is `name:port`, optionally `->target` when the application
+	// listens somewhere other than the same port on loopback. The daemon binds
+	// the port on the overlay address and forwards to the target, which is what
+	// makes this work for the many applications that bind 0.0.0.0 and would
+	// otherwise never see an IPv6 connection.
+	//
+	// Flat strings rather than a table because this parser has no nesting; see
+	// internal/service for the syntax.
+	Services []string
 
 	// HostsSuffix is the domain appended to peer names.
 	HostsSuffix string
@@ -191,10 +252,32 @@ func (c *Config) Validate() error {
 	if c.Interface == "" {
 		return errors.New("interface is empty")
 	}
+	// Checked here because the library does not: an unrecognised mode is
+	// accepted and quietly behaves as some default, so a typo reads as
+	// "I set Edge and it still uses a gigabyte a day".
+	switch c.Mode {
+	case ModeCore, ModeEdge:
+	case "":
+		return errors.New("mode is empty — expected \"Core\" or \"Edge\"")
+	default:
+		return fmt.Errorf("mode %q is not a node mode — expected %q (relays for the network) or %q (subscribes only)",
+			c.Mode, ModeCore, ModeEdge)
+	}
 	if c.Preset == "" && len(c.EntryNodes) == 0 {
 		return errors.New("preset is empty and no entry_nodes are set — the node would have nowhere to bootstrap from")
 	}
+	// Rejected at load rather than at bind: a typo here otherwise surfaces as
+	// one service quietly missing from a mesh that is otherwise fine.
+	if _, err := service.ParseSpecs(c.Services); err != nil {
+		return fmt.Errorf("services: %w", err)
+	}
 	return nil
+}
+
+// ServiceSpecs returns the parsed services. Validate has already checked them,
+// so an error here is a caller that skipped it.
+func (c *Config) ServiceSpecs() ([]service.Spec, error) {
+	return service.ParseSpecs(c.Services)
 }
 
 // Key returns the parsed network key.
@@ -329,6 +412,23 @@ func LoadConfig(path string) (Config, error) {
 	return c, nil
 }
 
+// LoadConfigUnvalidated reads a config without checking it.
+//
+// For the one caller that must read a config it knows is incomplete: set-key
+// operates on a `prepare`d file whose key is still the placeholder, and
+// LoadConfig would refuse it for exactly that reason.
+func LoadConfigUnvalidated(path string) (Config, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return Config{}, fmt.Errorf("read config: %w", err)
+	}
+	c, err := parseConfig(string(raw))
+	if err != nil {
+		return Config{}, fmt.Errorf("%s: %w", path, err)
+	}
+	return c, nil
+}
+
 func parseConfig(text string) (Config, error) {
 	c := DefaultConfig()
 	for n, line := range strings.Split(text, "\n") {
@@ -368,6 +468,8 @@ func parseConfig(text string) (Config, error) {
 			c.Relay = unquote(val) == "true"
 		case "relay_addr":
 			c.RelayAddr = unquote(val)
+		case "status_file_group":
+			c.StatusFileGroup = unquote(val)
 		case "status_file":
 			c.StatusFile = unquote(val)
 		case "ui_listen":
@@ -384,6 +486,8 @@ func parseConfig(text string) (Config, error) {
 			c.ListenPort = p
 		case "advertise":
 			c.Advertise = parseArray(val)
+		case "services":
+			c.Services = parseArray(val)
 		default:
 			return c, fmt.Errorf("line %d: unknown key %q", n+1, key)
 		}
@@ -451,6 +555,9 @@ func WriteConfig(path string, c Config) error {
 		b.WriteString("\n# Explicit bootstrap addresses, used instead of the preset's.\n")
 		fmt.Fprintf(&b, "entry_nodes = %s\n", formatArray(c.EntryNodes))
 	}
+	b.WriteString("\n# Core relays for the whole cluster (~20 MB/h measured idle, most of it\n")
+	b.WriteString("# other applications' traffic); Edge subscribes and forwards nothing\n")
+	b.WriteString("# (~3 MB/h). Use Edge on anything metered or battery-powered.\n")
 	fmt.Fprintf(&b, "mode        = %q\n", c.Mode)
 	if c.Relay {
 		b.WriteString("\n# This node forwards traffic for peers that cannot reach each other.\n")
@@ -464,6 +571,13 @@ func WriteConfig(path string, c Config) error {
 	if c.StatusFile != "" {
 		b.WriteString("\n# Write the status JSON here for a monitoring view.\n")
 		fmt.Fprintf(&b, "status_file = %q\n", c.StatusFile)
+		b.WriteString("# The group allowed to read it. The daemon runs as root, so without\n")
+		b.WriteString("# this only root can read the file and a desktop view cannot.\n")
+		if c.StatusFileGroup != "" {
+			fmt.Fprintf(&b, "status_file_group = %q\n", c.StatusFileGroup)
+		} else {
+			b.WriteString("# status_file_group = \"your-username\"\n")
+		}
 	}
 	if c.UIListen != "" {
 		b.WriteString("\n# Serve the status JSON over HTTP for a monitoring view.\n")
@@ -491,6 +605,18 @@ func WriteConfig(path string, c Config) error {
 			fmt.Fprintf(&b, "%q", a)
 		}
 		b.WriteString("]\n")
+	}
+
+	b.WriteString("\n# Publish local ports on the mesh under their own names. \"immich:2283\"\n")
+	b.WriteString("# makes this machine's port 2283 reachable from every device as\n")
+	b.WriteString("# immich.<this-device>.mesh:2283 — no port to remember, and it works even\n")
+	b.WriteString("# when the application binds 0.0.0.0 and would never accept an IPv6\n")
+	b.WriteString("# connection, because the daemon forwards to loopback. Add \"->port\" or\n")
+	b.WriteString("# \"->host:port\" when the application listens somewhere else.\n")
+	if len(c.Services) == 0 {
+		b.WriteString("# services = [\"immich:2283\", \"jellyfin:8096\"]\n")
+	} else {
+		fmt.Fprintf(&b, "services = %s\n", formatArray(c.Services))
 	}
 
 	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {

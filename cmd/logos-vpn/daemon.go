@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -22,6 +23,7 @@ import (
 	dnssrv "github.com/vpavlin/logos-vpn/internal/dns"
 	"github.com/vpavlin/logos-vpn/internal/identity"
 	"github.com/vpavlin/logos-vpn/internal/mesh"
+	"github.com/vpavlin/logos-vpn/internal/service"
 	"github.com/vpavlin/logos-vpn/internal/state"
 	"github.com/vpavlin/logos-vpn/internal/waku"
 	"github.com/vpavlin/logos-vpn/internal/wg"
@@ -115,7 +117,18 @@ func cmdDaemon(args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	srv, err := serveControl(ctx, log, *sock, m, cfg, self)
+	// Services, on the overlay address. The interface is up and holds the
+	// address by now; binding one it does not hold yet would fail.
+	var services *service.Publisher
+	if specs, err := cfg.ServiceSpecs(); err != nil {
+		log.Warn("services not published", "err", err)
+	} else if len(specs) > 0 {
+		services = service.Publish(ctx, self, mesh.DNSName(cfg.Name, cfg.HostsSuffix), specs,
+			func(msg string, args ...any) { log.Info(msg, args...) })
+		defer services.Close()
+	}
+
+	srv, err := serveControl(ctx, log, *sock, m, cfg, self, services)
 	if err != nil {
 		return err
 	}
@@ -181,6 +194,40 @@ type statusPayload struct {
 	// distinct values means endpoint-dependent (symmetric) NAT, which is the
 	// case where punching fails and a relay is required.
 	Reflexive []string `json:"reflexive,omitempty"`
+
+	// Services are the local ports this device publishes on the mesh. Only
+	// this device's own: services are not announced, so no node knows what any
+	// other one publishes.
+	Services []serviceStatus `json:"services,omitempty"`
+
+	// NameRouter is the shared-port router that lets a service be reached
+	// without a port at all. Reported separately because it can fail on its
+	// own — port 80 needs a capability the services' own ports do not.
+	NameRouter []routerStatus `json:"name_router,omitempty"`
+}
+
+// routerStatus is one shared port of the name router.
+type routerStatus struct {
+	Port      uint16 `json:"port"`
+	Listening bool   `json:"listening"`
+	Direct    bool   `json:"direct,omitempty"`
+	Err       string `json:"err,omitempty"`
+}
+
+// serviceStatus is one published local service.
+type serviceStatus struct {
+	Name   string `json:"name"`
+	Port   uint16 `json:"port"`
+	Target string `json:"target"`
+
+	// DNSName is this device's name, so a viewer can render the full
+	// <service>.<device>.<suffix> without reimplementing the sanitising.
+	DNSName string `json:"dns_name,omitempty"`
+
+	Listening bool   `json:"listening"`
+	Direct    bool   `json:"direct,omitempty"`
+	Conns     uint64 `json:"conns"`
+	Err       string `json:"err,omitempty"`
 }
 
 type pathStatus struct {
@@ -288,7 +335,7 @@ func serveUI(ctx context.Context, log *slog.Logger, addr string, h http.Handler)
 }
 
 // serveControl exposes status over a unix socket.
-func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Mesh, cfg state.Config, self netip.Addr) (*http.Server, error) {
+func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Mesh, cfg state.Config, self netip.Addr, services *service.Publisher) (*http.Server, error) {
 	// systemd's RuntimeDirectory creates this, but the daemon must also work
 	// when run by hand.
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -381,6 +428,28 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Me
 		for _, ap := range m.Reflexive() {
 			out.Reflexive = append(out.Reflexive, ap.String())
 		}
+		if services != nil {
+			for _, sv := range services.Status() {
+				out.Services = append(out.Services, serviceStatus{
+					Name:      sv.Name,
+					Port:      sv.Port,
+					Target:    sv.Target,
+					DNSName:   mesh.DNSName(cfg.Name, cfg.HostsSuffix),
+					Listening: sv.Listening,
+					Direct:    sv.Direct,
+					Conns:     sv.Conns,
+					Err:       sv.Err,
+				})
+			}
+			sort.Slice(out.Services, func(i, j int) bool {
+				return out.Services[i].Name < out.Services[j].Name
+			})
+			for _, r := range services.Router() {
+				out.NameRouter = append(out.NameRouter, routerStatus{
+					Port: r.Port, Listening: r.Listening, Direct: r.Direct, Err: r.Err,
+				})
+			}
+		}
 		return out
 	}
 
@@ -393,7 +462,7 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Me
 	// and access is then decided by file permissions rather than by a listener
 	// a VPN daemon has no other reason to run.
 	if cfg.StatusFile != "" {
-		if err := writeStatusFile(ctx, log, cfg.StatusFile, snapshot); err != nil {
+		if err := writeStatusFile(ctx, log, cfg.StatusFile, cfg.StatusFileGroup, snapshot); err != nil {
 			log.Warn("could not write the status file", "path", cfg.StatusFile, "err", err)
 		} else {
 			log.Info("status file up", "path", cfg.StatusFile)

@@ -66,10 +66,16 @@ APK=android/logos-vpn-unsigned.apk
 [ -f "$APK" ] || { echo "no unsigned APK"; exit 1; }
 
 echo "==> shipping to $HOST"
-scp -q "$APK" "$HOST:/tmp/logos-vpn-unsigned.apk"
+# Into a private directory, not a predictable /tmp path. This is not about
+# disclosure — an unsigned APK is not secret — but substitution: a local user
+# on that host could replace the file between the copy and apksigner, and we
+# would sign their code with the repo key.
+STAGE=$(ssh "$HOST" 'd=$(mktemp -d); chmod 700 "$d"; printf %s "$d"')
+[ -n "$STAGE" ] || { echo "could not create a staging directory on $HOST"; exit 1; }
+scp -q "$APK" "$HOST:$STAGE/unsigned.apk"
 
 echo "==> signing with the repo key (the password never leaves that host)"
-ssh "$HOST" "FDROID_DIR='$FDROID_DIR' VERSION_CODE='$VERSION_CODE' bash -s" <<'REMOTE'
+ssh "$HOST" "FDROID_DIR='$FDROID_DIR' VERSION_CODE='$VERSION_CODE' STAGE='$STAGE' bash -s" <<'REMOTE'
 set -eu
 BT=$(ls -d "$HOME"/Android/Sdk/build-tools/* | sort -V | tail -1)
 eval FD="$FDROID_DIR"
@@ -87,13 +93,13 @@ case "$ks" in /*) ;; *) ks="$FD/$ks" ;; esac
 [ -f "$ks" ] || { echo "keystore not found: $ks"; exit 1; }
 
 # Align before signing; zipalign afterwards would invalidate the signature.
-"$BT/zipalign" -p -f 4 /tmp/logos-vpn-unsigned.apk /tmp/logos-vpn-aligned.apk
+"$BT/zipalign" -p -f 4 "$STAGE/unsigned.apk" "$STAGE/aligned.apk"
 "$BT/apksigner" sign \
     --ks "$ks" --ks-key-alias "$alias" \
     --ks-pass env:KSPASS --key-pass env:KEYPASS \
-    --out "/tmp/logos-vpn-$VERSION_CODE.apk" /tmp/logos-vpn-aligned.apk
+    --out "/tmp/logos-vpn-$VERSION_CODE.apk" "$STAGE/aligned.apk"
 "$BT/apksigner" verify --print-certs "/tmp/logos-vpn-$VERSION_CODE.apk" | head -2
-rm -f /tmp/logos-vpn-unsigned.apk /tmp/logos-vpn-aligned.apk
+rm -rf "$STAGE"
 REMOTE
 
 echo "==> metadata"

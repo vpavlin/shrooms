@@ -40,7 +40,12 @@ func main() {
 		err = cmdHosts(os.Args[2:])
 	case "key":
 		err = cmdKey(os.Args[2:])
-	case "version", "--version", "-v":
+	case "set-key":
+		err = cmdSetKey(os.Args[2:])
+	// Not "-v": the daemon uses it for verbose, so `logos-vpn -v` expecting
+	// more logging printed a version string and exited. One letter, two
+	// meanings, and the wrong one is silent.
+	case "version", "--version":
 		fmt.Println(version)
 	case "-h", "--help", "help":
 		usage()
@@ -67,6 +72,9 @@ Usage:
   logos-vpn prepare [--name N] [--relay]  write a config with the key left blank,
                                           for setting a machine up without the
                                           key passing through anyone else
+  logos-vpn set-key                       write the key into a prepared config,
+                                          read from a prompt or stdin so it
+                                          never reaches shell history
   logos-vpn daemon                     run the mesh node
   logos-vpn status [--json]            show the roster and tunnel state
   logos-vpn paths [NAME]               show probed candidates and which won

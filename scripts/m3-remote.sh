@@ -183,14 +183,17 @@ TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 # announce, which is half of what the test is for.
 
 echo "==> installing on $HOST"
-scp -q "$TMP/config.toml" "$HOST:/tmp/m3-config.toml"
+# Not scp'd to a predictable /tmp path: this file contains the network key.
+# Staged under the remote's own home with a private mode instead.
+REMOTE_CFG=$(ssh "$HOST" 'd=$(mktemp -d); printf %s "$d/config.toml"')
+ssh "$HOST" "install -m 600 /dev/stdin '$REMOTE_CFG'" < "$TMP/config.toml"
 
 # Plain `docker run` rather than compose. The remote engine may be podman with
 # podman-compose, where `internal:` networks, static ipv4_address and SELinux
 # bind mounts are the least reliable corner; these commands behave identically
 # on docker and podman. It also removes a file that had to be kept in step with
 # this script.
-ssh "$HOST" "REMOTE_DIR=$REMOTE_DIR bash -s" <<'REMOTE'
+ssh "$HOST" "REMOTE_DIR=$REMOTE_DIR REMOTE_CFG=$REMOTE_CFG bash -s" <<'REMOTE'
 set -euo pipefail
 S=""; [ "$(id -u)" -eq 0 ] || S=sudo
 
@@ -203,8 +206,8 @@ if command -v getenforce >/dev/null && [ "$(getenforce 2>/dev/null)" = "Enforcin
 fi
 
 $S mkdir -p "$REMOTE_DIR/nat/etc" "$REMOTE_DIR/nat/state"
-$S mv /tmp/m3-config.toml "$REMOTE_DIR/nat/etc/config.toml"
-$S chmod 600 "$REMOTE_DIR/nat/etc/config.toml"
+$S install -m 600 "$REMOTE_CFG" "$REMOTE_DIR/nat/etc/config.toml"
+rm -f "$REMOTE_CFG"
 
 # Idempotent: a previous run must not block this one.
 $S docker rm -f logos-vpn-natted logos-vpn-testgw >/dev/null 2>&1 || true

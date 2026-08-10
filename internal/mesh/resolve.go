@@ -77,9 +77,44 @@ func DNSName(name, suffix string) string {
 
 // Lookup is the resolver handed to the DNS server: this device first, then
 // peers.
+//
+// The name arrives with the suffix already stripped, so it is one of:
+//
+//	laptop                  a device
+//	laptop.home             a device in a named mesh (ADR-015)
+//	immich.home-server      a service on a device
+//
+// The last two are indistinguishable by shape, so the leftmost label is tried
+// as a device name first — which keeps the mesh-qualified form working exactly
+// as before — and only if that fails is it read as a service on the label to
+// its right.
+//
+// A service resolves to its host's address and is not checked for existence:
+// only the device running it knows what it publishes, and that is not
+// announced (a service list would push the announce past its fixed 512-byte
+// padding). So `typo.home-server.mesh` resolves and then refuses the
+// connection, rather than returning NXDOMAIN. Honest enough — the name does
+// point at a real machine — and it is what makes adding a service require no
+// coordination with any other device.
 func (m *Mesh) Lookup(host string) (netip.Addr, bool) {
-	if addr, ok := m.ResolveSelf(host); ok {
+	labels := strings.Split(host, ".")
+
+	// A device, by its own name.
+	if addr, ok := m.lookupDevice(labels[0]); ok {
 		return addr, true
 	}
-	return m.Resolve(host)
+	// A service on a device: the label to the right is the host.
+	if len(labels) >= 2 {
+		if addr, ok := m.lookupDevice(labels[1]); ok {
+			return addr, true
+		}
+	}
+	return netip.Addr{}, false
+}
+
+func (m *Mesh) lookupDevice(name string) (netip.Addr, bool) {
+	if addr, ok := m.ResolveSelf(name); ok {
+		return addr, true
+	}
+	return m.Resolve(name)
 }

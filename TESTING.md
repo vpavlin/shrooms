@@ -181,7 +181,58 @@ three times on Android and presented as "DNS is broken" each time.
 
 ---
 
-## T10 — a fresh machine, from nothing
+## T10 — a published service
+
+The interesting case is deliberately the awkward one: an application that binds
+`0.0.0.0` and nothing else, which is most of them.
+
+**Setup:** on one machine, something listening on IPv4 loopback only — a real
+application, or `python3 -m http.server 8000 --bind 127.0.0.1`. Then:
+
+```toml
+services = ["test:8000"]      # in that machine's config, then restart
+```
+
+**Watch:** `logos-vpn status` on that machine lists it under *services
+published here*, with the name to type.
+
+**Pass:** from another device, both of these return the page:
+
+```console
+$ curl http://test.<device>.mesh          # via the shared-port name router
+$ curl http://test.<device>.mesh:8000     # the declared port
+```
+
+From the phone's browser too — same name, no port forwarding, nothing
+configured on either end.
+
+**Watch for:**
+
+- *The port works and the bare name does not.* The name router did not get port
+  80. `status` says why on a note under the table; the usual cause is a missing
+  `CAP_NET_BIND_SERVICE`, the same capability the resolver needs for port 53.
+- *Resolves but the connection is refused.* The name is fine and the forwarder
+  is not running. Check `status` on the publishing machine: a service that
+  failed to bind says so on its row.
+- *Does not resolve at all.* The device half of the name is wrong, or the
+  resolver is not registered — `resolvectl query test.<device>.mesh` names the
+  link it asked.
+- *A name for a service that does not exist still resolves.* Correct. Services
+  are not announced, so the name resolves to the machine that would run it, and
+  an HTTP request there gets a 404 listing the names that do exist.
+
+**Also check a protocol that is not HTTP.** `ssh -p 22 ssh.<device>.mesh` with
+`services = ["ssh:22"]` must work *with* the port and must not be expected to
+work without it: nothing but HTTP and TLS says the name it dialled. That
+limitation is the subject of [ADR-019](docs/adr/019-service-addresses.md).
+
+**Then:** point the application at `::` instead of loopback and restart it.
+`status` should report the service as reachable directly rather than as an
+error — the daemon must not take a port from an application that binds it.
+
+---
+
+## T11 — a fresh machine, from nothing
 
 The install path, run as a stranger would.
 

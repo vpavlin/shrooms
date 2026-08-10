@@ -249,11 +249,13 @@ func (s *Server) rcode(header dnsmessage.Header, q dnsmessage.Question, code dns
 	return b.Finish()
 }
 
-// hostWithinSuffix returns the label to look up, for names we serve.
+// hostWithinSuffix returns the name to look up, for names we serve: everything
+// below the suffix, with the suffix removed.
 //
-// Accepts both "laptop.mesh" and "laptop.home.mesh": the qualified form is what
-// survives two meshes holding the same device name (ADR-015), and the short one
-// is what people type.
+// It does NOT decide which label is the device. "laptop.home.mesh" is a
+// device in a named mesh (ADR-015) and "immich.home-server.mesh" is a service
+// on a device, and those are the same shape — only the mesh knows which labels
+// name what, so it is handed the whole remainder and left to work it out.
 func (s *Server) hostWithinSuffix(name string) (string, bool) {
 	suffix := strings.ToLower(strings.Trim(s.Suffix, "."))
 	if suffix == "" || name == "" {
@@ -265,11 +267,6 @@ func (s *Server) hostWithinSuffix(name string) (string, bool) {
 	rest := strings.TrimSuffix(name, "."+suffix)
 	if rest == "" {
 		return "", false
-	}
-	// "laptop.home" -> "laptop"; the mesh label is not resolved here because a
-	// node knows only its own meshes and they are local names anyway.
-	if i := strings.IndexByte(rest, '.'); i >= 0 {
-		return rest[:i], true
 	}
 	return rest, true
 }

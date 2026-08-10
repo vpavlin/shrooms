@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/vpavlin/logos-vpn/internal/identity"
+	"github.com/vpavlin/logos-vpn/internal/state"
 )
 
 func TestResolveFindsPeerByName(t *testing.T) {
@@ -66,5 +67,49 @@ func TestResolveUnknownName(t *testing.T) {
 	m := &Mesh{roster: NewRoster(nk, self.DevicePub)}
 	if _, ok := m.Resolve("nosuch"); ok {
 		t.Error("resolved a name nobody claims")
+	}
+}
+
+// A service name is <service>.<device>, which is the same shape as the
+// mesh-qualified <device>.<mesh> form. Lookup must handle both, and must not
+// resolve a service by treating its leftmost label as a device.
+func TestLookupResolvesServiceOnPeer(t *testing.T) {
+	nk, _ := identity.NewNetworkKey()
+	self, _ := identity.New()
+	peer, _ := identity.New()
+
+	m := &Mesh{roster: NewRoster(nk, self.DevicePub), cfg: state.Config{Name: "laptop"}}
+	m.self = identity.OverlayAddr(nk, self.DevicePub)
+	m.roster.Apply(newAnnounce(t, peer, "home-server", nil, 1), time.Now())
+	server := identity.OverlayAddr(nk, peer.DevicePub)
+
+	cases := []struct {
+		name string
+		want any // netip.Addr, or nil for "must not resolve"
+	}{
+		{"home-server", server},          // a device
+		{"immich.home-server", server},   // a service on a device
+		{"jellyfin.home-server", server}, // any service name; none are announced
+		{"laptop", m.self},               // ourselves
+		{"immich.laptop", m.self},        // a service on ourselves
+		{"home-server.home", server},     // the mesh-qualified form still works
+		{"immich.nonesuch", nil},         // the device does not exist
+		{"nonesuch", nil},                // nor does this
+	}
+	for _, c := range cases {
+		addr, ok := m.Lookup(c.name)
+		if c.want == nil {
+			if ok {
+				t.Errorf("Lookup(%q) resolved to %v, want no answer", c.name, addr)
+			}
+			continue
+		}
+		if !ok {
+			t.Errorf("Lookup(%q) did not resolve", c.name)
+			continue
+		}
+		if addr != c.want {
+			t.Errorf("Lookup(%q) = %v, want %v", c.name, addr, c.want)
+		}
 	}
 }
