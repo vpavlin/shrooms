@@ -1,5 +1,5 @@
 {
-  description = "logos-vpn — monitor an overlay mesh between your own devices";
+  description = "Shrooms — watch a mycelial mesh";
 
   inputs = {
     logos-module-builder.url = "github:logos-co/logos-module-builder";
