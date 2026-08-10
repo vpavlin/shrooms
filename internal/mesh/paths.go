@@ -281,9 +281,11 @@ func (m *Mesh) candidates() []string {
 		add(net.JoinHostPort(ip.String(), strconv.Itoa(int(m.cfg.ListenPort))))
 	}
 
-	// Keep the announce inside its fixed padding.
-	if len(out) > 8 {
-		out = out[:8]
+	// Keep the announce inside its fixed padding. Four is the real ceiling for
+	// a typical name; announceWith trims further if a longer one needs it, so
+	// this is a cheap first cut rather than the guarantee.
+	if len(out) > 4 {
+		out = out[:4]
 	}
 	return out
 }

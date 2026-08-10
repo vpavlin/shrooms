@@ -9,6 +9,7 @@ package mesh
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -485,7 +486,22 @@ func (m *Mesh) announceWith(now time.Time, fresh bool) error {
 		Fresh:     fresh,
 	}
 
+	// Trim until it fits. The announce is padded to a fixed size and Seal
+	// refuses anything larger, so a node with enough addresses simply stopped
+	// announcing — it logged "announce failed" once per interval and vanished
+	// from every roster, which looks like a network fault rather than a node
+	// that had too many interfaces. Five was enough: two reflexive addresses
+	// and three local ones is an ordinary laptop with docker installed.
+	//
+	// Dropping from the end is right because candidates() is ordered by
+	// usefulness: reflexive first, then configured, then local addresses.
 	raw, err := control.Seal(m.nk, topic.Epoch(now), m.st.Identity.DevicePriv, a)
+	for err != nil && len(a.Endpoints) > 0 && errors.Is(err, control.ErrTooLarge) {
+		a.Endpoints = a.Endpoints[:len(a.Endpoints)-1]
+		m.log.Debug("announce too large; dropping the least useful endpoint",
+			"remaining", len(a.Endpoints))
+		raw, err = control.Seal(m.nk, topic.Epoch(now), m.st.Identity.DevicePriv, a)
+	}
 	if err != nil {
 		return fmt.Errorf("seal announce: %w", err)
 	}

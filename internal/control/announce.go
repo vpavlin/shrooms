@@ -35,6 +35,13 @@ const PaddedSize = 512
 // long a captured message stays replayable.
 const MaxClockSkew = 2 * time.Hour
 
+// ErrTooLarge means the message does not fit the fixed padding.
+//
+// Distinguishable so a caller can shrink and retry rather than give up: a node
+// with several addresses would otherwise stop announcing entirely, which is
+// indistinguishable from being offline.
+var ErrTooLarge = errors.New("message exceeds the padded size")
+
 // Kind identifies a control message type.
 type Kind string
 
@@ -117,7 +124,8 @@ func Seal(nk identity.NetworkKey, epoch int64, priv ed25519.PrivateKey, msg any)
 		return nil, fmt.Errorf("marshal envelope: %w", err)
 	}
 	if len(plain) > PaddedSize-2 {
-		return nil, fmt.Errorf("message is %d bytes, exceeds padded size %d", len(plain), PaddedSize)
+		return nil, fmt.Errorf("%w: message is %d bytes, exceeds padded size %d",
+			ErrTooLarge, len(plain), PaddedSize)
 	}
 
 	// 2-byte big-endian length, then the envelope, then zero padding.
