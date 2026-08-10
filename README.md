@@ -1,27 +1,72 @@
-# logos-vpn
+# Shrooms 🍄
 
-An overlay mesh VPN between your own machines, using
-[Logos Messaging](https://github.com/logos-messaging) for rendezvous
-instead of a coordination server.
+**The mycelial mesh VPN.** Nodes find each other through the network's own
+gossip and move data directly between one another. No coordination server, no
+account, no vendor in the path.
 
-WireGuard carries the traffic. Logos Messaging is only used to find each other — cold
-start, roaming, and repair. Once tunnels exist they sustain themselves, so
-there is nothing to keep running and nothing to pay for.
+Yes, it is a mushroom pun. Deal with it.
 
-**Status: working over the real internet.** A laptop behind NAT and a VPS
-discovered each other over the public logos.test fleet and brought up a direct
-WireGuard tunnel — no coordination server, one shared key:
+Discovery and signalling run over **Logos Delivery**, a censorship-resistant
+pub/sub transport from the Logos stack. **WireGuard** carries the traffic —
+the real thing, in userspace, not something WireGuard-shaped. Delivery is used
+only to find each other: cold start, roaming, and repair. Once a tunnel exists
+it sustains itself, so there is nothing to keep running and nothing to pay for.
 
-```
-$ ssh root@vps.mesh          # names come from the mesh, not DNS
+Addresses are derived from device keys, so there is no allocation, no
+conflicts, and nothing to coordinate. Every node holds the full roster and none
+of them is authoritative.
+
+**Status: working over the real internet**, on Linux and Android, daily:
+
+```console
+$ ssh root@vps.mesh                      # names come from the mesh, not DNS
+$ curl http://ha.jimmy-crib.mesh         # a LAN device that never joined
 $ ping fd3b:ffe9:f81:6f18:41e:c574:c529:5bbf
 4 packets transmitted, 4 received, 0% packet loss
 rtt min/avg/max/mdev = 31.883/63.188/94.992/25.589 ms
 ```
 
-See [Status](#status) for what is proven and what is not.
+---
+
+## What Shrooms is not
+
+Every mesh VPN README claims to be decentralised. Here is where the seams
+actually are, because a promise you cannot keep is worse than one you never
+made.
+
+**It is not relay-free.** Two nodes behind hostile NAT sometimes cannot reach
+each other however well you punch — carrier-grade NAT that rewrites the port
+per destination makes it impossible, not merely hard. Shrooms relays through
+**a node you already run**, chosen automatically from its own announcement
+([ADR-012](docs/adr/012-relay-hosting.md)). The difference from a DERP-style
+service is not that no relay exists; it is that yours is a peer you own, and
+nobody else's machine is ever in the path. Claiming "no relay" would be a lie
+told by a project that had not yet met a real phone.
+
+**Rendezvous is somebody else's infrastructure.** Discovery rides a public
+Logos fleet on a shard shared with other applications. That is a dependency
+and a metadata surface: the shard is visible, and the crowd on it is the only
+cover there is. Your *traffic* never touches it — tunnels keep working with
+the fleet unreachable — but "no third party anywhere" would be false.
+
+**Membership is a shared secret.** One network key grants membership, so a
+leak from any device compromises the mesh, and revocation means rotating for
+everyone. [ADR-018](docs/adr/018-credentials-instead-of-a-shared-key.md) is the
+design that fixes this; it is not built yet.
+
+**It is a prototype**, used daily by its author and nobody else. See
+[Status](#status) for exactly what is proven and what is not, and
+[SECURITY.md](SECURITY.md) for what is deliberately deferred.
+
+**The code is still called `logos-vpn`.** The binary, the config at
+`/etc/logos-vpn`, the systemd unit and the Android package all keep that name,
+and every command below is real and current. Renaming them is a migration —
+config paths, a published Android application id, an F-Droid repo, existing
+installs — and worth doing deliberately rather than as a side effect of picking
+a name.
 
 ---
+
 
 ## How it works
 
@@ -43,7 +88,7 @@ See [Status](#status) for what is proven and what is not.
 Three planes, deliberately separate:
 
 - **Data** — userspace WireGuard, direct peer-to-peer where NAT allows.
-- **Rendezvous** — Logos Messaging pub/sub, used intermittently: cold start, network
+- **Rendezvous** — Logos Delivery pub/sub, used intermittently: cold start, network
   change, partition repair.
 - **Steady state** — WireGuard relearns a peer's endpoint from any
   authenticated packet, so a node that roams and sends first needs no signalling
@@ -77,7 +122,7 @@ authoritative behind it.
 
 | | |
 |---|---|
-| Linux | x86-64. Android is designed for but not yet built; iOS is out of scope |
+| Linux | x86-64. Android is built and in daily use; iOS is out of scope |
 | glibc ≥ 2.38 | Ubuntu 24.04+ works, **Debian 12 does not** (2.36). Irrelevant if you deploy the container |
 | `/dev/net/tun` | **verify this on a cheap VPS** — OpenVZ/LXC hosts often disable it. Insist on KVM |
 | 1 UDP port | default 51820, inbound only needed on nodes you want reachable |
@@ -261,6 +306,99 @@ cloud-init and NetworkManager also touch should be a deliberate choice.
 Still a hosts file, so it needs root and does not exist on Android — the DNS
 server that replaces it is [ADR-013](docs/adr/013-name-resolution.md).
 
+### 6b. Give services their own names
+
+A machine can publish what it runs, so it is reached by name rather than by a
+port number someone has to remember:
+
+```toml
+# in /etc/logos-vpn/config.toml on the machine that runs them
+services = ["immich:2283", "jellyfin:8096"]
+```
+
+From any other device on the mesh — including the phone's browser:
+
+```console
+$ curl http://immich.home-server.mesh          # no port
+$ curl http://immich.home-server.mesh:2283     # the declared port also works
+```
+
+The name is `<service>.<device>.mesh`. `grafana:443->3000` publishes 443 and
+forwards to 3000 when the two should differ.
+
+**How the bare name works.** Every service on a device shares that device's one
+overlay address, so port 80 cannot simply belong to one of them — something has
+to say which service a connection wants. Both protocols that matter in a browser
+already do: HTTP puts the name in the `Host` header and TLS in the SNI
+extension, before anything else on the wire. So the daemon also listens on 80
+and 443 and forwards by the name asked for. Nothing is terminated and no
+certificate is involved — the TLS ClientHello is cleartext by construction, the
+name is read out of it, and the bytes go on untouched to the application, which
+does its own TLS exactly as before.
+
+The limit is worth being plain about: it works for HTTP and TLS, because
+nothing else announces the name it dialled. `ssh`, syncthing and databases still
+need `<service>.<device>.mesh:<port>`, which always works.
+
+**Why this is not just a DNS entry.** Mesh addresses are IPv6, and a great many
+self-hosted applications bind `0.0.0.0` and nothing else. Pointing a name at the
+overlay address would then resolve perfectly and connect to nothing. So the
+daemon listens on the overlay address itself and forwards to `127.0.0.1`, which
+is where the application actually is. Nothing about the application changes, and
+it does not need to know the mesh exists.
+
+If something already holds that port on the overlay address — an application
+that binds `::` and is therefore reachable already — the daemon says so and
+stays out of the way rather than taking the port.
+
+### Reaching things that are not on the mesh
+
+The target does not have to be this machine. A service can point at anything
+the publishing device can reach, which makes it a gateway for hardware that
+will never run a mesh node — a Home Assistant box, a printer, a NAS web UI:
+
+```toml
+# on jimmy-crib, which is on the same LAN as 192.168.0.116
+services = ["ha:8080->192.168.0.116:80"]
+```
+
+Then `http://ha.jimmy-crib.mesh` from any device on the mesh, including the
+phone on mobile data. Nothing is installed on the Home Assistant box and it
+needs no configuration; it sees an ordinary connection from jimmy-crib's LAN
+address.
+
+**Publish it on a port other than 80.** `ha:80->192.168.0.116:80` would work,
+but the service takes port 80 on the overlay address and the shared-port name
+router cannot then have it — so every *other* service on that device loses its
+bare name. Publishing on 8080 leaves 80 to the router, and you get both
+`http://ha.jimmy-crib.mesh` and `http://ha.jimmy-crib.mesh:8080`.
+
+> **This is a hole from the mesh into your LAN, and it is worth naming.**
+> Every device holding the network key can now reach that address and port,
+> including a phone that leaves the house. The gateway device is doing exactly
+> what you asked; the thing to be deliberate about is that mesh membership now
+> implies access to a machine that never joined the mesh. Publish the specific
+> port you want reachable, not a router's admin interface.
+
+> **Publishing a loopback service exposes it to the whole mesh.** Plenty of
+> things bind `127.0.0.1` *as* their access control, on the reasoning that only
+> a local user can reach them. Listing one under `services` makes every device
+> holding the network key a local user. Publish deliberately.
+
+Services are not announced, so `logos-vpn status` lists what *this* machine
+publishes and no node knows what any other one runs. That is why a name for a
+service that does not exist still resolves — to the machine that would run it —
+where an HTTP request gets a 404 listing the names that do exist. Adding a
+service needs no coordination with any other device, and only TCP is forwarded.
+
+Service names need the resolver, not `/etc/hosts`: a hosts file can only hold
+names this machine already knows, and only the device running a service knows
+that it does. `manage_hosts` keeps working for device names either way.
+
+Giving each service its own address, so that any protocol works without a port,
+needs a change to how addresses are derived; that is
+[ADR-019](docs/adr/019-service-addresses.md), and it is not built.
+
 ### 7. Add more machines
 
 ```console
@@ -331,10 +469,65 @@ generates its own device identity, so no private key ever crosses the wire.
 
 A phone as a full mesh participant, not a client of something else. The app is a
 Compose UI and a `VpnService` around the same Go core — nothing in `internal/`
-is reimplemented. See [ANDROID.md](ANDROID.md) for the plan and
+is reimplemented. See [ANDROID.md](ANDROID.md) for the build and
 [ADR-016](docs/adr/016-android-reuses-the-go-core.md) for why.
 
-Prototype in progress.
+**Working on a real phone**, not a demo: tunnels to peers, `.mesh` names through
+an in-app resolver, and roaming between wifi and mobile data without user
+action — direct on wifi, relayed on the carrier's CGNAT, and the transition
+survived in both directions. Built with `make apk`, or published to an F-Droid
+repo with `make fdroid`.
+
+## Bandwidth, and what a node contributes
+
+A node joins a **public, shared cluster**, and by default it relays for it. That
+is the neighbourly setting and it is not free. Measured on a home connection
+against logos.test, idle — no VPN traffic at all — over ten minutes each:
+
+| | Core (default) | Edge |
+|---|---|---|
+| received | 15.6 MB/h | 1.9 MB/h |
+| sent | 4.7 MB/h | 1.6 MB/h |
+| **total** | **20.3 MB/h — 0.49 GB/day** | **3.4 MB/h — 0.08 GB/day** |
+| connections opened per 10 min | 139 | 90 |
+
+**Almost none of that is yours.** Of 745 messages the Core node handled, 693
+belonged to another application entirely and 14 were on this mesh's shard. The
+reason is in the metadata exchange — `localShards="[0,1,2,3,4,5,6,7]"` — a Core
+node subscribes to every shard in the cluster, so it carries the cluster, not
+your mesh.
+
+By comparison logos-vpn's own traffic is nothing: a 512-byte announce every 45s,
+a 104-byte probe per working path every 5s, and a WireGuard keepalive every 25s.
+A three-node mesh sits well under 1 MB/h. The rendezvous relay costs 20–30× the
+protocol it exists to serve.
+
+```toml
+mode = "Edge"      # subscribe and forward nothing
+mode = "Core"      # relay for the network (default)
+```
+
+Edge uses filter and lightpush instead of gossipsub. It was verified receiving:
+a Core publisher's message reached an Edge subscriber 281 ms later, same message
+hash. Nothing else in the config changes, and the mesh behaves identically —
+this is about what you carry for other people, not about how your own traffic
+moves.
+
+**Use Edge on anything metered or battery-powered**, and keep Core where
+bandwidth is flat and the machine is always on — a VPS is the right place to
+contribute relay capacity, a phone is not. On Android the setting is on the main
+screen rather than in the config file.
+
+Two honest costs. Edge leans on the fleet's service nodes for filter and
+lightpush, which [ADR-003](docs/adr/003-waku-as-rendezvous-not-control-plane.md)
+already accepts by treating messaging as rendezvous rather than a control plane;
+a dropped subscription self-heals within an announce interval. And lightpush
+means a service node sees you as the publisher directly, which is weaker than
+the already-weak sender anonymity [SECURITY.md](SECURITY.md) describes.
+
+**It is still Core by default**, including on Android. Someone has to relay, and
+changing what a node contributes to a shared network should be a decision rather
+than a default that quietly picks a side.
 
 ## Desktop monitoring
 
@@ -345,9 +538,28 @@ snapshot the view reads:
 status_file = "/run/logos-vpn/status.json"
 ```
 
-then install `basecamp/` as a module. It never changes the mesh, so it cannot
-break it. `make basecamp-check` loads the view offscreen against a fixture and
-asserts it read one, which is what caught both of its first bugs.
+It never changes the mesh, so it cannot break it.
+
+```console
+$ make basecamp-check      # load the real view offscreen against a fixture
+$ make basecamp-lgx        # build the installable package
+```
+
+The view reads that file if it can and falls back to the daemon's loopback
+endpoint if it cannot, because QML refuses `file://` reads through
+XMLHttpRequest unless the host sets `QML_XHR_ALLOW_FILE_READ` — Basecamp's
+environment to decide, not ours. `basecamp-check` covers both transports by
+running the real QML rather than inspecting it, which is what caught both of
+its first bugs.
+
+Packaged as an **LGX**: a gzipped tar of `manifest.json` plus
+`variants/<platform>/`, with a content hash per directory. The build comes from
+[logos-module-builder](https://github.com/logos-co/logos-module-builder) through
+a twelve-line `basecamp/flake.nix`, so the manifest and its hashes are generated
+rather than hand-maintained. CI builds `lgx-portable` on every push and uploads
+it as an artifact — the plain `lgx` output can reference paths in the nix store
+of the machine that built it, which is fine for a dev loop and useless as a
+download.
 
 ## Status
 
@@ -499,10 +711,43 @@ short version:
 
 ---
 
+## Roadmap
+
+Done, and in daily use:
+
+- [x] Discovery over Logos Delivery — no coordination server
+- [x] Derived addressing, so there is no IPAM and no collisions
+- [x] WireGuard tunnels, direct where NAT allows
+- [x] NAT traversal, with relay fallback through a node you run
+- [x] Names — `<device>.mesh`, and `<service>.<device>.mesh` for what you host
+- [x] Android, as a full participant rather than a client of something else
+- [x] Roaming between wifi and mobile data without user action
+- [x] A Basecamp view for watching a mesh
+
+Next, roughly in order:
+
+- [ ] One-time invite tokens, so the key stops being pasted
+      ([ADR-017](docs/adr/017-invite-tokens.md))
+- [ ] Admin-signed credentials and real revocation, so a compromised device
+      costs that device ([ADR-018](docs/adr/018-credentials-instead-of-a-shared-key.md))
+- [ ] An address per service, so any protocol works without a port
+      ([ADR-019](docs/adr/019-service-addresses.md))
+- [ ] Several meshes from one daemon ([ADR-015](docs/adr/015-multiple-meshes-one-daemon.md))
+
+---
+
+## Licence
+
+Not chosen yet — there is no `LICENSE` file in this repository, which means
+default copyright applies and nobody else may use this. Worth fixing before
+inviting anyone in.
+
+---
+
 ## Scope
 
-Linux first. Android is designed for but deliberately deferred — see DESIGN §6,
-which covers the constraints that decide it (Doze tears down messaging connections on
-every cycle, so intermittency is forced rather than chosen). **iOS is out of
-scope**: its NetworkExtension memory cap makes an embedded libp2p node
-impractical.
+Linux and Android. The constraints DESIGN §6 sets out are the ones that shaped
+the app rather than ones that deferred it: Doze tears down messaging connections
+on every cycle, so intermittency is forced rather than chosen, and the design
+assumes it. **iOS is out of scope**: its NetworkExtension memory cap makes an
+embedded libp2p node impractical.
