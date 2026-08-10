@@ -222,16 +222,24 @@ reach each other directly.
 $ ./scripts/deploy.sh root@VPS_IP --init --relay --name vps
 ```
 
-**You do not normally need `--advertise`.** A VPS has its public IP on a local
-interface, so the node enumerates and announces it by itself. Pass it only when
-your public address is *not* on any local interface — a home server behind a
-port-forwarding router, or a cloud instance that sees `10.x` with the public IP
-NAT'd in front:
+**You almost certainly do not need `--advertise`.** A node announces the
+addresses peers *actually observed* it at, learned from their replies to its own
+probes, and those come first in what it advertises. So a VPS with a public IP, a
+home server behind a port-forwarding router, and a cloud instance that sees
+`10.x` all end up announcing something dialable without being told anything.
+
+It exists for the case reflexive discovery cannot cover: when the address peers
+must dial is not the one your traffic appears to come from. A router that
+rewrites the source port gives an observed port that is not the forwarded one,
+and no amount of watching can discover the right answer — it has to be stated:
 
 ```console
 $ ./scripts/deploy.sh root@HOST --init --relay --name home \
     --advertise 203.0.113.4:51820
 ```
+
+It also saves the first announce interval, since a node has nothing reflexive to
+advertise until a peer has answered it once.
 
 `init` tells you which case you are in: if the machine has no globally routable
 address it says so, and otherwise stays quiet.
@@ -292,27 +300,45 @@ problem is traversal, not discovery. A relayed peer shows a `relay:…` endpoint
 
 ### 6. Use names instead of addresses
 
-```console
-$ sudo shrooms hosts            # preview
-$ sudo shrooms hosts --write    # update /etc/hosts
+Nothing to do — the daemon runs a resolver for the mesh and registers it with
+the system on startup:
 
+```console
 $ ssh root@vps.mesh
+$ ping6 laptop.mesh
+$ resolvectl query vps.mesh        # names shrooms0 as the link that answered
 ```
 
-Entries go in a marked block, written atomically, and re-running is safe.
+It is authoritative for one suffix and answers nothing else: no forwarding, no
+recursion, no upstream. A VPN that quietly becomes the system resolver is a
+surprise nobody asked for and a privacy leak besides, so `.mesh` is scoped to
+the interface (`resolvectl domain shrooms0 '~mesh'`) and every other name keeps
+going wherever it went before.
 
-To keep it current without re-running anything, let the daemon do it:
+If names do not resolve, that registration is the thing to check — serving DNS
+and *being asked* are different, and this shipped once doing only the first:
+
+```console
+$ resolvectl status shrooms0       # expect DNS Servers: <overlay> and Domain: ~mesh
+```
+
+Port 53 needs `CAP_NET_BIND_SERVICE`, which the packaged unit grants. A failure
+there is logged and never fatal — losing names is smaller than losing tunnels.
+
+**`/etc/hosts` is the fallback**, for hosts without systemd-resolved:
+
+```console
+$ sudo shrooms hosts --write       # once, into a marked block
+```
 
 ```toml
-manage_hosts = "true"      # in /etc/shrooms/config.toml
+manage_hosts = "true"              # or let the daemon keep it current
 ```
 
-It rewrites the block whenever the roster changes, and leaves the file alone
-when nothing has. Off by default, since a VPN editing a system file that
-cloud-init and NetworkManager also touch should be a deliberate choice.
-
-Still a hosts file, so it needs root and does not exist on Android — the DNS
-server that replaces it is [ADR-013](docs/adr/013-name-resolution.md).
+Off by default: a VPN editing a file that cloud-init and NetworkManager also
+touch should be deliberate. It also needs root, cannot do
+`<service>.<device>.mesh`, and does not exist on Android — which is why the
+resolver replaces it ([ADR-013](docs/adr/013-name-resolution.md)).
 
 ### 6b. Give services their own names
 
