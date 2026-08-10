@@ -7,6 +7,10 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.net.ConnectivityManager
+import android.net.LinkProperties
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.VpnService
 import android.os.Build
 import android.system.OsConstants
@@ -28,6 +32,10 @@ class MeshVpnService : VpnService() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var tunnel: android.os.ParcelFileDescriptor? = null
+
+    // Watches the underlying (non-VPN) network so the DNS forwarder can be told
+    // when its resolvers change. See watchNetworks.
+    private var netCallback: ConnectivityManager.NetworkCallback? = null
 
     companion object {
         const val ACTION_CONNECT = "dev.logos.vpn.CONNECT"
@@ -113,8 +121,10 @@ class MeshVpnService : VpnService() {
                     builder.addDnsServer(dnsAddr)
                     builder.addSearchDomain(Mobile.dnsSuffix(dir))
                     Log.i(TAG, "resolver at $dnsAddr")
+                    MeshState.names(dnsAddr)
                 } else {
                     Log.w(TAG, "no upstream resolvers; leaving DNS alone")
+                    MeshState.names("")
                     MeshState.log("WARN", "mesh names unavailable: could not read the network's resolvers")
                 }
 
@@ -129,6 +139,8 @@ class MeshVpnService : VpnService() {
 
                 // Go dups this, so closing it here later is safe.
                 Mobile.start(pfd.fd.toLong(), dir, upstream, protector, logger)
+                setUnderlying()
+                watchNetworks()
 
                 MeshState.connected(overlay)
                 notify("Connected · $overlay")
@@ -157,13 +169,39 @@ class MeshVpnService : VpnService() {
      */
     private fun underlyingDnsServers(): String = try {
         val cm = getSystemService(ConnectivityManager::class.java)
-        // activeNetwork is still the physical one at this point; once our VPN
-        // is up it becomes the VPN, whose resolver is us.
-        val net = cm?.activeNetwork
-        val props = net?.let { cm.getLinkProperties(it) }
-        val servers = props?.dnsServers?.mapNotNull { it.hostAddress } ?: emptyList()
-        Log.i(TAG, "upstream resolvers: $servers")
-        servers.joinToString(",")
+
+        fun isUsable(net: Network): Boolean {
+            val caps = cm?.getNetworkCapabilities(net) ?: return false
+            return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+        }
+        fun dnsOf(net: Network?): List<String> =
+            net?.let { cm?.getLinkProperties(it)?.dnsServers }
+                ?.mapNotNull { it.hostAddress } ?: emptyList()
+
+        // The network actually carrying traffic comes first, and the others
+        // only after it.
+        //
+        // Order matters more than it looks. The forwarder tries each resolver
+        // in turn with a timeout, so an unreachable one at the head of the list
+        // costs that timeout on every single query — and Android reacts to a
+        // slow resolver by dropping it, taking .mesh names with it. A phone
+        // holding wifi and mobile data at once yields both sets, and only one
+        // of them is reachable.
+        //
+        // activeNetwork is consulted but never trusted: once our own VpnService
+        // is up it IS the active network, and its resolver is us. Hence the
+        // NOT_VPN check before using it, and the scan as a fallback.
+        val active = cm?.activeNetwork?.takeIf { isUsable(it) }
+        val ordered = buildList {
+            addAll(dnsOf(active))
+            (cm?.allNetworks ?: emptyArray())
+                .filter { it != active && isUsable(it) }
+                .forEach { addAll(dnsOf(it)) }
+        }.distinct()
+
+        Log.i(TAG, "upstream resolvers: $ordered (active=${active != null})")
+        ordered.joinToString(",")
     } catch (t: Throwable) {
         // Needs ACCESS_NETWORK_STATE, and a SecurityException here must not
         // take the tunnel down — it only means no mesh names.
@@ -233,8 +271,97 @@ class MeshVpnService : VpnService() {
 
     override fun onDestroy() {
         scope.cancel()
+        unwatchNetworks()
         runCatching { Mobile.stop() }
         super.onDestroy()
+    }
+
+    /**
+     * Keeps the DNS forwarder's upstream resolvers current as the phone moves
+     * between networks.
+     *
+     * The list handed to Mobile.start belongs to the network the phone was on
+     * at connect. After roaming — mobile data to wifi, typically — those
+     * resolvers are unreachable, so every non-mesh query fails slowly against
+     * each in turn. Android watches that, decides our resolver is dead, and
+     * stops sending it anything at all. Mesh names disappear with it, because
+     * the same resolver answers them: the symptom is ".mesh stopped resolving
+     * after I changed network" while the tunnel itself is perfectly healthy.
+     *
+     * Requesting NOT_VPN explicitly, for the same reason underlyingDnsServers
+     * does: once our own VpnService is up, it is a network too, and its
+     * resolver is us.
+     */
+    private fun watchNetworks() {
+        if (netCallback != null) return
+        val cm = getSystemService(ConnectivityManager::class.java) ?: return
+
+        val request = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+            .build()
+
+        val cb = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) = refresh("available")
+            override fun onLost(network: Network) = refresh("lost")
+            override fun onLinkPropertiesChanged(network: Network, props: LinkProperties) =
+                refresh("link properties changed")
+
+            private fun refresh(why: String) {
+                // Tell the system which network the tunnel actually runs over.
+                //
+                // Without this a VpnService keeps whatever underlying network it
+                // had when establish() was called: after roaming, Android still
+                // believes the tunnel runs over the network you left. That
+                // affects how it treats the VPN network — its capabilities, its
+                // validation state, and its resolver — which is the shape of
+                // "names work until I change network".
+                //
+                // The active non-VPN network is passed explicitly rather than
+                // null, so the system is told rather than left to infer.
+                setUnderlying()
+
+                val servers = underlyingDnsServers()
+                if (servers.isEmpty()) {
+                    // Between networks. Mobile.setDNSServers would refuse this
+                    // anyway; saying so here is what makes the log readable.
+                    Log.i(TAG, "network $why, no resolvers yet; keeping the previous ones")
+                    return
+                }
+                val applied = runCatching { Mobile.setDNSServers(servers) }.getOrDefault(false)
+                Log.i(TAG, "network $why, resolvers now $servers (applied=$applied)")
+            }
+        }
+
+        runCatching { cm.registerNetworkCallback(request, cb) }
+            .onSuccess { netCallback = cb }
+            .onFailure { Log.w(TAG, "could not watch networks: ${it.message}") }
+    }
+
+    /**
+     * Points the VPN at the network currently carrying its traffic.
+     *
+     * Called on every change and once at connect. Passing null would mean "use
+     * the system default", which is also correct but tells the system less; an
+     * explicit network is what makes accounting and capability reporting right.
+     */
+    private fun setUnderlying() {
+        val cm = getSystemService(ConnectivityManager::class.java) ?: return
+        val active = cm.activeNetwork?.takeIf { net ->
+            val caps = cm.getNetworkCapabilities(net)
+            caps != null &&
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+        }
+        runCatching { setUnderlyingNetworks(active?.let { arrayOf(it) }) }
+            .onFailure { Log.w(TAG, "could not set underlying networks: ${it.message}") }
+    }
+
+    private fun unwatchNetworks() {
+        val cb = netCallback ?: return
+        netCallback = null
+        val cm = getSystemService(ConnectivityManager::class.java)
+        runCatching { cm?.unregisterNetworkCallback(cb) }
     }
 
     // --- notification -------------------------------------------------------

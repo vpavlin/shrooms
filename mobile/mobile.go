@@ -78,6 +78,16 @@ type session struct {
 	dev    *wg.Device
 	cancel context.CancelFunc
 	done   chan struct{}
+
+	// dnsIntercept and dnsServer are kept so status can report whether queries
+	// are arriving at all.
+	//
+	// "Names do not resolve" has three completely different causes that look
+	// identical from the outside: the query never reaches us, it reaches us and
+	// we refuse it, or we answer and the platform ignores the reply. Counting
+	// at both layers separates them, and guessing between them wasted a day.
+	dnsIntercept *dnssrv.Intercept
+	dnsServer    *dnssrv.Server
 }
 
 // Init creates a new mesh and returns its network key.
@@ -124,6 +134,65 @@ func NetworkKey(configDir string) string {
 		return ""
 	}
 	return cfg.NetworkKey
+}
+
+// Mode returns the rendezvous node mode, "Core" or "Edge", or "" if the device
+// is not configured yet.
+func Mode(configDir string) string {
+	cfg, _, err := load(configDir)
+	if err != nil {
+		return ""
+	}
+	return cfg.Mode
+}
+
+// SetMode changes the node mode and persists it.
+//
+// Core relays for the whole cluster and cost ~20 MB/h measured idle, most of it
+// other applications' traffic; Edge subscribes and forwards nothing, at
+// ~3 MB/h. On a phone that difference is a data plan and a battery, so the
+// setting has to be reachable without editing a file — which on Android is not
+// a thing anyone can do.
+//
+// Takes effect on the next connect: the node is built at Start, and rebuilding
+// it under a live tunnel would drop the tunnel to change a preference.
+func SetMode(configDir, mode string) error {
+	cfg, _, err := load(configDir)
+	if err != nil {
+		return err
+	}
+	switch mode {
+	case state.ModeCore, state.ModeEdge:
+	default:
+		return fmt.Errorf("mode %q is not a node mode", mode)
+	}
+	cfg.Mode = mode
+	cfgPath, _ := paths(configDir)
+	return state.WriteConfig(cfgPath, cfg)
+}
+
+// fwd is the live DNS forwarder, so its upstream list can be replaced without
+// restarting the tunnel.
+var fwd atomic.Pointer[forwarder]
+
+// SetDNSServers replaces the upstream resolvers used for names that are not
+// ours, as a comma-separated list from ConnectivityManager.
+//
+// Must be called whenever the underlying network changes. The list captured at
+// connect belongs to the network the phone was on then; after roaming, every
+// non-mesh query fails slowly against resolvers that are no longer reachable,
+// and Android responds by dropping our resolver altogether — which takes .mesh
+// names with it, since the same resolver serves them.
+//
+// Returns false if the list held nothing usable, in which case the previous one
+// is kept: a phone between networks reports no resolvers for a moment, and
+// forwarding to nothing is worse than forwarding to something stale.
+func SetDNSServers(servers string) bool {
+	f := fwd.Load()
+	if f == nil {
+		return false
+	}
+	return f.Set(servers)
 }
 
 // Start brings the mesh up on a TUN descriptor from VpnService.Builder.
@@ -176,7 +245,7 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 	// tun, so nothing could answer it there.
 	dnsAddr := dnssrv.ServiceAddr(mustKey(cfg).Prefix())
 	var resolver atomic.Pointer[dnssrv.Server]
-	tunDev := dnssrv.NewIntercept(rawTun, dnsAddr, func(q []byte) ([]byte, error) {
+	intercept := dnssrv.NewIntercept(rawTun, dnsAddr, func(q []byte) ([]byte, error) {
 		r := resolver.Load()
 		if r == nil {
 			return nil, errors.New("resolver not ready")
@@ -184,7 +253,7 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 		return r.Answer(q)
 	})
 
-	dev, err := wg.NewDevice(tunDev, st.Identity.WGPriv, cfg.ListenPort,
+	dev, err := wg.NewDevice(intercept, st.Identity.WGPriv, cfg.ListenPort,
 		device.NewLogger(device.LogLevelError, "[wg] "))
 	if err != nil {
 		return fmt.Errorf("wireguard: %w", err)
@@ -236,10 +305,14 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 	// Android sends us every query, so a resolver that only knows .mesh takes
 	// the device's name resolution away — no browsing, no app updates.
 	var forward func([]byte) ([]byte, error)
-	if fw, ferr := newForwarder(dnsServers, p); ferr != nil {
+	if f, fw, ferr := newForwarder(dnsServers, p); ferr != nil {
 		log.Warn("name resolution disabled: no usable upstream resolvers", "err", ferr)
 	} else {
 		forward = fw
+		// Kept so SetDNSServers can replace the list when the phone changes
+		// network. Without that the forwarder keeps querying the resolvers of
+		// the network it just left.
+		fwd.Store(f)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -250,6 +323,7 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 		overlay: identity.OverlayAddr(nk, st.Identity.DevicePub).String(),
 		prefix:  nk.Prefix().String(),
 		mesh:    m, dev: dev, cancel: cancel, done: make(chan struct{}),
+		dnsIntercept: intercept,
 	}
 	go func() {
 		defer close(s.done)
@@ -259,11 +333,13 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 	}()
 	if forward != nil {
 		// No socket and no port: the intercept already holds the packets.
-		resolver.Store(&dnssrv.Server{
+		srv := &dnssrv.Server{
 			Suffix:   cfg.HostsSuffix,
 			Lookup:   m.Lookup,
 			Upstream: forward,
-		})
+		}
+		resolver.Store(srv)
+		s.dnsServer = srv
 		log.Info("name resolution up", "address", dnsAddr, "suffix", cfg.HostsSuffix)
 	}
 	running = s
@@ -313,6 +389,15 @@ func StatusJSON() string {
 	snap := snapshot(s.mesh, s.suffix)
 	snap.Name, snap.Overlay, snap.Prefix = s.name, s.overlay, s.prefix
 	snap.DNSName = mesh.DNSName(s.name, s.suffix)
+	if s.dnsIntercept != nil {
+		handled, failed := s.dnsIntercept.Stats()
+		snap.DNS.Intercepted, snap.DNS.InterceptFailed = handled, failed
+	}
+	if s.dnsServer != nil {
+		q, a, r, f, ff := s.dnsServer.Stats()
+		snap.DNS.Queries, snap.DNS.Answers = q, a
+		snap.DNS.Refused, snap.DNS.Forwarded, snap.DNS.ForwardFailed = r, f, ff
+	}
 	b, err := json.Marshal(snap)
 	if err != nil {
 		return "{}"

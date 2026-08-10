@@ -258,6 +258,41 @@ private fun MeshScreen(snap: Snapshot, dir: String, onConnect: () -> Unit, onDis
             Text(buildLabel(), style = MaterialTheme.typography.labelSmall, color = Palette.Ash)
         }
 
+        // Whether .mesh names resolve, stated plainly and in both directions.
+        //
+        // Only warning on failure was not enough: "I see nothing about DNS"
+        // is indistinguishable from "there is nothing to say", so the working
+        // case has to be visible too. Peers appear and addresses work either
+        // way, so nothing else on this screen implies it.
+        if (snap.connected) {
+            if (snap.names.isEmpty()) {
+                Banner("names not available — .mesh will not resolve, addresses still work", Palette.Amber)
+            } else {
+                Text(
+                    "names via ${snap.names}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Palette.Ash,
+                    modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 2.dp),
+                )
+                // Private DNS silently wins over a VPN's resolver: Android
+                // sends DoT straight to the configured provider and never asks
+                // us, so .mesh cannot resolve however healthy the tunnel is.
+                // Nothing in the VpnService API reports it, so it is named here
+                // as the first thing to check rather than diagnosed.
+                // The counters, not advice. "arrived 0" means Android never
+                // sent us a query and the fault is above us; "arrived N,
+                // answered N" means we did our part and the reply was ignored.
+                // Those need completely different fixes and look the same from
+                // the outside.
+                Text(
+                    "dns  ${snap.dns.summary()}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (snap.dns.intercepted == 0L) Palette.Amber else Palette.Ash,
+                    modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 6.dp),
+                )
+            }
+        }
+
         if (snap.error.isNotEmpty()) Banner(snap.error, Palette.Rust)
 
         // A log tail in the app, because the alternative is asking someone to
@@ -351,6 +386,8 @@ private fun MeshScreen(snap: Snapshot, dir: String, onConnect: () -> Unit, onDis
             }
         }
 
+        ModeSetting(dir, connected = snap.connected)
+
         Text(
             buildLabel(),
             style = MaterialTheme.typography.bodySmall,
@@ -363,6 +400,66 @@ private fun MeshScreen(snap: Snapshot, dir: String, onConnect: () -> Unit, onDis
                 enabled = true,
                 danger = snap.connected,
             ) { if (snap.connected) onDisconnect() else onConnect() }
+        }
+    }
+}
+
+/** How much of the network this device carries.
+ *
+ * On a phone this is the setting that costs money, so it is on the main screen
+ * rather than behind a menu — and it states the measured numbers, because
+ * "Core" and "Edge" tell nobody anything. Core is still the default: someone
+ * has to relay, and quietly opting a user out of contributing is as wrong as
+ * quietly spending their data.
+ *
+ * Changing it while connected would mean tearing the tunnel down to alter a
+ * preference, so it applies on the next connect and says so.
+ */
+@Composable
+private fun ModeSetting(dir: String, connected: Boolean) {
+    var mode by remember { mutableStateOf(runCatching { Mobile.mode(dir) }.getOrDefault("")) }
+    var pending by remember { mutableStateOf(false) }
+    if (mode.isEmpty()) return
+
+    val edge = mode == "Edge"
+    Column(Modifier.padding(start = 24.dp, end = 24.dp, top = 12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    if (edge) "Light node" else "Relay node",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Palette.Bone,
+                )
+                Text(
+                    if (edge) "subscribes only  ~3 MB/h" else "relays for the network  ~20 MB/h",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (edge) Palette.Ash else Palette.Amber,
+                )
+            }
+            Switch(
+                checked = edge,
+                onCheckedChange = { wantEdge ->
+                    val next = if (wantEdge) "Edge" else "Core"
+                    runCatching { Mobile.setMode(dir, next) }
+                        .onSuccess {
+                            mode = next
+                            pending = connected
+                        }
+                },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Palette.Bone,
+                    checkedTrackColor = Palette.Violet,
+                    uncheckedThumbColor = Palette.Ash,
+                    uncheckedTrackColor = Palette.Line,
+                ),
+            )
+        }
+        if (pending) {
+            Text(
+                "applies on the next connect",
+                style = MaterialTheme.typography.labelSmall,
+                color = Palette.Ash,
+            )
         }
     }
 }

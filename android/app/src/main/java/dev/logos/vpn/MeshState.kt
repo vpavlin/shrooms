@@ -47,6 +47,21 @@ data class Peer(
         }
 }
 
+data class Dns(
+    val intercepted: Long = 0,
+    val interceptFailed: Long = 0,
+    val queries: Long = 0,
+    val answers: Long = 0,
+    val refused: Long = 0,
+    val forwarded: Long = 0,
+    val forwardFailed: Long = 0,
+) {
+    /** One line for the UI, saying which layer is doing something. */
+    fun summary(): String =
+        "arrived $intercepted · answered $answers · refused $refused · forwarded $forwarded" +
+            if (forwardFailed > 0) " · fwd-fail $forwardFailed" else ""
+}
+
 data class Rendezvous(val status: String, val ok: Boolean, val problem: String, val detail: String)
 
 data class Snapshot(
@@ -58,6 +73,20 @@ data class Snapshot(
     val peers: List<Peer> = emptyList(),
     val rendezvous: Rendezvous = Rendezvous("unknown", true, "", ""),
     val error: String = "",
+
+    // Names is where the resolver was installed, or "" when it was not.
+    //
+    // State, not a log line. Whether mesh names work is decided once at
+    // connect and then holds for the life of the tunnel, so a message about it
+    // scrolls out of the log within seconds and the question "do names work?"
+    // becomes unanswerable from the screen. It was unanswerable exactly when
+    // it mattered.
+    val names: String = "",
+
+    // What each layer of DNS actually saw. See statusPayload.DNS in the Go
+    // side: the point is to tell "nothing asked us" apart from "we answered
+    // and it was ignored", which are indistinguishable from the outside.
+    val dns: Dns = Dns(),
 ) {
     fun notificationLine(): String {
         val up = peers.count { it.reach == Peer.Reach.CONNECTED }
@@ -75,6 +104,11 @@ object MeshState {
 
     fun connected(overlay: String) {
         _snapshot.value = _snapshot.value.copy(connected = true, overlay = overlay, error = "")
+    }
+
+    /** Records where the resolver was installed, or "" if it could not be. */
+    fun names(addr: String) {
+        _snapshot.value = _snapshot.value.copy(names = addr)
     }
 
     fun disconnected() {
@@ -97,6 +131,7 @@ object MeshState {
     fun update(json: String) {
         val parsed = runCatching { parse(json) }.getOrNull() ?: return
         _snapshot.value = parsed.copy(
+            names = _snapshot.value.names,
             connected = true,
             error = _snapshot.value.error,
         )
@@ -140,6 +175,17 @@ object MeshState {
                 problem = r?.optString("problem") ?: "",
                 detail = r?.optString("detail") ?: "",
             ),
+            dns = o.optJSONObject("dns").let { d ->
+                Dns(
+                    intercepted = d?.optLong("intercepted") ?: 0,
+                    interceptFailed = d?.optLong("intercept_failed") ?: 0,
+                    queries = d?.optLong("queries") ?: 0,
+                    answers = d?.optLong("answers") ?: 0,
+                    refused = d?.optLong("refused") ?: 0,
+                    forwarded = d?.optLong("forwarded") ?: 0,
+                    forwardFailed = d?.optLong("forward_failed") ?: 0,
+                )
+            },
         )
     }
 

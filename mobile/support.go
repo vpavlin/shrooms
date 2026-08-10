@@ -136,6 +136,23 @@ type statusPayload struct {
 		Problem string `json:"problem,omitempty"`
 		Detail  string `json:"detail,omitempty"`
 	} `json:"rendezvous"`
+
+	// DNS counts what each layer of name resolution actually saw.
+	//
+	// Three failures look identical from outside the phone — the query never
+	// reaches us, it reaches us and is refused, or we answer and Android
+	// discards the reply — and only counters tell them apart. Intercepted is
+	// the packet layer (did a query for our resolver arrive on the tun at all);
+	// Queries/Answers is the resolver above it.
+	DNS struct {
+		Intercepted     uint64 `json:"intercepted"`
+		InterceptFailed uint64 `json:"intercept_failed"`
+		Queries         uint64 `json:"queries"`
+		Answers         uint64 `json:"answers"`
+		Refused         uint64 `json:"refused"`
+		Forwarded       uint64 `json:"forwarded"`
+		ForwardFailed   uint64 `json:"forward_failed"`
+	} `json:"dns"`
 }
 
 func snapshot(m *mesh.Mesh, suffix string) statusPayload {
