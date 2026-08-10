@@ -15,7 +15,19 @@ QML=${QML:-$(ls -d /nix/store/*-qtdeclarative-*/bin/qml 2>/dev/null | sort -V | 
 [ -n "${QML:-}" ] && [ -x "$QML" ] || { echo "no qml runtime found; set QML=/path/to/qml"; exit 1; }
 QMLDIR=$(dirname "$(dirname "$QML")")/lib/qt-6/qml
 
-work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
+# The fake endpoint is torn down by the same trap as the workdir, not on the
+# success path. It used to be killed after the last assertion, so any earlier
+# failure leaked the server — and because the port is baked into the view, the
+# next run then talked to a leftover server holding a deleted directory, got a
+# 404, and failed with "status is not readable JSON". One failure poisoned every
+# run after it, which is a miserable thing to debug.
+srv=""
+work=$(mktemp -d)
+cleanup() {
+    [ -n "$srv" ] && kill "$srv" 2>/dev/null
+    rm -rf "$work"
+}
+trap cleanup EXIT
 cp basecamp/Main.qml basecamp/test/Harness.qml "$work/"
 cp "$FIXTURE" "$work/status.json"
 
@@ -32,10 +44,26 @@ peers=$(echo "$out" | sed -n 's/.*PEERS=\([0-9]*\).*/\1/p' | head -1)
 echo "$out" | grep -q "TypeError\|ReferenceError\|is not a" && { echo "FAIL: script errors"; echo "$out"; exit 1; }
 
 echo "==> falls back to the endpoint when the file cannot be read"
-( cd "$work" && python3 -m http.server 8787 --bind 127.0.0.1 >/dev/null 2>&1 & echo $! > "$work/pid" )
+# The view asks for /status, which is what the daemon serves. A static server
+# has no such route, so the fixture is copied to that exact name — without it
+# the server answers 404, the view reads zero peers, and the failure looks like
+# a bug in the view rather than in the harness.
+cp "$FIXTURE" "$work/status"
+
+# The port is baked into the view, so it cannot simply be moved. Anything
+# already holding it will answer instead of us and the test would report a
+# false failure — so say what is wrong rather than testing the wrong server.
+if (exec 3<>/dev/tcp/127.0.0.1/8787) 2>/dev/null; then
+    exec 3<&-
+    echo "FAIL: something already listens on 127.0.0.1:8787; it would answer instead of this test"
+    ss -lntp 2>/dev/null | grep ':8787' || true
+    exit 1
+fi
+
+( cd "$work" && exec python3 -m http.server 8787 --bind 127.0.0.1 >/dev/null 2>&1 ) &
+srv=$!
 sleep 1
 out=$(run "$QML" -I "$work" "$work/Harness.qml" "$work/missing.json")
-kill "$(cat "$work/pid")" 2>/dev/null || true
 echo "$out" | grep -E "^qml: PEERS" || true
 echo "$out" | grep -q "FILEBLOCKED=true" || { echo "FAIL: did not escalate to the endpoint"; exit 1; }
 peers=$(echo "$out" | sed -n 's/.*PEERS=\([0-9]*\).*/\1/p' | head -1)

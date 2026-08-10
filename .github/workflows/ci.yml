@@ -189,3 +189,63 @@ jobs:
           echo "built logos-vpn-linux-amd64.tar.gz"
         # Attaching to a GitHub Release needs contents:write; add it here and
         # a release step when you are ready to publish.
+
+  # The Basecamp monitoring module: a QML view, packaged as an LGX.
+  #
+  # Separate from the Go jobs because it shares nothing with them — no cgo, no
+  # liblogosdelivery, a different toolchain entirely. It is also the only job
+  # that needs Nix, and pinning it here keeps that out of everyone else's path.
+  basecamp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The QML is checked before it is packaged. It runs offscreen, which is
+      # the only way this gets tested at all in CI — and it caught two real
+      # bugs (a blocked file:// XHR and a TypeError on a missing field) that
+      # reading the file did not.
+      - name: Install Qt for the offscreen check
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qml6-module-qtquick qml6-module-qtquick-controls \
+            qml6-module-qtquick-layouts qml6-module-qtqml-workerscript \
+            qt6-declarative-dev-tools libqt6svg6
+      - name: Check the QML
+        run: make basecamp-check
+
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+
+      # lgx-portable, not lgx: the plain one can reference paths in the nix
+      # store of the machine that built it, which is fine for a dev loop and
+      # useless as a download. This is the artifact someone can actually
+      # install.
+      - name: Build the portable LGX
+        run: nix build ./basecamp#lgx-portable --print-build-logs
+
+      - name: Check the package is well formed
+        run: |
+          lgx=$(find -L result -name '*.lgx' | head -1)
+          [ -n "$lgx" ] || { echo "no .lgx was produced"; exit 1; }
+          echo "== $lgx =="
+          tar tzf "$lgx"
+          # A manifest without hashes is a package Basecamp will refuse, and it
+          # is much cheaper to catch here than after a download.
+          tar xzOf "$lgx" manifest.json | tee /tmp/manifest.json
+          python3 - <<'EOF'
+          import json, sys
+          m = json.load(open('/tmp/manifest.json'))
+          for k in ('name', 'version', 'type', 'view', 'hashes'):
+              if not m.get(k):
+                  sys.exit(f"manifest is missing {k}")
+          if m['type'] != 'ui_qml':
+              sys.exit(f"unexpected type {m['type']}")
+          print(f"ok: {m['name']} {m['version']} ({len(m['hashes'])} hashes)")
+          EOF
+          cp "$lgx" "logos-vpn-basecamp-$(tar xzOf "$lgx" manifest.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])').lgx"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: logos-vpn-basecamp-lgx
+          path: '*.lgx'

@@ -25,7 +25,7 @@ GO ?= go
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 .PHONY: all deps deps-basecamp check-lib logos-vpn wakuspike s3topics m0demo \
-        s1 s3 probe m0 m1 m2 m2-edm m3 m3-remote dist image push-image deps-release install uninstall build-all vet-cgo test test-unit android-deps android-core aar apk fdroid basecamp-check fmt clean
+        s1 s3 probe m0 m1 m2 m2-edm m3 m3-remote dist image push-image deps-release install uninstall build-all vet-cgo test test-unit android-deps android-core aar apk fdroid basecamp-check basecamp-lgx fmt clean
 
 all: logos-vpn
 
@@ -192,7 +192,7 @@ test-unit:
 	CGO_CFLAGS= CGO_LDFLAGS= $(GO) test -race ./internal/identity/... \
 		./internal/topic/... ./internal/control/... ./internal/wg/... \
 		./internal/disco/... ./internal/relay/... ./internal/state/... \
-		./internal/hosts/...
+		./internal/hosts/... ./internal/dns/... ./internal/service/...
 
 ## --- android ---
 
@@ -221,6 +221,15 @@ android-core: android-deps
 ## QML looks right" is not a test.
 basecamp-check:
 	./basecamp/test/check.sh
+
+## Build the Basecamp module as a portable LGX, the installable package format.
+##
+## `lgx-portable`, not `lgx`: the plain one can reference paths in the nix store
+## of the machine that built it, which is fine for a dev loop and useless as a
+## download. Needs nix with flakes; CI builds this on every push.
+basecamp-lgx:
+	nix build ./basecamp#lgx-portable --print-build-logs
+	@find -L result -name '*.lgx' -exec ls -lL {} \;
 
 ## Build the .aar for the Android app. Container-based: gomobile needs a JDK
 ## and Go >= 1.25, which the core deliberately does not.
