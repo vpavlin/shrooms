@@ -23,7 +23,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base32"
-	"encoding/json"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -103,34 +103,114 @@ func (m MeshID) Prefix() netip.Prefix {
 // suppress a revocation it cannot forge. Expiry is what bounds that; gossiped
 // revocation is only the fast path.
 type Credential struct {
-	MeshID    MeshID `json:"mesh"`
-	DevicePub []byte `json:"device"` // ed25519, 32 bytes
-	WGPub     []byte `json:"wg"`     // curve25519, 32 bytes
-	Name      string `json:"name"`
-	Serial    uint64 `json:"serial"`
-	NotBefore int64  `json:"nbf"` // unix seconds
-	NotAfter  int64  `json:"exp"`
-	Sig       []byte `json:"sig"` // ed25519 over the body below
+	MeshID    MeshID
+	DevicePub []byte // ed25519, 32 bytes
+	WGPub     []byte // curve25519, 32 bytes
+	Name      string
+	Serial    uint64
+	NotBefore int64 // unix seconds
+	NotAfter  int64
+	Sig       []byte // ed25519 over signedBytes()
 }
 
-// body is exactly what is signed: the credential without its signature.
-// Marshalled from a separate type rather than by blanking a field, so a field
-// added later cannot silently fall outside the signature.
-type body struct {
-	MeshID    MeshID `json:"mesh"`
-	DevicePub []byte `json:"device"`
-	WGPub     []byte `json:"wg"`
-	Name      string `json:"name"`
-	Serial    uint64 `json:"serial"`
-	NotBefore int64  `json:"nbf"`
-	NotAfter  int64  `json:"exp"`
-}
+// Wire format. Version 1:
+//
+//	1   version
+//	16  mesh id
+//	32  device public key
+//	32  wireguard public key
+//	8   serial            (big endian)
+//	8   not before        (big endian, unix seconds)
+//	8   not after
+//	1   name length
+//	n   name
+//	64  signature         (over everything above)
+//
+// Binary rather than JSON for two reasons. Size: a credential has to ride an
+// announce that is padded to a fixed size, and it is base64'd into JSON which
+// is then base64'd again inside the envelope — the JSON form measured 364 bytes
+// against a 320-byte budget, so it did not fit at all. And canonicality: what is
+// signed is a byte layout with exactly one representation, rather than a JSON
+// document whose stability depends on a marshaller's field ordering.
+const (
+	credVersion = 1
+	credFixed   = 1 + MeshIDLen + 32 + 32 + 8 + 8 + 8 + 1
+	sigLen      = ed25519.SignatureSize
+	maxNameLen  = 64
+)
 
-func (c *Credential) body() body {
-	return body{
-		MeshID: c.MeshID, DevicePub: c.DevicePub, WGPub: c.WGPub,
-		Name: c.Name, Serial: c.Serial, NotBefore: c.NotBefore, NotAfter: c.NotAfter,
+// signedBytes is everything the signature covers: the credential without it.
+func (c *Credential) signedBytes() ([]byte, error) {
+	if len(c.DevicePub) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("device key is %d bytes, want %d", len(c.DevicePub), ed25519.PublicKeySize)
 	}
+	if len(c.WGPub) != 32 {
+		return nil, fmt.Errorf("wireguard key is %d bytes, want 32", len(c.WGPub))
+	}
+	if len(c.Name) > maxNameLen {
+		return nil, fmt.Errorf("name is %d bytes, over the %d limit", len(c.Name), maxNameLen)
+	}
+
+	b := make([]byte, 0, credFixed+len(c.Name))
+	b = append(b, credVersion)
+	b = append(b, c.MeshID[:]...)
+	b = append(b, c.DevicePub...)
+	b = append(b, c.WGPub...)
+	b = binary.BigEndian.AppendUint64(b, c.Serial)
+	b = binary.BigEndian.AppendUint64(b, uint64(c.NotBefore))
+	b = binary.BigEndian.AppendUint64(b, uint64(c.NotAfter))
+	b = append(b, byte(len(c.Name)))
+	b = append(b, c.Name...)
+	return b, nil
+}
+
+// MarshalBinary renders a credential for the wire.
+func (c *Credential) MarshalBinary() ([]byte, error) {
+	body, err := c.signedBytes()
+	if err != nil {
+		return nil, err
+	}
+	if len(c.Sig) != sigLen {
+		return nil, fmt.Errorf("signature is %d bytes, want %d", len(c.Sig), sigLen)
+	}
+	return append(body, c.Sig...), nil
+}
+
+// UnmarshalCredential reads one, rejecting anything malformed.
+//
+// Every length is checked before it is used: this parses bytes that arrived
+// from a public bus, and a credential that has not been verified yet is
+// attacker-controlled input.
+func UnmarshalCredential(b []byte) (*Credential, error) {
+	if len(b) < credFixed+sigLen {
+		return nil, fmt.Errorf("credential is %d bytes, too short", len(b))
+	}
+	if b[0] != credVersion {
+		return nil, fmt.Errorf("credential version %d is not supported", b[0])
+	}
+	c := &Credential{}
+	i := 1
+	copy(c.MeshID[:], b[i:i+MeshIDLen])
+	i += MeshIDLen
+	c.DevicePub = append([]byte(nil), b[i:i+32]...)
+	i += 32
+	c.WGPub = append([]byte(nil), b[i:i+32]...)
+	i += 32
+	c.Serial = binary.BigEndian.Uint64(b[i : i+8])
+	i += 8
+	c.NotBefore = int64(binary.BigEndian.Uint64(b[i : i+8]))
+	i += 8
+	c.NotAfter = int64(binary.BigEndian.Uint64(b[i : i+8]))
+	i += 8
+	n := int(b[i])
+	i++
+	if len(b) != i+n+sigLen {
+		return nil, fmt.Errorf("credential length %d does not match its name length %d", len(b), n)
+	}
+	c.Name = string(b[i : i+n])
+	i += n
+	c.Sig = append([]byte(nil), b[i:]...)
+	return c, nil
 }
 
 // Issue signs a credential for one device.
@@ -156,9 +236,9 @@ func (a *Admin) Issue(devicePub, wgPub []byte, name string, serial uint64, now t
 		NotBefore: now.Add(-time.Minute).Unix(),
 		NotAfter:  now.Add(life).Unix(),
 	}
-	raw, err := json.Marshal(c.body())
+	raw, err := c.signedBytes()
 	if err != nil {
-		return nil, fmt.Errorf("marshal credential: %w", err)
+		return nil, err
 	}
 	c.Sig = ed25519.Sign(a.Priv, raw)
 	return c, nil
@@ -183,9 +263,9 @@ func Verify(adminPub ed25519.PublicKey, c *Credential, now time.Time) error {
 	if c == nil {
 		return errors.New("no credential")
 	}
-	raw, err := json.Marshal(c.body())
+	raw, err := c.signedBytes()
 	if err != nil {
-		return fmt.Errorf("marshal credential: %w", err)
+		return fmt.Errorf("credential is malformed: %w", err)
 	}
 	if !ed25519.Verify(adminPub, raw, c.Sig) {
 		return ErrBadSignature
@@ -208,22 +288,62 @@ func Verify(adminPub ed25519.PublicKey, c *Credential, now time.Time) error {
 // to gossip and to keep. NotBefore exists so a revocation cannot be replayed to
 // undo a later re-enrolment of the same device.
 type Revocation struct {
-	MeshID    MeshID `json:"mesh"`
-	DevicePub []byte `json:"device"`
-	Serial    uint64 `json:"serial"`
-	Issued    int64  `json:"issued"`
-	Sig       []byte `json:"sig"`
+	MeshID    MeshID
+	DevicePub []byte
+	Serial    uint64
+	Issued    int64
+	Sig       []byte
 }
 
-type revBody struct {
-	MeshID    MeshID `json:"mesh"`
-	DevicePub []byte `json:"device"`
-	Serial    uint64 `json:"serial"`
-	Issued    int64  `json:"issued"`
+// Wire format, version 1: version, mesh id, device key, serial, issued,
+// signature. Binary for the same reasons as the credential.
+const revFixed = 1 + MeshIDLen + 32 + 8 + 8
+
+func (r *Revocation) signedBytes() ([]byte, error) {
+	if len(r.DevicePub) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("device key is %d bytes, want %d", len(r.DevicePub), ed25519.PublicKeySize)
+	}
+	b := make([]byte, 0, revFixed)
+	b = append(b, credVersion)
+	b = append(b, r.MeshID[:]...)
+	b = append(b, r.DevicePub...)
+	b = binary.BigEndian.AppendUint64(b, r.Serial)
+	b = binary.BigEndian.AppendUint64(b, uint64(r.Issued))
+	return b, nil
 }
 
-func (r *Revocation) body() revBody {
-	return revBody{MeshID: r.MeshID, DevicePub: r.DevicePub, Serial: r.Serial, Issued: r.Issued}
+// MarshalBinary renders a revocation for the wire.
+func (r *Revocation) MarshalBinary() ([]byte, error) {
+	body, err := r.signedBytes()
+	if err != nil {
+		return nil, err
+	}
+	if len(r.Sig) != sigLen {
+		return nil, fmt.Errorf("signature is %d bytes, want %d", len(r.Sig), sigLen)
+	}
+	return append(body, r.Sig...), nil
+}
+
+// UnmarshalRevocation reads one, checking every length first.
+func UnmarshalRevocation(b []byte) (*Revocation, error) {
+	if len(b) != revFixed+sigLen {
+		return nil, fmt.Errorf("revocation is %d bytes, want %d", len(b), revFixed+sigLen)
+	}
+	if b[0] != credVersion {
+		return nil, fmt.Errorf("revocation version %d is not supported", b[0])
+	}
+	r := &Revocation{}
+	i := 1
+	copy(r.MeshID[:], b[i:i+MeshIDLen])
+	i += MeshIDLen
+	r.DevicePub = append([]byte(nil), b[i:i+32]...)
+	i += 32
+	r.Serial = binary.BigEndian.Uint64(b[i : i+8])
+	i += 8
+	r.Issued = int64(binary.BigEndian.Uint64(b[i : i+8]))
+	i += 8
+	r.Sig = append([]byte(nil), b[i:]...)
+	return r, nil
 }
 
 // Revoke signs a withdrawal of one credential.
@@ -234,9 +354,9 @@ func (a *Admin) Revoke(devicePub []byte, serial uint64, now time.Time) (*Revocat
 		Serial:    serial,
 		Issued:    now.Unix(),
 	}
-	raw, err := json.Marshal(r.body())
+	raw, err := r.signedBytes()
 	if err != nil {
-		return nil, fmt.Errorf("marshal revocation: %w", err)
+		return nil, err
 	}
 	r.Sig = ed25519.Sign(a.Priv, raw)
 	return r, nil
@@ -247,9 +367,9 @@ func VerifyRevocation(adminPub ed25519.PublicKey, r *Revocation) error {
 	if r == nil {
 		return errors.New("no revocation")
 	}
-	raw, err := json.Marshal(r.body())
+	raw, err := r.signedBytes()
 	if err != nil {
-		return fmt.Errorf("marshal revocation: %w", err)
+		return fmt.Errorf("revocation is malformed: %w", err)
 	}
 	if !ed25519.Verify(adminPub, raw, r.Sig) {
 		return ErrBadSignature

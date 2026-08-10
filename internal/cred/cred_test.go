@@ -3,7 +3,6 @@ package cred
 import (
 	"crypto/ed25519"
 	"crypto/rand"
-	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -220,17 +219,92 @@ func TestCredentialSizeAgainstTheAnnounceBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := json.Marshal(c)
+	raw, err := c.MarshalBinary()
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("credential is %d bytes as JSON", len(raw))
+	t.Logf("credential is %d bytes on the wire", len(raw))
 
-	// The announce carries a few hundred bytes of its own, so a credential must
-	// leave room beside them. 400 is comfortably inside 1024 with an announce
-	// and its base64 expansion; anything approaching it means the encoding needs
-	// revisiting before this ships, not after.
-	if len(raw) > 400 {
+	// Measured, not guessed: an announce carrying a credential is base64'd into
+	// JSON and then base64'd again inside the envelope, and the whole thing must
+	// fit a fixed padding. 320 bytes was the ceiling found by bisecting against
+	// Seal; the JSON encoding was 364 and did not fit at all, which is why this
+	// is binary.
+	if len(raw) > 320 {
 		t.Errorf("credential is %d bytes, too large to ride an announce", len(raw))
+	}
+
+	// And it must survive the round trip unchanged, including its signature.
+	back, err := UnmarshalCredential(raw)
+	if err != nil {
+		t.Fatalf("a credential we just wrote did not parse: %v", err)
+	}
+	if err := Verify(admin.Pub, back, time.Now()); err != nil {
+		t.Errorf("a credential did not verify after a round trip: %v", err)
+	}
+	if back.Name != c.Name || back.Serial != c.Serial || back.NotAfter != c.NotAfter {
+		t.Error("fields changed across the round trip")
+	}
+}
+
+// The parser reads bytes from a public bus, so every malformed shape must be
+// refused rather than panic. A credential that has not been verified yet is
+// attacker-controlled input.
+func TestUnmarshalRejectsMalformedInput(t *testing.T) {
+	admin, _ := NewAdmin()
+	dev, wg := device(t)
+	c, _ := admin.Issue(dev, wg, "laptop", 1, time.Now(), time.Hour)
+	good, err := c.MarshalBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, bad := range [][]byte{
+		nil,
+		{},
+		{1},
+		good[:len(good)-1],                      // truncated signature
+		good[:credFixed],                        // no signature at all
+		append([]byte{9}, good[1:]...),          // unsupported version
+		append(append([]byte(nil), good...), 0), // trailing junk
+	} {
+		if _, err := UnmarshalCredential(bad); err == nil {
+			t.Errorf("accepted a malformed credential of %d bytes", len(bad))
+		}
+	}
+
+	// A name length that disagrees with the buffer must not read past the end.
+	tampered := append([]byte(nil), good...)
+	tampered[credFixed-1] = 200
+	if _, err := UnmarshalCredential(tampered); err == nil {
+		t.Error("accepted a credential whose name length exceeds its buffer")
+	}
+}
+
+func TestRevocationRoundTrip(t *testing.T) {
+	admin, _ := NewAdmin()
+	dev, _ := device(t)
+	r, err := admin.Revoke(dev, 7, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := r.MarshalBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := UnmarshalRevocation(raw)
+	if err != nil {
+		t.Fatalf("a revocation we just wrote did not parse: %v", err)
+	}
+	if err := VerifyRevocation(admin.Pub, back); err != nil {
+		t.Errorf("did not verify after a round trip: %v", err)
+	}
+	if back.Serial != 7 {
+		t.Errorf("serial came back as %d", back.Serial)
+	}
+	for _, bad := range [][]byte{nil, raw[:len(raw)-1], append(append([]byte(nil), raw...), 0)} {
+		if _, err := UnmarshalRevocation(bad); err == nil {
+			t.Errorf("accepted a malformed revocation of %d bytes", len(bad))
+		}
 	}
 }

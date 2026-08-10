@@ -128,8 +128,31 @@ func epochKey(nk identity.NetworkKey, epoch int64) []byte {
 }
 
 // Seal signs a message with the device key and encrypts it under the epoch key.
+// Seal pads to the smallest known size the message fits.
+//
+// Not a fixed size any more, because a credential (ADR-018) is ~364 bytes and
+// nothing else fits beside it in 512. Readers accept every size in PaddedSizes,
+// so a node that carries a credential simply uses the next one up and older
+// nodes still read it — which is what makes credentials deployable without a
+// flag day.
+//
+// The cost is honest and worth stating: length now distinguishes an announce
+// carrying a credential from one that is not. Within a size the padding is
+// still constant, so "came online" and "changed address" remain
+// indistinguishable, which is what the padding was for.
 func Seal(nk identity.NetworkKey, epoch int64, priv ed25519.PrivateKey, msg any) ([]byte, error) {
-	return sealPadded(nk, epoch, priv, msg, PaddedSize)
+	var err error
+	for _, size := range PaddedSizes {
+		var out []byte
+		out, err = sealPadded(nk, epoch, priv, msg, size)
+		if err == nil {
+			return out, nil
+		}
+		if !errors.Is(err, ErrTooLarge) {
+			return nil, err
+		}
+	}
+	return nil, err
 }
 
 // sealPadded seals to a specific plaintext size. Exists so the sending size can
