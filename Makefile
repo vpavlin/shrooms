@@ -199,7 +199,7 @@ test-unit:
 	CGO_CFLAGS= CGO_LDFLAGS= $(GO) test -race ./internal/identity/... \
 		./internal/topic/... ./internal/control/... ./internal/wg/... \
 		./internal/disco/... ./internal/relay/... ./internal/state/... \
-		./internal/hosts/... ./internal/dns/... ./internal/service/...
+		./internal/hosts/... ./internal/dns/... ./internal/service/... ./internal/cred/...
 
 ## --- android ---
 

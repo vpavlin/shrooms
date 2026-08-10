@@ -30,6 +30,22 @@ import (
 // signal.
 const PaddedSize = 512
 
+// PaddedSizes are the plaintext sizes a reader accepts.
+//
+// Senders use PaddedSize; readers take any of these, so the sending size can
+// move without a flag day. 1024 is here ahead of need, so that by the time
+// credentials require it every node in the field already accepts it.
+var PaddedSizes = []int{512, 1024}
+
+func knownPadding(n int) bool {
+	for _, s := range PaddedSizes {
+		if n == s {
+			return true
+		}
+	}
+	return false
+}
+
 // MaxClockSkew bounds how far a message's timestamp may be from local time.
 // Beyond this the message is rejected regardless of signature, which limits how
 // long a captured message stays replayable.
@@ -113,6 +129,13 @@ func epochKey(nk identity.NetworkKey, epoch int64) []byte {
 
 // Seal signs a message with the device key and encrypts it under the epoch key.
 func Seal(nk identity.NetworkKey, epoch int64, priv ed25519.PrivateKey, msg any) ([]byte, error) {
+	return sealPadded(nk, epoch, priv, msg, PaddedSize)
+}
+
+// sealPadded seals to a specific plaintext size. Exists so the sending size can
+// be moved deliberately, and so tests can prove a reader accepts each size
+// rather than only the one compiled in today.
+func sealPadded(nk identity.NetworkKey, epoch int64, priv ed25519.PrivateKey, msg any, size int) ([]byte, error) {
 	body, err := json.Marshal(msg)
 	if err != nil {
 		return nil, fmt.Errorf("marshal body: %w", err)
@@ -123,13 +146,13 @@ func Seal(nk identity.NetworkKey, epoch int64, priv ed25519.PrivateKey, msg any)
 	if err != nil {
 		return nil, fmt.Errorf("marshal envelope: %w", err)
 	}
-	if len(plain) > PaddedSize-2 {
+	if len(plain) > size-2 {
 		return nil, fmt.Errorf("%w: message is %d bytes, exceeds padded size %d",
-			ErrTooLarge, len(plain), PaddedSize)
+			ErrTooLarge, len(plain), size)
 	}
 
 	// 2-byte big-endian length, then the envelope, then zero padding.
-	padded := make([]byte, PaddedSize)
+	padded := make([]byte, size)
 	binary.BigEndian.PutUint16(padded[:2], uint16(len(plain)))
 	copy(padded[2:], plain)
 
@@ -204,12 +227,22 @@ func open(nk identity.NetworkKey, epoch int64, raw []byte) ([]byte, error) {
 	if err != nil {
 		return nil, errors.New("decryption failed")
 	}
-	if len(padded) != PaddedSize {
-		return nil, fmt.Errorf("plaintext is %d bytes, want %d", len(padded), PaddedSize)
+	// Any size we know about, not just the one we send. The reader used to
+	// demand exactly PaddedSize, which made changing that constant a flag day:
+	// old and new nodes could not read each other at all, so a mesh would have
+	// to be upgraded everywhere simultaneously — including a phone that updates
+	// through an app store on its own schedule.
+	//
+	// Accepting a set instead turns the change into two ordinary steps: ship
+	// tolerant readers everywhere, then move the senders. Growing the padding
+	// is needed for admin-signed credentials (ADR-018), which do not fit in 512
+	// bytes with anything else.
+	if !knownPadding(len(padded)) {
+		return nil, fmt.Errorf("plaintext is %d bytes, want one of %v", len(padded), PaddedSizes)
 	}
 
 	n := int(binary.BigEndian.Uint16(padded[:2]))
-	if n > PaddedSize-2 {
+	if n > len(padded)-2 {
 		return nil, errors.New("declared length exceeds padding")
 	}
 	return padded[2 : 2+n], nil
