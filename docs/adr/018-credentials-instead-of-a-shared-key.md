@@ -25,6 +25,14 @@ ADR-017's invites reduce how far the key *travels*. They do not change any of
 the above, because the joined device ends up holding the same key. Worth being
 blunt about: an invite scheme is easy to mistake for a credential system.
 
+> **Scope note (see [ADR-020](020-membership-is-a-seam.md)).** The
+> per-recipient announce encryption below is *not* being built. It is the
+> largest piece of this design, it scales worst, and it is exactly what MLS
+> TreeKEM does properly — and Logos already has an MLS implementation in
+> libchat. The shared payload key stays until that is a real option. What is
+> being built is credentials, expiry and revocation, which earn their keep
+> whatever happens to libchat.
+
 ## Decision
 
 **Separate authority from participation.**

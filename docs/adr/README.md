@@ -29,3 +29,4 @@ number appears, its source is named.
 | [017](017-invite-tokens.md) | Invite tokens | proposed |
 | [018](018-credentials-instead-of-a-shared-key.md) | Credentials instead of a shared key | proposed |
 | [019](019-service-addresses.md) | An address per service | proposed |
+| [020](020-membership-is-a-seam.md) | Membership is a seam | accepted |
