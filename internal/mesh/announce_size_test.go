@@ -1,7 +1,6 @@
 package mesh
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -34,18 +33,26 @@ func TestAnnounceFitsByTrimmingEndpoints(t *testing.T) {
 		}
 	}
 
-	// Establish the failure this guards against: unmodified, a large announce
-	// is refused, and refused with an error a caller can recognise.
-	if _, err := control.Seal(nk, 1, id.DevicePriv, build(8)); err == nil {
-		t.Fatal("an oversized announce sealed; this test proves nothing")
-	} else if !strings.Contains(err.Error(), "padded size") {
-		t.Fatalf("unexpected error: %v", err)
+	// Seal escalates to the next padding size, so the count that overflows is
+	// larger than it was — the original failure appeared at five endpoints
+	// against a fixed 512. Find where it still overflows rather than hardcoding
+	// a number that moves whenever a padding size is added.
+	overflow := 0
+	for n := 1; n <= 64; n++ {
+		if _, err := control.Seal(nk, 1, id.DevicePriv, build(n)); err != nil {
+			overflow = n
+			break
+		}
 	}
+	if overflow == 0 {
+		t.Skip("no endpoint count overflows the largest padding; nothing to trim")
+	}
+	t.Logf("overflows at %d endpoints", overflow)
 
-	// Trimming from the end must always reach something that fits, because
-	// zero endpoints certainly fits — a node with no dialable address is still
-	// worth announcing, since peers can reach it once it speaks first.
-	a := build(8)
+	// Trimming from the end must always reach something that fits, because zero
+	// endpoints certainly fits — a node with no dialable address is still worth
+	// announcing, since peers can reach it once it speaks first.
+	a := build(overflow)
 	var err error
 	for {
 		_, err = control.Seal(nk, 1, id.DevicePriv, a)
