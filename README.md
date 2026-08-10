@@ -583,31 +583,34 @@ than a default that quietly picks a side.
 A read-only Basecamp view — the same graph and list as the phone. It never
 changes the mesh, so it cannot break it.
 
-**Point `status_file` at the module's own directory.** That is the only place
-Basecamp can read from:
+It reads the daemon through **`shrooms_core`**, a companion module installed
+alongside it. That indirection is not ceremony. A `ui_qml` app runs inside a
+sandbox (Basecamp's spec, *QML App Sandboxing*): a deny-all network manager
+blocks every outgoing HTTP request, and `XMLHttpRequest` refuses local files
+unless the host sets `QML_XHR_ALLOW_FILE_READ`, which Basecamp does not. So
+neither a status file nor a port is reachable from the view, whatever their
+permissions — a status file with the right group, `ui_listen`, and a file
+beside the view were all proposed here before anyone read the log that says so.
+
+A Logos module runs in its own process and is not sandboxed, which is the route
+Basecamp prescribes: UI apps reach the outside indirectly, through modules.
+`shrooms_core` does one HTTP GET over the daemon's control socket and hands back
+the JSON; the view calls it with `logos.callModule`, exactly as `qaku` calls
+`qaku_core`.
+
+The socket is `0660` and the daemon runs as root for `CAP_NET_ADMIN`, so name a
+group you are in:
 
 ```toml
-status_file       = "/home/you/.local/share/Logos/LogosBasecamp/plugins/shrooms/status.json"
-status_file_group = "you"
+socket_group = "your-username"      # in /etc/shrooms/config.toml
 ```
 
-A `ui_qml` app runs inside a sandbox (Basecamp's spec, *QML App Sandboxing*): a
-deny-all network manager blocks every outgoing HTTP request, and a URL
-interceptor resolves local files only under an allow-list of roots — chiefly
-the app's own install directory. So a file in `/run` is refused there however
-it is permissioned, and `ui_listen` does not rescue it either, because the
-request is refused before it reaches any port.
+Without it the view says precisely that, rather than showing an empty mesh.
 
-The view therefore tries three sources in order: a file beside itself, an
-absolute path, then the endpoint. Only the first works under Basecamp; the
-other two are for running outside it. `basecamp-check` exercises all three by
-running the real QML rather than inspecting it, which is what caught its first
-three bugs.
-
-The properly architected answer is a companion **core module** — those run in
-their own process, unsandboxed, and a view reaches them through
-`logos.callModule`. It is why every other module in this ecosystem has a
-`_core` counterpart. Worth building; it needs C++, and this does not.
+Outside Basecamp — the offscreen check, or a plain `qml` runtime — there is no
+sandbox and no core module, so the view falls back to a file beside itself, an
+absolute `status_file`, then the daemon's endpoint. `basecamp-check` exercises
+all three.
 
 ```console
 $ make basecamp-check      # load the real view offscreen against a fixture
@@ -638,7 +641,7 @@ download.
 | **Android** | ✅ a full participant, in daily use — tunnels, names, roaming between wifi and mobile data |
 | **M4** seamless operation | 🟨 roaming survives and the mesh repairs itself after a rendezvous outage; switching networks is still rough on the phone |
 | **M5** credentials | ⬜ designed ([ADR-017](docs/adr/017-invite-tokens.md), [ADR-018](docs/adr/018-credentials-instead-of-a-shared-key.md)), not built — the network key is still a shared bearer secret |
-| **Basecamp view** | 🟨 packaged and published; cannot read its status inside Basecamp's QML sandbox until a companion core module exists |
+| **Basecamp view** | ✅ published, with `shrooms_core` reading the daemon from outside the QML sandbox |
 
 `make m0` / `make m1` / `make m3` / `make s1` / `make s3` reproduce these.
 
