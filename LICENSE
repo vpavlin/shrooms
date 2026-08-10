@@ -1,0 +1,14 @@
+Shrooms is licensed under either of
+
+  * Apache License, Version 2.0  (LICENSE-APACHE-v2)
+  * MIT License                  (LICENSE-MIT)
+
+at your option. This is the dual licence the Logos projects use, and it is
+chosen for the same reason: Apache-2.0 carries an explicit patent grant, which
+matters for a network protocol, while MIT stays compatible with the widest
+range of downstream projects. Take whichever suits you; you need not choose
+both.
+
+Unless you state otherwise, any contribution intentionally submitted for
+inclusion in this work is dual licensed as above, with no additional terms or
+conditions.

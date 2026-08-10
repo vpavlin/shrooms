@@ -738,9 +738,10 @@ Next, roughly in order:
 
 ## Licence
 
-Not chosen yet — there is no `LICENSE` file in this repository, which means
-default copyright applies and nobody else may use this. Worth fixing before
-inviting anyone in.
+Dual licensed under **Apache-2.0** ([LICENSE-APACHE-v2](LICENSE-APACHE-v2)) or
+**MIT** ([LICENSE-MIT](LICENSE-MIT)), at your option — the same pair the Logos
+projects use. Apache-2.0 carries an explicit patent grant, which matters for a
+network protocol; MIT keeps the widest downstream compatibility.
 
 ---
 
