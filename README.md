@@ -531,26 +531,39 @@ than a default that quietly picks a side.
 
 ## Desktop monitoring
 
-A read-only Basecamp view — the same graph and list as the phone. Enable the
-snapshot the view reads:
+A read-only Basecamp view — the same graph and list as the phone. It never
+changes the mesh, so it cannot break it.
+
+**Point `status_file` at the module's own directory.** That is the only place
+Basecamp can read from:
 
 ```toml
-status_file = "/run/logos-vpn/status.json"
+status_file       = "/home/you/.local/share/Logos/LogosBasecamp/plugins/logos_vpn/status.json"
+status_file_group = "you"
 ```
 
-It never changes the mesh, so it cannot break it.
+A `ui_qml` app runs inside a sandbox (Basecamp's spec, *QML App Sandboxing*): a
+deny-all network manager blocks every outgoing HTTP request, and a URL
+interceptor resolves local files only under an allow-list of roots — chiefly
+the app's own install directory. So a file in `/run` is refused there however
+it is permissioned, and `ui_listen` does not rescue it either, because the
+request is refused before it reaches any port.
+
+The view therefore tries three sources in order: a file beside itself, an
+absolute path, then the endpoint. Only the first works under Basecamp; the
+other two are for running outside it. `basecamp-check` exercises all three by
+running the real QML rather than inspecting it, which is what caught its first
+three bugs.
+
+The properly architected answer is a companion **core module** — those run in
+their own process, unsandboxed, and a view reaches them through
+`logos.callModule`. It is why every other module in this ecosystem has a
+`_core` counterpart. Worth building; it needs C++, and this does not.
 
 ```console
 $ make basecamp-check      # load the real view offscreen against a fixture
 $ make basecamp-lgx        # build the installable package
 ```
-
-The view reads that file if it can and falls back to the daemon's loopback
-endpoint if it cannot, because QML refuses `file://` reads through
-XMLHttpRequest unless the host sets `QML_XHR_ALLOW_FILE_READ` — Basecamp's
-environment to decide, not ours. `basecamp-check` covers both transports by
-running the real QML rather than inspecting it, which is what caught both of
-its first bugs.
 
 Packaged as an **LGX**: a gzipped tar of `manifest.json` plus
 `variants/<platform>/`, with a content hash per directory. The build comes from
