@@ -33,11 +33,24 @@ read *future* traffic even holding every key it ever had.
 
 Three reasons, in increasing order of how hard they are to fix.
 
-**Groups are ephemeral.** libchat today has no persistence for group state. Mesh
-membership is the opposite of ephemeral: it must survive a VPS reboot, a laptop
-shut for a month, and a phone that is off overnight. "This device is a member"
-is a durable fact about hardware, not a conversation that can be re-established
-by the people in it. Until group state persists, membership cannot live there.
+**Groups are ephemeral.** Checked rather than assumed, because this is the fact
+the decision rests on: libchat's MLS provider is
+`core/conversations/src/inbox_v2/mls_provider.rs`, the type is named
+`MlsEphemeralPqProvider`, and its `StorageProvider` is
+`openmls_memory_storage::MemoryStorage` — group state lives in memory and is
+gone on restart. Upstream named it `Ephemeral`, so this is a stated position
+rather than an oversight.
+
+Mesh membership is the opposite. It must survive a VPS reboot, a laptop shut for
+a month, and a phone that is off overnight. "This device is a member" is a
+durable fact about hardware, not a conversation that can be re-established by
+the people in it. Until group state persists, membership cannot live there.
+
+Worth noting what this is *not*: libchat persists other things. There is a
+`core/sqlite` crate, and double-ratchet sessions persist in
+`core/double-ratchets/src/storage/session.rs`. `StorageProvider` is an openmls
+trait with a sqlite-shaped hole already waiting, so this reads as a gap on a
+path rather than a refusal.
 
 **MLS needs ordering.** Epochs advance through an agreed sequence of commits,
 and Waku is eventually consistent and unordered. Chat systems put a Delivery
@@ -85,5 +98,6 @@ worse than keeping a cheap version that certainly will be.
   security arrives with it.
 - If it does not, nothing is lost. Credentials stand on their own, and the mesh
   never depended on a group-chat library to know who its members are.
-- Worth re-reading when libchat persists group state. That is the trigger; not a
-  version number, and not enthusiasm.
+- The trigger for re-reading this is specific: when `MlsEphemeralPqProvider`
+  stops being ephemeral — when that `StorageProvider` points at something
+  durable. Not a version number, and not enthusiasm.
