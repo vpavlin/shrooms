@@ -70,7 +70,9 @@ func (m *Mesh) HoldInvite(ctx context.Context, s invite.Secret) (*invite.Request
 	if err := m.node.Subscribe(name); err != nil {
 		return nil, fmt.Errorf("subscribe to the invite topic: %w", err)
 	}
-	m.log.Info("holding an invite open")
+	// The fleet is logged on both ends deliberately: if they differ, both sides
+	// work perfectly and never meet, and this is the only place it shows.
+	m.log.Info("holding an invite open", "preset", m.cfg.Preset, "cluster", m.cfg.ClusterID)
 
 	select {
 	case <-ctx.Done():

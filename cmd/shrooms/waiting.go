@@ -180,13 +180,36 @@ func joinHere(ctx context.Context, log *slog.Logger, st *state.State, cfgPath, s
 		if err != nil {
 			return nil, err
 		}
-		node, err := startNode(nodeConfig(state.DefaultConfig()))
+		// This machine's own fleet settings, not the shipped defaults.
+		//
+		// The invite is not allowed to say which fleet to use — a device that
+		// could be told that could be told to use somebody else's — but the
+		// local config may, and ignoring it was wrong: a node whose config
+		// names a different preset or cluster than today's default would
+		// publish its request onto a fleet the inviter is not on. Both sides
+		// behave perfectly and never meet, which presents as a join that waits
+		// out its timeout with nothing in either log.
+		fleet := state.DefaultConfig()
+		if onDisk, err := state.LoadConfigUnvalidated(cfgPath); err == nil {
+			if onDisk.Preset != "" {
+				fleet.Preset = onDisk.Preset
+			}
+			fleet.ClusterID = onDisk.ClusterID
+			fleet.EntryNodes = onDisk.EntryNodes
+			if onDisk.Mode != "" {
+				fleet.Mode = onDisk.Mode
+			}
+		}
+		node, err := startNode(nodeConfig(fleet))
 		if err != nil {
 			return nil, err
 		}
 		defer node.Close()
 
-		log.Info("redeeming an invite")
+		// Logged, because a mismatch here is invisible otherwise: the only
+		// symptom is that nobody answers.
+		log.Info("redeeming an invite",
+			"preset", fleet.Preset, "cluster", fleet.ClusterID, "mode", fleet.Mode)
 		resp, err := invite.Redeem(ctx, rendezvous.InviteTransport(node), secret, &invite.Request{
 			DevicePub: st.Identity.DevicePub,
 			WGPub:     st.Identity.WGPub[:],
