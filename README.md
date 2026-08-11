@@ -709,6 +709,38 @@ the short name rather than silently picking a network for you.
 The first mesh in a config keeps the interface, port and identity it always had,
 so adding a second changes nothing about the first.
 
+### Firewalls
+
+A host firewall does not know the mesh interface is the mesh, and puts it
+wherever it puts unknown interfaces. On Fedora and RHEL that is firewalld's
+`public` zone, which allows ssh and little else — so `ssh vps.mesh` works while
+a published service on port 80 is refused, which is a confusing pair of
+symptoms to debug.
+
+```console
+$ sudo firewall-cmd --permanent --zone=trusted --add-interface=shrooms0
+$ sudo firewall-cmd --reload
+```
+
+That says traffic arriving over the mesh is trusted, which matches how this
+works: access is decided by membership and enforced by WireGuard, not by port.
+
+**On a mesh you share with other people, do not do that.** `trusted` means their
+devices reach everything on the machine, not only what you published. There,
+open the specific ports instead:
+
+```console
+$ sudo firewall-cmd --permanent --add-port=80/tcp --add-port=443/tcp
+```
+
+The UDP port also has to be reachable for the tunnel itself — 51820, plus one
+per additional mesh:
+
+```console
+$ sudo firewall-cmd --permanent --add-port=51820/udp && sudo firewall-cmd --reload
+$ sudo ufw allow 51820/udp        # Debian and Ubuntu
+```
+
 ## Bandwidth, and what a node contributes
 
 A node joins a **public, shared cluster**, and by default it relays for it. That
