@@ -259,17 +259,22 @@ $ ssh root@VPS_IP 'ufw allow 51820/udp'    # or your firewall's equivalent
 
 ### 3. Join from your laptop
 
-On the machine that is already a member:
+On the machine that is already a member, ask it to admit one device. It prints
+a token and waits:
 
 ```console
 $ shrooms invite
+Invite valid for 15m0s. On the joining device:
+
   shrooms join --invite BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U
+
+Waiting...
 ```
 
-Then here, while that is still running:
+Then run that here, while the other machine is still waiting:
 
 ```console
-$ sudo ./bin/shrooms join --invite <TOKEN> --name laptop
+$ sudo ./bin/shrooms join --invite BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U --name laptop
 $ sudo ./bin/shrooms daemon -v
 ```
 
@@ -575,7 +580,7 @@ laptop $ shrooms invite
 
 vps    $ shrooms join --invite BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U --name vps
         Asking to join as "vps"...
-        Enrolled. Credential serial 1, expires 2026-09-10T11:03:51+02:00.
+        Enrolled. Credential serial 1786439411, expires 2026-09-10T11:03:51+02:00.
 ```
 
 The token is 128 bits, good for **one device and fifteen minutes**, and both
