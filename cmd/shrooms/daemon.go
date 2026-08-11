@@ -125,11 +125,12 @@ func cmdDaemon(args []string) error {
 
 	for i, mc := range meshes {
 		iface, port := ifaceAndPort(cfg, i)
-		// The first mesh is the one this device already belonged to, and keeps
-		// its keys: re-deriving them would change its address and make it a
-		// stranger to every peer. A config that only ever had network_key puts
-		// exactly that mesh first.
-		in, err := startInstance(ctx, log, cfg, st, node, mc, iface, port, i == 0, *verbose)
+		// Legacy by identity, not by position: the mesh written as network_key
+		// is the one this device already belonged to, and keeps its keys —
+		// re-deriving them would change its address and make it a stranger to
+		// every peer. A mesh labelled "aaa" sorts first and is not it.
+		in, err := startInstance(ctx, log, cfg, st, node, mc, iface, port,
+			isLegacyMesh(cfg, mc), *verbose)
 		if in != nil {
 			instances = append(instances, in)
 		}

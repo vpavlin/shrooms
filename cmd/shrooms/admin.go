@@ -165,8 +165,12 @@ func mintAuthorityAt(dir string, plain bool, cfgPath, stateDir, name, label stri
 			return err
 		}
 		admin := &cred.Admin{Priv: primary.Priv, Pub: primary.Pub}
-		if err := issueLocal(admin, auth, stateDir, name, 1); err == nil {
-			enrolled = true
+		// Which mesh this authority is for, and whether it is the device's
+		// first — the one whose identity predates there being more than one.
+		if netID, legacy, err := meshIdentityOf(cfgPath, label); err == nil {
+			if err := issueLocal(admin, auth, stateDir, name, netID, legacy, 1); err == nil {
+				enrolled = true
+			}
 		}
 	}
 
@@ -187,6 +191,38 @@ func mintAuthorityAt(dir string, plain bool, cfgPath, stateDir, name, label stri
 	fmt.Printf("\n  %s\n\n", base64.StdEncoding.EncodeToString(recovery.Priv))
 	fmt.Println("Store it away from this machine. A password manager, a Keycard, paper.")
 	return nil
+}
+
+// meshIdentityOf resolves a label to the mesh's network id, and says whether it
+// is the mesh this device already belonged to.
+//
+// Not "the first one in the list": a mesh labelled "aaa" sorts before the
+// single-mesh "default", and taking position for history would hand a new mesh
+// the identity of the old one — changing this device's address on the mesh it
+// was already using.
+func meshIdentityOf(cfgPath, label string) (string, bool, error) {
+	cfg, err := state.LoadConfig(cfgPath)
+	if err != nil {
+		return "", false, err
+	}
+	want := label
+	if want == "" {
+		want = state.DefaultLabel
+	}
+	for _, m := range cfg.Meshes() {
+		if m.Label != want {
+			continue
+		}
+		id, err := m.NetworkID()
+		return id, isLegacyMesh(cfg, m), err
+	}
+	return "", false, fmt.Errorf("no mesh called %q in %s", want, cfgPath)
+}
+
+// isLegacyMesh reports whether a mesh is the one written as network_key — the
+// device's original mesh, whose identity must not be re-derived.
+func isLegacyMesh(cfg state.Config, m state.Mesh) bool {
+	return cfg.NetworkKey != "" && m.Label == state.DefaultLabel
 }
 
 // addAdminKeysFor appends an authority to a config, for one mesh or for the
@@ -249,18 +285,30 @@ func issueFor(admin *cred.Admin, auth *cred.Authority, devPub, wgPub []byte,
 	return c.MarshalBinary()
 }
 
-// issueLocal enrols the device whose state directory this is.
-func issueLocal(admin *cred.Admin, auth *cred.Authority, stateDir, name string, serial uint64) error {
+// issueLocal enrols the device whose state directory this is, on one mesh.
+//
+// networkID and legacy decide *which identity* is named. A device has one per
+// mesh (ADR-015), so issuing against the single-mesh identity — as this did —
+// produced a credential naming the wrong keys, stored in the wrong slot. On a
+// second mesh that meant announcing with no credential at all, which every
+// peer of a mesh with admin keys correctly refuses. The symptom is a peer that
+// appears in the roster on one side, never on the other, and whose handshakes
+// are dropped by a WireGuard that has never heard of it.
+func issueLocal(admin *cred.Admin, auth *cred.Authority, stateDir, name, networkID string, legacy bool, serial uint64) error {
 	st, err := state.LoadOrCreateState(stateDir)
 	if err != nil {
 		return err
 	}
-	raw, err := issueFor(admin, auth, st.Identity.DevicePub, st.Identity.WGPub[:],
+	ms, err := st.MeshState(networkID, legacy)
+	if err != nil {
+		return err
+	}
+	raw, err := issueFor(admin, auth, ms.Identity.DevicePub, ms.Identity.WGPub[:],
 		name, serial, time.Now(), cred.DefaultLife)
 	if err != nil {
 		return err
 	}
-	return st.SetCredential(raw)
+	return st.SetMeshCredential(networkID, raw)
 }
 
 func loadAdmin(dir string) (*cred.Admin, *cred.Authority, error) {
@@ -333,6 +381,8 @@ func cmdAdminIssue(args []string) error {
 	fs := flag.NewFlagSet("admin issue", flag.ExitOnError)
 	dir := fs.String("dir", defaultAdminDir(), "where the admin key is kept")
 	stateDir := fs.String("state", state.DefaultStateDir, "the device's state directory")
+	cfgPath := fs.String("config", state.DefaultConfigPath, "config file, to resolve --mesh")
+	label := fs.String("mesh", "", "which mesh to enrol this device on (ADR-015)")
 	name := fs.String("name", "", "the device's name")
 	life := fs.Duration("life", cred.DefaultLife, "how long the credential is valid")
 	serial := fs.Uint64("serial", 0, "credential serial; must increase per device (default: now)")
@@ -347,7 +397,7 @@ func cmdAdminIssue(args []string) error {
 		return errors.New("--device and --wg go together: both name the same machine")
 	}
 
-	admin, auth, err := loadAdmin(*dir)
+	admin, auth, err := loadAdminFor(*dir, *label)
 	if err != nil {
 		return err
 	}
@@ -356,6 +406,7 @@ func cmdAdminIssue(args []string) error {
 	}
 
 	var devPub, wgPub []byte
+	var networkID string
 	var st *state.State
 	if remote {
 		if devPub, err = parseKey(*devHex, ed25519.PublicKeySize); err != nil {
@@ -369,7 +420,20 @@ func cmdAdminIssue(args []string) error {
 		if err != nil {
 			return err
 		}
-		devPub, wgPub = st.Identity.DevicePub, st.Identity.WGPub[:]
+		// The identity for *this mesh*. A device has one per mesh, so issuing
+		// against the single-mesh identity would name the wrong keys — and a
+		// credential naming keys the announce is not signed with is refused by
+		// every peer, correctly and silently.
+		netID, legacy, idErr := meshIdentityOf(*cfgPath, *label)
+		if idErr != nil {
+			return idErr
+		}
+		ms, msErr := st.MeshState(netID, legacy)
+		if msErr != nil {
+			return msErr
+		}
+		devPub, wgPub = ms.Identity.DevicePub, ms.Identity.WGPub[:]
+		networkID = netID
 	}
 
 	now := time.Now()
@@ -383,7 +447,7 @@ func cmdAdminIssue(args []string) error {
 	}
 	local := !remote && *write
 	if local {
-		if err := st.SetCredential(raw); err != nil {
+		if err := st.SetMeshCredential(networkID, raw); err != nil {
 			return err
 		}
 	}
