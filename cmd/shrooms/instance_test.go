@@ -46,11 +46,14 @@ func TestQualifiedNamePicksTheMesh(t *testing.T) {
 		t.Errorf("vps.shared resolved to %v (%v)", addr, ok)
 	}
 
-	// Ambiguous unqualified: answered by nobody rather than by whichever mesh
-	// happened to be first. Silently picking one is how you end up sending
-	// something to the wrong network.
-	if addr, ok := lookup("vps"); ok {
-		t.Errorf("ambiguous name resolved to %v", addr)
+	// A name on both meshes is answered by the first, in config order — which
+	// is your own mesh, since that is the one a config lists first and the one
+	// a second mesh is added to. Refusing instead took the short name away
+	// from exactly the devices that are on both of your meshes, which are the
+	// ones you reach most often, and looked from the outside like DNS being
+	// broken for one machine.
+	if addr, ok := lookup("vps"); !ok || addr.String() != "fd00::1" {
+		t.Errorf("shared name resolved to %v (%v), wanted the first mesh", addr, ok)
 	}
 
 	// Unambiguous unqualified still works, which is what keeps the short form

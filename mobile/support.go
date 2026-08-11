@@ -387,8 +387,10 @@ func (t tapTransport) Messages() <-chan invite.Message { return t.msgs }
 // resolveAll answers a name across every mesh on this device (ADR-015).
 //
 // The qualified form wins — vps.home.mesh is answered only by the mesh it names
-// — and the short form only when exactly one mesh has that name. A phone with
-// one mesh, which is every phone today, sees no change.
+// — and for the short form the first mesh that has the name answers, in config
+// order. See resolveAcross in the daemon: refusing an ambiguous short name
+// took the short name away from precisely the devices on both of your meshes,
+// which are the ones you reach most.
 func resolveAll(instances []*meshInstance) dnssrv.Lookup {
 	return func(host string) (netip.Addr, bool) {
 		if dev, rest, ok := strings.Cut(host, "."); ok {
@@ -398,14 +400,12 @@ func resolveAll(instances []*meshInstance) dnssrv.Lookup {
 				}
 			}
 		}
-		var found netip.Addr
-		hits := 0
 		for _, in := range instances {
 			if addr, ok := in.mesh.Lookup(host); ok {
-				found, hits = addr, hits+1
+				return addr, true
 			}
 		}
-		return found, hits == 1
+		return netip.Addr{}, false
 	}
 }
 

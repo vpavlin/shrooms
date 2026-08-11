@@ -164,10 +164,20 @@ func named(instances []*instance) []namedMesh {
 
 // resolveAcross answers a name across every mesh (ADR-015).
 //
-// The qualified form wins: vps.home.mesh is unambiguous by construction. The
-// short form is answered only when exactly one mesh has that name, so a
-// single-mesh node — which is every node today — sees no change, and ambiguity
-// removes the short name rather than silently picking a mesh for you.
+// The qualified form wins: vps.home.mesh names one mesh and is unambiguous by
+// construction. For the short form, the first mesh that has the name answers,
+// in config order.
+//
+// This used to refuse a name that more than one mesh answered, on the grounds
+// that picking one silently is a lie. In practice the devices on two of your
+// own meshes are largely the same devices, so the rule removed exactly the
+// names most worth having — a machine on both meshes became the one machine
+// with no short name, while everything on a single mesh resolved fine. That
+// reads as "DNS is broken", and it took a while to find because it is not.
+//
+// Picking the first is honest enough: both addresses reach the same machine,
+// and it is the mesh the config lists first that answers. The qualified form
+// remains the way to say which one you mean.
 func resolveAcross(meshes []namedMesh) dnssrv.Lookup {
 	return func(host string) (netip.Addr, bool) {
 		// Qualified: the label to the right of the device is a mesh label.
@@ -181,14 +191,12 @@ func resolveAcross(meshes []namedMesh) dnssrv.Lookup {
 				}
 			}
 		}
-		var found netip.Addr
-		hits := 0
 		for _, m := range meshes {
 			if addr, ok := m.lookup(host); ok {
-				found, hits = addr, hits+1
+				return addr, true
 			}
 		}
-		return found, hits == 1
+		return netip.Addr{}, false
 	}
 }
 
