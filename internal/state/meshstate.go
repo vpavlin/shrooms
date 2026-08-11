@@ -1,11 +1,13 @@
 package state
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/base64"
 	"errors"
 	"fmt"
 
+	"github.com/vpavlin/shrooms/internal/cred"
 	"github.com/vpavlin/shrooms/internal/identity"
 )
 
@@ -90,6 +92,19 @@ func (s *State) SetMeshCredentialFor(networkID string, legacy bool, raw []byte) 
 	ms, err := s.MeshState(networkID, legacy)
 	if err != nil {
 		return err
+	}
+	// The credential must name the identity this mesh announces with.
+	//
+	// Refused rather than stored, because the failure is otherwise silent and
+	// remote: the mesh announces a credential naming another device, every peer
+	// refuses it, and the only evidence is a line in somebody else's log. Cost
+	// an evening to find once.
+	if c, err := cred.UnmarshalCredential(raw); err == nil && ms.Identity != nil {
+		if !bytes.Equal(c.DevicePub, ms.Identity.DevicePub) {
+			return fmt.Errorf("this credential names another device (%x, not %x); "+
+				"it belongs to a different mesh or identity",
+				c.DevicePub[:8], ms.Identity.DevicePub[:8])
+		}
 	}
 	ms.Credential = append([]byte(nil), raw...)
 	// The single-mesh field stays in step only for the device's ORIGINAL mesh.

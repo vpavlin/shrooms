@@ -88,6 +88,18 @@ class MainActivity : ComponentActivity() {
                 val dir = filesDir.absolutePath
                 var configured by remember { mutableStateOf(Mobile.configured(dir)) }
                 var addingMesh by remember { mutableStateOf(false) }
+
+                // Connect on launch, once. A mesh VPN that has to be switched
+                // on by hand every time is a mesh that is off when you need it
+                // — and the consent dialog only appears the first time, so
+                // there is nothing to interrupt afterwards.
+                var autoConnected by rememberSaveable { mutableStateOf(false) }
+                LaunchedEffect(configured) {
+                    if (configured && !autoConnected) {
+                        autoConnected = true
+                        requestConnect()
+                    }
+                }
                 val snap by MeshState.snapshot.collectAsStateWithLifecycle()
 
                 Surface(
@@ -125,6 +137,16 @@ class MainActivity : ComponentActivity() {
                                     .setAction(MeshVpnService.ACTION_DISCONNECT))
                             },
                             onAddMesh = { addingMesh = true },
+                            onLeftMesh = {
+                                // The tunnel is built from the config at
+                                // connect time, so a mesh it no longer names
+                                // keeps running until it is rebuilt.
+                                if (snap.connected) {
+                                    startService(Intent(this@MainActivity, MeshVpnService::class.java)
+                                        .setAction(MeshVpnService.ACTION_DISCONNECT))
+                                }
+                                requestConnect()
+                            },
                         )
                     }
                 }
@@ -391,7 +413,12 @@ private fun MeshScreen(
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
     onAddMesh: () -> Unit = {},
+    onLeftMesh: () -> Unit = {},
 ) {
+    // Leaving edits the config; the running session still holds the mesh it
+    // was told about at connect time. Without saying so, the button looks
+    // like it did nothing at all.
+    var leaveError by remember { mutableStateOf("") }
     val clipboard = LocalClipboardManager.current
 
     Column(Modifier.fillMaxSize()) {
@@ -421,31 +448,69 @@ private fun MeshScreen(
             // Which meshes this device is on, when there is more than one.
             // Each has its own address here, and the roster below is grouped
             // the same way.
-            if (snap.meshes.size > 1) {
-                snap.meshes.forEach { m ->
+            val allMeshes = remember(snap.meshes, addingMesh) { meshesFromConfig(dir) }
+            if (allMeshes.size > 1) {
+                allMeshes.forEach { cm ->
+                    val m = snap.meshes.firstOrNull { it.label == cm.label }
+                        ?: MeshInfo(cm.label, "", "", 0)
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            "${m.label}  ${m.overlay}  ·  ${m.peers} peer${if (m.peers == 1) "" else "s"}",
+                            if (cm.disabled) "${cm.label}  — off"
+                            else "${m.label}  ${m.overlay}  ·  ${m.peers} peer${if (m.peers == 1) "" else "s"}",
                             style = MaterialTheme.typography.bodySmall,
-                            color = Palette.Ash,
+                            color = if (cm.disabled) Palette.Line else Palette.Ash,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f),
                         )
+                        // On or off without leaving. Being a member of a mesh
+                        // and using it are different things.
+                        if (cm.label != "default") {
+                            Switch(
+                                checked = !cm.disabled,
+                                onCheckedChange = { on ->
+                                    leaveError = ""
+                                    runCatching { Mobile.setMeshEnabled(dir, cm.label, on) }
+                                        .onSuccess { onLeftMesh() }
+                                        .onFailure { leaveError = it.message ?: "could not change it" }
+                                },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Palette.Bone,
+                                    checkedTrackColor = Palette.Violet,
+                                    uncheckedThumbColor = Palette.Ash,
+                                    uncheckedTrackColor = Palette.Line,
+                                ),
+                            )
+                        }
                         // The way back from a join that went wrong. Only the
                         // added meshes: leaving the original one is "forget
                         // everything", which is what clearing app data is for.
-                        if (m.label != "default") {
+                        if (cm.label != "default") {
                             Text(
                                 "leave",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = Palette.Rust,
                                 modifier = Modifier.clickable {
-                                    runCatching { Mobile.leaveMesh(dir, m.label) }
+                                    leaveError = ""
+                                    runCatching { Mobile.leaveMesh(dir, cm.label) }
+                                        // Reconnect, or the mesh stays up until
+                                        // something else restarts the tunnel and
+                                        // the button appears to have done nothing.
+                                        .onSuccess { onLeftMesh() }
+                                        .onFailure {
+                                            leaveError = it.message ?: "could not leave"
+                                        }
                                 },
                             )
                         }
                     }
+                }
+                if (leaveError.isNotEmpty()) {
+                    Text(
+                        leaveError,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Palette.Rust,
+                    )
                 }
                 Spacer(Modifier.height(8.dp))
             }
@@ -714,6 +779,18 @@ private fun ModeSetting(dir: String, connected: Boolean) {
         }
     }
 }
+
+/** One mesh as the config knows it, including ones that are switched off. */
+private data class ConfigMesh(val label: String, val disabled: Boolean)
+
+private fun meshesFromConfig(dir: String): List<ConfigMesh> =
+    runCatching {
+        val arr = org.json.JSONArray(Mobile.meshesJSON(dir))
+        (0 until arr.length()).map { i ->
+            val o = arr.getJSONObject(i)
+            ConfigMesh(o.optString("label"), o.optBoolean("disabled"))
+        }
+    }.getOrDefault(emptyList())
 
 @Composable
 private fun PeerRow(p: Peer) {

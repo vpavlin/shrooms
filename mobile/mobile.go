@@ -88,6 +88,12 @@ type session struct {
 	instances []*meshInstance
 	mux       *wg.Mux
 
+	// st is the state this session loaded. Edits made while it runs must go
+	// through it: a second State loaded from disk writes the whole file on its
+	// next save, so anything it deleted comes back the moment a mesh advances
+	// its sequence number.
+	st *state.State
+
 	cancel context.CancelFunc
 	done   chan struct{}
 
@@ -369,6 +375,45 @@ func OverlayV4(configDir string) string {
 	return t.Self().String()
 }
 
+// liveState is the state the running session loaded, or a fresh one.
+//
+// Anything that edits state while the mesh is up must use this. Two State
+// values over one file do not merge: each writes the whole thing, so an edit
+// made through a second copy is undone by the first mesh to advance its
+// sequence number — which is every 45 seconds.
+func liveState(stateDir string) *state.State {
+	mu.Lock()
+	s := running
+	mu.Unlock()
+	if s != nil && s.st != nil {
+		return s.st
+	}
+	st, err := state.LoadOrCreateState(stateDir)
+	if err != nil {
+		return nil
+	}
+	return st
+}
+
+// SetMeshEnabled switches a mesh on or off without leaving it.
+//
+// Takes effect on the next connect: the tunnel's addresses and routes are
+// built when it comes up.
+func SetMeshEnabled(configDir, label string, enabled bool) error {
+	cfgPath, _ := paths(configDir)
+	cfg, err := state.LoadConfig(cfgPath)
+	if err != nil {
+		return err
+	}
+	m, ok := cfg.MeshSet[label]
+	if !ok {
+		return fmt.Errorf("no mesh called %q, or it is the original one", label)
+	}
+	m.Disabled = !enabled
+	cfg.MeshSet[label] = m
+	return state.WriteConfig(cfgPath, cfg)
+}
+
 // LeaveMesh removes one mesh from this device, keeping the others.
 //
 // The way back from a join that went wrong. Without it a device with a broken
@@ -394,8 +439,10 @@ func LeaveMesh(configDir, label string) error {
 	nk, err := m.Key()
 	if err == nil {
 		// The state entry too, so re-joining starts clean rather than
-		// inheriting whatever was wrong.
-		if st, err := state.LoadOrCreateState(stateDir); err == nil {
+		// inheriting whatever was wrong — through the running session's state
+		// if there is one, because a second copy loaded from disk would be
+		// overwritten wholesale the next time a mesh saved.
+		if st := liveState(stateDir); st != nil {
 			delete(st.Meshes, state.NetworkID(nk))
 			_ = st.Save()
 		}
@@ -450,14 +497,19 @@ func MeshesJSON(configDir string) string {
 		return "[]"
 	}
 	type entry struct {
-		Label   string `json:"label"`
-		Overlay string `json:"overlay"`
-		Prefix  string `json:"prefix"`
-		V4      string `json:"v4"`
-		V4Block string `json:"v4_block"`
+		Label    string `json:"label"`
+		Disabled bool   `json:"disabled,omitempty"`
+		Overlay  string `json:"overlay"`
+		Prefix   string `json:"prefix"`
+		V4       string `json:"v4"`
+		V4Block  string `json:"v4_block"`
 	}
 	var out []entry
 	for _, m := range cfg.Meshes() {
+		if m.Disabled {
+			out = append(out, entry{Label: m.Label, Disabled: true})
+			continue
+		}
 		nk, err := m.Key()
 		if err != nil {
 			continue
@@ -630,9 +682,12 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 	// Answered on the service address, not this device's: a packet to an
 	// address the interface holds is delivered locally and never reaches the
 	// tun, so nothing could answer it there.
-	meshes := cfg.Meshes()
+	// Only the meshes that are switched on. A mesh left in the config but not
+	// running costs nothing; one running that nobody wants costs an announce
+	// loop, a WireGuard device and the battery to carry them.
+	meshes := cfg.Active()
 	if len(meshes) == 0 {
-		return errors.New("no meshes in the config")
+		return errors.New("no meshes are enabled")
 	}
 	primary := meshes[0]
 	primaryKey, err := primary.Key()
@@ -795,6 +850,7 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &session{
+		st:        st,
 		name:      cfg.Name,
 		suffix:    cfg.HostsSuffix,
 		overlay:   instances[0].self.String(),

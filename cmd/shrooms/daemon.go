@@ -112,9 +112,9 @@ func cmdDaemon(args []string) error {
 	// peer, and both are per mesh here — so meshes cannot share a device, and
 	// two devices cannot share a port. Interfaces and ports are numbered from
 	// the configured ones, so a config naming one mesh is exactly what it was.
-	meshes := cfg.Meshes()
+	meshes := cfg.Active()
 	if len(meshes) == 0 {
-		return errors.New("no meshes in the config")
+		return errors.New("no meshes are enabled")
 	}
 	var instances []*instance
 	defer func() {

@@ -874,6 +874,9 @@ func WriteConfig(path string, c Config) error {
 			m := c.MeshSet[label]
 			b.WriteString("\n# A mesh this node belongs to. Its own key, identity, interface and port.\n")
 			fmt.Fprintf(&b, "mesh.%s.key   = %q\n", label, m.NetworkKey)
+			if m.Disabled {
+				fmt.Fprintf(&b, "mesh.%s.enabled = \"false\"\n", label)
+			}
 			if m.Relay {
 				fmt.Fprintf(&b, "mesh.%s.relay = \"true\"\n", label)
 			}

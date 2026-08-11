@@ -45,6 +45,15 @@ type Mesh struct {
 
 	// Services published on this mesh, in the form ParseSpec reads.
 	Services []string
+
+	// Disabled keeps a mesh in the config without running it. Written as
+	// enabled = "false".
+	//
+	// Joining a mesh and using it are different things: a device may be a
+	// member of somebody's shared mesh for months and want it off most of the
+	// time. Leaving would mean re-enrolling to come back, which is a poor
+	// answer to "not right now".
+	Disabled bool
 }
 
 // Key parses the mesh's network key.
@@ -78,6 +87,22 @@ func NetworkID(nk identity.NetworkKey) string {
 
 // DefaultLabel is the mesh a single-mesh config describes.
 const DefaultLabel = "default"
+
+// Active returns the meshes that should be running.
+//
+// The single-mesh form is always active: it has nowhere to say otherwise, and
+// a device with one mesh that is switched off is a device that is switched
+// off — which is what disconnecting is for.
+func (c Config) Active() []Mesh {
+	all := c.Meshes()
+	out := all[:0:0]
+	for _, m := range all {
+		if !m.Disabled {
+			out = append(out, m)
+		}
+	}
+	return out
+}
 
 // Meshes returns every mesh in the config, single-mesh form included.
 //
@@ -158,6 +183,8 @@ func (c *Config) setMeshField(label, field, val string, line int) error {
 		m.AdminKeys = parseArray(val)
 	case "relay":
 		m.Relay = unquote(val) == "true"
+	case "enabled":
+		m.Disabled = unquote(val) == "false"
 	case "services":
 		m.Services = parseArray(val)
 	default:
