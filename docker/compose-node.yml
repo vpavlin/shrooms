@@ -27,10 +27,14 @@ services:
       - /dev/net/tun:/dev/net/tun
 
     volumes:
-      - /etc/shrooms:/etc/shrooms
-      - /var/lib/shrooms:/var/lib/shrooms
+      - /etc/shrooms:/etc/shrooms:z
+      - /var/lib/shrooms:/var/lib/shrooms:z
       # The control socket, so `shrooms status` works from the host.
-      - /run/shrooms:/run/shrooms
+      #
+      # :z on every mount, for SELinux. Without it the daemon cannot bind the
+      # socket at all — "permission denied" on a path root owns — and the
+      # shared form rather than :Z so the host can still reach it.
+      - /run/shrooms:/run/shrooms:z
 
     command: ["daemon", "--socket", "/run/shrooms/shrooms.sock"]
 

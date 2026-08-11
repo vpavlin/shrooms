@@ -115,6 +115,11 @@ fi
 
 # SELinux relabels bind mounts; without :Z the container cannot read its config
 # and reports it as missing rather than as a permission problem.
+#
+# Every mount, including /run. That one was missed, and it is the one that
+# fails hardest: the daemon cannot bind its control socket, exits, and systemd
+# restarts it forever. "bind: permission denied" on a path root owns reads as
+# nonsense until you remember SELinux is in the way.
 Z=""
 if command -v getenforce >/dev/null && [ "$(getenforce 2>/dev/null)" = "Enforcing" ]; then
     Z=":Z"
@@ -175,6 +180,10 @@ After=$AFTER
 Wants=network-online.target
 
 [Service]
+# /run is a tmpfs, so the socket directory has to be recreated on every boot
+# rather than only at install. systemd owns it and cleans it up on stop.
+RuntimeDirectory=shrooms
+RuntimeDirectoryMode=0750
 ExecStartPre=-$RUNTIME rm -f shrooms
 ExecStart=$RUNTIME run --rm --name shrooms \\
     --network host \\
@@ -182,7 +191,7 @@ ExecStart=$RUNTIME run --rm --name shrooms \\
     --device /dev/net/tun \\
     -v /etc/shrooms:/etc/shrooms$Z \\
     -v /var/lib/shrooms:/var/lib/shrooms$Z \\
-    -v /run/shrooms:/run/shrooms \\
+    -v /run/shrooms:/run/shrooms$Z \\
     $IMAGE daemon --socket /run/shrooms/shrooms.sock
 ExecStop=$RUNTIME stop shrooms
 Restart=always
