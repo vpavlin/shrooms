@@ -3,10 +3,11 @@
 **Status:** accepted, built except for the announce rewrite. The destination
 [ADR-017](017-invite-tokens.md) is a step toward, and its enrolment channel.
 
-Built: `internal/cred`, the `admin` commands, expiry, revocation, and issuance
-inside the invite exchange. Not built, deliberately: the per-recipient announce
-wrapping, for the reasons in [ADR-020](020-membership-is-a-seam.md). Also not
-built: automatic renewal.
+Built: `internal/cred`, the `admin` commands, expiry, revocation, issuance
+inside the invite exchange, and renewal as a sweep (below). Not built,
+deliberately: the per-recipient announce wrapping, for the reasons in
+[ADR-020](020-membership-is-a-seam.md). Not built: renewal without a person,
+which needs a key that is online and is therefore its own decision.
 
 ## Context
 
@@ -110,6 +111,38 @@ The revoked device keeps whatever it already had — nothing can reach into it �
 but it stops receiving announces, so it cannot follow anyone who moves, and no
 member will establish a new tunnel with it. Monotonic serials, as with
 announces, so a revocation cannot be rolled back by replay.
+
+### Renewal is a sweep, not a ceremony per device
+
+Expiry is what makes a lost device survivable without every node having to hear
+a revocation: an unrenewed device falls off the mesh by itself. The cost of
+that guarantee is that somebody has to renew, and a system whose answer to "what
+happens on day thirty" is "everything stops and nobody knows why" is worse than
+one with no expiry at all.
+
+So `shrooms admin renew` asks a running node who is on the mesh, signs a fresh
+credential for every device inside `RenewBefore` of expiry, and hands them back
+to that node to deliver. One command, occasionally, from the machine that
+already holds the admin key.
+
+**Delivery is a control message — `KindGrant`, the mirror of a revocation
+travelling the other way.** Relayed by any member, for the same reason a
+revocation is: a credential is public, holds nothing secret, and is worthless to
+anyone but the device whose keys it names. A hostile relayer can drop one, which
+is indistinguishable from being offline and ends exactly where expiry already
+ends. It cannot forge one, because every node verifies the admin signature on
+arrival against the authority that admits peers.
+
+A device receiving its own keeps whichever credential lasts longer — a sweep may
+reissue while an older one is still in flight — and announces immediately, so
+peers stop checking against the credential it has replaced.
+
+**What is deliberately not built is renewal with nobody present.** That needs a
+signing key that is online, which is a different security posture from an admin
+key used a handful of times a year, and it is the thing a Keycard
+([ADR-022](022-keycard-for-the-admin-key.md)) makes awkward. The fixed
+authority set already allows for a separate renewal key; adding one is a
+decision to take on its own, not a side effect of making renewal work.
 
 ## What this costs
 
