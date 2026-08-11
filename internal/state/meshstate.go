@@ -92,10 +92,14 @@ func (s *State) SetMeshCredentialFor(networkID string, legacy bool, raw []byte) 
 		return err
 	}
 	ms.Credential = append([]byte(nil), raw...)
-	// The single-mesh fields stay in step for the mesh that owns them, so a
-	// daemon that has not been taught about several meshes yet reads the same
-	// thing it always did.
-	if s.Identity != nil && ms.Identity == s.Identity {
+	// The single-mesh field stays in step only for the device's ORIGINAL mesh.
+	//
+	// Not "whenever the identities match", which is what this said: an
+	// additional mesh that adopts the base identity — every invite-joined one,
+	// see ADR-017 — then overwrote the first mesh's credential with its own.
+	// The first mesh would go on announcing a credential for a different mesh,
+	// which its peers correctly refuse.
+	if legacy && s.Identity != nil && ms.Identity == s.Identity {
 		s.Credential = ms.Credential
 	}
 	return s.Save()

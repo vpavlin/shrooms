@@ -237,7 +237,12 @@ func joinInvite(token, name, label, configDir string, timeoutSeconds int) error 
 	if existing, err := state.LoadConfig(cfgPath); err == nil {
 		cfg = existing
 	}
-	cfg.Name = name
+	// The device name is config-wide, so setting it here would rename this
+	// device on every mesh it is already on — which is what happened: a phone
+	// called "nothing" became "a063" on the mesh it had been using for weeks.
+	if label == "" {
+		cfg.Name = name
+	}
 	if label != "" {
 		if cfg.MeshSet == nil {
 			cfg.MeshSet = map[string]state.Mesh{}

@@ -92,6 +92,8 @@ data class Snapshot(
     val peers: List<Peer> = emptyList(),
     val rendezvous: Rendezvous = Rendezvous("unknown", true, "", ""),
     val error: String = "",
+    /** One entry per mesh, present only when this device has more than one. */
+    val meshes: List<MeshInfo> = emptyList(),
 
     // Names is where the resolver was installed, or "" when it was not.
     //
@@ -195,6 +197,17 @@ object MeshState {
                 problem = r?.optString("problem") ?: "",
                 detail = r?.optString("detail") ?: "",
             ),
+            meshes = o.optJSONArray("meshes")?.let { arr ->
+                (0 until arr.length()).map { i ->
+                    val m = arr.getJSONObject(i)
+                    MeshInfo(
+                        label = m.optString("label"),
+                        overlay = m.optString("overlay"),
+                        prefix = m.optString("prefix"),
+                        peers = m.optInt("peers"),
+                    )
+                }
+            } ?: emptyList(),
             dns = o.optJSONObject("dns").let { d ->
                 Dns(
                     intercepted = d?.optLong("intercepted") ?: 0,

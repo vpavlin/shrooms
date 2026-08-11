@@ -120,12 +120,23 @@ func TestCredentialsArePerMesh(t *testing.T) {
 		t.Error("a credential for one mesh appeared in another")
 	}
 
-	// The mesh that owns the single-mesh fields keeps them in step, so a daemon
-	// that knows nothing about several meshes reads what it always did.
-	if err := st.SetMeshCredential("homeid", []byte("home-credential")); err != nil {
+	// The device's ORIGINAL mesh keeps the single-mesh field in step, so a
+	// daemon that knows nothing about several meshes reads what it always did.
+	if err := st.SetMeshCredentialFor("homeid", true, []byte("home-credential")); err != nil {
 		t.Fatal(err)
 	}
 	if string(st.Credential) != "home-credential" {
 		t.Errorf("single-mesh credential is %q", st.Credential)
+	}
+
+	// And an additional mesh must not touch it — even though it shares the
+	// device's identity, which every invite-joined mesh does (ADR-017). Getting
+	// this wrong left the first mesh announcing a credential belonging to
+	// another mesh, which its peers correctly refuse.
+	if err := st.SetMeshCredentialFor("sharedid", false, []byte("shared-again")); err != nil {
+		t.Fatal(err)
+	}
+	if string(st.Credential) != "home-credential" {
+		t.Errorf("a second mesh overwrote the first mesh's credential: %q", st.Credential)
 	}
 }

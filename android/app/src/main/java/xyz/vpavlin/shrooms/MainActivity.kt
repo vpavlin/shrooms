@@ -404,6 +404,21 @@ private fun MeshScreen(
             LaunchedEffect(selfCopied) {
                 if (selfCopied) { kotlinx.coroutines.delay(1200); selfCopied = false }
             }
+            // Which meshes this device is on, when there is more than one.
+            // Each has its own address here, and the roster below is grouped
+            // the same way.
+            if (snap.meshes.size > 1) {
+                snap.meshes.forEach { m ->
+                    Text(
+                        "${m.label}  ${m.overlay}  ·  ${m.peers} peer${if (m.peers == 1) "" else "s"}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Palette.Ash,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+            }
             Text(
                 if (selfCopied) "copied" else self,
                 style = MaterialTheme.typography.bodyMedium,
@@ -560,8 +575,26 @@ private fun MeshScreen(
                     }
                 }
 
+                // Grouped by mesh when there is more than one. Two meshes may
+                // hold devices with the same name, and a flat list gives no way
+                // to tell which network a peer is actually on.
                 else -> LazyColumn(contentPadding = PaddingValues(horizontal = 16.dp)) {
-                    items(snap.peers) { PeerRow(it) }
+                    val grouped = snap.peers.groupBy { it.mesh }
+                    if (grouped.size <= 1) {
+                        items(snap.peers) { PeerRow(it) }
+                    } else {
+                        grouped.toSortedMap().forEach { (mesh, peers) ->
+                            item {
+                                Text(
+                                    mesh.ifEmpty { "default" }.uppercase(),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Palette.Violet,
+                                    modifier = Modifier.padding(top = 14.dp, bottom = 6.dp),
+                                )
+                            }
+                            items(peers) { PeerRow(it) }
+                        }
+                    }
                 }
             }
         }

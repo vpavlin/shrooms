@@ -308,7 +308,7 @@ func issueLocal(admin *cred.Admin, auth *cred.Authority, stateDir, name, network
 	if err != nil {
 		return err
 	}
-	return st.SetMeshCredential(networkID, raw)
+	return st.SetMeshCredentialFor(networkID, legacy, raw)
 }
 
 func loadAdmin(dir string) (*cred.Admin, *cred.Authority, error) {
