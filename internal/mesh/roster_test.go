@@ -198,3 +198,60 @@ func TestForgetAfterOutlastsClockSkew(t *testing.T) {
 			ForgetAfter, control.MaxClockSkew)
 	}
 }
+
+// A device that changes identity leaves its old entry behind for hours. Both
+// are the same machine, the old one is unreachable, and on a device that has
+// been re-added a few times the roster is mostly ghosts.
+func TestCurrentHidesASupersededEntry(t *testing.T) {
+	nk, _ := identity.NewNetworkKey()
+	self, _ := identity.New()
+	old, _ := identity.New()
+	live, _ := identity.New()
+	other, _ := identity.New()
+
+	r := NewRoster(nk, self.DevicePub)
+	now := time.Now()
+	r.Apply(newAnnounce(t, old, "k11", nil, 1), now.Add(-2*time.Hour))
+	r.Apply(newAnnounce(t, live, "k11", nil, 1), now)
+	r.Apply(newAnnounce(t, other, "vps", nil, 1), now.Add(-2*time.Hour))
+
+	got := r.Current(now)
+	if len(got) != 2 {
+		t.Fatalf("roster shows %d peers, wanted 2", len(got))
+	}
+	for _, p := range got {
+		if p.ID() == hex.EncodeToString(old.DevicePub) {
+			t.Error("the superseded entry is still shown")
+		}
+	}
+
+	// An offline peer nothing has superseded stays: that one is a machine that
+	// is switched off, which is worth seeing.
+	var sawVPS bool
+	for _, p := range got {
+		if p.Name == "vps" {
+			sawVPS = true
+		}
+	}
+	if !sawVPS {
+		t.Error("hid an offline peer that nothing replaced")
+	}
+}
+
+// Two live machines that genuinely share a name are both shown. Hiding one
+// there would be the lie the old rule was worried about.
+func TestCurrentKeepsTwoLiveClaimants(t *testing.T) {
+	nk, _ := identity.NewNetworkKey()
+	self, _ := identity.New()
+	a, _ := identity.New()
+	b, _ := identity.New()
+
+	r := NewRoster(nk, self.DevicePub)
+	now := time.Now()
+	r.Apply(newAnnounce(t, a, "box", nil, 1), now.Add(-time.Second))
+	r.Apply(newAnnounce(t, b, "box", nil, 1), now)
+
+	if got := r.Current(now); len(got) != 2 {
+		t.Errorf("roster shows %d peers, wanted both live claimants", len(got))
+	}
+}

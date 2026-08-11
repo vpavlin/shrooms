@@ -644,7 +644,7 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 				Prefix:  in.prefix.String(),
 				Iface:   in.iface,
 				Port:    in.port,
-				Peers:   len(in.mesh.Roster().Peers()),
+				Peers:   len(in.mesh.Roster().Current(now)),
 			}
 			if e := in.mesh.SelfExpiry(); !e.IsZero() {
 				ms.Expires = e.Unix()
@@ -679,7 +679,7 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 			if len(instances) > 1 {
 				meshLabel = in.label
 			}
-			for _, p := range m.Roster().Peers() {
+			for _, p := range m.Roster().Current(now) {
 				ps := peerStatus{
 					Mesh:      meshLabel,
 					Name:      p.Name,

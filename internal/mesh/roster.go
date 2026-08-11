@@ -138,6 +138,41 @@ func (r *Roster) Peers() []PeerInfo {
 	return out
 }
 
+// Current is the roster with superseded entries left out.
+//
+// A device that changes identity — re-enrolled, re-installed, or given a
+// per-mesh identity by ADR-015 — announces under a key nothing has seen
+// before, and the entry for its old key stays until ForgetAfter drops it hours
+// later. Both are the same machine. The old one has no tunnel and never will,
+// so it sits in the roster as a peer that is permanently offline, and on a
+// device that has been re-added a few times the list is mostly ghosts.
+//
+// So an entry is hidden when another entry claims the same name, was heard
+// from more recently, and this one has gone quiet. All three conditions
+// matter: two live machines that genuinely share a name are both still shown,
+// which is the case where hiding one would be a lie.
+//
+// Peers stays as it is — everything that reasons about membership, replay or
+// revocation must see every key that announced, and only the display wants
+// this.
+func (r *Roster) Current(now time.Time) []PeerInfo {
+	all := r.Peers()
+	freshest := map[string]time.Time{}
+	for _, p := range all {
+		if t, ok := freshest[sanitiseName(p.Name)]; !ok || p.LastSeen.After(t) {
+			freshest[sanitiseName(p.Name)] = p.LastSeen
+		}
+	}
+	out := all[:0:0]
+	for _, p := range all {
+		if !p.Online(now) && freshest[sanitiseName(p.Name)].After(p.LastSeen) {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
 // Len reports how many peers are known.
 func (r *Roster) Len() int {
 	r.mu.RLock()

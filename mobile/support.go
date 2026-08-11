@@ -204,7 +204,7 @@ func snapshotAll(instances []*meshInstance, suffix string) statusPayload {
 			Label:   in.label,
 			Overlay: in.self.String(),
 			Prefix:  in.prefix.String(),
-			Peers:   len(in.mesh.Roster().Peers()),
+			Peers:   len(in.mesh.Roster().Current(now)),
 		})
 	}
 	_ = now
@@ -222,7 +222,7 @@ func snapshot(m *mesh.Mesh, suffix string) statusPayload {
 	out.Rendezvous.Detail = h.Detail(now)
 
 	stats, _ := m.PeerStats()
-	for _, p := range m.Roster().Peers() {
+	for _, p := range m.Roster().Current(now) {
 		sp := statusPeer{
 			Name:    p.Name,
 			DNSName: mesh.DNSName(p.Name, suffix),
