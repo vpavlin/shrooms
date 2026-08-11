@@ -454,6 +454,12 @@ type State struct {
 	// Meshes is per-mesh state, keyed by network id. Empty on a single-mesh
 	// device, where the fields above are the whole story.
 	Meshes map[string]*MeshState
+
+	// owner and view are set on a View: the state this one is a window onto,
+	// and the entry it stands for. Saving a view writes through to the owner,
+	// so one mesh cannot overwrite another's.
+	owner *State
+	view  *MeshState
 }
 
 // LoadOrCreateState reads device state, generating a fresh identity on first run.
@@ -536,6 +542,13 @@ func LoadOrCreateState(dir string) (*State, error) {
 // Save writes state atomically. The sequence number changes on every announce,
 // so a torn write here would make the device look replayed to its peers.
 func (s *State) Save() error {
+	// A view writes through: it holds one mesh's fields, and the file is the
+	// whole device's.
+	if s.owner != nil {
+		s.view.Seq = s.Seq
+		s.view.Credential = s.Credential
+		return s.owner.Save()
+	}
 	sf := stateFile{
 		DevicePriv: base64.StdEncoding.EncodeToString(s.Identity.DevicePriv),
 		WGPriv:     base64.StdEncoding.EncodeToString(s.Identity.WGPriv[:]),

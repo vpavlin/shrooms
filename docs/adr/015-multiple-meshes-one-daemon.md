@@ -33,7 +33,34 @@ end of it.
 
 ## Decision
 
-**One daemon, one TUN device, one UDP port, one messaging node, many meshes.**
+**One daemon, one messaging node, many meshes — but a WireGuard device, a TUN
+and a UDP port each.**
+
+The original line here was "one TUN, one UDP port", and building it showed that
+to be wrong in a way worth recording rather than quietly changing.
+
+A wireguard-go `Device` has exactly one static private key, and the whole point
+of the per-mesh identity below is that the key differs per mesh. Worse,
+WireGuard allows **one preshared key per peer**, and our PSK is per mesh — so a
+peer that shares two meshes with us cannot be one entry on one device at all.
+Two devices are therefore forced.
+
+Two devices cannot share a UDP port either. A transport packet identifies its
+destination only by a receiver index the receiving device allocated, so nothing
+in the packet says which device it belongs to. Handing every packet to both and
+letting the wrong one fail authentication would work — everything is
+authenticated — but it doubles the work on the data path and turns other
+meshes'' traffic into a stream of decrypt failures in the log. Boring and
+separate beats clever and shared here.
+
+What that costs is one NAT mapping per mesh rather than one shared, so hole
+punching no longer amortises across meshes. What it keeps is the expensive
+thing: **one Logos Delivery node**, whose ~20 MB/h dwarfs everything else a node
+does (see the bandwidth measurements in the README). Running a daemon per mesh
+would have duplicated that, which is what this ADR set out to avoid.
+
+Ports are allocated from `listen_port` upwards in label order, so a config that
+names one mesh listens exactly where it always did.
 
 ### Per-mesh identity, derived from one master secret
 
@@ -217,5 +244,5 @@ one mesh rather than requiring Alice to share her private one.
 1. **Mesh naming and per-mesh hosts blocks.** Independently useful: the
    `/etc/hosts` marker is currently a fixed string, so two writers fight.
 2. **Config and state** — prefixed keys, per-mesh identity, migration.
-3. **Runtime** — per-mesh roster/prober/announce loop, trial decryption, one TUN
-   carrying an address and route per mesh.
+3. **Runtime** — a mesh instance per mesh: its own WireGuard device, TUN and
+   port, sharing the rendezvous node, the control socket and the resolver.

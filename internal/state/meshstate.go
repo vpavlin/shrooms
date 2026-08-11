@@ -152,3 +152,23 @@ func decodeMeshes(in map[string]meshStateFile) (map[string]*MeshState, error) {
 	}
 	return out, nil
 }
+
+// View presents one mesh's state as a State, for code that still expects the
+// single-mesh shape.
+//
+// The Identity pointer and the credential are shared with the per-mesh entry,
+// and Seq is written back on Save — so a mesh that advances its sequence number
+// advances the one that persists, which is the whole reason this is a view
+// rather than a copy.
+func (s *State) View(ms *MeshState) *State {
+	return &State{
+		dir:      s.dir,
+		Identity: ms.Identity,
+		Seq:      ms.Seq,
+		// Deliberately not the mesh set: a view is one mesh, and handing it the
+		// whole map would let one mesh's Save clobber another's.
+		Credential: ms.Credential,
+		owner:      s,
+		view:       ms,
+	}
+}

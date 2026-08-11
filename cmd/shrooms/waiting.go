@@ -300,5 +300,11 @@ func configHasNoKey(path string) (bool, error) {
 		}
 		return false, err
 	}
-	return cfg.NetworkKey == "" || cfg.NetworkKey == state.KeyPlaceholder, nil
+	// Meshes(), not NetworkKey alone: a config that names its meshes the
+	// multi-mesh way has no network_key at all, and would otherwise wait
+	// forever for a mesh it already has.
+	if cfg.NetworkKey == state.KeyPlaceholder {
+		return true, nil
+	}
+	return len(cfg.Meshes()) == 0, nil
 }

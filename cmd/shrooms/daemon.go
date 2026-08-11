@@ -21,17 +21,12 @@ import (
 	"syscall"
 	"time"
 
-	"golang.zx2c4.com/wireguard/device"
-
 	dnssrv "github.com/vpavlin/shrooms/internal/dns"
-	"github.com/vpavlin/shrooms/internal/identity"
 	"github.com/vpavlin/shrooms/internal/invite"
 	"github.com/vpavlin/shrooms/internal/mesh"
 	"github.com/vpavlin/shrooms/internal/service"
 	"github.com/vpavlin/shrooms/internal/state"
-	"github.com/vpavlin/shrooms/internal/v4"
 	"github.com/vpavlin/shrooms/internal/waku"
-	"github.com/vpavlin/shrooms/internal/wg"
 )
 
 // DefaultSocket is the daemon's control socket. The CLI is a thin client over
@@ -76,44 +71,12 @@ func cmdDaemon(args []string) error {
 	if err != nil {
 		return err
 	}
-	nk, err := cfg.Key()
-	if err != nil {
-		return err
-	}
 
-	self := identity.OverlayAddr(nk, st.Identity.DevicePub)
-	log.Info("starting", "name", cfg.Name, "overlay", self, "prefix", nk.Prefix())
-
-	// --- data plane ---
-	// Synthetic IPv4 (ADR-021), so that browsers can use mesh names on a
-	// v4-only network. Built before the interface, because the interface has to
-	// carry this device's own alias.
-	aliases := v4.NewTable(v4.Entry{Overlay: self, DevicePub: st.Identity.DevicePub}, nil)
-
-	tunDev, err := wg.CreateTUN(cfg.Interface, self, nk.Prefix(), wg.DefaultMTU,
-		aliases.Self(), v4.Prefix)
-	if err != nil {
-		return fmt.Errorf("tun: %w (need CAP_NET_ADMIN)", err)
-	}
-	// Wrapped so translation happens below WireGuard: what it encrypts is
-	// always IPv6, whatever the application spoke.
+	// --- rendezvous plane, shared by every mesh ---
 	//
-	// The clamp is the interface MTU less both headers' difference and the TCP
-	// header, which is what a segment may be once it has become IPv6.
-	translated := v4.NewDevice(tunDev, aliases, wg.DefaultMTU-40-20)
-
-	wgLevel := device.LogLevelError
-	if *verbose {
-		wgLevel = device.LogLevelVerbose
-	}
-	dev, err := wg.NewDevice(translated, st.Identity.WGPriv, cfg.ListenPort, device.NewLogger(wgLevel, "[wg] "))
-	if err != nil {
-		return fmt.Errorf("wireguard: %w", err)
-	}
-	defer dev.Close()
-	log.Info("data plane up", "interface", cfg.Interface, "port", cfg.ListenPort)
-
-	// --- rendezvous plane ---
+	// The expensive part, and the reason this is one daemon rather than one per
+	// mesh: a Core node costs ~20 MB/h whether it carries one mesh or five.
+	//
 	// clusterId alongside preset, not instead of it: the preset is what loads
 	// the fleet's entry nodes, and the explicit cluster is what stops those
 	// nodes hanging up on us. See state.DefaultClusterID.
@@ -141,42 +104,62 @@ func cmdDaemon(args []string) error {
 	}
 	log.Info("rendezvous plane up", "preset", cfg.Preset, "cluster", cfg.ClusterID, "mode", cfg.Mode)
 
-	m, err := mesh.New(log, cfg, st, node, dev)
-	if err != nil {
-		return err
-	}
-	m.SetV4(aliases)
-	log.Info("data plane up (ipv4 aliases)", "self", aliases.Self(), "range", v4.Prefix)
-
 	ctx := ctx0
 
-	// Services, on the overlay address. The interface is up and holds the
-	// address by now; binding one it does not hold yet would fail.
-	var services *service.Publisher
-	if specs, err := cfg.ServiceSpecs(); err != nil {
-		log.Warn("services not published", "err", err)
-	} else if len(specs) > 0 {
-		services = service.Publish(ctx, self, mesh.DNSName(cfg.Name, cfg.HostsSuffix), specs,
-			func(msg string, args ...any) { log.Info(msg, args...) })
-		defer services.Close()
+	// --- one data plane per mesh (ADR-015) ---
+	//
+	// A WireGuard device holds one static key and allows one preshared key per
+	// peer, and both are per mesh here — so meshes cannot share a device, and
+	// two devices cannot share a port. Interfaces and ports are numbered from
+	// the configured ones, so a config naming one mesh is exactly what it was.
+	meshes := cfg.Meshes()
+	if len(meshes) == 0 {
+		return errors.New("no meshes in the config")
+	}
+	var instances []*instance
+	defer func() {
+		for _, in := range instances {
+			in.Close()
+		}
+	}()
+
+	for i, mc := range meshes {
+		iface, port := ifaceAndPort(cfg, i)
+		// The first mesh is the one this device already belonged to, and keeps
+		// its keys: re-deriving them would change its address and make it a
+		// stranger to every peer. A config that only ever had network_key puts
+		// exactly that mesh first.
+		in, err := startInstance(ctx, log, cfg, st, node, mc, iface, port, i == 0, *verbose)
+		if in != nil {
+			instances = append(instances, in)
+		}
+		if err != nil {
+			return err
+		}
 	}
 
-	srv, err := serveControl(ctx, log, *sock, m, cfg, self, services)
+	primary := instances[0]
+	self := primary.self
+	log.Info("data plane up", "meshes", len(instances),
+		"self", self, "ipv4", primary.aliases.Self())
+
+	srv, err := serveControl(ctx, log, *sock, primary.mesh, cfg, self, primary.services)
 	if err != nil {
 		return err
 	}
 	defer srv.Close()
 
-	// Names, on the overlay address only. Port 53 needs CAP_NET_BIND_SERVICE;
-	// a failure here is logged and not fatal, because losing name resolution
-	// is a much smaller thing than losing the tunnel.
+	// Names, on the primary mesh's address. Port 53 needs CAP_NET_BIND_SERVICE;
+	// a failure here is logged and not fatal, because losing name resolution is
+	// a much smaller thing than losing the tunnel.
 	if pc, err := dnssrv.Listen(self); err != nil {
 		log.Warn("name resolution unavailable", "err", err,
 			"hint", "port 53 needs CAP_NET_BIND_SERVICE")
 	} else {
 		resolver := &dnssrv.Server{
 			Suffix: cfg.HostsSuffix,
-			Lookup: m.Lookup,
+			Lookup: resolveAcross(named(instances)),
+			Alias:  aliasAcross(named(instances)),
 			Log:    func(msg string, args ...any) { log.Debug(msg, args...) },
 		}
 		go func() {
@@ -202,8 +185,15 @@ func cmdDaemon(args []string) error {
 		}
 	}
 
+	// Every mesh runs; the first one to stop stops the daemon, because a node
+	// that is half up is worse than one that restarts.
+	errs := make(chan error, len(instances))
+	for _, in := range instances {
+		go func(in *instance) { errs <- in.mesh.Run(ctx) }(in)
+	}
+
 	log.Info("running", "socket", *sock)
-	if err := m.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+	if err := <-errs; err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
 	log.Info("shutting down")
