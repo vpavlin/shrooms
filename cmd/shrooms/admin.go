@@ -185,9 +185,14 @@ func loadAdmin(dir string) (*cred.Admin, *cred.Authority, error) {
 
 // cmdAdminIssue signs a credential for one device.
 //
-// The device's own keys are its state directory's, so this is run where that
-// device is — or given the keys by hand, which is what --device and --wg are
-// for when enrolling something remote.
+// Two ways to name the device. Locally, --state reads its keys straight out of
+// its state directory. Remotely, --device and --wg take the keys as printed by
+// `shrooms keys` on that machine, and the credential comes back on stdout for
+// `shrooms credential set` there.
+//
+// The remote form exists so the admin key never has to travel. Enrolling a VPS
+// by copying the admin key to it would defeat the entire point of separating
+// authority from participation.
 func cmdAdminIssue(args []string) error {
 	fs := flag.NewFlagSet("admin issue", flag.ExitOnError)
 	dir := fs.String("dir", defaultAdminDir(), "where the admin key is kept")
@@ -195,16 +200,18 @@ func cmdAdminIssue(args []string) error {
 	name := fs.String("name", "", "the device's name")
 	life := fs.Duration("life", cred.DefaultLife, "how long the credential is valid")
 	serial := fs.Uint64("serial", 0, "credential serial; must increase per device")
+	devHex := fs.String("device", "", "the device's public key, hex (for a remote device)")
+	wgHex := fs.String("wg", "", "the device's tunnel key, hex (for a remote device)")
 	write := fs.Bool("write", true, "store the credential in the device's state")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	remote := *devHex != "" || *wgHex != ""
+	if remote && (*devHex == "" || *wgHex == "") {
+		return errors.New("--device and --wg go together: both name the same machine")
+	}
 
 	admin, auth, err := loadAdmin(*dir)
-	if err != nil {
-		return err
-	}
-	st, err := state.LoadOrCreateState(*stateDir)
 	if err != nil {
 		return err
 	}
@@ -212,8 +219,25 @@ func cmdAdminIssue(args []string) error {
 		return errors.New("--name is required: a credential names the device it admits")
 	}
 
+	var devPub, wgPub []byte
+	var st *state.State
+	if remote {
+		if devPub, err = parseKey(*devHex, ed25519.PublicKeySize); err != nil {
+			return fmt.Errorf("--device: %w", err)
+		}
+		if wgPub, err = parseKey(*wgHex, 32); err != nil {
+			return fmt.Errorf("--wg: %w", err)
+		}
+	} else {
+		st, err = state.LoadOrCreateState(*stateDir)
+		if err != nil {
+			return err
+		}
+		devPub, wgPub = st.Identity.DevicePub, st.Identity.WGPub[:]
+	}
+
 	now := time.Now()
-	c, err := admin.Issue(st.Identity.DevicePub, st.Identity.WGPub[:], *name, *serial, now, *life)
+	c, err := admin.Issue(devPub, wgPub, *name, *serial, now, *life)
 	if err != nil {
 		return err
 	}
@@ -230,22 +254,35 @@ func cmdAdminIssue(args []string) error {
 	if err != nil {
 		return err
 	}
-	if *write {
+	local := !remote && *write
+	if local {
 		if err := st.SetCredential(raw); err != nil {
 			return err
 		}
 	}
 	fmt.Printf("Issued a credential for %q.\n\n", *name)
 	fmt.Printf("  mesh     %s\n", auth.ID())
-	fmt.Printf("  device   %x\n", st.Identity.DevicePub[:8])
+	fmt.Printf("  device   %x\n", devPub[:8])
 	fmt.Printf("  serial   %d\n", c.Serial)
 	fmt.Printf("  expires  %s (in %s)\n", time.Unix(c.NotAfter, 0).Format(time.RFC3339), *life)
-	if *write {
+	if local {
 		fmt.Printf("\nStored in %s. Restart the daemon to announce it.\n", *stateDir)
-	} else {
-		fmt.Printf("\n  %s\n", base64.StdEncoding.EncodeToString(raw))
+		return nil
 	}
+	fmt.Printf("\nInstall it on that machine:\n\n  shrooms credential set %s\n",
+		base64.StdEncoding.EncodeToString(raw))
 	return nil
+}
+
+func parseKey(s string, want int) ([]byte, error) {
+	var b []byte
+	if _, err := fmt.Sscanf(strings.TrimSpace(s), "%x", &b); err != nil {
+		return nil, fmt.Errorf("not hex: %w", err)
+	}
+	if len(b) != want {
+		return nil, fmt.Errorf("is %d bytes, want %d", len(b), want)
+	}
+	return b, nil
 }
 
 // cmdAdminRevoke withdraws a device before its credential expires.
