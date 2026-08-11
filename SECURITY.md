@@ -15,7 +15,7 @@ adversary — if that is your threat model, do not use this.
 | | Status |
 |---|---|
 | **Waku control messages** | Encrypted, XChaCha20-Poly1305 under a per-epoch key derived from the network key. Signature is *inside* the ciphertext, so the libp2p layer's `StrictNoSign` sender anonymity is not undone. |
-| **Message size** | Padded to a fixed 512-byte plaintext → constant 552 bytes on the wire, confirmed in a live run. "Came online", "changed IP" and "nothing happened" are indistinguishable. |
+| **Message size** | Padded to one of two fixed plaintext sizes, 512 or 1024 bytes. "Came online", "changed IP" and "nothing happened" are indistinguishable within a size. Credentials (ADR-018) do not fit beside endpoints in 512, so a node that carries one uses 1024 — which means length now distinguishes a credentialled mesh from one that is not, though not which device or what changed. |
 | **Announce rate** | Fixed 45 s heartbeat. Endpoint changes ride the next scheduled announce rather than triggering an out-of-band publish. |
 | **Rendezvous topic** | Rotating hourly, derived from the network key via HMAC. An observer without the key cannot find the mesh's traffic. Verified (spike S3) to stay on one shard, so rotation emits no gossipsub subscription churn. |
 | **Store archival** | Announces are published `ephemeral: true`, so they are not persisted. Without this an observer who later learned the topic could query history retroactively. |

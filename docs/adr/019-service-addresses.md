@@ -46,7 +46,7 @@ Three properties follow, and they are the whole argument:
 **Any peer can compute a service address without being told.** It needs the
 device's public key, which the roster already carries, and the service name,
 which is in the name the user typed. Nothing has to be announced — which
-matters, because the announce is already within ~12 bytes of its 512-byte
+matters, because the announce was already within ~12 bytes of its then 512-byte
 padding (ADR-014) and a service list would not fit.
 
 **Routing stays per-device.** A peer's WireGuard `AllowedIPs` becomes

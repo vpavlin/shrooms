@@ -776,7 +776,9 @@ reason is in the metadata exchange — `localShards="[0,1,2,3,4,5,6,7]"` — a C
 node subscribes to every shard in the cluster, so it carries the cluster, not
 your mesh.
 
-By comparison shrooms's own traffic is nothing: a 512-byte announce every 45s,
+By comparison shrooms's own traffic is nothing: a 512- or 1024-byte announce
+every 45s — the larger size once a mesh uses credentials, which do not fit
+beside the endpoints in the smaller one —
 a 104-byte probe per working path every 5s, and a WireGuard keepalive every 25s.
 A three-node mesh sits well under 1 MB/h. The rendezvous relay costs 20–30× the
 protocol it exists to serve.
