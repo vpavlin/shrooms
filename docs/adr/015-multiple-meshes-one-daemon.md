@@ -59,8 +59,27 @@ membership of a private one.
 `mesh_id` is derived from the network key, not chosen, so it needs no agreement:
 
 ```
-mesh_id = SHA256("mesh/v1/meshid" || NK)[0:8]
+network_id = SHA256("mesh/v1/meshid" || NK)[0:8]
 ```
+
+**Renamed from `mesh_id`, because that name was taken.**
+[ADR-018](018-credentials-instead-of-a-shared-key.md) introduced a *different*
+mesh id — the hash of the sorted admin key set — which is what a credential
+names and what says which authority admitted you. Two identifiers with one name,
+one of which the address prefix depends on, is a bug waiting for a bad afternoon.
+
+They are not the same thing and neither can replace the other:
+
+| | derived from | exists when | answers |
+|---|---|---|---|
+| **network id** | the network key | always | which mesh is this, locally |
+| **mesh id** (ADR-018) | the admin key set | only with an authority | who may admit devices |
+
+A mesh with no `admin_keys` — which is every mesh today, and which stays
+supported — has no ADR-018 mesh id at all, so the network id is the only one
+that can key per-mesh derivation. Nothing about this is visible on the wire:
+the address prefix already derives from the network key (ADR-005), and this
+identifier is a local label over the same secret.
 
 ### Mesh names are local labels
 
@@ -125,6 +144,37 @@ WireGuard public key, breaking every established tunnel and appearing to its
 peers as a new device while the old one lingered until it timed out. The
 existing identity is written under the existing mesh's id verbatim.
 
+### Credentials are per mesh
+
+Each mesh carries its own `admin_keys`, its own credential in the announce, and
+its own revocation list. Nothing is shared between meshes but the device, which
+is the point: being admitted to Bob's shared mesh says nothing about Alice's
+private one, and an admin who can revoke you there cannot touch you here.
+
+Since identities are per mesh, a credential names the per-mesh device and
+WireGuard keys. That falls out for free — those are the keys the announce is
+signed with in that mesh — but it means a credential issued for one mesh is not
+merely untrusted in another, it does not even name the right device.
+
+### The network key path stays
+
+`network_key = "..."` remains valid and means one mesh named `default`, and a
+mesh with no `admin_keys` keeps admitting anyone who holds its key. Not as a
+transitional courtesy: it is how a mesh is bootstrapped, how one is recovered,
+and the only thing that works when nothing is running on the other end. Invites
+and credentials are the better path and are not yet the only path — auto-renewal
+is not built, so a credentialled mesh still needs a human every thirty days.
+
+Concretely, nothing in this ADR may require an authority to exist.
+
+### The waiting daemon is the runtime half
+
+A daemon that gains a mesh while running is what "join more than once" means,
+and it is [already built](../../cmd/shrooms/waiting.go) for the empty case: a
+daemon with no key holds the control socket and takes a mesh over `/join`. The
+remaining work is that the same call must be accepted by a daemon that already
+has one, and must add rather than replace.
+
 ## Consequences
 
 **Joining a mesh does not bridge it to another.** Each node is an endpoint, not
@@ -148,6 +198,12 @@ disco probes and relay frames carry no cleartext mesh identifier — deliberatel
 since one would be a membership oracle for a passive observer. Demultiplexing is
 therefore trial decryption, O(meshes) per packet. Fine at the scale this is for;
 if it ever isn't, the fix is a per-mesh listen port, which costs privacy.
+
+**Every mesh needs its own IPv4 aliases.** [ADR-021](021-synthetic-ipv4.md)
+gives each peer a synthetic address derived from its device key. With per-mesh
+identities that derivation is already distinct per mesh, so the aliases do not
+collide by construction — but the *table* must be per mesh, or one mesh's peer
+would answer another's name.
 
 **Sharing a mesh key still shares everything.** The network key is a bearer
 credential (ADR-008): giving Bob the key to mesh C makes him a full member who

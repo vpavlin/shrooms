@@ -285,6 +285,13 @@ type Config struct {
 	// AdminPK is reserved for M5 (admin-signed credentials) and ignored while
 	// empty. Present now so adding it later is not a config break.
 	AdminPK string
+
+	// MeshSet holds the additional meshes of a multi-mesh config (ADR-015),
+	// keyed by their local label. Empty for every config written so far, and
+	// NetworkKey above remains the single-mesh form rather than being folded
+	// into this — it is the form that bootstraps and recovers a mesh, and the
+	// one the whole install base uses.
+	MeshSet map[string]Mesh
 }
 
 // DefaultConfig returns a config with everything but the network key filled in.
@@ -305,6 +312,11 @@ func DefaultConfig() Config {
 
 // Validate checks a loaded config.
 func (c *Config) Validate() error {
+	// A config may describe its mesh either way round, so "no network_key" is
+	// only an error when there are no meshes at all.
+	if c.NetworkKey == "" && len(c.MeshSet) > 0 {
+		return c.validateMeshes()
+	}
 	if c.NetworkKey == "" {
 		return errors.New("network_key is not set — run `logos-vpn init` or `logos-vpn join`")
 	}
@@ -349,7 +361,8 @@ func (c *Config) Validate() error {
 	if _, err := c.Authority(); err != nil {
 		return err
 	}
-	return nil
+	// And the extra meshes, if this config names any.
+	return c.validateMeshes()
 }
 
 // Authority returns the admin keys this mesh trusts, or nil when membership is
@@ -357,12 +370,16 @@ func (c *Config) Validate() error {
 //
 // nil is not an error: it is the pre-credential world, and every node lives
 // there until a mesh is minted with admin keys.
-func (c *Config) Authority() (*cred.Authority, error) {
-	if len(c.AdminKeys) == 0 {
+func (c *Config) Authority() (*cred.Authority, error) { return parseAuthority(c.AdminKeys) }
+
+// parseAuthority is shared with the per-mesh form, so a mesh in a multi-mesh
+// config and the single-mesh one cannot disagree about what an admin key is.
+func parseAuthority(adminKeys []string) (*cred.Authority, error) {
+	if len(adminKeys) == 0 {
 		return nil, nil
 	}
-	keys := make([]ed25519.PublicKey, 0, len(c.AdminKeys))
-	for _, s := range c.AdminKeys {
+	keys := make([]ed25519.PublicKey, 0, len(adminKeys))
+	for _, s := range adminKeys {
 		raw, err := base32.StdEncoding.WithPadding(base32.NoPadding).
 			DecodeString(strings.ToUpper(strings.TrimSpace(s)))
 		if err != nil {
@@ -580,6 +597,16 @@ func parseConfig(text string) (Config, error) {
 		}
 		key = strings.TrimSpace(key)
 		val = strings.TrimSpace(val)
+
+		// mesh.<label>.<field>, the multi-mesh form (ADR-015). Checked before
+		// the switch so a mesh may be called anything without colliding with a
+		// top-level option name.
+		if label, field, ok := parseMeshKey(key); ok {
+			if err := c.setMeshField(label, field, val, n+1); err != nil {
+				return c, err
+			}
+			continue
+		}
 
 		switch key {
 		case "network_key":
