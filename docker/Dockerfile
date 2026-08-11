@@ -28,5 +28,11 @@ COPY gateway.sh entrypoint-nat.sh /usr/bin/
 # and, importantly, its announce sequence number.
 VOLUME ["/etc/shrooms", "/var/lib/shrooms"]
 
+# The library resolves storeMessageDbUrl — "sqlite://store.sqlite3" by default —
+# against the working directory, which was "/" and is not somewhere anything
+# should be writing. Pointed at the state volume instead: writable, persistent,
+# and already ours.
+WORKDIR /var/lib/shrooms
+
 ENTRYPOINT ["/usr/bin/shrooms"]
 CMD ["daemon", "-v"]

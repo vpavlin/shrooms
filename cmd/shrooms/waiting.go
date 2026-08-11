@@ -61,12 +61,19 @@ func runWaiting(ctx context.Context, log *slog.Logger, cfgPath, stateDir, sock s
 	// anything still carries the fleet's traffic, ~20 MB/h in the default Core
 	// mode. A machine that will sit prepared for a long time should say
 	// mode = "Edge" in its config, which is a sixth of that.
+	// Failing to start it is not fatal. The daemon's job while waiting is to
+	// hold the socket, and a node that would not come up now may come up later;
+	// joinHere starts one itself if there is none. Returning an error here
+	// instead would turn a rendezvous problem into a service that systemd
+	// restarts forever.
 	fleet := waitingFleet(cfgPath)
 	node, err := startNode(nodeConfig(fleet))
 	if err != nil {
-		return err
+		log.Warn("rendezvous node did not start; will try again when joining", "err", err)
+		node = nil
+	} else {
+		defer node.Close()
 	}
-	defer node.Close()
 
 	log.Info("waiting to be told which mesh this is",
 		"socket", sock, "device", hex.EncodeToString(st.Identity.DevicePub[:8]),
@@ -167,7 +174,9 @@ func runWaiting(ctx context.Context, log *slog.Logger, cfgPath, stateDir, sock s
 		// Closed explicitly: syscall.Exec replaces the process image, so no
 		// deferred call runs, and a socket the library still holds would be
 		// inherited by the daemon that comes up next and refuse to rebind.
-		node.Close()
+		if node != nil {
+			node.Close()
+		}
 		return reexec(log)
 	}
 }
@@ -206,6 +215,17 @@ func joinHere(ctx context.Context, log *slog.Logger, node *waku.Node, st *state.
 		secret, err := invite.ParseToken(token)
 		if err != nil {
 			return nil, err
+		}
+
+		// A node of our own only if the waiting daemon has none, which happens
+		// when starting it failed earlier.
+		if node == nil {
+			own, err := startNode(nodeConfig(waitingFleet(cfgPath)))
+			if err != nil {
+				return nil, err
+			}
+			defer own.Close()
+			node = own
 		}
 
 		log.Info("redeeming an invite")
