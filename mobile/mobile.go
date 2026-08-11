@@ -23,6 +23,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -366,6 +367,75 @@ func OverlayV4(configDir string) string {
 		DevicePub: st.Identity.DevicePub,
 	}, nil)
 	return t.Self().String()
+}
+
+// LeaveMesh removes one mesh from this device, keeping the others.
+//
+// The way back from a join that went wrong. Without it a device with a broken
+// mesh entry — a credential stored against the wrong identity, say — had no
+// remedy but clearing the app's data, which throws away the identity of every
+// other mesh with it.
+//
+// Refuses the last one: leaving that is "forget everything", which is what
+// clearing app data is for, and doing it by accident is expensive.
+func LeaveMesh(configDir, label string) error {
+	cfgPath, stateDir := paths(configDir)
+	cfg, err := state.LoadConfig(cfgPath)
+	if err != nil {
+		return err
+	}
+	if len(cfg.Meshes()) < 2 {
+		return errors.New("this is the only mesh; clear the app's data to start over")
+	}
+	m, ok := cfg.MeshSet[label]
+	if !ok {
+		return fmt.Errorf("no mesh called %q, or it is the original one", label)
+	}
+	nk, err := m.Key()
+	if err == nil {
+		// The state entry too, so re-joining starts clean rather than
+		// inheriting whatever was wrong.
+		if st, err := state.LoadOrCreateState(stateDir); err == nil {
+			delete(st.Meshes, state.NetworkID(nk))
+			_ = st.Save()
+		}
+	}
+	delete(cfg.MeshSet, label)
+	return state.WriteConfig(cfgPath, cfg)
+}
+
+// DeviceName is what this device calls itself on every mesh it is on.
+func DeviceName(configDir string) string {
+	cfg, _, err := load(configDir)
+	if err != nil {
+		return ""
+	}
+	return cfg.Name
+}
+
+// SetDeviceName renames this device.
+//
+// One name for every mesh, because that is what the config holds and what the
+// announce carries. Renaming takes effect on the next connect: the name rides
+// the announce, and peers keep the old one until they hear a new one.
+func SetDeviceName(configDir, name string) error {
+	cfgPath, _ := paths(configDir)
+	cfg, err := state.LoadConfig(cfgPath)
+	if err != nil {
+		return err
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return errors.New("a device needs a name")
+	}
+	if name == cfg.Name {
+		return nil
+	}
+	cfg.Name = name
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	return state.WriteConfig(cfgPath, cfg)
 }
 
 // MeshesJSON lists every mesh this device belongs to, with the address and

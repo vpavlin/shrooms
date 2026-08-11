@@ -280,7 +280,14 @@ private fun AddMeshScreen(
 ) {
     var token by remember { mutableStateOf("") }
     var label by remember { mutableStateOf("") }
-    var name by remember { mutableStateOf(Build.MODEL.replace(' ', '-').lowercase()) }
+    // The name this device already answers to, not the phone's model. Offering
+    // the model here renamed a device that was perfectly well named, on every
+    // mesh it was already on, with no way back.
+    var name by remember {
+        mutableStateOf(
+            Mobile.deviceName(dir).ifEmpty { Build.MODEL.replace(' ', '-').lowercase() }
+        )
+    }
     var error by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -326,7 +333,8 @@ private fun AddMeshScreen(
         Label("NAME FOR THIS PHONE")
         Spacer(Modifier.height(6.dp))
         Text(
-            "how the other devices on that mesh will see this one",
+            "how other devices see this one — the same on every mesh, so " +
+                "changing it here renames it everywhere",
             style = MaterialTheme.typography.bodySmall, color = Palette.Ash,
         )
         Spacer(Modifier.height(8.dp))
@@ -346,7 +354,13 @@ private fun AddMeshScreen(
             error = ""
             scope.launch {
                 val result = withContext(Dispatchers.IO) {
-                    runCatching { Mobile.joinAnotherWithInvite(token, label, name, dir, 120L) }
+                    runCatching {
+                        // Applied deliberately rather than as a side effect of
+                        // joining: the field is prefilled with the current
+                        // name, so this only fires if it was actually edited.
+                        Mobile.setDeviceName(dir, name)
+                        Mobile.joinAnotherWithInvite(token, label, name, dir, 120L)
+                    }
                 }
                 result
                     .onSuccess { onDone() }
@@ -409,13 +423,29 @@ private fun MeshScreen(
             // the same way.
             if (snap.meshes.size > 1) {
                 snap.meshes.forEach { m ->
-                    Text(
-                        "${m.label}  ${m.overlay}  ·  ${m.peers} peer${if (m.peers == 1) "" else "s"}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Palette.Ash,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "${m.label}  ${m.overlay}  ·  ${m.peers} peer${if (m.peers == 1) "" else "s"}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Palette.Ash,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        // The way back from a join that went wrong. Only the
+                        // added meshes: leaving the original one is "forget
+                        // everything", which is what clearing app data is for.
+                        if (m.label != "default") {
+                            Text(
+                                "leave",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Palette.Rust,
+                                modifier = Modifier.clickable {
+                                    runCatching { Mobile.leaveMesh(dir, m.label) }
+                                },
+                            )
+                        }
+                    }
                 }
                 Spacer(Modifier.height(8.dp))
             }
