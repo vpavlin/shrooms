@@ -100,7 +100,19 @@ class MainActivity : ComponentActivity() {
                         AddMeshScreen(
                             dir = dir,
                             onScan = ::scanInvite,
-                            onDone = { addingMesh = false },
+                            onDone = {
+                                addingMesh = false
+                                // A new mesh gets its addresses and routes when
+                                // the tunnel is built, so it does nothing until
+                                // the next connect. Reconnecting here rather
+                                // than asking: the alternative is a join that
+                                // succeeded and a mesh that appears broken.
+                                if (snap.connected) {
+                                    startService(Intent(this@MainActivity, MeshVpnService::class.java)
+                                        .setAction(MeshVpnService.ACTION_DISCONNECT))
+                                }
+                                requestConnect()
+                            },
                             onCancel = { addingMesh = false },
                         )
                     } else {
@@ -344,7 +356,7 @@ private fun AddMeshScreen(
 
         Spacer(Modifier.height(14.dp))
         Text(
-            "reconnect afterwards for it to come up",
+            "the tunnel reconnects when this finishes, so the new mesh comes up",
             style = MaterialTheme.typography.bodySmall, color = Palette.Ash,
         )
 
