@@ -464,23 +464,25 @@ private fun MeshScreen(
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f),
                         )
-                        // On or off without leaving. Being a member of a mesh
-                        // and using it are different things.
+                        // On or off without leaving — being a member of a mesh
+                        // and using it are different things. Text rather than a
+                        // Switch: these rows are one line of small type, and a
+                        // Material switch is twice their height.
                         if (cm.label != "default") {
-                            Switch(
-                                checked = !cm.disabled,
-                                onCheckedChange = { on ->
-                                    leaveError = ""
-                                    runCatching { Mobile.setMeshEnabled(dir, cm.label, on) }
-                                        .onSuccess { onLeftMesh() }
-                                        .onFailure { leaveError = it.message ?: "could not change it" }
-                                },
-                                colors = SwitchDefaults.colors(
-                                    checkedThumbColor = Palette.Bone,
-                                    checkedTrackColor = Palette.Violet,
-                                    uncheckedThumbColor = Palette.Ash,
-                                    uncheckedTrackColor = Palette.Line,
-                                ),
+                            Text(
+                                if (cm.disabled) "off" else "on",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (cm.disabled) Palette.Line else Palette.Phosphor,
+                                modifier = Modifier
+                                    .padding(horizontal = 10.dp)
+                                    .clickable {
+                                        leaveError = ""
+                                        runCatching { Mobile.setMeshEnabled(dir, cm.label, cm.disabled) }
+                                            .onSuccess { onLeftMesh() }
+                                            .onFailure {
+                                                leaveError = it.message ?: "could not change it"
+                                            }
+                                    },
                             )
                         }
                         // The way back from a join that went wrong. Only the
