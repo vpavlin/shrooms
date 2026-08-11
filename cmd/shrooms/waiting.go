@@ -18,8 +18,8 @@ import (
 	"github.com/vpavlin/shrooms/internal/cred"
 	"github.com/vpavlin/shrooms/internal/identity"
 	"github.com/vpavlin/shrooms/internal/invite"
+	"github.com/vpavlin/shrooms/internal/rendezvous"
 	"github.com/vpavlin/shrooms/internal/state"
-	"github.com/vpavlin/shrooms/internal/waku"
 )
 
 // A daemon with no mesh yet.
@@ -176,7 +176,7 @@ func joinHere(ctx context.Context, log *slog.Logger, st *state.State, cfgPath, s
 
 	switch {
 	case token != "":
-		secret, err := parseInviteToken(token)
+		secret, err := invite.ParseToken(token)
 		if err != nil {
 			return nil, err
 		}
@@ -187,7 +187,7 @@ func joinHere(ctx context.Context, log *slog.Logger, st *state.State, cfgPath, s
 		defer node.Close()
 
 		log.Info("redeeming an invite")
-		resp, err := invite.Redeem(ctx, &nodeTransport{node: node}, secret, &invite.Request{
+		resp, err := invite.Redeem(ctx, rendezvous.InviteTransport(node), secret, &invite.Request{
 			DevicePub: st.Identity.DevicePub,
 			WGPub:     st.Identity.WGPub[:],
 			Name:      name,
@@ -282,42 +282,6 @@ func reexec(log *slog.Logger) error {
 	}
 	log.Info("restarting into the mesh")
 	return syscall.Exec(exe, os.Args, os.Environ())
-}
-
-// nodeTransport adapts a rendezvous node to the invite package's transport,
-// which is deliberately ignorant of Waku.
-type nodeTransport struct {
-	node *waku.Node
-	msgs chan invite.Message
-	once bool
-}
-
-func (t *nodeTransport) Subscribe(topic string) error   { return t.node.Subscribe(topic) }
-func (t *nodeTransport) Unsubscribe(topic string) error { return t.node.Unsubscribe(topic) }
-
-func (t *nodeTransport) Send(topic string, payload []byte, ephemeral bool) (string, error) {
-	return t.node.Send(topic, payload, ephemeral)
-}
-
-func (t *nodeTransport) Messages() <-chan invite.Message {
-	if !t.once {
-		t.once = true
-		t.msgs = make(chan invite.Message, 16)
-		go func() {
-			for ev := range t.node.Events() {
-				msg, _, ok := waku.ParseMessage(ev.JSON)
-				if !ok {
-					continue
-				}
-				select {
-				case t.msgs <- invite.Message{Topic: msg.ContentTopic, Payload: msg.Payload}:
-				default: // the exchange is not keeping up with a shard's traffic
-				}
-			}
-			close(t.msgs)
-		}()
-	}
-	return t.msgs
 }
 
 // configHasNoKey reports whether this machine has yet to join anything.

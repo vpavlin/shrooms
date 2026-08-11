@@ -24,6 +24,9 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -126,6 +129,14 @@ private fun JoinScreen(dir: String, onScan: ((String) -> Unit) -> Unit, onDone: 
     var name by remember { mutableStateOf(Build.MODEL.replace(' ', '-').lowercase()) }
     var error by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
+    var waiting by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    // An invite token and a network key are told apart by Go, not by asking:
+    // one is 26 characters and the other 52, so a single field can take either
+    // and nobody has to know which they were handed.
+    val isInvite = key.isNotEmpty() && runCatching { Mobile.inviteToken(key) }.getOrNull()
+        .orEmpty().isNotEmpty()
 
     Column(
         Modifier.fillMaxSize().padding(24.dp).verticalScroll(rememberScrollState()),
@@ -141,7 +152,7 @@ private fun JoinScreen(dir: String, onScan: ((String) -> Unit) -> Unit, onDone: 
         Text(buildLabel(), style = MaterialTheme.typography.bodySmall, color = Palette.Ash)
 
         Spacer(Modifier.height(40.dp))
-        Label("NETWORK KEY")
+        Label(if (isInvite) "INVITE" else "INVITE OR NETWORK KEY")
         Spacer(Modifier.height(8.dp))
         KeyField(key) { key = it.trim() }
 
@@ -150,10 +161,17 @@ private fun JoinScreen(dir: String, onScan: ((String) -> Unit) -> Unit, onDone: 
             error = ""
             onScan { scanned ->
                 // Parsed in Go, so the invitation format has one implementation
-                // and the app cannot drift from what the CLI writes.
-                runCatching { Mobile.inviteKey(scanned) }
-                    .onSuccess { key = it }
-                    .onFailure { error = it.message ?: "that is not a mesh invitation" }
+                // and the app cannot drift from what the CLI writes. An invite
+                // token is tried first: it is the one that expires, so a stale
+                // scan should say so rather than falling through to a key.
+                val token = runCatching { Mobile.inviteToken(scanned) }.getOrNull().orEmpty()
+                if (token.isNotEmpty()) {
+                    key = token
+                } else {
+                    runCatching { Mobile.inviteKey(scanned) }
+                        .onSuccess { key = it }
+                        .onFailure { error = it.message ?: "that is not a mesh invitation" }
+                }
             }
         }
 
@@ -168,18 +186,45 @@ private fun JoinScreen(dir: String, onScan: ((String) -> Unit) -> Unit, onDone: 
         }
 
         Spacer(Modifier.height(28.dp))
-        Action(if (busy) "JOINING…" else "JOIN", enabled = key.isNotEmpty() && !busy) {
+        Action(
+            when {
+                waiting -> "WAITING FOR THE OTHER DEVICE…"
+                busy -> "JOINING…"
+                else -> "JOIN"
+            },
+            enabled = key.isNotEmpty() && !busy,
+        ) {
             busy = true
             error = ""
-            runCatching { Mobile.join(key, name, dir) }
-                .onSuccess { onDone() }
-                .onFailure { error = it.message ?: "could not join"; busy = false }
+            if (isInvite) {
+                // Redeeming an invite talks to the other machine and can take
+                // the better part of a minute, so it cannot run here: the main
+                // thread is what draws the "waiting" state it produces.
+                waiting = true
+                scope.launch {
+                    val result = withContext(Dispatchers.IO) {
+                        runCatching { Mobile.joinWithInvite(key, name, dir, 120L) }
+                    }
+                    waiting = false
+                    result
+                        .onSuccess { onDone() }
+                        .onFailure { error = it.message ?: "could not join"; busy = false }
+                }
+            } else {
+                runCatching { Mobile.join(key, name, dir) }
+                    .onSuccess { onDone() }
+                    .onFailure { error = it.message ?: "could not join"; busy = false }
+            }
         }
 
         Spacer(Modifier.height(14.dp))
         Text(
-            "The key is the only secret. Anyone who has it is a member of the mesh — " +
-                "treat it like a password.",
+            if (isInvite)
+                "An invite is good for one device and fifteen minutes. Keep " +
+                    "`shrooms invite` running on the other machine until this finishes."
+            else
+                "The key is the only secret. Anyone who has it is a member of the mesh — " +
+                    "treat it like a password. An invite is the safer way in.",
             style = MaterialTheme.typography.bodySmall, color = Palette.Ash,
         )
 

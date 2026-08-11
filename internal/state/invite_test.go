@@ -1,6 +1,10 @@
 package state
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/vpavlin/shrooms/internal/invite"
+)
 
 const validKey = "P27KNQ2HDSIUFIXZAGYDBSU2GU3PE4M52POFBUBOWHUZEWYSCP5A"
 
@@ -40,5 +44,15 @@ func TestRubbishRejected(t *testing.T) {
 		if _, _, err := ParseInvite(s); err == nil {
 			t.Errorf("accepted %q", s)
 		}
+	}
+}
+
+// The phone reads what the CLI writes. internal/invite keeps its own copy of
+// the scheme so that it stays free of config and file handling, which is only
+// safe if the two cannot drift.
+func TestInviteSchemesAgree(t *testing.T) {
+	if invite.Scheme != InviteScheme {
+		t.Fatalf("invite.Scheme is %q and state.InviteScheme is %q; a scanned invite "+
+			"would be understood by one and not the other", invite.Scheme, InviteScheme)
 	}
 }

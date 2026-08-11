@@ -233,3 +233,39 @@ func group(s string) string {
 	}
 	return string(out)
 }
+
+// The CLI writes these and the phone reads them, so every form the CLI can
+// produce — the QR's URI, the grouped form it prints, and a bare token someone
+// retyped — has to come back as the same secret.
+func TestParseToken(t *testing.T) {
+	s, _ := New()
+	for _, form := range []string{
+		s.URI(),
+		s.String(),
+		group(s.String()),
+		lower(s.String()),
+		"  " + s.URI() + "\n",
+	} {
+		got, err := ParseToken(form)
+		if err != nil {
+			t.Fatalf("ParseToken(%q): %v", form, err)
+		}
+		if got != s {
+			t.Errorf("ParseToken(%q) gave a different token", form)
+		}
+	}
+
+	// A network-key invitation is the other thing the app can be handed, and it
+	// is not a token: it must fail here so the caller falls through to the key
+	// path rather than trying to redeem it.
+	for _, notAToken := range []string{
+		"logosvpn://join?key=P27KNQ2HDSIUFIXZAGYDBSU2GU3PE4M52POFBUBOWHUZEWYSCP5A",
+		"P27KNQ2HDSIUFIXZAGYDBSU2GU3PE4M52POFBUBOWHUZEWYSCP5A",
+		"logosvpn://enrol?token=",
+		"https://example.com",
+	} {
+		if _, err := ParseToken(notAToken); err == nil {
+			t.Errorf("ParseToken(%q) accepted something that is not an invite token", notAToken)
+		}
+	}
+}

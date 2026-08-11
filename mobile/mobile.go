@@ -14,6 +14,8 @@ package mobile
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/base32"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,9 +30,12 @@ import (
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun"
 
+	"github.com/vpavlin/shrooms/internal/cred"
 	dnssrv "github.com/vpavlin/shrooms/internal/dns"
 	"github.com/vpavlin/shrooms/internal/identity"
+	"github.com/vpavlin/shrooms/internal/invite"
 	"github.com/vpavlin/shrooms/internal/mesh"
+	"github.com/vpavlin/shrooms/internal/rendezvous"
 	"github.com/vpavlin/shrooms/internal/state"
 	"github.com/vpavlin/shrooms/internal/waku"
 	"github.com/vpavlin/shrooms/internal/wg"
@@ -90,6 +95,9 @@ type session struct {
 	dnsServer    *dnssrv.Server
 }
 
+// b32 matches how admin keys are written in a config: uppercase, unpadded.
+var b32 = base32.StdEncoding.WithPadding(base32.NoPadding)
+
 // Init creates a new mesh and returns its network key.
 func Init(name, configDir string) (string, error) {
 	cfg, _, err := setup(configDir, name, "")
@@ -103,6 +111,123 @@ func Init(name, configDir string) (string, error) {
 func Join(key, name, configDir string) error {
 	_, _, err := setup(configDir, name, key)
 	return err
+}
+
+// JoinWithInvite redeems an invite token (ADR-017): the phone's way onto a mesh
+// that admits devices by credential rather than by holding the network key.
+//
+// Blocking, so Kotlin must call it off the main thread. It runs a rendezvous
+// node for the length of the exchange and throws it away — the app's own node
+// is not running yet, since there is nothing to run it for until this returns.
+//
+// On success the device has a config, the mesh's admin keys, and a credential
+// signed for the keys generated here. On failure it has written nothing.
+func JoinWithInvite(token, name, configDir string, timeoutSeconds int) error {
+	cfgPath, stateDir := paths(configDir)
+	if _, err := os.Stat(cfgPath); err == nil {
+		return errors.New("this device has already joined a mesh")
+	}
+	secret, err := invite.ParseToken(token)
+	if err != nil {
+		return err
+	}
+	if timeoutSeconds <= 0 || timeoutSeconds > 900 {
+		timeoutSeconds = 120
+	}
+
+	// The identity first: it is what the credential names, and generating it
+	// here means the keys in the request are the keys this device keeps.
+	st, err := state.LoadOrCreateState(stateDir)
+	if err != nil {
+		return fmt.Errorf("state: %w", err)
+	}
+	if name == "" {
+		name = "phone"
+	}
+
+	node, err := waku.New(nodeConfig(state.DefaultConfig()))
+	if err != nil {
+		return fmt.Errorf("rendezvous plane: %w", err)
+	}
+	defer node.Close()
+	if err := node.Start(); err != nil {
+		return fmt.Errorf("start rendezvous plane: %w", err)
+	}
+	// Nothing arrives until the node has peers. The inviter is waiting at a
+	// prompt, so a few seconds here costs nothing and asking too early costs a
+	// retry interval.
+	time.Sleep(3 * time.Second)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSeconds)*time.Second)
+	defer cancel()
+
+	resp, err := invite.Redeem(ctx, rendezvous.InviteTransport(node), secret, &invite.Request{
+		DevicePub: st.Identity.DevicePub,
+		WGPub:     st.Identity.WGPub[:],
+		Name:      name,
+	})
+	if err != nil {
+		return errors.New("no answer — is `shrooms invite` still running on the other machine?")
+	}
+
+	nk, err := identity.NetworkKeyFromBytes(resp.NetworkKey)
+	if err != nil {
+		return err
+	}
+	cfg := state.DefaultConfig()
+	cfg.Name = name
+	cfg.NetworkKey = nk.String()
+	if resp.Suffix != "" {
+		cfg.HostsSuffix = resp.Suffix
+	}
+	for _, k := range resp.AdminKeys {
+		if len(k) != ed25519.PublicKeySize {
+			return errors.New("the invitation carried a malformed admin key")
+		}
+		cfg.AdminKeys = append(cfg.AdminKeys, b32.EncodeToString(k))
+	}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+
+	// The credential is checked before anything is written, so a failed join
+	// leaves the device exactly as it was rather than half-joined.
+	if len(resp.Credential) > 0 {
+		c, err := cred.UnmarshalCredential(resp.Credential)
+		if err != nil {
+			return fmt.Errorf("the invitation carried a malformed credential: %w", err)
+		}
+		auth, err := cfg.Authority()
+		if err != nil {
+			return err
+		}
+		if auth != nil {
+			if err := cred.VerifyBy(auth, c, time.Now()); err != nil {
+				return fmt.Errorf("the credential does not verify: %w", err)
+			}
+		}
+	}
+
+	if err := state.WriteConfig(cfgPath, cfg); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+	if len(resp.Credential) > 0 {
+		if err := st.SetCredential(resp.Credential); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// InviteToken reports whether scanned text is an enrolment invite, and returns
+// it in canonical form. Empty means it is not one — it may still be a network
+// key, which InviteKey handles.
+func InviteToken(scanned string) string {
+	s, err := invite.ParseToken(scanned)
+	if err != nil {
+		return ""
+	}
+	return s.String()
 }
 
 // Configured reports whether this device has already been set up, so the app

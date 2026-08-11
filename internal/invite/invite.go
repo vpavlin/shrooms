@@ -115,6 +115,38 @@ func (s Secret) payloadKey() []byte {
 	return s.derive("invite/v1/payload", chacha20poly1305.KeySize)
 }
 
+// Scheme is the URI an invite QR code carries.
+//
+// A URI rather than a bare token so a phone can tell an invite from any other
+// text it might scan, and from the network-key invitations `key show --qr`
+// still produces. Deliberately the same scheme as those: it is the same app
+// being handed the same kind of thing, distinguished by the host part.
+//
+// Kept equal to state.InviteScheme by a test in that package rather than by
+// importing it, so this package stays free of config and file handling.
+const Scheme = "logosvpn"
+
+// URI renders a token as something scannable.
+func (s Secret) URI() string { return Scheme + "://enrol?token=" + s.String() }
+
+// ParseToken accepts the URI form, the grouped form, or a bare token.
+//
+// One implementation, because the CLI writes these and the phone reads them,
+// and a second parser is how the two drift.
+func ParseToken(text string) (Secret, error) {
+	text = strings.TrimSpace(text)
+	if rest, ok := strings.CutPrefix(text, Scheme+"://"); ok {
+		_, query, _ := strings.Cut(rest, "?")
+		for _, kv := range strings.Split(query, "&") {
+			if tok, ok := strings.CutPrefix(kv, "token="); ok {
+				return Parse(tok)
+			}
+		}
+		return Secret{}, errors.New("that invitation carries no token")
+	}
+	return Parse(text)
+}
+
 // Kinds of invite message.
 const (
 	KindRequest  = "invite-request"

@@ -13,7 +13,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -24,6 +23,7 @@ import (
 	"github.com/vpavlin/shrooms/internal/cred"
 	"github.com/vpavlin/shrooms/internal/identity"
 	"github.com/vpavlin/shrooms/internal/invite"
+	"github.com/vpavlin/shrooms/internal/rendezvous"
 	"github.com/vpavlin/shrooms/internal/state"
 	"github.com/vpavlin/shrooms/internal/waku"
 )
@@ -93,7 +93,7 @@ func cmdInvite(args []string) error {
 	fmt.Printf("Invite valid for %s. On the joining device:\n\n", *ttl)
 	fmt.Printf("  shrooms join --invite %s\n\n", groupToken(secret.String()))
 	if *asQR {
-		art, err := renderQR(inviteURI(secret))
+		art, err := renderQR(secret.URI())
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "(no QR: %v)\n", err)
 		} else {
@@ -248,7 +248,7 @@ func cmdJoinInvite(token string, args []string) error {
 		return err
 	}
 
-	if _, err := parseInviteToken(token); err != nil {
+	if _, err := invite.ParseToken(token); err != nil {
 		return err
 	}
 	deviceName := *name
@@ -306,13 +306,13 @@ func cmdJoinInvite(token string, args []string) error {
 	}
 	defer node.Close()
 
-	secret, err := parseInviteToken(token)
+	secret, err := invite.ParseToken(token)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "Asking to join as %q...\n", deviceName)
 
-	resp, err := invite.Redeem(ctx, &nodeTransport{node: node}, secret, &invite.Request{
+	resp, err := invite.Redeem(ctx, rendezvous.InviteTransport(node), secret, &invite.Request{
 		DevicePub: st.Identity.DevicePub,
 		WGPub:     st.Identity.WGPub[:],
 		Name:      deviceName,
@@ -416,24 +416,6 @@ func joinViaDaemon(sock, token, name string, port uint16, advertise string, rela
 	// just joined, which is the whole reason for doing it at this end.
 	fmt.Printf("\nThe daemon is bringing the mesh up now. Check it with:\n  shrooms status\n")
 	return nil
-}
-
-// inviteURI is what the QR code carries: a URI rather than a bare token, so the
-// phone can tell an invite from any other text it might scan, and from the
-// network-key invites that `key show --qr` still produces.
-func inviteURI(s invite.Secret) string {
-	return state.InviteScheme + "://enrol?token=" + s.String()
-}
-
-// parseInviteToken accepts the URI, the grouped form, or the bare token.
-func parseInviteToken(text string) (invite.Secret, error) {
-	text = strings.TrimSpace(text)
-	if u, err := url.Parse(text); err == nil && u.Scheme == state.InviteScheme {
-		if tok := u.Query().Get("token"); tok != "" {
-			return invite.Parse(tok)
-		}
-	}
-	return invite.Parse(text)
 }
 
 // nodeConfig builds the rendezvous node's configuration from a config, matching

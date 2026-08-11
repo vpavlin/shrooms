@@ -607,6 +607,11 @@ connected to the fleet; the CLI only mints the token and signs the credential.
 So the admin key never reaches the daemon and the network key never reaches the
 CLI, and neither one can admit a device by itself.
 
+**The phone joins the same way.** Scan the QR that `shrooms invite` prints, or
+paste the token into the one field on the join screen — it takes an invite or a
+network key and tells them apart itself. The credential lands in the app's state
+and the phone is a member of a credentialled mesh, which it could not be before.
+
 `shrooms join <NETWORK-KEY>` is still there for bootstrapping and recovery, and
 `shrooms admin init` mints an authority separately for a mesh created with
 `--no-admin`.
