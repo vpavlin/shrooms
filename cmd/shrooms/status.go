@@ -169,8 +169,17 @@ func cmdStatus(args []string) error {
 		return nil
 	}
 
+	// The mesh column appears only when there is more than one, so a node with
+	// a single mesh — which is most of them — sees exactly the table it always
+	// did rather than a column of the same word.
+	multi := len(st.Meshes) > 1
+
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tOVERLAY IP\tANNOUNCE\tTUNNEL\tENDPOINT\tRX/TX\tCONNECTED IN")
+	if multi {
+		fmt.Fprintln(w, "MESH\tNAME\tOVERLAY IP\tANNOUNCE\tTUNNEL\tENDPOINT\tRX/TX\tCONNECTED IN")
+	} else {
+		fmt.Fprintln(w, "NAME\tOVERLAY IP\tANNOUNCE\tTUNNEL\tENDPOINT\tRX/TX\tCONNECTED IN")
+	}
 	for _, p := range st.Peers {
 		ann := "offline"
 		if p.Online {
@@ -214,8 +223,13 @@ func cmdStatus(args []string) error {
 		if p.TunnelAfterS > 0 {
 			took = shortDur(int64(p.TunnelAfterS))
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s/%s\t%s\n",
-			name, p.Overlay, ann, tun, ep, human(p.RxBytes), human(p.TxBytes), took)
+		if multi {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s/%s\t%s\n",
+				p.Mesh, name, p.Overlay, ann, tun, ep, human(p.RxBytes), human(p.TxBytes), took)
+		} else {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s/%s\t%s\n",
+				name, p.Overlay, ann, tun, ep, human(p.RxBytes), human(p.TxBytes), took)
+		}
 	}
 	if err := w.Flush(); err != nil {
 		return err

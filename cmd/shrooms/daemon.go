@@ -26,6 +26,7 @@ import (
 	"github.com/vpavlin/shrooms/internal/mesh"
 	"github.com/vpavlin/shrooms/internal/state"
 	"github.com/vpavlin/shrooms/internal/waku"
+	"github.com/vpavlin/shrooms/internal/wg"
 )
 
 // DefaultSocket is the daemon's control socket. The CLI is a thin client over
@@ -323,6 +324,9 @@ type rendezvousStatus struct {
 }
 
 type peerStatus struct {
+	// Mesh is which mesh this peer is on, empty on a single-mesh node.
+	Mesh string `json:"mesh,omitempty"`
+
 	Name string `json:"name"`
 	// OverlayV4 is the synthetic IPv4 address this device uses for the peer
 	// (ADR-021). Local to this node: another device may call it something else.
@@ -630,55 +634,68 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 			out.Rendezvous.LastMsgAgeS = int64(now.Sub(h.LastMessage).Seconds())
 		}
 
-		stats, _ := m.PeerStats()
-		for _, p := range m.Roster().Peers() {
-			ps := peerStatus{
-				Name:      p.Name,
-				Overlay:   p.Overlay.String(),
-				OverlayV4: v4Of(m, p.Overlay),
-				Endpoints: p.Endpoints,
-				Seq:       p.Seq,
-				LastSeen:  p.LastSeen.Format(time.RFC3339),
-				Online:    p.Online(now),
-				Relay:     p.Relay,
-				DNSName:   mesh.DNSName(p.Name, cfg.HostsSuffix),
+		// Every mesh's peers, not just the first one's. A node with two meshes
+		// counted the second's peers and then listed none of them, which reads
+		// as "it says one peer and shows me nothing".
+		for _, in := range instances {
+			m, stats := in.mesh, map[string]wg.PeerStat{}
+			if s, err := in.mesh.PeerStats(); err == nil {
+				stats = s
 			}
-			if best, ok := m.BestPath(p.ID(), now); ok {
-				ps.RTTMs = best.RTT.Milliseconds()
+			meshLabel := ""
+			if len(instances) > 1 {
+				meshLabel = in.label
 			}
-			if r := m.Rate(p.ID()); r.RxBps > 0 || r.TxBps > 0 || len(r.RxHistory) > 0 {
-				ps.RxBps, ps.TxBps = r.RxBps, r.TxBps
-				ps.RxHistory, ps.TxHistory = r.RxHistory, r.TxHistory
-			}
-			if t := m.Timing(p.ID()); t.DiscoveredAfter > 0 || t.TunnelAfter > 0 {
-				ps.DiscoveredAfterS = t.DiscoveredAfter.Seconds()
-				ps.PathAfterS = t.PathAfter.Seconds()
-				ps.TunnelAfterS = t.TunnelAfter.Seconds()
-			}
-			best, hasBest := m.BestPath(p.ID(), now)
-			for _, path := range m.Paths(p.ID()) {
-				ps.Paths = append(ps.Paths, pathStatus{
-					Addr:     path.Addr.String(),
-					RTTMs:    path.RTT.Milliseconds(),
-					LastPong: path.LastPong.Format(time.RFC3339),
-					Selected: hasBest && path.Addr == best.Addr,
-				})
-			}
-			if st, ok := stats[p.WGPub.String()]; ok {
-				ps.Endpoint = st.Endpoint
-				ps.RxBytes = st.RxBytes
-				ps.TxBytes = st.TxBytes
-				// A relayed endpoint serialises with a relay: prefix; say so as
-				// a field so no viewer has to parse the string.
-				ps.Relayed = strings.HasPrefix(st.Endpoint, "relay:")
-				if st.Handshaked() {
-					ps.Handshaked = true
-					ps.LastHandshake = st.LastHandshake.Format(time.RFC3339)
-					ps.HandshakeAgeS = int64(now.Sub(st.LastHandshake).Seconds())
-					ps.Live = st.Live(now)
+			for _, p := range m.Roster().Peers() {
+				ps := peerStatus{
+					Mesh:      meshLabel,
+					Name:      p.Name,
+					Overlay:   p.Overlay.String(),
+					OverlayV4: v4Of(m, p.Overlay),
+					Endpoints: p.Endpoints,
+					Seq:       p.Seq,
+					LastSeen:  p.LastSeen.Format(time.RFC3339),
+					Online:    p.Online(now),
+					Relay:     p.Relay,
+					DNSName:   mesh.DNSName(p.Name, cfg.HostsSuffix),
 				}
+				if best, ok := m.BestPath(p.ID(), now); ok {
+					ps.RTTMs = best.RTT.Milliseconds()
+				}
+				if r := m.Rate(p.ID()); r.RxBps > 0 || r.TxBps > 0 || len(r.RxHistory) > 0 {
+					ps.RxBps, ps.TxBps = r.RxBps, r.TxBps
+					ps.RxHistory, ps.TxHistory = r.RxHistory, r.TxHistory
+				}
+				if t := m.Timing(p.ID()); t.DiscoveredAfter > 0 || t.TunnelAfter > 0 {
+					ps.DiscoveredAfterS = t.DiscoveredAfter.Seconds()
+					ps.PathAfterS = t.PathAfter.Seconds()
+					ps.TunnelAfterS = t.TunnelAfter.Seconds()
+				}
+				best, hasBest := m.BestPath(p.ID(), now)
+				for _, path := range m.Paths(p.ID()) {
+					ps.Paths = append(ps.Paths, pathStatus{
+						Addr:     path.Addr.String(),
+						RTTMs:    path.RTT.Milliseconds(),
+						LastPong: path.LastPong.Format(time.RFC3339),
+						Selected: hasBest && path.Addr == best.Addr,
+					})
+				}
+				if st, ok := stats[p.WGPub.String()]; ok {
+					ps.Endpoint = st.Endpoint
+					ps.RxBytes = st.RxBytes
+					ps.TxBytes = st.TxBytes
+					// A relayed endpoint serialises with a relay: prefix; say so as
+					// a field so no viewer has to parse the string.
+					ps.Relayed = strings.HasPrefix(st.Endpoint, "relay:")
+					if st.Handshaked() {
+						ps.Handshaked = true
+						ps.LastHandshake = st.LastHandshake.Format(time.RFC3339)
+						ps.HandshakeAgeS = int64(now.Sub(st.LastHandshake).Seconds())
+						ps.Live = st.Live(now)
+					}
+				}
+				out.Peers = append(out.Peers, ps)
 			}
-			out.Peers = append(out.Peers, ps)
 		}
 		for _, ap := range m.Reflexive() {
 			out.Reflexive = append(out.Reflexive, ap.String())
