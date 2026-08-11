@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"time"
@@ -518,8 +519,26 @@ func readPassphraseTwice() (string, error) {
 }
 
 func defaultAdminDir() string {
+	// Under sudo, HOME is root's, and the admin key belongs to the person
+	// rather than to the machine. `sudo shrooms invite` — which needs root only
+	// to read the config — would otherwise look in /root/.config and report a
+	// missing key that is sitting in the user's home.
+	if u := os.Getenv("SUDO_USER"); u != "" {
+		if home := homeOf(u); home != "" {
+			return filepath.Join(home, ".config", "shrooms")
+		}
+	}
 	if h, err := os.UserHomeDir(); err == nil {
 		return filepath.Join(h, ".config", "shrooms")
 	}
 	return "."
+}
+
+// homeOf looks a user's home directory up without shelling out.
+func homeOf(name string) string {
+	u, err := user.Lookup(name)
+	if err != nil {
+		return ""
+	}
+	return u.HomeDir
 }

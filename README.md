@@ -279,6 +279,11 @@ $ sudo ./bin/shrooms join --invite BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U --name laptop
 $ sudo ./bin/shrooms daemon -v
 ```
 
+If a daemon is already running on this machine and has not joined anything, the
+join goes through it and it brings the mesh up itself — no second command, no
+restart. That is what a freshly installed machine looks like: the unit is
+enabled, the daemon waits, and `join` is the only thing you run.
+
 `sudo ./bin/shrooms join <NETWORK-KEY> --name laptop` also works, and is what to
 use when nothing is running on the other end.
 

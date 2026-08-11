@@ -56,6 +56,17 @@ func cmdDaemon(args []string) error {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
+	ctx0, cancel0 := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel0()
+
+	// No key yet — no mesh yet. Wait to be told which one this is rather than
+	// exiting, which under systemd is a restart loop nobody reads.
+	if unset, err := configHasNoKey(*cfgPath); err != nil {
+		return err
+	} else if unset {
+		return runWaiting(ctx0, log, *cfgPath, *stateDir, *sock)
+	}
+
 	cfg, err := state.LoadConfig(*cfgPath)
 	if err != nil {
 		return err
@@ -122,8 +133,7 @@ func cmdDaemon(args []string) error {
 		return err
 	}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
+	ctx := ctx0
 
 	// Services, on the overlay address. The interface is up and holds the
 	// address by now; binding one it does not hold yet would fail.
@@ -187,6 +197,10 @@ func cmdDaemon(args []string) error {
 
 // statusPayload is what the daemon reports over the control socket.
 type statusPayload struct {
+	// Waiting means this daemon has no mesh yet and is holding the socket open
+	// until someone tells it which one it belongs to.
+	Waiting bool `json:"waiting,omitempty"`
+
 	Name    string       `json:"name"`
 	Overlay string       `json:"overlay"`
 	Prefix  string       `json:"prefix"`
@@ -361,7 +375,7 @@ func inviteHandlers(mux *http.ServeMux, m inviteHolder) {
 	// not here. /invite/hold blocks until a request arrives and returns it; the
 	// CLI signs; /invite/reply publishes what it signed. The token is what
 	// names the exchange, so this cannot be used to publish on any other topic.
-	mux.HandleFunc("/invite/hold", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/invite/hold", requireRoot(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Token string `json:"token"`
 			TTLS  int    `json:"ttl_s"`
@@ -400,9 +414,9 @@ func inviteHandlers(mux *http.ServeMux, m inviteHolder) {
 			"name":       got.Name,
 			"eph_pub":    hex.EncodeToString(got.EphPub),
 		})
-	})
+	}))
 
-	mux.HandleFunc("/invite/reply", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/invite/reply", requireRoot(func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
 			Token      string `json:"token"`
 			EphPub     string `json:"eph_pub"`
@@ -435,11 +449,15 @@ func inviteHandlers(mux *http.ServeMux, m inviteHolder) {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
-	})
+	}))
 }
 
-// serveControl exposes status over a unix socket.
-func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Mesh, cfg state.Config, self netip.Addr, services *service.Publisher) (*http.Server, error) {
+// listenControl binds the control socket and serves a handler on it.
+//
+// Shared with the waiting daemon (see waiting.go), which has no mesh to report
+// but the same socket to own — including its permissions, which are the only
+// thing standing between the socket group and the mutating endpoints.
+func listenControl(ctx context.Context, log *slog.Logger, path string, h http.Handler, cfg state.Config) (*http.Server, error) {
 	// systemd's RuntimeDirectory creates this, but the daemon must also work
 	// when run by hand.
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -468,6 +486,23 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Me
 			log.Info("control socket readable by group", "group", cfg.SocketGroup)
 		}
 	}
+
+	srv := &http.Server{Handler: h, ConnContext: withPeerCred}
+	go func() {
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error("control socket", "err", err)
+		}
+	}()
+	go func() {
+		<-ctx.Done()
+		srv.Close()
+		os.Remove(path)
+	}()
+	return srv, nil
+}
+
+// serveControl exposes status over a unix socket.
+func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Mesh, cfg state.Config, self netip.Addr, services *service.Publisher) (*http.Server, error) {
 
 	nk, _ := cfg.Key()
 
@@ -585,7 +620,7 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Me
 	// The socket's permissions decide who may ask; the signature inside decides
 	// whether it is honoured. A caller who can reach this socket can already
 	// read every peer's endpoints, and cannot forge a revocation with it.
-	mux.HandleFunc("/revoke", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/revoke", requireRoot(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "POST a revocation", http.StatusMethodNotAllowed)
 			return
@@ -606,7 +641,7 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Me
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
-	})
+	}))
 
 	// A file, not a port: QML can read a file and cannot open a unix socket,
 	// and access is then decided by file permissions rather than by a listener
@@ -625,16 +660,5 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Me
 		}
 	}
 
-	srv := &http.Server{Handler: mux}
-	go func() {
-		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Error("control socket", "err", err)
-		}
-	}()
-	go func() {
-		<-ctx.Done()
-		srv.Close()
-		os.Remove(path)
-	}()
-	return srv, nil
+	return listenControl(ctx, log, path, mux, cfg)
 }

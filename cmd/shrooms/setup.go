@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"golang.org/x/term"
 
@@ -31,6 +32,7 @@ func cmdInit(args []string) error {
 	relay := fs.Bool("relay", false, "forward traffic for peers that cannot reach each other")
 	adminDir := fs.String("admin-dir", defaultAdminDir(), "where to keep the admin key")
 	noAdmin := fs.Bool("no-admin", false, "do not mint an authority; membership is the network key alone")
+	sock := fs.String("socket", DefaultSocket, "control socket, so a waiting daemon picks this up")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -47,13 +49,18 @@ func cmdInit(args []string) error {
 		return err
 	}
 	if *noAdmin {
+		nudgeDaemon(*sock)
 		return nil
 	}
 
 	// Minting the authority here rather than in a second command. Creating a
 	// mesh is one act, and asking for two was the first half of why enrolling a
 	// device had grown to six steps.
-	return mintAuthority(*adminDir, *cfgPath, *stateDir, *name)
+	if err := mintAuthority(*adminDir, *cfgPath, *stateDir, *name); err != nil {
+		return err
+	}
+	nudgeDaemon(*sock)
+	return nil
 }
 
 func cmdJoin(args []string) error {
@@ -244,6 +251,7 @@ func cmdPrepare(args []string) error {
 func cmdSetKey(args []string) error {
 	fs := flag.NewFlagSet("set-key", flag.ExitOnError)
 	cfgPath, _ := commonFlags(fs)
+	sock := fs.String("socket", DefaultSocket, "control socket, so a waiting daemon picks this up")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -280,8 +288,31 @@ func cmdSetKey(args []string) error {
 		fmt.Println("Replaced the existing key. Every peer must hold the same one,")
 		fmt.Println("so any machine still using the old key will not be seen.")
 	}
-	fmt.Printf("Key written to %s.\n\nStart it:\n  sudo systemctl start shrooms\n", *cfgPath)
+	fmt.Printf("Key written to %s.\n", *cfgPath)
+	if nudgeDaemon(*sock) {
+		fmt.Println("The daemon was waiting for this and is bringing the mesh up now.")
+	} else {
+		fmt.Println("\nStart it:\n  sudo systemctl start shrooms")
+	}
 	return nil
+}
+
+// nudgeDaemon tells a daemon that is waiting for a mesh that the config now
+// names one. Reports whether there was one to tell.
+//
+// Best effort by design: writing a config on a machine with no daemon running
+// is entirely normal, and this is a convenience rather than a step.
+func nudgeDaemon(sock string) bool {
+	st, err := fetchStatus(sock)
+	if err != nil || !st.Waiting {
+		return false
+	}
+	resp, err := socketClient(sock, 10*time.Second).Post("http://unix/reload", "application/json", nil)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode/100 == 2
 }
 
 // stdinReader is shared, because a bufio.Reader reads ahead: a second one

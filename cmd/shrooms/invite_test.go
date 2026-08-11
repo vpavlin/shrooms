@@ -7,7 +7,9 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -57,7 +59,9 @@ func serveHolder(t *testing.T, h inviteHolder) string {
 	}
 	mux := http.NewServeMux()
 	inviteHandlers(mux, h)
-	srv := &http.Server{Handler: mux}
+	// ConnContext as the daemon sets it, so the tests exercise the peer
+	// credential check rather than routing around it.
+	srv := &http.Server{Handler: mux, ConnContext: withPeerCred}
 	go srv.Serve(ln)
 	t.Cleanup(func() { srv.Close() })
 	return sock
@@ -127,6 +131,22 @@ func TestInviteExpiryIsNotAnError(t *testing.T) {
 	}
 	if req != nil {
 		t.Error("a request appeared out of nowhere")
+	}
+}
+
+// The socket is group-readable so `shrooms status` needs no root. Changing the
+// mesh is a different thing, and must not come with it.
+func TestMutatingEndpointsRefuseStrangers(t *testing.T) {
+	mux := http.NewServeMux()
+	inviteHandlers(mux, &fakeHolder{})
+
+	// A handler reached with no credentials on the context — what a caller the
+	// kernel would not vouch for looks like — must be refused.
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/invite/hold", strings.NewReader(`{"token":"x"}`))
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("an unidentified caller got %d, want 403", rec.Code)
 	}
 }
 

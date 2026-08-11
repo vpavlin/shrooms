@@ -66,10 +66,10 @@ _shrooms() {
     local cmd=${words[1]}
     case $cmd in
         init)
-            COMPREPLY=($(compgen -W "--name --relay --advertise --port --admin-dir --no-admin $common" -- "$cur"))
+            COMPREPLY=($(compgen -W "--name --relay --advertise --port --admin-dir --no-admin --socket $common" -- "$cur"))
             ;;
         join)
-            COMPREPLY=($(compgen -W "--invite --name --relay --advertise --port --timeout -v $common" -- "$cur"))
+            COMPREPLY=($(compgen -W "--invite --name --relay --advertise --port --timeout --socket --local -v $common" -- "$cur"))
             ;;
         prepare)
             COMPREPLY=($(compgen -W "--name --relay --advertise --port $common" -- "$cur"))
@@ -102,7 +102,10 @@ _shrooms() {
                 COMPREPLY=($(compgen -W "--qr --yes $common" -- "$cur"))
             fi
             ;;
-        set-key|keys)
+        set-key)
+            COMPREPLY=($(compgen -W "--socket $common" -- "$cur"))
+            ;;
+        keys)
             COMPREPLY=($(compgen -W "$common" -- "$cur"))
             ;;
         credential)

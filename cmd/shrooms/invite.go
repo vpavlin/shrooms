@@ -227,23 +227,47 @@ func socketClient(sock string, timeout time.Duration) *http.Client {
 }
 
 // cmdJoinInvite is `join --invite`: the joining half.
+//
+// Two ways to run the exchange, and the protocol itself is neither of them —
+// invite.Redeem is shared, so what differs is only where the node comes from.
+// A daemon that is waiting for a mesh already has the socket and can bring the
+// tunnel up the moment it joins; a machine with no daemon runs a node for the
+// length of the exchange and throws it away.
 func cmdJoinInvite(token string, args []string) error {
 	fs := flag.NewFlagSet("join --invite", flag.ExitOnError)
 	cfgPath, stateDir := commonFlags(fs)
+	sock := fs.String("socket", DefaultSocket, "control socket of the local daemon")
 	name := fs.String("name", "", "device name (default: hostname)")
 	port := fs.Uint("port", 51820, "UDP listen port")
 	advertise := fs.String("advertise", "", "public endpoint, only if it is not on a local interface")
 	relay := fs.Bool("relay", false, "forward traffic for peers that cannot reach each other")
 	timeout := fs.Duration("timeout", 2*time.Minute, "how long to wait for the inviter to answer")
+	local := fs.Bool("local", false, "do not use a running daemon even if there is one")
 	verbose := fs.Bool("v", false, "show the rendezvous library's own logging")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	secret, err := parseInviteToken(token)
-	if err != nil {
+	if _, err := parseInviteToken(token); err != nil {
 		return err
 	}
+	deviceName := *name
+	if deviceName == "" {
+		deviceName = state.DefaultConfig().Name
+	}
+
+	// A waiting daemon is the better end to do this at: it comes up on the mesh
+	// straight away, with no restart and nothing for anyone to remember.
+	if !*local {
+		if st, err := fetchStatus(*sock); err == nil {
+			if !st.Waiting {
+				return errors.New("the daemon on this machine already has a mesh; " +
+					"stop it and remove its config to join another one")
+			}
+			return joinViaDaemon(*sock, token, deviceName, uint16(*port), *advertise, *relay, *timeout)
+		}
+	}
+
 	if _, err := os.Stat(*cfgPath); err == nil {
 		return fmt.Errorf("%s already exists — remove it or use a different --config", *cfgPath)
 	}
@@ -255,24 +279,12 @@ func cmdJoinInvite(token string, args []string) error {
 	if err != nil {
 		return err
 	}
-	deviceName := *name
-	if deviceName == "" {
-		deviceName = state.DefaultConfig().Name
-	}
-
-	ephPriv, ephPub, err := invite.NewEphemeral()
-	if err != nil {
-		return err
-	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 	ctx, cancelTimeout := context.WithTimeout(ctx, *timeout)
 	defer cancelTimeout()
 
-	// The joining side cannot use a daemon the way `invite` does: there is no
-	// config yet, so there is no daemon. It runs a node for the length of the
-	// exchange and throws it away.
 	// Anything printed between here and unhush() has to go to `out`: fd 1 is
 	// pointed at /dev/null for the length of the exchange.
 	var out io.Writer = os.Stdout
@@ -294,62 +306,19 @@ func cmdJoinInvite(token string, args []string) error {
 	}
 	defer node.Close()
 
-	topicName := secret.Topic()
-	if err := node.Subscribe(topicName); err != nil {
-		return fmt.Errorf("subscribe: %w", err)
-	}
-
-	req := &invite.Request{
-		DevicePub: st.Identity.DevicePub,
-		WGPub:     st.Identity.WGPub[:],
-		Name:      deviceName,
-		EphPub:    ephPub,
-		Timestamp: time.Now().Unix(),
-	}
-	blob, err := invite.SealRequest(secret, req)
+	secret, err := parseInviteToken(token)
 	if err != nil {
 		return err
 	}
-
 	fmt.Fprintf(out, "Asking to join as %q...\n", deviceName)
 
-	// Retried, because the joining device is usually the one on the worse
-	// network and the first publish often lands before the subscription has
-	// propagated. The inviter answers at most once regardless.
-	send := func() error {
-		_, err := node.Send(topicName, blob, true)
-		return err
-	}
-	if err := send(); err != nil {
-		return fmt.Errorf("send: %w", err)
-	}
-	retry := time.NewTicker(5 * time.Second)
-	defer retry.Stop()
-
-	var resp *invite.Response
-	for resp == nil {
-		select {
-		case <-ctx.Done():
-			return errors.New("no answer. Is `shrooms invite` still running on the other machine?")
-		case <-retry.C:
-			if err := send(); err != nil {
-				return fmt.Errorf("send: %w", err)
-			}
-		case ev, ok := <-node.Events():
-			if !ok {
-				return errors.New("the rendezvous node stopped")
-			}
-			msg, _, ok := waku.ParseMessage(ev.JSON)
-			if !ok || msg.ContentTopic != topicName {
-				continue
-			}
-			r, err := invite.OpenResponse(secret, ephPriv, msg.Payload, time.Now())
-			if err != nil {
-				// Our own request comes back to us, as does anyone else's.
-				continue
-			}
-			resp = r
-		}
+	resp, err := invite.Redeem(ctx, &nodeTransport{node: node}, secret, &invite.Request{
+		DevicePub: st.Identity.DevicePub,
+		WGPub:     st.Identity.WGPub[:],
+		Name:      deviceName,
+	})
+	if err != nil {
+		return errors.New("no answer. Is `shrooms invite` still running on the other machine?")
 	}
 
 	// Everything from here is ours to print, and the node has nothing left to
@@ -368,7 +337,7 @@ func cmdJoinInvite(token string, args []string) error {
 		encoded := make([]string, 0, len(resp.AdminKeys))
 		for _, k := range resp.AdminKeys {
 			if len(k) != ed25519.PublicKeySize {
-				return fmt.Errorf("the invite carried a malformed admin key")
+				return errors.New("the invite carried a malformed admin key")
 			}
 			encoded = append(encoded, b32.EncodeToString(k))
 		}
@@ -402,6 +371,50 @@ func cmdJoinInvite(token string, args []string) error {
 		fmt.Printf("\nEnrolled. Credential serial %d, expires %s.\n",
 			c.Serial, time.Unix(c.NotAfter, 0).Format(time.RFC3339))
 	}
+	return nil
+}
+
+// joinViaDaemon hands the token to a daemon that is waiting for a mesh.
+func joinViaDaemon(sock, token, name string, port uint16, advertise string, relay bool, timeout time.Duration) error {
+	fmt.Printf("Asking to join as %q, via the daemon...\n", name)
+
+	body, _ := json.Marshal(map[string]any{
+		"token": token, "name": name, "port": port,
+		"advertise": advertise, "relay": relay,
+		"wait_s": int(timeout.Seconds()),
+	})
+	client := socketClient(sock, timeout+time.Minute)
+	resp, err := client.Post("http://unix/join", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return errors.New(strings.TrimSpace(string(msg)))
+	}
+
+	var res struct {
+		Name       string `json:"name"`
+		Overlay    string `json:"overlay"`
+		Prefix     string `json:"prefix"`
+		Credential bool   `json:"credential"`
+		Serial     uint64 `json:"serial"`
+		Expires    string `json:"expires"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return err
+	}
+
+	fmt.Printf("\nDevice:      %s\n", res.Name)
+	fmt.Printf("Overlay IP:  %s\n", res.Overlay)
+	fmt.Printf("Mesh prefix: %s\n", res.Prefix)
+	if res.Credential {
+		fmt.Printf("Credential:  serial %d, expires %s\n", res.Serial, res.Expires)
+	}
+	// No restart to ask for: the daemon re-executes itself into the mesh it has
+	// just joined, which is the whole reason for doing it at this end.
+	fmt.Printf("\nThe daemon is bringing the mesh up now. Check it with:\n  shrooms status\n")
 	return nil
 }
 

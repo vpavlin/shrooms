@@ -1,6 +1,18 @@
 # 015. Multiple meshes in one daemon
 
-**Status:** accepted; design agreed, implementation staged
+**Status:** accepted; design agreed, implementation staged.
+
+**First piece built:** a daemon with no key in its config now waits on the
+control socket instead of exiting, and gains a mesh at runtime through
+`/join` — one mesh so far, but "join a running daemon" is the primitive this
+design needs, and it is in place. What remains is the plural: per-mesh identity
+derivation, one TUN carrying several prefixes, and the naming below.
+
+**One thing to settle before the rest.** This ADR derives `mesh_id` from the
+network key; [ADR-018](018-credentials-instead-of-a-shared-key.md) then
+introduced a different mesh id, the hash of the admin key set. Two things with
+one name, and the address prefix depends on which one is meant. That has to be
+decided — not papered over — before per-mesh derivation is built.
 
 ## Context
 

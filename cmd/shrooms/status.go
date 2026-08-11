@@ -106,6 +106,18 @@ func cmdStatus(args []string) error {
 		return enc.Encode(st)
 	}
 
+	// A daemon that has not joined anything has no roster, no addresses and no
+	// rendezvous plane to report. Saying so beats an empty table with a
+	// stalled-discovery warning underneath it.
+	if st.Waiting {
+		fmt.Println("waiting for a mesh — this machine has not joined one yet")
+		fmt.Println()
+		fmt.Println("Get an invite from a machine that is already on one:")
+		fmt.Println("  there $ shrooms invite")
+		fmt.Println("  here  $ sudo shrooms join --invite <TOKEN>")
+		return nil
+	}
+
 	online := 0
 	for _, p := range st.Peers {
 		if p.Online {
