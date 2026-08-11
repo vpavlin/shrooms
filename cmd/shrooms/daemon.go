@@ -635,6 +635,14 @@ const rendezvousGrace = 6 * time.Minute
 // not coming back".
 const rendezvousStall = 10 * time.Minute
 
+// deafConfirm is how long the deaf condition must persist before acting on it.
+//
+// Short, because mesh.DeafAfter has already waited twelve minutes for an
+// announce that never came. This only insists the condition survive a second
+// look, so a peer that shuts down in the same minute its tunnel last rekeyed
+// does not cost a restart.
+const deafConfirm = 2 * time.Minute
+
 // watchRendezvous restarts the daemon when the rendezvous plane stays down.
 //
 // When it stops, nothing looks broken. Established tunnels keep carrying
@@ -655,6 +663,9 @@ const rendezvousStall = 10 * time.Minute
 func watchRendezvous(ctx context.Context, log *slog.Logger, instances []*instance, errs chan<- error) {
 	started := time.Now()
 	healthy := started
+	// When we first noticed a peer we can reach but cannot hear. Zero when
+	// there is no such peer.
+	var deafSince time.Time
 	tick := time.NewTicker(30 * time.Second)
 	defer tick.Stop()
 
@@ -663,23 +674,53 @@ func watchRendezvous(ctx context.Context, log *slog.Logger, instances []*instanc
 		case <-ctx.Done():
 			return
 		case now := <-tick.C:
-			// Any mesh being healthy is enough: they share one connection, so
-			// one of them hearing something proves it is alive.
+			// Two ways to be cut off, and they look nothing alike.
+			//
+			// Health counts traffic on the shard, so it catches the connection
+			// being gone. It cannot catch the connection being half there: a
+			// node can go deaf to some publishers and not others — one
+			// gossipsub mesh degrading while another holds — and then messages
+			// keep arriving while particular peers fall silent one at a time.
+			// Mesh.Deaf catches that, because a peer whose tunnel is still
+			// rekeying is a peer whose daemon is running, and a running daemon
+			// announces.
+			deafTo := ""
 			for _, in := range instances {
 				if in.mesh.Health().OK(now) {
 					healthy = now
-					break
+				}
+				if who, deaf := in.mesh.Deaf(now); deaf && deafTo == "" {
+					deafTo = who
 				}
 			}
-			if now.Sub(started) < rendezvousGrace || now.Sub(healthy) < rendezvousStall {
+			switch {
+			case deafTo == "":
+				deafSince = time.Time{}
+			case deafSince.IsZero():
+				deafSince = now
+			}
+
+			if now.Sub(started) < rendezvousGrace {
 				continue
 			}
-			log.Error("rendezvous plane has been down too long, restarting",
-				"for", now.Sub(healthy).Round(time.Second),
-				"problem", instances[0].mesh.Health().Problem(now))
-			errs <- fmt.Errorf("no rendezvous connection for %s",
-				now.Sub(healthy).Round(time.Second))
-			return
+			switch {
+			case now.Sub(healthy) >= rendezvousStall:
+				log.Error("rendezvous plane has been down too long, restarting",
+					"for", now.Sub(healthy).Round(time.Second),
+					"problem", instances[0].mesh.Health().Problem(now))
+				errs <- fmt.Errorf("no rendezvous connection for %s",
+					now.Sub(healthy).Round(time.Second))
+				return
+			case !deafSince.IsZero() && now.Sub(deafSince) >= deafConfirm:
+				// Traffic is arriving and this peer's is not. Restarting is a
+				// blunt answer, and it is the one that has worked every time:
+				// the subscription is intact as far as this process can tell,
+				// so there is nothing here to retry.
+				log.Error("no announces from a peer whose tunnel is live, restarting",
+					"peer", deafTo, "for", now.Sub(deafSince).Round(time.Second))
+				errs <- fmt.Errorf("deaf to %s, whose tunnel is live", deafTo)
+				return
+			}
 		}
 	}
 }

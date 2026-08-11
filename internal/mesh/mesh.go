@@ -252,6 +252,47 @@ func (m *Mesh) requestResync() {
 // PeerStats exposes the data-plane view of peers.
 func (m *Mesh) PeerStats() (map[string]wg.PeerStat, error) { return m.dev.PeerStats() }
 
+// Deaf reports a peer this node can plainly reach but has stopped hearing
+// announce.
+//
+// The inference is what makes this worth having. WireGuard lives inside the
+// daemon, so a handshake completed in the last couple of minutes proves the
+// peer's daemon is running — and a running daemon announces every 45 seconds.
+// If we have not seen an announce from it for many minutes while its tunnel
+// keeps rekeying, the peer is not the one that stopped: we are.
+//
+// This catches what a plain "nothing has arrived" check cannot. A node can go
+// deaf to some publishers and not others — one gossipsub mesh degrading while
+// another holds — which looks like those particular peers going offline, one
+// at a time, for no reason. Established tunnels keep working throughout, so
+// nothing else notices, and what breaks is discovery: a peer that moves is
+// never found again, and relaying stops, because a relay is only chosen among
+// peers believed to be online.
+func (m *Mesh) Deaf(now time.Time) (string, bool) {
+	stats, err := m.PeerStats()
+	if err != nil {
+		return "", false
+	}
+	for _, p := range m.roster.Peers() {
+		st, ok := stats[p.WGPub.String()]
+		if !ok || now.Sub(st.LastHandshake) > wg.LiveWindow {
+			continue // no tunnel, so nothing is proven either way
+		}
+		if now.Sub(p.LastSeen) > DeafAfter {
+			return p.Name, true
+		}
+	}
+	return "", false
+}
+
+// DeafAfter is how long an announce may be missing from a peer whose tunnel is
+// live before this node calls itself deaf to it.
+//
+// Generous against RendezvousStale (3 minutes): a single missed announce, or
+// several, is ordinary on a lossy link, and this must mean "the stream from
+// that peer has stopped", not "a packet was lost".
+const DeafAfter = 12 * time.Minute
+
 // Roster exposes the peer roster.
 func (m *Mesh) Roster() *Roster { return m.roster }
 
