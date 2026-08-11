@@ -277,6 +277,7 @@ func cmdJoinInvite(token string, args []string) error {
 	advertise := fs.String("advertise", "", "public endpoint, only if it is not on a local interface")
 	relay := fs.Bool("relay", false, "forward traffic for peers that cannot reach each other")
 	timeout := fs.Duration("timeout", 2*time.Minute, "how long to wait for the inviter to answer")
+	label := fs.String("mesh", "", "what to call this mesh on this machine (ADR-015)")
 	local := fs.Bool("local", false, "do not use a running daemon even if there is one")
 	verbose := fs.Bool("v", false, "show the rendezvous library's own logging")
 	if err := fs.Parse(args); err != nil {
@@ -299,7 +300,7 @@ func cmdJoinInvite(token string, args []string) error {
 				return errors.New("the daemon on this machine already has a mesh; " +
 					"stop it and remove its config to join another one")
 			}
-			return joinViaDaemon(*sock, token, deviceName, uint16(*port), *advertise, *relay, *timeout)
+			return joinViaDaemon(*sock, token, deviceName, *label, uint16(*port), *advertise, *relay, *timeout)
 		}
 	}
 
@@ -410,11 +411,11 @@ func cmdJoinInvite(token string, args []string) error {
 }
 
 // joinViaDaemon hands the token to a daemon that is waiting for a mesh.
-func joinViaDaemon(sock, token, name string, port uint16, advertise string, relay bool, timeout time.Duration) error {
+func joinViaDaemon(sock, token, name, label string, port uint16, advertise string, relay bool, timeout time.Duration) error {
 	fmt.Printf("Asking to join as %q, via the daemon...\n", name)
 
 	body, _ := json.Marshal(map[string]any{
-		"token": token, "name": name, "port": port,
+		"token": token, "name": name, "port": port, "mesh": label,
 		"advertise": advertise, "relay": relay,
 		"wait_s": int(timeout.Seconds()),
 	})
@@ -430,6 +431,7 @@ func joinViaDaemon(sock, token, name string, port uint16, advertise string, rela
 	}
 
 	var res struct {
+		Mesh       string `json:"mesh"`
 		Name       string `json:"name"`
 		Overlay    string `json:"overlay"`
 		Prefix     string `json:"prefix"`
@@ -442,6 +444,9 @@ func joinViaDaemon(sock, token, name string, port uint16, advertise string, rela
 	}
 
 	fmt.Printf("\nDevice:      %s\n", res.Name)
+	if res.Mesh != "" && res.Mesh != state.DefaultLabel {
+		fmt.Printf("Mesh:        %s\n", res.Mesh)
+	}
 	fmt.Printf("Overlay IP:  %s\n", res.Overlay)
 	fmt.Printf("Mesh prefix: %s\n", res.Prefix)
 	if res.Credential {

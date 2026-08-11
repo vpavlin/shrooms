@@ -87,6 +87,7 @@ func runWaiting(ctx context.Context, log *slog.Logger, cfgPath, stateDir, sock s
 			Name    string `json:"name"`
 			Port    uint16 `json:"port"`
 			Relay   bool   `json:"relay"`
+			Mesh    string `json:"mesh"`
 			WaitS   int    `json:"wait_s"`
 			Advert  string `json:"advertise"`
 			Verbose bool   `json:"-"`
@@ -110,7 +111,7 @@ func runWaiting(ctx context.Context, log *slog.Logger, cfgPath, stateDir, sock s
 		defer cancel()
 
 		res, err := joinHere(jctx, log, node, st, cfgPath, stateDir, in.Token, in.Key,
-			in.Name, in.Port, in.Advert, in.Relay)
+			in.Name, in.Mesh, in.Port, in.Advert, in.Relay)
 		if err != nil {
 			log.Warn("join failed", "err", err)
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -173,6 +174,7 @@ func runWaiting(ctx context.Context, log *slog.Logger, cfgPath, stateDir, sock s
 
 // joinResult is what the daemon reports after joining.
 type joinResult struct {
+	Mesh       string `json:"mesh"`
 	Name       string `json:"name"`
 	Overlay    string `json:"overlay"`
 	Prefix     string `json:"prefix"`
@@ -184,7 +186,7 @@ type joinResult struct {
 // joinHere writes the config for the mesh this device has been invited to, or
 // told the key of.
 func joinHere(ctx context.Context, log *slog.Logger, node *waku.Node, st *state.State, cfgPath, stateDir,
-	token, key, name string, port uint16, advertise string, relay bool) (*joinResult, error) {
+	token, key, name, label string, port uint16, advertise string, relay bool) (*joinResult, error) {
 
 	if _, err := os.Stat(cfgPath); err == nil {
 		if cfg, err := state.LoadConfig(cfgPath); err == nil && cfg.NetworkKey != "" {
@@ -233,10 +235,22 @@ func joinHere(ctx context.Context, log *slog.Logger, node *waku.Node, st *state.
 	}
 
 	cfg := state.DefaultConfig()
-	cfg.NetworkKey = nk.String()
 	cfg.Name = name
+	// A label names the mesh locally (ADR-015). Written as the multi-mesh form
+	// so the name survives — it is what `vps.test.mesh` and `--mesh test` refer
+	// to, and there is no way to learn it later: mesh names are local, and
+	// deliberately not carried on the wire.
+	if label != "" && label != state.DefaultLabel {
+		cfg.MeshSet = map[string]state.Mesh{label: {
+			Label: label, NetworkKey: nk.String(), Relay: relay, AdminKeys: adminKeys,
+		}}
+	} else {
+		cfg.NetworkKey = nk.String()
+	}
 	cfg.ListenPort = port
-	cfg.Relay = relay
+	if cfg.NetworkKey != "" {
+		cfg.Relay = relay
+	}
 	if advertise != "" {
 		cfg.Advertise = []string{advertise}
 	}
@@ -249,13 +263,14 @@ func joinHere(ctx context.Context, log *slog.Logger, node *waku.Node, st *state.
 	if err := state.WriteConfig(cfgPath, cfg); err != nil {
 		return nil, err
 	}
-	if len(adminKeys) > 0 {
+	if len(adminKeys) > 0 && cfg.NetworkKey != "" {
 		if err := addAdminKeys(cfgPath, adminKeys); err != nil {
 			return nil, err
 		}
 	}
 
 	res := &joinResult{
+		Mesh:    label,
 		Name:    name,
 		Overlay: identity.OverlayAddr(nk, st.Identity.DevicePub).String(),
 		Prefix:  nk.Prefix().String(),
