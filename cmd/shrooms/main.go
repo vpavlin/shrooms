@@ -37,6 +37,8 @@ func main() {
 		err = cmdDaemon(os.Args[2:])
 	case "status":
 		err = cmdStatus(os.Args[2:])
+	case "reload":
+		err = cmdReload(os.Args[2:])
 	case "paths":
 		err = cmdPaths(os.Args[2:])
 	case "hosts":
@@ -96,6 +98,7 @@ Usage:
                                           never reaches shell history
   shrooms daemon                     run the mesh node
   shrooms status [--json]            show the roster and tunnel state
+  shrooms reload                     re-read the config; applies services
   shrooms paths [NAME]               show probed candidates and which won
   shrooms hosts [--write]            /etc/hosts entries, so you can use names
   shrooms key show                   print the network key

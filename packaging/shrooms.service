@@ -7,6 +7,10 @@ Wants=network-online.target
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/shrooms daemon
+# `systemctl reload shrooms` re-reads the config and applies what can be
+# applied while running — the published services. Everything else is reported
+# as needing a restart rather than silently ignored.
+ExecReload=/bin/kill -HUP $MAINPID
 
 # CAP_NET_ADMIN to create the TUN device and configure its address and route.
 #

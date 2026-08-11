@@ -144,7 +144,8 @@ func cmdDaemon(args []string) error {
 	log.Info("data plane up", "meshes", len(instances),
 		"self", self, "ipv4", primary.aliases.Self())
 
-	srv, err := serveControl(ctx, log, *sock, instances, cfg)
+	rl := &reloader{cfgPath: *cfgPath, log: log, instances: instances, baseline: cfg}
+	srv, err := serveControl(ctx, log, *sock, instances, cfg, rl)
 	if err != nil {
 		return err
 	}
@@ -221,6 +222,27 @@ func cmdDaemon(args []string) error {
 	for _, in := range instances {
 		go func(in *instance) { errs <- in.mesh.Run(ctx) }(in)
 	}
+
+	// Reload on SIGHUP, and over the socket, so `systemctl reload shrooms` and
+	// `shrooms reload` both work. Only the safe parts change; the rest is
+	// reported rather than silently ignored.
+	go func() {
+		hup := make(chan os.Signal, 1)
+		signal.Notify(hup, syscall.SIGHUP)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-hup:
+				msg, err := rl.Reload(ctx)
+				if err != nil {
+					log.Warn("reload failed", "err", err)
+					continue
+				}
+				log.Info(msg)
+			}
+		}
+	}()
 
 	log.Info("running", "socket", *sock)
 	if err := <-errs; err != nil && !errors.Is(err, context.Canceled) {
@@ -586,12 +608,12 @@ func v4Of(m *mesh.Mesh, overlay netip.Addr) string {
 }
 
 // serveControl exposes status over a unix socket.
-func serveControl(ctx context.Context, log *slog.Logger, path string, instances []*instance, cfg state.Config) (*http.Server, error) {
+func serveControl(ctx context.Context, log *slog.Logger, path string, instances []*instance, cfg state.Config, rl *reloader) (*http.Server, error) {
 	// The first mesh is what the top-level fields describe, so a reader that
 	// knows nothing about several meshes — the Android app, Basecamp, an older
 	// CLI — sees exactly what it always saw. The rest are added alongside.
 	primary := instances[0]
-	m, self, services := primary.mesh, primary.self, primary.services
+	m, self := primary.mesh, primary.self
 
 	nk, _ := cfg.Key()
 
@@ -701,7 +723,7 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 		for _, ap := range m.Reflexive() {
 			out.Reflexive = append(out.Reflexive, ap.String())
 		}
-		if services != nil {
+		if services := primary.services; services != nil {
 			for _, sv := range services.Status() {
 				out.Services = append(out.Services, serviceStatus{
 					Name:      sv.Name,
@@ -717,7 +739,7 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 			sort.Slice(out.Services, func(i, j int) bool {
 				return out.Services[i].Name < out.Services[j].Name
 			})
-			for _, r := range services.Router() {
+			for _, r := range primary.services.Router() {
 				out.NameRouter = append(out.NameRouter, routerStatus{
 					Port: r.Port, Listening: r.Listening, Direct: r.Direct, Err: r.Err,
 				})
@@ -730,6 +752,22 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(snapshot())
 	})
+
+	// Config changes that can be applied while running (services, today).
+	// requireRoot like every mutating endpoint: it re-reads a file only root
+	// can write, but it also rebinds ports, and the socket group is for
+	// reading status.
+	if rl != nil {
+		mux.HandleFunc("/reload", requireRoot(func(w http.ResponseWriter, r *http.Request) {
+			msg, err := rl.Reload(ctx)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			log.Info(msg)
+			fmt.Fprintln(w, msg)
+		}))
+	}
 
 	inviteHandlers(mux, func(label string) inviteHolder {
 		for _, in := range instances {

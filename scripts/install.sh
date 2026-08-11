@@ -201,6 +201,9 @@ ExecStart=$RUNTIME run --rm --name shrooms \\
     -v /var/lib/shrooms:/var/lib/shrooms$Z \\
     -v /run/shrooms:/run/shrooms$Z \\
     $IMAGE daemon --socket /run/shrooms/shrooms.sock
+# `systemctl reload shrooms` re-reads the config for what can change while
+# running; the daemon reports the rest as needing a restart.
+ExecReload=$RUNTIME kill --signal HUP shrooms
 ExecStop=$RUNTIME stop shrooms
 Restart=always
 RestartSec=5

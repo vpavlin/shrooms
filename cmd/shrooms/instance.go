@@ -36,6 +36,9 @@ type instance struct {
 	port    uint16
 
 	services *service.Publisher
+	// specs is what services was published from, so a reload can tell whether
+	// anything actually changed.
+	specs []string
 }
 
 // Close tears one mesh down. Safe on a partially built instance, because
@@ -115,6 +118,7 @@ func startInstance(ctx context.Context, log *slog.Logger, cfg state.Config, st *
 	}
 	in.mesh.SetV4(in.aliases)
 
+	in.specs = append([]string(nil), m.Services...)
 	if specs, err := meshCfg.ServiceSpecs(); err != nil {
 		log.Warn("services not published", "mesh", m.Label, "err", err)
 	} else if len(specs) > 0 {
