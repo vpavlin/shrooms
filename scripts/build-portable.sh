@@ -59,11 +59,23 @@ esac
 echo "==> staged $(ls "$STAGE/lib" | wc -l) files"
 
 echo "==> building shrooms against an older glibc"
+# The build context is the staged directory's parent, so lib/ is where the
+# Dockerfile expects it.
+BUILD_CTX=$(mktemp -d); trap 'rm -rf "$BUILD_CTX"' EXIT
+# docker/run holds root-owned state from the container tests, which is not
+# part of a build and cannot be read here anyway.
+tar -c --exclude=.git --exclude=dist --exclude=bin --exclude=docker/run . \
+    | tar -x -C "$BUILD_CTX"
+cp -r "$STAGE/lib" "$BUILD_CTX/lib"
+
 docker build -f docker/build-vpn.Dockerfile \
     --build-arg "VERSION=$VERSION" \
-    --target dist -o "$DIST" .
+    --target dist -o "$DIST" "$BUILD_CTX"
 
 cp packaging/shrooms.service "$DIST/"
+cp packaging/shrooms.bash "$DIST/"
+cp packaging/install-dist.sh "$DIST/install.sh"
+chmod +x "$DIST/install.sh"
 
 echo
 echo "==> $DIST"
@@ -73,6 +85,6 @@ echo "glibc requirement:"
 objdump -T "$DIST/bin/shrooms" 2>/dev/null \
     | grep -oE 'GLIBC_[0-9.]+' | sort -Vu | tail -1 | sed 's/^/  /'
 echo
-echo "Install on a target:"
-echo "  scp -r $DIST/* host:/opt/shrooms/"
-echo "  ssh host 'ln -sf /opt/shrooms/bin/shrooms /usr/bin/shrooms'"
+echo "Install on a target — no container runtime, no Go toolchain:"
+echo "  scp -r $DIST/ host:shrooms-dist"
+echo "  ssh host 'sudo ./shrooms-dist/install.sh'"

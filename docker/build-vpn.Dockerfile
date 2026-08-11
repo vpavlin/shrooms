@@ -1,14 +1,18 @@
-# Build logos-vpn against an older glibc so the binary runs on older systems.
+# Build shrooms against the oldest glibc that can actually link, so the binary
+# runs on as many systems as possible.
 #
-# A binary linked against glibc 2.36 runs on newer systems; one built on the
-# 2.42 host does not run on a Debian 12 VPS. Building here is what makes the
-# artifact portable downward.
+# That floor is set by liblogosdelivery, not by us: it references
+# __isoc23_strtoull@GLIBC_2.38, so a Debian 12 base (2.36) fails at link time
+# no matter what our own code needs. Ubuntu 24.04 is 2.39 and is the oldest
+# base that works, which puts the result on Ubuntu 24.04+, Debian 13+ and
+# anything newer. Building here is still what stops the artifact depending on
+# whatever glibc the developer machine happens to have (2.42 today).
 #
 # Needs liblogosdelivery and its header. Supply them by mounting or by staging
 # them into the build context at lib/:
 #
 #   docker build -f docker/build-vpn.Dockerfile --target dist -o dist .
-ARG GLIBC_BASE=debian:bookworm
+ARG GLIBC_BASE=ubuntu:24.04
 
 FROM ${GLIBC_BASE} AS builder
 
@@ -37,12 +41,20 @@ ENV CGO_CFLAGS="-I/opt/logos/lib"
 ENV CGO_LDFLAGS="-L/opt/logos/lib -llogosdelivery -Wl,-rpath,\$ORIGIN/../lib"
 
 ARG VERSION=dev
+# Not "|| true" on the build itself. It used to be, which meant a failed
+# compile produced a successful layer with no binary in it, and the error
+# surfaced three stages later as "/out/shrooms: not found".
 RUN go build -trimpath \
         -ldflags "-X main.version=${VERSION}" \
-        -o /out/logos-vpn ./cmd/logos-vpn \
-    && /out/logos-vpn --help 2>&1 | head -1 || true
+        -o /out/shrooms ./cmd/shrooms
+RUN /out/shrooms version || true
 
-# Distribution layout: bin/logos-vpn plus lib/, matching the rpath above.
+# Distribution layout: bin/shrooms plus lib/, matching the rpath above.
+#
+# The library comes from the builder stage rather than the context: it was
+# already copied in there, and a second COPY from the context needs a lib/ at
+# the repo root that only exists if someone staged one — which is how this
+# broke silently at the rename and stayed broken.
 FROM scratch AS dist
-COPY --from=builder /out/logos-vpn /bin/
-COPY lib/ /lib/
+COPY --from=builder /out/shrooms /bin/
+COPY --from=builder /opt/logos/lib/ /lib/
