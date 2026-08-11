@@ -335,9 +335,27 @@ class MeshVpnService : VpnService() {
                     now - healthy > STALL_BEFORE_RECONNECT &&
                         now - revived > REVIVE_COOLDOWN -> {
                         revived = now
-                        Log.w(TAG, "rendezvous stalled: ${s.rendezvous.problem} — rebuilding")
-                        MeshState.log("WARN", "rendezvous stalled, reconnecting")
-                        restart()
+                        // Two different faults, two different answers.
+                        //
+                        // "Not connected to any fleet peers" means the
+                        // delivery node itself is gone, and rebuilding the
+                        // session will not bring it back: the session is
+                        // deliberately rebuilt *around* the node, because the
+                        // library keeps process-global state and has never
+                        // survived being restarted inside a live process. The
+                        // thing that has always worked is force-stopping the
+                        // app, and that works because it ends the process. So
+                        // do that, rather than make someone do it by hand.
+                        //
+                        // Anything else — subscribed, connected, nothing
+                        // arriving — is worth a cheaper try first.
+                        if (s.rendezvous.status == "Disconnected") {
+                            hardRestart(s.rendezvous.problem)
+                        } else {
+                            Log.w(TAG, "rendezvous stalled: ${s.rendezvous.problem} — rebuilding")
+                            MeshState.log("WARN", "rendezvous stalled, reconnecting")
+                            restart()
+                        }
                     }
                 }
                 delay(2000)
@@ -367,6 +385,24 @@ class MeshVpnService : VpnService() {
             MeshState.disconnected()
             startInline()
         }
+    }
+
+    /**
+     * End the process, and let Android start it again.
+     *
+     * The service is START_STICKY and a restart arrives with a null intent,
+     * which connects — so this is a few seconds of downtime and a delivery
+     * node built from nothing, which is the only state it reliably works from.
+     *
+     * Deliberately not stopSelf() first: that would tell Android the service
+     * is finished and no restart is wanted, which is the opposite of this.
+     */
+    private fun hardRestart(why: String) {
+        Log.w(TAG, "delivery node is gone ($why) — restarting the process")
+        MeshState.log("WARN", "delivery node gone, restarting the app")
+        runCatching { Mobile.stop() }
+        runCatching { tunnel?.close() }
+        android.os.Process.killProcess(android.os.Process.myPid())
     }
 
     private fun stop() {
