@@ -122,8 +122,16 @@ fi
 # nonsense until you remember SELinux is in the way.
 Z=""
 if command -v getenforce >/dev/null && [ "$(getenforce 2>/dev/null)" = "Enforcing" ]; then
-    Z=":Z"
-    echo "  SELinux enforcing, relabelling mounts"
+    # :z, the shared label — NOT :Z.
+    #
+    # :Z applies a *private* label, with MCS categories unique to the container
+    # that did the relabelling. These directories are touched by more than one
+    # container: the short-lived one that writes the config during setup, and
+    # the daemon that runs afterwards. With :Z the second gets different
+    # categories and is refused access to files the first created, which
+    # surfaces as "write config: permission denied" on a file root owns.
+    Z=":z"
+    echo "  SELinux enforcing, relabelling mounts (shared)"
 fi
 
 echo "==> fetching $IMAGE"
