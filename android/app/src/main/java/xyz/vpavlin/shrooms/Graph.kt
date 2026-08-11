@@ -151,10 +151,18 @@ fun MeshGraph(
             drawn.clear()
             drawn.addAll(at)
 
-            val relayIndex = peers.indexOfFirst { it.relay }
+            // The relay each mesh has, not the first relay on the screen.
+            // Traffic to a peer on one mesh cannot pass through a relay on
+            // another — different prefix, different WireGuard device — so
+            // bending the line through one drew a path that cannot exist, and
+            // the graph is here to show which path traffic actually takes.
+            val relayIndex = peers.indices
+                .filter { peers[it].relay }
+                .associateBy { peers[it].mesh }
 
             peers.forEachIndexed { i, peer ->
-                val relayAt = if (relayIndex >= 0 && relayIndex != i) at[relayIndex] else null
+                val r = relayIndex[peer.mesh]
+                val relayAt = if (r != null && r != i) at[r] else null
                 drawLink(centre, at[i], peer, relayAt, pulse, drift)
             }
 
