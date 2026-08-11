@@ -24,6 +24,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -448,7 +449,7 @@ private fun MeshScreen(
             // Which meshes this device is on, when there is more than one.
             // Each has its own address here, and the roster below is grouped
             // the same way.
-            val allMeshes = remember(snap.meshes, addingMesh) { meshesFromConfig(dir) }
+            val allMeshes = remember(snap.meshes, snap.connected) { meshesFromConfig(dir) }
             if (allMeshes.size > 1) {
                 allMeshes.forEach { cm ->
                     val m = snap.meshes.firstOrNull { it.label == cm.label }
