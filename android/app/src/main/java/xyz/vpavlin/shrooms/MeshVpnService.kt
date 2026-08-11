@@ -13,6 +13,7 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.VpnService
 import android.os.Build
+import android.os.SystemClock
 import android.system.OsConstants
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
@@ -50,6 +51,12 @@ class MeshVpnService : VpnService() {
          * button they had not asked for.
          */
         const val ACTION_RECONNECT = "xyz.vpavlin.shrooms.RECONNECT"
+
+        /** How long the rendezvous plane may be down before rebuilding it. */
+        private const val STALL_BEFORE_RECONNECT = 5 * 60_000L
+
+        /** And how long to leave it alone afterwards. */
+        private const val REVIVE_COOLDOWN = 15 * 60_000L
         private const val CHANNEL = "mesh"
         private const val NOTIFICATION_ID = 1
         private const val TAG = "shrooms"
@@ -303,10 +310,35 @@ class MeshVpnService : VpnService() {
     /** Polls the Go status snapshot for the UI. Cheap: a map read and a marshal. */
     private fun poll() {
         scope.launch {
+            var healthy = SystemClock.elapsedRealtime()
+            var revived = 0L
             while (Mobile.running()) {
                 MeshState.update(Mobile.statusJSON())
-                MeshState.snapshot.value.let { s ->
-                    if (s.connected) notify(s.notificationLine())
+                val s = MeshState.snapshot.value
+                if (s.connected) notify(s.notificationLine())
+
+                // Watchdog on the rendezvous plane.
+                //
+                // When it stops, tunnels keep carrying traffic and nothing
+                // else changes — announces simply stop arriving, every peer
+                // ages out, and the screen fills with devices marked offline
+                // that are all perfectly fine. It looks like the mesh died and
+                // it is really the one plane that discovers it.
+                //
+                // Rebuilding the session is what fixed it by hand every time,
+                // so do that rather than wait to be asked. The cooldown is
+                // long because a reconnect is disruptive and a network that is
+                // genuinely gone will not be fixed by another one.
+                val now = SystemClock.elapsedRealtime()
+                when {
+                    !s.connected || s.rendezvous.ok -> healthy = now
+                    now - healthy > STALL_BEFORE_RECONNECT &&
+                        now - revived > REVIVE_COOLDOWN -> {
+                        revived = now
+                        Log.w(TAG, "rendezvous stalled: ${s.rendezvous.problem} — rebuilding")
+                        MeshState.log("WARN", "rendezvous stalled, reconnecting")
+                        restart()
+                    }
                 }
                 delay(2000)
             }

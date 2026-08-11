@@ -30,12 +30,18 @@ import kotlin.math.sin
 import kotlin.random.Random
 
 /** One drifting spore, with its own slow circular wander. */
-private class Spore(rnd: Random) {
+internal class Spore(rnd: Random) {
     val x = rnd.nextFloat()
     val y = rnd.nextFloat()
     val radius = 0.03f + rnd.nextFloat() * 0.09f   // how far it wanders
     val phase = rnd.nextFloat() * 2f * PI.toFloat()
-    val speed = 0.6f + rnd.nextFloat() * 0.8f
+
+    // Whole numbers of cycles per drift period. t restarts at 2π, so a
+    // fractional rate lands somewhere else when it wraps and the whole field
+    // jumps at once. Two different integers keep the path a Lissajous curve
+    // rather than a circle, and it closes exactly.
+    val kx = 1 + rnd.nextInt(2)
+    val ky = 2 + rnd.nextInt(2)
     val size = 1.6f + rnd.nextFloat() * 2.4f
     val violet = rnd.nextFloat() < 0.28f
 }
@@ -62,7 +68,7 @@ fun SporeField(
 ) {
     // Fixed seed: the same drift every time, so the screen has a character
     // rather than being different noise on each launch.
-    val spores = remember(count) { Random(0x5EED).let { r -> List(count) { Spore(r) } } }
+    val spores = remember(count) { sporeField(count) }
 
     val t by rememberInfiniteTransition(label = "spores").animateFloat(
         initialValue = 0f,
@@ -88,7 +94,18 @@ fun SporeField(
     }
 }
 
-private fun DrawScope.drawSpores(spores: List<Spore>, t: Float) {
+/**
+ * A fixed field of spores. Fixed seed: the same drift every time, so the app
+ * has a character rather than being different noise on each launch.
+ */
+internal fun sporeField(count: Int): List<Spore> =
+    Random(0x5EED).let { r -> List(count) { Spore(r) } }
+
+/**
+ * @param alpha scales the whole field, so the same drift can be the subject of
+ * the joining screen and the substrate behind a live mesh.
+ */
+internal fun DrawScope.drawSpores(spores: List<Spore>, t: Float, alpha: Float = 1f) {
     val w = size.width
     val h = size.height
     if (w <= 0f || h <= 0f) return
@@ -96,10 +113,9 @@ private fun DrawScope.drawSpores(spores: List<Spore>, t: Float) {
     // Positions first, then edges, so a link is never drawn over a spore it
     // does not touch.
     val pts = spores.map { s ->
-        val a = t * s.speed + s.phase
         Offset(
-            (s.x + s.radius * cos(a)) * w,
-            (s.y + s.radius * sin(a * 0.7f)) * h,
+            (s.x + s.radius * cos(s.kx * t + s.phase)) * w,
+            (s.y + s.radius * sin(s.ky * t + s.phase)) * h,
         )
     }
 
@@ -113,7 +129,7 @@ private fun DrawScope.drawSpores(spores: List<Spore>, t: Float) {
             // Fade with distance: a link is strongest as they pass closest.
             val strength = 1f - (d / near)
             drawLine(
-                color = Palette.Phosphor.copy(alpha = 0.10f + 0.45f * strength * strength),
+                color = Palette.Phosphor.copy(alpha = (0.10f + 0.45f * strength * strength) * alpha),
                 start = pts[i],
                 end = pts[j],
                 strokeWidth = 1f + 1.2f * strength,
@@ -125,7 +141,7 @@ private fun DrawScope.drawSpores(spores: List<Spore>, t: Float) {
         val s = spores[i]
         val c = if (s.violet) Palette.Violet else Palette.Phosphor
         // A soft halo, then the spore itself.
-        drawCircle(color = c.copy(alpha = 0.14f), radius = s.size * 3.2f, center = p)
-        drawCircle(color = c.copy(alpha = 0.85f), radius = s.size, center = p)
+        drawCircle(color = c.copy(alpha = 0.14f * alpha), radius = s.size * 3.2f, center = p)
+        drawCircle(color = c.copy(alpha = 0.85f * alpha), radius = s.size, center = p)
     }
 }

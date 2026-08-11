@@ -30,6 +30,13 @@ object Palette {
     val Amber = Color(0xFFF0B429)     // reaching, not there yet
     val Rust = Color(0xFFE05252)      // failed
     val Violet = Color(0xFF9A7BFF)    // relayed — distinct, not a warning
+
+    // Which mesh a peer is on. Not status: these never mean healthy or broken,
+    // and they are kept clear of the four above so a mesh ring and the node
+    // inside it can never be mistaken for each other.
+    val Sky = Color(0xFF5AA9FF)
+    val Blossom = Color(0xFFFF6FB5)
+    val Chartreuse = Color(0xFFC8E64A)
 }
 
 /**

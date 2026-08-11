@@ -2,6 +2,7 @@ package xyz.vpavlin.shrooms
 
 import android.Manifest
 import android.content.Intent
+import android.provider.Settings
 import android.content.pm.PackageManager
 import android.net.VpnService
 import android.os.Build
@@ -33,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -430,6 +432,7 @@ private fun MeshScreen(
     // is off by default: the honest picture first, the pretty one on request.
     var wholeMesh by rememberSaveable { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current
+    val ctx = LocalContext.current
 
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.padding(start = 24.dp, end = 24.dp, top = 32.dp, bottom = 20.dp)) {
@@ -499,6 +502,19 @@ private fun MeshScreen(
                         // everything", which is what clearing app data is for.
                         if (cm.label != "default") {
                             val armed = confirmLeave == cm.label
+                            // Armed, the row offers both answers. A confirm
+                            // with no way back is a trap, and tapping
+                            // elsewhere is not an obvious way out of one.
+                            if (armed) {
+                                Text(
+                                    "cancel",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Palette.Line,
+                                    modifier = Modifier
+                                        .padding(end = 10.dp)
+                                        .clickable { confirmLeave = ""; leaveError = "" },
+                                )
+                            }
                             Text(
                                 if (armed) "sure?" else "leave",
                                 style = MaterialTheme.typography.labelSmall,
@@ -567,8 +583,6 @@ private fun MeshScreen(
             } else if (snap.name.isNotEmpty()) {
                 Text(snap.name, style = MaterialTheme.typography.bodySmall, color = Palette.Ash)
             }
-            Spacer(Modifier.height(6.dp))
-            Text(buildLabel(), style = MaterialTheme.typography.labelSmall, color = Palette.Ash)
         }
 
         // Whether .mesh names resolve, stated plainly and in both directions.
@@ -581,27 +595,23 @@ private fun MeshScreen(
             if (snap.names.isEmpty()) {
                 Banner("names not available — .mesh will not resolve, addresses still work", Palette.Amber)
             } else {
+                // One line when it is working, the counters on request — the
+                // same shape as the log below. The state is what you want
+                // every time; the numbers are what you want on the one day
+                // something is wrong with them.
+                var showDns by remember { mutableStateOf(false) }
+                val quiet = snap.dns.intercepted == 0L
                 Text(
-                    "names via ${snap.names}",
+                    when {
+                        showDns -> "dns  ${snap.dns.summary()}"
+                        quiet -> "dns  no queries yet"
+                        else -> "dns  on  ·  ${snap.names}"
+                    },
                     style = MaterialTheme.typography.labelSmall,
-                    color = Palette.Ash,
-                    modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 2.dp),
-                )
-                // Private DNS silently wins over a VPN's resolver: Android
-                // sends DoT straight to the configured provider and never asks
-                // us, so .mesh cannot resolve however healthy the tunnel is.
-                // Nothing in the VpnService API reports it, so it is named here
-                // as the first thing to check rather than diagnosed.
-                // The counters, not advice. "arrived 0" means Android never
-                // sent us a query and the fault is above us; "arrived N,
-                // answered N" means we did our part and the reply was ignored.
-                // Those need completely different fixes and look the same from
-                // the outside.
-                Text(
-                    "dns  ${snap.dns.summary()}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (snap.dns.intercepted == 0L) Palette.Amber else Palette.Ash,
-                    modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 6.dp),
+                    color = if (quiet) Palette.Amber else Palette.Ash,
+                    modifier = Modifier
+                        .padding(start = 24.dp, end = 24.dp, bottom = 6.dp)
+                        .clickable { showDns = !showDns },
                 )
             }
         }
@@ -740,15 +750,36 @@ private fun MeshScreen(
             "join another mesh",
             style = MaterialTheme.typography.bodySmall,
             color = Palette.Phosphor,
-            modifier = Modifier.clickable { onAddMesh() },
+            modifier = Modifier
+                .padding(horizontal = 24.dp)
+                .clickable { onAddMesh() },
         )
 
-        Text(
-            buildLabel(),
-            style = MaterialTheme.typography.bodySmall,
-            color = Palette.Ash,
-            modifier = Modifier.padding(start = 24.dp, top = 4.dp),
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 4.dp),
+        ) {
+            Text(buildLabel(), style = MaterialTheme.typography.bodySmall, color = Palette.Ash)
+            Spacer(Modifier.width(12.dp))
+            // The app reconnects itself on boot and after an update, but only
+            // Android can bring it back when the app is killed, and only
+            // Android can hold traffic until the tunnel is there. That switch
+            // lives in system settings and cannot be set from here, so point
+            // at it rather than pretend otherwise.
+            Text(
+                "start on boot",
+                style = MaterialTheme.typography.bodySmall,
+                color = Palette.Phosphor,
+                modifier = Modifier.clickable {
+                    runCatching {
+                        ctx.startActivity(
+                            Intent(Settings.ACTION_VPN_SETTINGS)
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        )
+                    }
+                },
+            )
+        }
         Box(Modifier.padding(start = 24.dp, end = 24.dp, top = 4.dp, bottom = 24.dp)) {
             Action(
                 if (snap.connected) "DISCONNECT" else "CONNECT",
@@ -777,8 +808,21 @@ private fun ModeSetting(dir: String, connected: Boolean) {
     if (mode.isEmpty()) return
 
     val edge = mode == "Edge"
+    var open by remember { mutableStateOf(false) }
     Column(Modifier.padding(start = 24.dp, end = 24.dp, top = 12.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        // Collapsed by default. Relaying for the network is a real option and
+        // stays here, but it costs seven times the data and nobody chooses it
+        // on a phone — so it should not be the most prominent control on the
+        // screen, which is what a Material switch always is.
+        if (!open) {
+            Text(
+                if (edge) "light node  ·  ~3 MB/h" else "relay node  ·  ~20 MB/h",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (edge) Palette.Ash else Palette.Amber,
+                modifier = Modifier.clickable { open = true },
+            )
+        }
+        if (open) Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(
                     if (edge) "Light node" else "Relay node",
