@@ -1,6 +1,6 @@
 # 021. A synthetic IPv4 address per peer
 
-**Status:** proposed
+**Status:** accepted; `internal/v4` built and unit-tested, not yet wired in
 
 ## Context
 
@@ -60,9 +60,22 @@ anyone noticing. There is therefore **no allocation problem and no
 coordination** — which is the objection that would otherwise sink this, given
 that avoiding coordination is the point of the project.
 
-**It is stateless.** The mapping is a deterministic function of the peer, in
-both directions, so there is no connection table, nothing to expire, and no
-behaviour that differs between the first packet and the thousandth.
+**The mapping is stateless; the inbound direction is not.** The mapping is a
+deterministic function of the peer both ways. Translating *outbound* is
+therefore a pure function. Translating inbound is not, and this was wrong in
+the first draft of this ADR: a packet arriving from a peer is either the reply
+to a translated flow, which must become IPv4 again, or ordinary IPv6 traffic,
+which must not — and nothing in the packet distinguishes them. Translating
+everything would break `http://[fd93:…]/`, which is how the mesh's web
+interfaces are reached today.
+
+So a flow is remembered when it is translated, and inbound packets matching one
+are translated back. One entry per connection made to an alias, expiring on
+idleness. The alternative that would restore statelessness — a second overlay
+address per device marking translated traffic, in the manner of SIIT — needs
+every node to widen its AllowedIPs, which makes it a wire-visible change
+requiring the whole mesh to update. That trade was not worth it for a table
+that holds a handful of entries.
 
 **The surgery already exists.** `internal/dns.Intercept` reads and writes raw
 packets on the tun and builds IPv6/UDP replies with correct checksums today
@@ -94,10 +107,16 @@ inconvenience rather than a protocol failure.
   part that makes browsers work and is worth having even if translation lands
   later — a name that resolves to an unreachable address is at least a
   diagnosable failure rather than a silent one.
-- Stateless header translation both ways, per RFC 6145: rewrite the IP header,
-  adjust TCP/UDP checksums by delta rather than recomputing, translate ICMP,
-  and set the DF bit and MTU so that fragmentation is never needed rather than
-  handled.
+- Header translation both ways, per RFC 6145: rewrite the IP header, fix the
+  TCP/UDP checksums, translate ICMP echo, and set DF so fragmentation is never
+  needed rather than handled. Checksums are recomputed rather than adjusted
+  incrementally — the delta form is the textbook answer and is also where this
+  code usually goes wrong, and at this MTU a recompute is a few hundred
+  additions.
+- MSS clamping on translated SYNs. The IPv6 header is 20 bytes larger, so a
+  segment sized for the v4 MTU no longer fits; without this a connection opens
+  and then hangs on the first full-size response, which is the worst kind of
+  bug to find later.
 
 ## Alternatives
 
