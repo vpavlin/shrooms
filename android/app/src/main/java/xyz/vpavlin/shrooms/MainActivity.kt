@@ -122,9 +122,10 @@ class MainActivity : ComponentActivity() {
                                 // succeeded and a mesh that appears broken.
                                 if (snap.connected) {
                                     startService(Intent(this@MainActivity, MeshVpnService::class.java)
-                                        .setAction(MeshVpnService.ACTION_DISCONNECT))
+                                        .setAction(MeshVpnService.ACTION_RECONNECT))
+                                } else {
+                                    requestConnect()
                                 }
-                                requestConnect()
                             },
                             onCancel = { addingMesh = false },
                         )
@@ -140,13 +141,15 @@ class MainActivity : ComponentActivity() {
                             onAddMesh = { addingMesh = true },
                             onLeftMesh = {
                                 // The tunnel is built from the config at
-                                // connect time, so a mesh it no longer names
-                                // keeps running until it is rebuilt.
+                                // connect time, so a mesh added, removed or
+                                // switched needs it rebuilt. One intent, so the
+                                // stop and the start cannot arrive out of order.
                                 if (snap.connected) {
                                     startService(Intent(this@MainActivity, MeshVpnService::class.java)
-                                        .setAction(MeshVpnService.ACTION_DISCONNECT))
+                                        .setAction(MeshVpnService.ACTION_RECONNECT))
+                                } else {
+                                    requestConnect()
                                 }
-                                requestConnect()
                             },
                         )
                     }
@@ -420,6 +423,12 @@ private fun MeshScreen(
     // was told about at connect time. Without saying so, the button looks
     // like it did nothing at all.
     var leaveError by remember { mutableStateOf("") }
+    // Which mesh has been tapped once. Leaving means re-enrolling to come
+    // back, which is too much to hang on a single tap next to a toggle.
+    var confirmLeave by remember { mutableStateOf("") }
+    // Whether to draw the links between other peers. They are guesses, so this
+    // is off by default: the honest picture first, the pretty one on request.
+    var wholeMesh by rememberSaveable { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current
 
     Column(Modifier.fillMaxSize()) {
@@ -489,12 +498,18 @@ private fun MeshScreen(
                         // added meshes: leaving the original one is "forget
                         // everything", which is what clearing app data is for.
                         if (cm.label != "default") {
+                            val armed = confirmLeave == cm.label
                             Text(
-                                "leave",
+                                if (armed) "sure?" else "leave",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = Palette.Rust,
+                                color = if (armed) Palette.Amber else Palette.Rust,
                                 modifier = Modifier.clickable {
                                     leaveError = ""
+                                    if (!armed) {
+                                        confirmLeave = cm.label
+                                        return@clickable
+                                    }
+                                    confirmLeave = ""
                                     runCatching { Mobile.leaveMesh(dir, cm.label) }
                                         // Reconnect, or the mesh stays up until
                                         // something else restarts the tunnel and
@@ -507,6 +522,13 @@ private fun MeshScreen(
                             )
                         }
                     }
+                }
+                if (confirmLeave.isNotEmpty()) {
+                    Text(
+                        "leaving $confirmLeave means re-enrolling with a new invite to come back",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Palette.Amber,
+                    )
                 }
                 if (leaveError.isNotEmpty()) {
                     Text(
@@ -657,7 +679,21 @@ private fun MeshScreen(
                 )
 
                 asGraph -> {
-                    MeshGraph(snap, onSelect = { selected = it })
+                    MeshGraph(snap, onSelect = { selected = it }, inferred = wholeMesh)
+                    // What the picture is, and a way to change it. The honest
+                    // version shows only this device's tunnels; the other adds
+                    // the links between peers, which are assumed rather than
+                    // known.
+                    Text(
+                        if (wholeMesh) "whole mesh · faint links are assumed"
+                        else "your links · tap for the whole mesh",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (wholeMesh) Palette.Amber else Palette.Ash,
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(top = 6.dp)
+                            .clickable { wholeMesh = !wholeMesh },
+                    )
                     selected?.let { peer ->
                         // The detail for a tapped node, over the graph rather
                         // than replacing it: the shape is the context.

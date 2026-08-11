@@ -40,6 +40,16 @@ class MeshVpnService : VpnService() {
     companion object {
         const val ACTION_CONNECT = "xyz.vpavlin.shrooms.CONNECT"
         const val ACTION_DISCONNECT = "xyz.vpavlin.shrooms.DISCONNECT"
+
+        /**
+         * Rebuild the tunnel from the config, in one ordered step.
+         *
+         * Not a disconnect followed by a connect from the caller: those are two
+         * intents and the second can be handled before the first has finished,
+         * which left the service stopped and the user looking at a Connect
+         * button they had not asked for.
+         */
+        const val ACTION_RECONNECT = "xyz.vpavlin.shrooms.RECONNECT"
         private const val CHANNEL = "mesh"
         private const val NOTIFICATION_ID = 1
         private const val TAG = "shrooms"
@@ -53,6 +63,10 @@ class MeshVpnService : VpnService() {
             ACTION_DISCONNECT -> {
                 stop()
                 return START_NOT_STICKY
+            }
+            ACTION_RECONNECT -> {
+                restart()
+                return START_STICKY
             }
             else -> start()
         }
@@ -72,7 +86,13 @@ class MeshVpnService : VpnService() {
 
         startForeground(NOTIFICATION_ID, notification("Connecting…"))
 
-        scope.launch {
+        scope.launch { startInline() }
+    }
+
+    /** The body of start(), so a restart can run it in its own sequence. */
+    private suspend fun startInline() {
+        val dir = filesDir.absolutePath
+        run {
             try {
                 val overlay = Mobile.overlayAddress(dir)
                 if (overlay.isEmpty()) throw IllegalStateException("no overlay address; config unreadable")
@@ -290,6 +310,30 @@ class MeshVpnService : VpnService() {
                 }
                 delay(2000)
             }
+        }
+    }
+
+    /**
+     * Rebuild the tunnel after a config change, in order.
+     *
+     * One coroutine, because stop() and start() each launch their own: calling
+     * them in sequence returned immediately from both and started the new
+     * session while the old one was still being torn down, which left the
+     * tunnel up and carrying nothing until the app was force-stopped.
+     *
+     * The rendezvous node stays running throughout. Stopping and starting it is
+     * the part that does not survive repetition — the library keeps
+     * process-global state — and there is nothing to gain from a few seconds of
+     * silence.
+     */
+    private fun restart() {
+        scope.launch {
+            runCatching { Mobile.stopForRestart() }
+                .onFailure { Log.e(TAG, "stop for restart", it) }
+            runCatching { tunnel?.close() }
+            tunnel = null
+            MeshState.disconnected()
+            startInline()
         }
     }
 

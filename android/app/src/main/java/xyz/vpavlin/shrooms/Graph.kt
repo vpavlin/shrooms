@@ -44,7 +44,22 @@ import kotlin.math.sin
  * how any two others reach each other.
  */
 @Composable
-fun MeshGraph(snap: Snapshot, onSelect: (Peer?) -> Unit, modifier: Modifier = Modifier) {
+fun MeshGraph(
+    snap: Snapshot,
+    onSelect: (Peer?) -> Unit,
+    modifier: Modifier = Modifier,
+    /**
+     * Draw the links between other peers as well as our own.
+     *
+     * Those are inferred, not measured: a node knows its own tunnels and
+     * nothing about anyone else's, because no announce carries them. Two peers
+     * both reachable from here may still only reach each other through a relay
+     * — which is exactly why the relay exists. So they are drawn faintly, and
+     * only within a mesh, since peers on different meshes genuinely cannot
+     * reach each other at all.
+     */
+    inferred: Boolean = false,
+) {
     val measurer = rememberTextMeasurer()
 
     // A slow pulse on live links. Motion only where traffic is actually
@@ -56,7 +71,11 @@ fun MeshGraph(snap: Snapshot, onSelect: (Peer?) -> Unit, modifier: Modifier = Mo
         label = "pulse",
     )
 
-    val peers = snap.peers
+    // Grouped by mesh, so each mesh occupies an arc of the ring rather than
+    // being scattered around it. Order is stable, so nodes do not jump between
+    // refreshes.
+    val peers = snap.peers.sortedWith(compareBy({ it.mesh }, { it.name }))
+    val meshNames = peers.map { it.mesh }.distinct()
     // A relay is drawn where traffic through it would pass, so relayed links
     // visibly bend around it rather than crossing the middle.
     val relay = peers.firstOrNull { it.relay }
@@ -87,9 +106,29 @@ fun MeshGraph(snap: Snapshot, onSelect: (Peer?) -> Unit, modifier: Modifier = Mo
                 drawLink(centre, at, peer, relayAt, pulse)
             }
 
-            // Peers on top of the links.
+            // Assumed links first, underneath everything: same mesh, both
+            // reachable from here, so probably reachable from each other.
+            if (inferred) {
+                peers.forEachIndexed { i, a ->
+                    if (a.reach != Peer.Reach.CONNECTED) return@forEachIndexed
+                    peers.forEachIndexed inner@{ j, b ->
+                        if (j <= i || b.reach != Peer.Reach.CONNECTED) return@inner
+                        if (a.mesh != b.mesh) return@inner
+                        drawLine(
+                            Palette.Phosphor.copy(alpha = 0.10f),
+                            nodeAt(centre, radius, i, peers.size),
+                            nodeAt(centre, radius, j, peers.size),
+                            1f,
+                        )
+                    }
+                }
+            }
+
+            // Peers on top of the links, each ringed by its mesh.
             peers.forEachIndexed { i, peer ->
-                drawNode(nodeAt(centre, radius, i, peers.size), peer, measurer)
+                val at = nodeAt(centre, radius, i, peers.size)
+                drawMeshRing(at, peer.mesh, meshNames)
+                drawNode(at, peer, measurer)
             }
 
             // This device last: it is the thing the rest is drawn relative to.
@@ -104,6 +143,10 @@ private fun nodeAt(centre: Offset, radius: Float, index: Int, count: Int): Offse
     if (count == 0) return centre
     // Start at the top and go clockwise; a single peer sits directly above,
     // which reads better than off to one side.
+    //
+    // Peers arrive grouped by mesh, so meshes come out as arcs rather than
+    // interleaved — which, with the ring tint below, is what makes a device on
+    // two meshes readable at a glance.
     val angle = (-Math.PI / 2) + (2 * Math.PI * index / count)
     return Offset(
         centre.x + radius * cos(angle).toFloat(),
@@ -118,6 +161,22 @@ private fun nodeAt(centre: Offset, radius: Float, index: Int, count: Int): Offse
  * where the packets go. Drawing it as a straight line would show a connection
  * that does not exist.
  */
+/**
+ * A ring around a peer, tinted by which mesh it is on.
+ *
+ * Deliberately a ring rather than the node's own colour: the node says whether
+ * the peer is reachable, which is what you look at first, and the mesh is the
+ * grouping around it. On a device with one mesh nothing is drawn at all.
+ */
+private fun DrawScope.drawMeshRing(at: Offset, mesh: String, meshes: List<String>) {
+    if (meshes.size < 2) return
+    val i = meshes.indexOf(mesh).coerceAtLeast(0)
+    val tint = meshTints[i % meshTints.size]
+    drawCircle(tint.copy(alpha = 0.55f), radius = 17f, center = at, style = Stroke(1.5f))
+}
+
+private val meshTints = listOf(Palette.Phosphor, Palette.Amber, Palette.Violet, Palette.Rust)
+
 private fun DrawScope.drawLink(centre: Offset, at: Offset, peer: Peer, relayAt: Offset?, pulse: Float) {
     val dashed = PathEffect.dashPathEffect(floatArrayOf(9f, 11f), pulse * -20f)
 

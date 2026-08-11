@@ -506,10 +506,6 @@ func MeshesJSON(configDir string) string {
 	}
 	var out []entry
 	for _, m := range cfg.Meshes() {
-		if m.Disabled {
-			out = append(out, entry{Label: m.Label, Disabled: true})
-			continue
-		}
 		nk, err := m.Key()
 		if err != nil {
 			continue
@@ -521,12 +517,17 @@ func MeshesJSON(configDir string) string {
 		}
 		self := identity.OverlayAddr(nk, ms.Identity.DevicePub)
 		aliases := v4.NewTable(networkID, v4.Entry{Overlay: self, DevicePub: ms.Identity.DevicePub}, nil)
+		// Reported for a mesh that is switched off as well as one that is on.
+		// The identity and the address exist either way — they are derived, not
+		// allocated — and hiding them made a mesh look half-forgotten rather
+		// than simply not running.
 		out = append(out, entry{
-			Label:   m.Label,
-			Overlay: self.String(),
-			Prefix:  nk.Prefix().String(),
-			V4:      aliases.Self().String(),
-			V4Block: aliases.Block().String(),
+			Label:    m.Label,
+			Disabled: m.Disabled,
+			Overlay:  self.String(),
+			Prefix:   nk.Prefix().String(),
+			V4:       aliases.Self().String(),
+			V4Block:  aliases.Block().String(),
 		})
 	}
 	b, err := json.Marshal(out)
@@ -915,7 +916,19 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 }
 
 // Stop tears the mesh down. Safe to call when not running.
-func Stop() error {
+func Stop() error { return stopSession(true) }
+
+// StopForRestart tears the meshes down but leaves the rendezvous node running.
+//
+// For rebuilding the tunnel after a config change — adding a mesh, switching
+// one on — which is now a routine thing to do. Stopping and starting the node
+// each time is the part that is not routine: the library keeps process-global
+// state, and a restart of it has been seen to crash inside its own persistency
+// setup. Leaving it up costs nothing that it was not already costing a second
+// earlier, and removes the churn entirely.
+func StopForRestart() error { return stopSession(false) }
+
+func stopSession(stopNode bool) error {
 	mu.Lock()
 	s := running
 	running = nil
@@ -932,7 +945,7 @@ func Stop() error {
 	}
 	// Stop, never destroy: destroying leaves state behind that stops the next
 	// node being created at all.
-	if node != nil {
+	if stopNode && node != nil {
 		_ = node.Stop()
 	}
 	for _, in := range s.instances {
