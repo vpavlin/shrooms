@@ -46,12 +46,12 @@ _shrooms() {
         cword=$COMP_CWORD
     fi
 
-    local commands="init join prepare set-key daemon status paths hosts key version help"
+    local commands="init join invite prepare set-key daemon status paths hosts key keys credential admin version help"
     local common="--config --state"
 
     # A path-valued flag completes as a path, whichever command it belongs to.
     case $prev in
-        --config|--socket|--state)
+        --config|--socket|--state|--admin-dir|--dir)
             _filedir 2>/dev/null || COMPREPLY=($(compgen -f -- "$cur"))
             return
             ;;
@@ -65,8 +65,17 @@ _shrooms() {
 
     local cmd=${words[1]}
     case $cmd in
-        init|join|prepare)
+        init)
+            COMPREPLY=($(compgen -W "--name --relay --advertise --port --admin-dir --no-admin $common" -- "$cur"))
+            ;;
+        join)
+            COMPREPLY=($(compgen -W "--invite --name --relay --advertise --port --timeout $common" -- "$cur"))
+            ;;
+        prepare)
             COMPREPLY=($(compgen -W "--name --relay --advertise --port $common" -- "$cur"))
+            ;;
+        invite)
+            COMPREPLY=($(compgen -W "--name --ttl --life --serial --qr --admin-dir $common" -- "$cur"))
             ;;
         daemon)
             COMPREPLY=($(compgen -W "--socket -v $common" -- "$cur"))
@@ -93,8 +102,22 @@ _shrooms() {
                 COMPREPLY=($(compgen -W "--qr --yes $common" -- "$cur"))
             fi
             ;;
-        set-key)
+        set-key|keys)
             COMPREPLY=($(compgen -W "$common" -- "$cur"))
+            ;;
+        credential)
+            if [ "$cword" -eq 2 ]; then
+                COMPREPLY=($(compgen -W "set" -- "$cur"))
+            else
+                COMPREPLY=($(compgen -W "$common" -- "$cur"))
+            fi
+            ;;
+        admin)
+            if [ "$cword" -eq 2 ]; then
+                COMPREPLY=($(compgen -W "init issue revoke show" -- "$cur"))
+            else
+                COMPREPLY=($(compgen -W "--dir --name --device --wg --serial --life --write --no-passphrase $common" -- "$cur"))
+            fi
             ;;
         *)
             COMPREPLY=()

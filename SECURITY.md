@@ -54,10 +54,14 @@ is inside. Obfuscation is a different project; do not conflate it with this.
 permanently. There is no per-device revocation and no expiry, so removing a
 device means rotating the key and re-enrolling everyone. Acceptable at 3–5
 machines you control; not acceptable beyond that.
-→ **M5** replaces this with admin-signed per-device credentials, short expiry,
-gossiped revocation, and one-time-use invite tokens so the copy/pasted artifact
-stops being a permanent secret. `admin_pk` and the announce `credential` field
-already exist (empty) so the migration is not a wire-format break.
+→ **Largely addressed.** A mesh with `admin_keys` set admits devices by
+admin-signed credential with a 30-day expiry and gossiped revocation, and
+`shrooms invite` enrols one device at a time with a token good for fifteen
+minutes. What remains is that the network key still derives the topics, payload
+key and PSKs, so a leak of it still exposes the control plane to reading and
+still means rotating for everyone — it is no longer what *membership* is, but it
+is still a shared secret. ADR-020 explains why the per-recipient rewrite that
+would remove it is not built.
 
 **A published service is reachable by every member.** `services` forwards a
 mesh connection to a loopback port, and a great many applications treat "bound
@@ -94,32 +98,42 @@ all) at the cost of N² topics.
 
 The destination is [ADR-018](docs/adr/018-credentials-instead-of-a-shared-key.md):
 no shared key at all, membership by admin-signed credential, and revocation that
-costs one device rather than the whole mesh. [ADR-017](docs/adr/017-invite-tokens.md)
-is its enrolment half and is worth building first.
+costs one device rather than the whole mesh. Credentials and
+[ADR-017](docs/adr/017-invite-tokens.md)'s invites are built; the shared key
+remains, for the reasons ADR-020 sets out.
 
 
 The bearer key is the weakest part of the system and it is not a design
 position — it is a v1 shortcut with a planned replacement. Sequenced by
 value-per-effort, not by tidiness.
 
-### Phase 1 — one-time invite tokens ⭐ do this first
+### Phase 1 — one-time invite tokens ✅ built
 
 **Problem:** the artifact you copy between machines is a permanent credential.
 It lands in shell history, clipboard managers, and whatever you pasted it into.
 Anyone who ever sees it is a member forever.
 
-**Change:** `shrooms invite` emits a token valid ~15 minutes, single
+**Change:** `shrooms invite` emits a token valid 15 minutes, single
 redemption. The joining device generates its own keys, redeems the token, and
-receives the network key over the resulting authenticated channel.
+receives the network key — and, since phase 2 landed alongside it, a credential
+signed for those keys — over the resulting channel.
 
-**Why first:** it is the highest value per unit of work in the whole plan, and
-it is *independent of credentials*. It does not need an admin key, a PKI, or a
-wire-format change — it only changes how the existing secret is transported. A
-leaked clipboard stops being worth anything.
+**What it does not fix:** the token *is* the authorisation, so whoever
+photographs it inside the window can join. That is minutes and one device
+against what used to be permanent and unlimited. Both halves of the exchange are
+padded to a constant, so the bus sees two fixed-size ciphertexts on a shard it
+cannot distinguish from the mesh's own traffic.
 
-**Effort:** small. **Depends on:** nothing.
+`shrooms join <NETWORK-KEY>` still exists for bootstrapping and recovery, and
+carries the old exposure when used.
 
-### Phase 2 — admin-signed credentials
+### Phase 2 — admin-signed credentials ✅ built
+
+Built as `internal/cred` and the `admin` commands, and the wire format is binary
+rather than CBOR — a credential rides an announce padded to a fixed size, and
+the JSON form did not fit at the time it was measured. Auto-renewal is the piece
+still missing: a credential is re-issued by hand, or by inviting the device
+again.
 
 **Problem:** holding the network key makes you a member, so there is no
 per-device revocation and no expiry.
@@ -142,7 +156,11 @@ defeated by dropping packets.
 
 **Effort:** medium. **Depends on:** phase 1 for the enrolment channel.
 
-### Phase 3 — revocation
+### Phase 3 — revocation ✅ built
+
+Revocations are signed, gossiped on the control plane, verified by each node
+against the admin keys itself, and kept until the credential they withdraw would
+have expired anyway.
 
 **Change:** `shrooms revoke <name>` publishes a signed revocation with a
 monotonic serial, republished on every epoch rotation and on join. Peers **tear
@@ -187,22 +205,25 @@ The milestone order is M2 (traversal) → M3 (relay) → M4 (seamless) → M5
 (security). That ordering assumes a mesh that does not reliably connect is not
 worth securing.
 
-**Phase 1 is the exception and should jump the queue.** It is small, has no
-dependencies, and the exposure it removes grows the moment this runs on a VPS —
-a machine you do not fully control, holding a credential that never expires.
+**Phase 1 jumped the queue, as planned, and phases 2 and 3 followed it.** What
+is left of the plan is the part ADR-020 argues should wait: removing the shared
+key itself, which is a control-plane encryption redesign rather than a
+membership change.
 
 ## Before running this in anger
 
-1. **Do not treat the network key as low-value.** Until M5 it is the whole
-   security of the mesh. Do not paste it into chat, tickets, or shell history
-   you keep.
+1. **Do not treat the network key as low-value.** It no longer decides who is a
+   member on a mesh with `admin_keys`, but it still decrypts the control plane
+   and derives every PSK. Use `shrooms invite` to move it — do not paste it into
+   chat, tickets, or shell history you keep.
 2. **The control socket is mode 0660.** Anyone in its group can read the roster
    and every peer's endpoints. Check the group on a multi-user host.
-3. **Rotate the network key if a device is lost** — `shrooms key rotate` —
-   and re-enrol the rest. That is the only revocation available until phase 2,
-   and it is blunt: the key derives the mesh prefix, so every overlay address
-   changes and every device must re-join. It is closer to creating a new mesh
-   than to rotating a credential, which is precisely what credentials fix.
+3. **Revoke a lost device** — `shrooms admin revoke --device <hex>` — which
+   costs that device and nothing else. Rotating the network key
+   (`shrooms key rotate`) is still the answer if the *key* leaked rather than a
+   device, and it re-enrols everyone: the key derives the mesh prefix, so every
+   overlay address changes. It is closer to creating a new mesh than to
+   rotating a credential, which is precisely what credentials fixed.
 4. **`shrooms paths` reports reflexive addresses.** More than one distinct
    value means endpoint-dependent NAT — useful diagnostically, but it also
    means peers learn several of your external addresses.

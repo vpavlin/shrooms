@@ -29,6 +29,8 @@ func cmdInit(args []string) error {
 	port := fs.Uint("port", 51820, "UDP listen port")
 	advertise := fs.String("advertise", "", "public endpoint, only if it is not on a local interface")
 	relay := fs.Bool("relay", false, "forward traffic for peers that cannot reach each other")
+	adminDir := fs.String("admin-dir", defaultAdminDir(), "where to keep the admin key")
+	noAdmin := fs.Bool("no-admin", false, "do not mint an authority; membership is the network key alone")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -41,15 +43,34 @@ func cmdInit(args []string) error {
 	if err != nil {
 		return err
 	}
-	return setup(*cfgPath, *stateDir, nk, *name, uint16(*port), *advertise, *relay, true)
+	if err := setup(*cfgPath, *stateDir, nk, *name, uint16(*port), *advertise, *relay, true); err != nil {
+		return err
+	}
+	if *noAdmin {
+		return nil
+	}
+
+	// Minting the authority here rather than in a second command. Creating a
+	// mesh is one act, and asking for two was the first half of why enrolling a
+	// device had grown to six steps.
+	return mintAuthority(*adminDir, *cfgPath, *stateDir, *name)
 }
 
 func cmdJoin(args []string) error {
+	// Two ways in. `join --invite TOKEN` is the one to use — a token good for
+	// one device and fifteen minutes. `join <KEY>` stays because bootstrapping
+	// and recovery both need it, and because a mesh with no authority has
+	// nothing else (ADR-017).
+	if tok, rest, ok := inviteFlag(args); ok {
+		return cmdJoinInvite(tok, rest)
+	}
+
 	// The key is positional and comes first, which is the natural way to type
 	// it. Go's flag package stops parsing at the first positional, so pull the
 	// key off before parsing the flags.
 	if len(args) < 1 || strings.HasPrefix(args[0], "-") {
-		return fmt.Errorf("usage: shrooms join <NETWORK-KEY> [flags]")
+		return fmt.Errorf("usage: shrooms join <NETWORK-KEY> [flags]\n" +
+			"   or: shrooms join --invite <TOKEN> [flags]")
 	}
 	keyArg := args[0]
 
@@ -71,6 +92,27 @@ func cmdJoin(args []string) error {
 		return fmt.Errorf("%s already exists — remove it or use a different --config", *cfgPath)
 	}
 	return setup(*cfgPath, *stateDir, nk, *name, uint16(*port), *advertise, *relay, false)
+}
+
+// inviteFlag pulls --invite out of the arguments, wherever it appears.
+//
+// Its own parse rather than a flag on the join set, because the network key is
+// positional and Go's flag package stops at the first positional — so
+// `join --invite X` and `join KEY` cannot share one FlagSet.
+func inviteFlag(args []string) (token string, rest []string, ok bool) {
+	for i, a := range args {
+		switch {
+		case a == "--invite" || a == "-invite":
+			if i+1 >= len(args) {
+				return "", nil, false
+			}
+			return args[i+1], append(append([]string{}, args[:i]...), args[i+2:]...), true
+		case strings.HasPrefix(a, "--invite="), strings.HasPrefix(a, "-invite="):
+			_, v, _ := strings.Cut(a, "=")
+			return v, append(append([]string{}, args[:i]...), args[i+1:]...), true
+		}
+	}
+	return "", nil, false
 }
 
 // setup writes the config and generates the device identity.

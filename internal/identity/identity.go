@@ -49,6 +49,18 @@ func NewNetworkKey() (NetworkKey, error) {
 // String renders the key for copy/paste between machines.
 func (nk NetworkKey) String() string { return b32.EncodeToString(nk[:]) }
 
+// NetworkKeyFromBytes takes a key that arrived as raw bytes rather than text —
+// out of an invite, which carries it inside a sealed message where base32 would
+// be nothing but padding.
+func NetworkKeyFromBytes(b []byte) (NetworkKey, error) {
+	if len(b) != NetworkKeyLen {
+		return NetworkKey{}, fmt.Errorf("network key is %d bytes, want %d", len(b), NetworkKeyLen)
+	}
+	var nk NetworkKey
+	copy(nk[:], b)
+	return nk, nil
+}
+
 // ParseNetworkKey parses the String form.
 func ParseNetworkKey(s string) (NetworkKey, error) {
 	raw, err := b32.DecodeString(s)

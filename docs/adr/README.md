@@ -26,7 +26,7 @@ number appears, its source is named.
 | [014](014-relay-discovery-via-announce.md) | Relay discovery: a flag on the announce, not a separate message | accepted |
 | [015](015-multiple-meshes-one-daemon.md) | Multiple meshes in one daemon | accepted |
 | [016](016-android-reuses-the-go-core.md) | Android reuses the Go core | accepted |
-| [017](017-invite-tokens.md) | Invite tokens | proposed |
-| [018](018-credentials-instead-of-a-shared-key.md) | Credentials instead of a shared key | proposed |
-| [019](019-service-addresses.md) | An address per service | proposed |
+| [017](017-invite-tokens.md) | Invite tokens | accepted, built |
+| [018](018-credentials-instead-of-a-shared-key.md) | Credentials instead of a shared key | accepted, mostly built |
+| [019](019-service-addresses.md) | An address per service | proposed; the name router is built |
 | [020](020-membership-is-a-seam.md) | Membership is a seam | accepted |

@@ -1,6 +1,12 @@
 # 018. Credentials instead of a shared key
 
-**Status:** proposed — the destination ADR-017 is a step toward
+**Status:** accepted, built except for the announce rewrite. The destination
+[ADR-017](017-invite-tokens.md) is a step toward, and its enrolment channel.
+
+Built: `internal/cred`, the `admin` commands, expiry, revocation, and issuance
+inside the invite exchange. Not built, deliberately: the per-recipient announce
+wrapping, for the reasons in [ADR-020](020-membership-is-a-seam.md). Also not
+built: automatic renewal.
 
 ## Context
 

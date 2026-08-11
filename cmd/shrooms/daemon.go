@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -474,6 +476,36 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Me
 	mux.HandleFunc("/status", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(snapshot())
+	})
+
+	// The way a revocation reaches the bus. The admin key signs offline — that
+	// is the whole point of it — so something with a rendezvous connection has
+	// to publish what it signed, and the daemon is the only such thing here.
+	//
+	// The socket's permissions decide who may ask; the signature inside decides
+	// whether it is honoured. A caller who can reach this socket can already
+	// read every peer's endpoints, and cannot forge a revocation with it.
+	mux.HandleFunc("/revoke", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST a revocation", http.StatusMethodNotAllowed)
+			return
+		}
+		raw, err := io.ReadAll(io.LimitReader(r.Body, 4096))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		blob, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(raw)))
+		if err != nil {
+			http.Error(w, "revocation is not base64: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := m.Revoke(blob); err != nil {
+			log.Warn("refused a revocation", "err", err)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	})
 
 	// A file, not a port: QML can read a file and cannot open a unix socket,

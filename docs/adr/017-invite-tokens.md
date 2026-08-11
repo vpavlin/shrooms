@@ -1,6 +1,11 @@
 # 017. Invite tokens
 
-**Status:** proposed — the enrolment half of [ADR-018](018-credentials-instead-of-a-shared-key.md)
+**Status:** accepted, built — the enrolment half of [ADR-018](018-credentials-instead-of-a-shared-key.md)
+
+Built as described, with one change and one addition. `internal/invite` is the
+crypto and wire format; `shrooms invite` and `shrooms join --invite` are the two
+ends. Verified end to end over logos.test: token to enrolled device in about
+twenty seconds, and the same token afterwards times out with nothing written.
 
 ## Context
 
@@ -67,10 +72,19 @@ topic_key   = HKDF(secret, "invite/v1/topic")     where to listen
 payload_key = HKDF(secret, "invite/v1/payload")   what to encrypt with
 ```
 
-The request carries the joiner's device and X25519 public keys, a nonce and a
-timestamp, sealed under `payload_key`. The response carries the network key
-sealed to the joiner's X25519 key *and* under `payload_key`, so the bus sees
-only ciphertext and only the intended device can open it.
+The request carries the joiner's device and WireGuard public keys, a **fresh**
+X25519 key and a timestamp, sealed under `payload_key`. The response carries the
+network key sealed to that X25519 key *and* under `payload_key`, so the bus sees
+only ciphertext and only the device that asked can open it.
+
+The ephemeral key is generated for the exchange rather than being the device's
+tunnel key. The tunnel key is a Curve25519 key and would have worked; a fresh
+one costs nothing and means there is no cross-protocol key reuse to argue about.
+
+Both directions are padded to 1024 bytes, so a request, a response, and a
+response carrying a credential are the same size on the bus. The topic is built
+with the rendezvous application and version fields, so it lands on the shard the
+mesh's traffic already uses (ADR-006) rather than on one of its own.
 
 128 bits is far beyond guessing, and there is nothing to guess against: a wrong
 token addresses a topic nobody is listening on.
@@ -122,3 +136,11 @@ is a shared key that every member already has.
   recovering a mesh both need it.
 - The invite exchange is the natural place for M5 to issue a credential, so the
   wire format should leave room for one rather than being minimal now.
+- **It carries the credential, and that is what makes it worth building.** The
+  response is the network key, the mesh's `admin_keys` and a credential signed
+  for the joining device's keys — so `invite` needs the admin key, and enrolment
+  is one command on each machine instead of six and a copied blob.
+- The response is sent once. Waku may lose it, and the failure is visible and
+  cheap: the joining device says nobody answered, and you run `invite` again.
+  Answering repeatedly would quietly turn a single-use token into a reusable
+  one, which is the property the whole design rests on.

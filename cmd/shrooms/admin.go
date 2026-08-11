@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/ed25519"
 	"encoding/base32"
 	"encoding/base64"
@@ -8,6 +9,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -80,6 +84,21 @@ func cmdAdminInit(args []string) error {
 			adminPath(*dir))
 	}
 
+	return mintAuthorityAt(*dir, *plain, "", "", "")
+}
+
+// mintAuthority mints a mesh's authority, writes admin_keys into the config and
+// issues this device its own credential — everything `init` needs so that
+// creating a mesh is one command.
+func mintAuthority(dir, cfgPath, stateDir, name string) error {
+	return mintAuthorityAt(dir, false, cfgPath, stateDir, name)
+}
+
+func mintAuthorityAt(dir string, plain bool, cfgPath, stateDir, name string) error {
+	if _, err := os.Stat(adminPath(dir)); err == nil {
+		return fmt.Errorf("%s already exists; minting again would create a different mesh",
+			adminPath(dir))
+	}
 	primary, err := cred.NewAdmin()
 	if err != nil {
 		return err
@@ -93,13 +112,13 @@ func cmdAdminInit(args []string) error {
 		return err
 	}
 
-	if err := os.MkdirAll(*dir, 0o700); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	af := adminFile{
 		Keys: []string{b32.EncodeToString(primary.Pub), b32.EncodeToString(recovery.Pub)},
 	}
-	if *plain {
+	if plain {
 		af.Priv = base64.StdEncoding.EncodeToString(primary.Priv)
 	} else {
 		pass, err := readPassphraseTwice()
@@ -116,18 +135,35 @@ func cmdAdminInit(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(adminPath(*dir), append(raw, '\n'), 0o600); err != nil {
+	if err := os.WriteFile(adminPath(dir), append(raw, '\n'), 0o600); err != nil {
 		return err
 	}
 
-	fmt.Printf("Minted a mesh.\n\n")
+	// Write the keys into the config and enrol this device, so a fresh mesh is
+	// usable the moment init returns.
+	enrolled := false
+	if cfgPath != "" {
+		if err := addAdminKeys(cfgPath, af.Keys); err != nil {
+			return err
+		}
+		admin := &cred.Admin{Priv: primary.Priv, Pub: primary.Pub}
+		if err := issueLocal(admin, auth, stateDir, name, 1); err == nil {
+			enrolled = true
+		}
+	}
+
+	fmt.Printf("\nMinted the mesh authority.\n\n")
 	fmt.Printf("  mesh id     %s\n", auth.ID())
-	fmt.Printf("  prefix      %s\n", auth.ID().Prefix())
-	fmt.Printf("  admin key   %s\n", adminPath(*dir))
+	fmt.Printf("  admin key   %s\n", adminPath(dir))
+	if enrolled {
+		fmt.Printf("  this device is enrolled\n")
+	}
 	fmt.Println()
-	fmt.Println("Put this in every node's config — these are public values:")
-	fmt.Printf("  admin_keys = [%q, %q]\n", af.Keys[0], af.Keys[1])
-	fmt.Println()
+	if cfgPath == "" {
+		fmt.Println("Put this in every node's config — these are public values:")
+		fmt.Printf("  admin_keys = [%q, %q]\n", af.Keys[0], af.Keys[1])
+		fmt.Println()
+	}
 	fmt.Println("RECOVERY KEY — written down now or never. It is not saved anywhere,")
 	fmt.Println("and it is what lets you keep this mesh if the admin key above is lost:")
 	fmt.Printf("\n  %s\n\n", base64.StdEncoding.EncodeToString(recovery.Priv))
@@ -135,10 +171,71 @@ func cmdAdminInit(args []string) error {
 	return nil
 }
 
+// addAdminKeys appends the authority to a config that already exists.
+func addAdminKeys(cfgPath string, keys []string) error {
+	f, err := os.OpenFile(cfgPath, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = fmt.Fprintf(f, "\n# The admin keys this mesh trusts to sign membership. Public values,\n"+
+		"# fixed when the mesh was minted: the mesh id commits to the set.\nadmin_keys = [%q, %q]\n",
+		keys[0], keys[1])
+	return err
+}
+
+// issueFor signs a credential and returns it in wire form.
+//
+// The mesh id is the authority's, not the signer's: a credential says which
+// mesh it admits you to, and this admin is one key among that mesh's set. Admin
+// .Issue cannot know that — it only has its own key — so every caller has to
+// restamp and re-sign, and doing that in three places was two too many.
+func issueFor(admin *cred.Admin, auth *cred.Authority, devPub, wgPub []byte,
+	name string, serial uint64, now time.Time, life time.Duration) ([]byte, error) {
+
+	// A serial of zero means "now", in unix seconds.
+	//
+	// Serials must increase per device, because a revocation withdraws its
+	// serial and everything below — so re-issuing at the same serial would put
+	// the renewed credential inside the range an old revocation covers. Nothing
+	// tracks a counter per device, and a clock is a counter everyone already
+	// agrees on.
+	if serial == 0 {
+		serial = uint64(now.Unix())
+	}
+	c, err := admin.Issue(devPub, wgPub, name, serial, now, life)
+	if err != nil {
+		return nil, err
+	}
+	c.MeshID = auth.ID()
+	d, err := c.Digest()
+	if err != nil {
+		return nil, err
+	}
+	c.Sig = ed25519.Sign(admin.Priv, d[:])
+	return c.MarshalBinary()
+}
+
+// issueLocal enrols the device whose state directory this is.
+func issueLocal(admin *cred.Admin, auth *cred.Authority, stateDir, name string, serial uint64) error {
+	st, err := state.LoadOrCreateState(stateDir)
+	if err != nil {
+		return err
+	}
+	raw, err := issueFor(admin, auth, st.Identity.DevicePub, st.Identity.WGPub[:],
+		name, serial, time.Now(), cred.DefaultLife)
+	if err != nil {
+		return err
+	}
+	return st.SetCredential(raw)
+}
+
 func loadAdmin(dir string) (*cred.Admin, *cred.Authority, error) {
 	raw, err := os.ReadFile(adminPath(dir))
 	if err != nil {
-		return nil, nil, fmt.Errorf("no admin key at %s — run `shrooms admin init`", adminPath(dir))
+		return nil, nil, fmt.Errorf("no admin key at %s.\n"+
+			"It is created by `shrooms init` on the machine that made the mesh, and "+
+			"stays there — this command has to run where it lives", adminPath(dir))
 	}
 	var af adminFile
 	if err := json.Unmarshal(raw, &af); err != nil {
@@ -199,7 +296,7 @@ func cmdAdminIssue(args []string) error {
 	stateDir := fs.String("state", state.DefaultStateDir, "the device's state directory")
 	name := fs.String("name", "", "the device's name")
 	life := fs.Duration("life", cred.DefaultLife, "how long the credential is valid")
-	serial := fs.Uint64("serial", 0, "credential serial; must increase per device")
+	serial := fs.Uint64("serial", 0, "credential serial; must increase per device (default: now)")
 	devHex := fs.String("device", "", "the device's public key, hex (for a remote device)")
 	wgHex := fs.String("wg", "", "the device's tunnel key, hex (for a remote device)")
 	write := fs.Bool("write", true, "store the credential in the device's state")
@@ -237,20 +334,11 @@ func cmdAdminIssue(args []string) error {
 	}
 
 	now := time.Now()
-	c, err := admin.Issue(devPub, wgPub, *name, *serial, now, *life)
+	raw, err := issueFor(admin, auth, devPub, wgPub, *name, *serial, now, *life)
 	if err != nil {
 		return err
 	}
-	// The mesh id is the authority's, not the signer's: a credential says which
-	// mesh it admits you to, and this admin is one key among that mesh's set.
-	c.MeshID = auth.ID()
-	d, err := c.Digest()
-	if err != nil {
-		return err
-	}
-	c.Sig = ed25519.Sign(admin.Priv, d[:])
-
-	raw, err := c.MarshalBinary()
+	c, err := cred.UnmarshalCredential(raw)
 	if err != nil {
 		return err
 	}
@@ -294,9 +382,18 @@ func cmdAdminRevoke(args []string) error {
 	fs := flag.NewFlagSet("admin revoke", flag.ExitOnError)
 	dir := fs.String("dir", defaultAdminDir(), "where the admin key is kept")
 	devHex := fs.String("device", "", "the device's public key, hex")
-	serial := fs.Uint64("serial", 0, "revoke this serial and everything below it")
+	// Zero means "everything issued up to now", which is what revoking a device
+	// means. Serials are unix seconds by default (see issueFor), so a
+	// timestamp covers every credential that device has and none it cannot yet
+	// have been given.
+	serial := fs.Uint64("serial", 0, "revoke this serial and everything below it (default: now)")
+	sock := fs.String("socket", DefaultSocket, "control socket of the local daemon")
+	publish := fs.Bool("publish", true, "hand it to the local daemon to put on the mesh")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *serial == 0 {
+		*serial = uint64(time.Now().Unix())
 	}
 	admin, auth, err := loadAdmin(*dir)
 	if err != nil {
@@ -326,10 +423,54 @@ func cmdAdminRevoke(args []string) error {
 	}
 
 	fmt.Printf("Revoked %x, serial %d and below.\n\n", dev[:8], *serial)
+
+	if *publish {
+		if err := publishRevocation(*sock, raw); err != nil {
+			fmt.Printf("Not published: %v\n\n", err)
+			fmt.Printf("Hand it to a running node yourself:\n\n  %s\n\n",
+				base64.StdEncoding.EncodeToString(raw))
+			fmt.Println("Every node that sees it verifies the signature itself and passes")
+			fmt.Println("it on, so one node is enough. The device stays out either way")
+			fmt.Println("once its credential expires, which is what expiry is for.")
+			return nil
+		}
+		fmt.Println("Published. Every node that sees it verifies the signature itself,")
+		fmt.Println("drops the device, and passes it on — so a node that was offline")
+		fmt.Println("learns it from whoever is up.")
+		return nil
+	}
 	fmt.Printf("  %s\n\n", base64.StdEncoding.EncodeToString(raw))
-	fmt.Println("Distribution over the mesh is not built yet, so this has to be")
-	fmt.Println("carried by hand for now. The device stays out either way once its")
-	fmt.Println("credential expires, which is what expiry is for.")
+	fmt.Println("Hand that to any running node to put it on the mesh.")
+	return nil
+}
+
+// publishRevocation hands a signed revocation to the local daemon.
+func publishRevocation(sock string, raw []byte) error {
+	if sock == DefaultSocket {
+		if _, err := os.Stat(sock); err != nil {
+			if _, err := os.Stat(LegacySocket); err == nil {
+				sock = LegacySocket
+			}
+		}
+	}
+	client := &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, "unix", sock)
+			},
+		},
+		Timeout: 10 * time.Second,
+	}
+	body := strings.NewReader(base64.StdEncoding.EncodeToString(raw))
+	resp, err := client.Post("http://unix/revoke", "text/plain", body)
+	if err != nil {
+		return fmt.Errorf("no daemon on %s: %w", sock, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("the daemon refused it: %s", strings.TrimSpace(string(msg)))
+	}
 	return nil
 }
 

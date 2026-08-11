@@ -445,30 +445,56 @@ func (m *Mesh) publishRevocation(raw []byte, now time.Time) error {
 // on precisely the input an attacker controls — the number of device keys they
 // can invent.
 func (m *Mesh) handleRevocation(raw []byte, now time.Time) {
+	if _, err := m.applyRevocation(raw, now); err != nil {
+		m.log.Warn("ignoring a revocation", "err", err)
+	}
+}
+
+// Revoke takes a revocation from the admin tooling and puts it on the bus.
+//
+// This is how one gets there at all: the admin signs offline, and the daemon is
+// the only thing on the machine with a rendezvous connection. Verified exactly
+// as one arriving from a peer would be — the socket says who may ask, not what
+// is true.
+func (m *Mesh) Revoke(raw []byte) error {
+	fresh, err := m.applyRevocation(raw, time.Now())
+	if err != nil {
+		return err
+	}
+	if !fresh {
+		// Already known, and already relayed when it first arrived. Not an
+		// error: re-publishing a revocation is always safe and often the point.
+		return m.publishRevocation(raw, time.Now())
+	}
+	return nil
+}
+
+// applyRevocation verifies, records, and passes on. Reports whether it was new.
+func (m *Mesh) applyRevocation(raw []byte, now time.Time) (bool, error) {
 	if m.authority == nil {
-		return // no authority, no revocations to honour
+		return false, errors.New("this mesh has no admin keys, so nothing can be revoked")
 	}
 	r, err := cred.UnmarshalRevocation(raw)
 	if err != nil {
-		m.log.Debug("ignoring an unreadable revocation", "err", err)
-		return
+		return false, fmt.Errorf("unreadable revocation: %w", err)
 	}
 	if err := cred.VerifyRevocationBy(m.authority, r); err != nil {
-		m.log.Warn("ignoring a revocation this mesh did not sign", "err", err)
-		return
+		return false, fmt.Errorf("this mesh did not sign that revocation: %w", err)
 	}
-	if m.revoked.Add(r, raw, now.Add(cred.DefaultLife)) {
-		m.log.Info("device revoked",
-			"device", hex.EncodeToString(r.DevicePub)[:16], "serial", r.Serial)
-		// Drop it now rather than waiting for its announce to lapse.
-		m.roster.Forget(r.DevicePub)
-		m.requestResync()
-		// Pass it on. New to us means possibly new to a peer, and a node that
-		// was offline when the admin published learns it from whoever is up.
-		if err := m.publishRevocation(raw, now); err != nil {
-			m.log.Debug("could not relay a revocation", "err", err)
-		}
+	if !m.revoked.Add(r, raw, now.Add(cred.DefaultLife)) {
+		return false, nil
 	}
+	m.log.Info("device revoked",
+		"device", hex.EncodeToString(r.DevicePub)[:16], "serial", r.Serial)
+	// Drop it now rather than waiting for its announce to lapse.
+	m.roster.Forget(r.DevicePub)
+	m.requestResync()
+	// Pass it on. New to us means possibly new to a peer, and a node that
+	// was offline when the admin published learns it from whoever is up.
+	if err := m.publishRevocation(raw, now); err != nil {
+		m.log.Debug("could not relay a revocation", "err", err)
+	}
+	return true, nil
 }
 
 // reportUnknown logs packets WireGuard rejected as an unknown message type.

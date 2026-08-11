@@ -259,10 +259,22 @@ $ ssh root@VPS_IP 'ufw allow 51820/udp'    # or your firewall's equivalent
 
 ### 3. Join from your laptop
 
+On the machine that is already a member:
+
 ```console
-$ sudo ./bin/shrooms join <NETWORK-KEY> --name laptop
+$ shrooms invite
+  shrooms join --invite BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U
+```
+
+Then here, while that is still running:
+
+```console
+$ sudo ./bin/shrooms join --invite <TOKEN> --name laptop
 $ sudo ./bin/shrooms daemon -v
 ```
+
+`sudo ./bin/shrooms join <NETWORK-KEY> --name laptop` also works, and is what to
+use when nothing is running on the other end.
 
 Leave that running (or `sudo make install` and use systemd here too). On first start it generates a device identity, derives its
 overlay address, connects to the fleet, and announces itself.
@@ -543,10 +555,45 @@ key is needed only to enrol and revoke — so it can live offline, on a Keycard 
 in a drawer, never on a participating node.
 
 ```console
-$ shrooms admin init                       # mints a mesh: two keys, one kept
-$ shrooms admin issue --name laptop        # sign this device's membership
+$ shrooms init --name laptop               # a mesh: network key, admin keys,
+                                           #   and this device's credential
+$ shrooms invite                           # admit one more device, once
 $ shrooms admin revoke --device <hex>      # withdraw one before it expires
 ```
+
+**Creating a mesh is one command and adding a device is two** — `invite` here,
+`join --invite` there. That matters more than it sounds: the intermediate
+version had six steps and a credential blob copied between machines by hand,
+which is the sort of thing people skip.
+
+```console
+laptop $ shrooms invite
+        Invite valid for 15m0s. On the joining device:
+          shrooms join --invite BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U
+        [QR code]
+        Waiting...
+
+vps    $ shrooms join --invite BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U --name vps
+        Asking to join as "vps"...
+        Enrolled. Credential serial 1, expires 2026-09-10T11:03:51+02:00.
+```
+
+The token is 128 bits, good for **one device and fifteen minutes**, and both
+sides derive from it where to meet and what to encrypt with — so a wrong token
+addresses a topic nobody answers rather than a guess anyone can grind against.
+What comes back is the network key, the admin keys and a credential issued to
+that device's keys, sealed to the device that asked
+([ADR-017](docs/adr/017-invite-tokens.md)). The network key never appears on a
+screen.
+
+"Used once" needs no consensus: an invite is answered only by the machine that
+issued it, so it is one machine's local decision. The price is that **the
+inviter must be running while the other device joins** — which is also the
+point, since it means a human is present.
+
+`shrooms join <NETWORK-KEY>` is still there for bootstrapping and recovery, and
+`shrooms admin init` mints an authority separately for a mesh created with
+`--no-admin`.
 
 `init` prints a **recovery key once and never stores it**, and puts both public
 keys in your config:
@@ -578,8 +625,11 @@ revocation is only the fast path. The lifetime is the admin's choice per device
 (30 days by default) and lives inside the signature, so a device cannot extend
 its own membership.
 
-**Revocations travel over the mesh.** The admin publishes one; every node
-verifies it against the admin keys *itself*, drops the device, and passes it on
+**Revocations travel over the mesh.** `shrooms admin revoke` signs one and hands
+it to the local daemon over the control socket — the admin key is offline by
+design, so something with a rendezvous connection has to put it on the bus. From
+there every node verifies it against the admin keys *itself*, drops the device,
+and passes it on
 — so a compromised node cannot un-revoke anyone by staying quiet, and a node
 that was offline learns it from whoever is up. Entries are kept until the
 credential they withdraw would have expired anyway; after that expiry does the
@@ -592,7 +642,7 @@ key — and does not exist on a headless machine. `--no-passphrase` is there for
 a file you keep on an encrypted volume.
 
 Not built yet: automatic renewal, so a credential is re-issued by hand every 30
-days.
+days — `shrooms invite` again is the shortest way to do it.
 
 ## Bandwidth, and what a node contributes
 

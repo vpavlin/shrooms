@@ -110,3 +110,40 @@ func TestAnotherMeshsCredentialIsRefused(t *testing.T) {
 }
 
 func signWith(a *cred.Admin, d [32]byte) []byte { return ed25519.Sign(a.Priv, d[:]) }
+
+// Revoke is reachable over the control socket, so what it refuses matters as
+// much as what it accepts: the socket says who may ask, and the signature
+// inside says whether it is honoured.
+//
+// Only the refusals are exercised here. Accepting one publishes to the bus,
+// which needs a live rendezvous node.
+func TestRevokeRefusesWhatThisMeshDidNotSign(t *testing.T) {
+	ours, _ := cred.NewAdmin()
+	theirs, _ := cred.NewAdmin()
+	auth, _ := cred.NewAuthority(ours.Pub)
+	id, _ := identity.New()
+
+	m := &Mesh{authority: auth}
+
+	if err := m.Revoke([]byte("not a revocation")); err == nil {
+		t.Error("accepted rubbish as a revocation")
+	}
+
+	r, err := theirs.Revoke(id.DevicePub, 1, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.MeshID = auth.ID() // claims to be ours; the signature is not
+	d, _ := r.Digest()
+	r.Sig = signWith(theirs, d)
+	raw, _ := r.MarshalBinary()
+	if err := m.Revoke(raw); err == nil {
+		t.Error("accepted a revocation signed by another mesh's admin")
+	}
+
+	// And a mesh with no authority has nothing to revoke against, so it must
+	// say so rather than quietly dropping a device on anyone's say-so.
+	if err := (&Mesh{}).Revoke(raw); err == nil {
+		t.Error("a mesh with no admin keys accepted a revocation")
+	}
+}
