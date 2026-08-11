@@ -50,6 +50,10 @@ data class Peer(
 data class Dns(
     val intercepted: Long = 0,
     val interceptFailed: Long = 0,
+    val missed: Long = 0,
+    val nxdomain: Long = 0,
+    val nodataA: Long = 0,
+    val nodataOther: Long = 0,
     val queries: Long = 0,
     val answers: Long = 0,
     val refused: Long = 0,
@@ -57,9 +61,20 @@ data class Dns(
     val forwardFailed: Long = 0,
 ) {
     /** One line for the UI, saying which layer is doing something. */
-    fun summary(): String =
-        "arrived $intercepted · answered $answers · refused $refused · forwarded $forwarded" +
-            if (forwardFailed > 0) " · fwd-fail $forwardFailed" else ""
+    fun summary(): String {
+        var s = "arrived $intercepted · answered $answers · refused $refused · forwarded $forwarded"
+        if (forwardFailed > 0) s += " · fwd-fail $forwardFailed"
+        // Queries aimed at the resolver in a form it does not answer, which in
+        // practice means DNS over TCP. An app that resolves nothing while
+        // another resolves everything is usually this.
+        if (missed > 0) s += " · unanswerable $missed"
+        // The two outcomes that look like success from the intercept's side
+        // and like failure from the browser's.
+        if (nxdomain > 0) s += " · unknown-name $nxdomain"
+        if (nodataA > 0) s += " · ipv4-only $nodataA"
+        if (nodataOther > 0) s += " · other-type $nodataOther"
+        return s
+    }
 }
 
 data class Rendezvous(val status: String, val ok: Boolean, val problem: String, val detail: String)
@@ -179,6 +194,10 @@ object MeshState {
                 Dns(
                     intercepted = d?.optLong("intercepted") ?: 0,
                     interceptFailed = d?.optLong("intercept_failed") ?: 0,
+                    missed = d?.optLong("missed") ?: 0,
+                    nxdomain = d?.optLong("nxdomain") ?: 0,
+                    nodataA = d?.optLong("nodata_a") ?: 0,
+                    nodataOther = d?.optLong("nodata_other") ?: 0,
                     queries = d?.optLong("queries") ?: 0,
                     answers = d?.optLong("answers") ?: 0,
                     refused = d?.optLong("refused") ?: 0,

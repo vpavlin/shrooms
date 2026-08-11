@@ -35,6 +35,17 @@ type Intercept struct {
 
 	handled atomic.Uint64
 	failed  atomic.Uint64
+
+	// missed counts packets addressed to the resolver that this cannot answer:
+	// TCP rather than UDP, or some other port.
+	//
+	// Here because "names do not resolve in one app and do in another" has
+	// exactly two shapes and no way to tell them apart from outside — the query
+	// never reached us, or it reached us in a form we drop. WireGuard then
+	// looks for a peer owning the resolver's address, finds none, and discards
+	// it silently, which is indistinguishable from the query never arriving.
+	// Guessing at this once cost a day; counting is cheap.
+	missed atomic.Uint64
 }
 
 // NewIntercept wraps a TUN device.
@@ -46,6 +57,10 @@ func NewIntercept(dev tun.Device, self netip.Addr, answer func([]byte) ([]byte, 
 func (i *Intercept) Stats() (handled, failed uint64) {
 	return i.handled.Load(), i.failed.Load()
 }
+
+// Missed reports packets aimed at the resolver that arrived in a form it does
+// not answer — almost always DNS over TCP.
+func (i *Intercept) Missed() uint64 { return i.missed.Load() }
 
 // Read removes queries for us from the batch and answers them.
 //
@@ -68,6 +83,9 @@ func (i *Intercept) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
 	for k := 0; k < n; k++ {
 		pkt := bufs[k][offset : offset+sizes[k]]
 
+		if i.aimedAtUs(pkt) {
+			i.missed.Add(1)
+		}
 		if query, ok := i.queryForUs(pkt); ok {
 			if reply := i.respond(pkt, query, offset); reply != nil {
 				// Straight back to the OS: this is a reply, not something to
@@ -96,6 +114,23 @@ const (
 	udpHeaderLen  = 8
 	protoUDP      = 17
 )
+
+// aimedAtUs reports whether a packet is addressed to the resolver but is not a
+// UDP query it can answer. Counting only, so that a client falling back to TCP
+// is visible rather than looking like silence.
+func (i *Intercept) aimedAtUs(pkt []byte) bool {
+	if len(pkt) < ipv6HeaderLen || pkt[0]>>4 != 6 {
+		return false
+	}
+	dst, ok := netip.AddrFromSlice(pkt[24:40])
+	if !ok || dst != i.self {
+		return false
+	}
+	if _, answerable := i.queryForUs(pkt); answerable {
+		return false
+	}
+	return true
+}
 
 // queryForUs reports whether a packet is a DNS query addressed to this device,
 // and returns the query payload.

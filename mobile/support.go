@@ -147,11 +147,21 @@ type statusPayload struct {
 	DNS struct {
 		Intercepted     uint64 `json:"intercepted"`
 		InterceptFailed uint64 `json:"intercept_failed"`
-		Queries         uint64 `json:"queries"`
-		Answers         uint64 `json:"answers"`
-		Refused         uint64 `json:"refused"`
-		Forwarded       uint64 `json:"forwarded"`
-		ForwardFailed   uint64 `json:"forward_failed"`
+		// Missed is queries aimed at the resolver in a form it does not answer,
+		// which in practice means DNS over TCP.
+		Missed uint64 `json:"missed"`
+		// NXDomain and NoData are the two outcomes that used to be invisible: a
+		// name we do not know, and a name we know with no record of the type
+		// asked for. The overlay is IPv6-only, so NoDataA is a client that
+		// asked only for IPv4 — which fails while the resolver works perfectly.
+		NXDomain      uint64 `json:"nxdomain"`
+		NoDataA       uint64 `json:"nodata_a"`
+		NoDataOther   uint64 `json:"nodata_other"`
+		Queries       uint64 `json:"queries"`
+		Answers       uint64 `json:"answers"`
+		Refused       uint64 `json:"refused"`
+		Forwarded     uint64 `json:"forwarded"`
+		ForwardFailed uint64 `json:"forward_failed"`
 	} `json:"dns"`
 }
 

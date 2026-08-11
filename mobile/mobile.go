@@ -517,11 +517,13 @@ func StatusJSON() string {
 	if s.dnsIntercept != nil {
 		handled, failed := s.dnsIntercept.Stats()
 		snap.DNS.Intercepted, snap.DNS.InterceptFailed = handled, failed
+		snap.DNS.Missed = s.dnsIntercept.Missed()
 	}
 	if s.dnsServer != nil {
-		q, a, r, f, ff := s.dnsServer.Stats()
-		snap.DNS.Queries, snap.DNS.Answers = q, a
-		snap.DNS.Refused, snap.DNS.Forwarded, snap.DNS.ForwardFailed = r, f, ff
+		c := s.dnsServer.Count()
+		snap.DNS.Queries, snap.DNS.Answers = c.Queries, c.Answers
+		snap.DNS.Refused, snap.DNS.Forwarded, snap.DNS.ForwardFailed = c.Refused, c.Forwarded, c.ForwardFail
+		snap.DNS.NXDomain, snap.DNS.NoDataA, snap.DNS.NoDataOther = c.NXDomain, c.NoDataA, c.NoDataOther
 	}
 	b, err := json.Marshal(snap)
 	if err != nil {

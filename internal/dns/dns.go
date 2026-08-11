@@ -84,10 +84,41 @@ type Server struct {
 
 	mu          sync.Mutex
 	queries     uint64
+	nxdomain    uint64
+	nodataA     uint64
+	nodataOther uint64
 	answers     uint64
 	refused     uint64
 	forwarded   uint64
 	forwardFail uint64
+}
+
+// Counters is everything the resolver has done, by outcome.
+//
+// Every outcome, deliberately. Two of them — NXDOMAIN, and an empty answer to
+// an A query — had no counter at all, which made "the query arrived and we
+// replied" indistinguishable from "we answered it". That gap is where a real
+// bug hid.
+type Counters struct {
+	Queries     uint64
+	Answers     uint64
+	Refused     uint64
+	Forwarded   uint64
+	ForwardFail uint64
+	NXDomain    uint64
+	NoDataA     uint64
+	NoDataOther uint64
+}
+
+// Count returns every outcome.
+func (s *Server) Count() Counters {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return Counters{
+		Queries: s.queries, Answers: s.answers, Refused: s.refused,
+		Forwarded: s.forwarded, ForwardFail: s.forwardFail,
+		NXDomain: s.nxdomain, NoDataA: s.nodataA, NoDataOther: s.nodataOther,
+	}
 }
 
 // Stats reports what the server has seen, for `status`.
@@ -201,6 +232,9 @@ func (s *Server) answer(query []byte) ([]byte, error) {
 		addr, found = s.Lookup(host)
 	}
 	if !found {
+		s.mu.Lock()
+		s.nxdomain++
+		s.mu.Unlock()
 		return s.rcode(header, q, dnsmessage.RCodeNameError) // NXDOMAIN
 	}
 
@@ -208,12 +242,23 @@ func (s *Server) answer(query []byte) ([]byte, error) {
 	// NOERROR with no records, not NXDOMAIN: NXDOMAIN means the name does not
 	// exist at all, and a resolver that believes it will not then try AAAA.
 	if q.Type == dnsmessage.TypeA {
+		// Counted separately, and it is the interesting one. The overlay is
+		// IPv6-only, so a client that asks only for A gets a correct empty
+		// answer and concludes the name is unusable — which is a working
+		// resolver and a broken experience, and looks from outside exactly
+		// like a resolver that is not working at all.
+		s.mu.Lock()
+		s.nodataA++
+		s.mu.Unlock()
 		if err := reply.StartAnswers(); err != nil {
 			return nil, err
 		}
 		return reply.Finish()
 	}
 	if q.Type != dnsmessage.TypeAAAA {
+		s.mu.Lock()
+		s.nodataOther++
+		s.mu.Unlock()
 		if err := reply.StartAnswers(); err != nil {
 			return nil, err
 		}
