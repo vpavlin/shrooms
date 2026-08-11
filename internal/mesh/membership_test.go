@@ -59,9 +59,10 @@ func TestWithAnAuthorityACredentialIsRequired(t *testing.T) {
 	}
 }
 
-// A credential is public and rides a public bus, so anyone can copy one.
-// Binding it to the key that signed the announce is what stops a copied
-// credential being replayed by another device.
+// A credential holds nothing secret and every mesh member can read one: it
+// rides inside an announce encrypted to the mesh, not to a recipient. Binding
+// it to the key that signed the announce is what stops one member replaying
+// another member's membership.
 func TestACopiedCredentialDoesNotAdmitAnotherDevice(t *testing.T) {
 	admin, _ := cred.NewAdmin()
 	auth, _ := cred.NewAuthority(admin.Pub)

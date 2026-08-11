@@ -282,8 +282,9 @@ func (c *Credential) MarshalBinary() ([]byte, error) {
 
 // UnmarshalCredential reads one, rejecting anything malformed.
 //
-// Every length is checked before it is used: this parses bytes that arrived
-// from a public bus, and a credential that has not been verified yet is
+// Every length is checked before it is used. These bytes arrive inside an
+// announce from a mesh member, and a member may be hostile — the parse happens
+// before anything has been verified, so until Verify returns nil this is
 // attacker-controlled input.
 func UnmarshalCredential(b []byte) (*Credential, error) {
 	if len(b) < credFixed+sigLen {

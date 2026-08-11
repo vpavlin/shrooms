@@ -374,9 +374,13 @@ func needsRendezvousRepair(h Health, lastOK bool, now time.Time) (why string, ne
 // authority, a peer must present a credential that authority signed, naming
 // the device key that signed the announce.
 //
-// That last check is the one that matters. A credential is public and travels
-// on a public bus, so anyone can copy one; binding it to the announce's signing
-// key is what stops a copied credential being replayed by someone else.
+// That last check is the one that matters. A credential holds nothing secret,
+// and every mesh member can read it: it rides inside an announce, which is
+// encrypted to the mesh rather than to a recipient, so any member — or anyone
+// who has obtained the network key — can lift one. Binding it to the key that
+// signed the announce is what stops a member replaying another member's
+// membership. It is not visible to a passing observer on the shard, who sees
+// only a fixed-size ciphertext.
 func (m *Mesh) checkMembership(a *control.Announce, now time.Time) error {
 	if m.authority == nil {
 		return nil

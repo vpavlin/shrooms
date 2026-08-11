@@ -563,8 +563,14 @@ lets credentials refresh while the root stays offline.
 **Both schemes run at once.** A mesh with no `admin_keys` behaves exactly as it
 does today. With them, a peer must also present a credential the set signed,
 naming the same device and tunnel keys as the announce that carried it — so a
-copied credential admits nobody, since credentials are public and travel on a
-public bus.
+copied credential admits nobody.
+
+That binding is needed because a credential holds nothing secret and **every
+mesh member can read one**: it rides inside an announce, which is encrypted to
+the mesh rather than to a particular recipient. So any member — or anyone who
+obtains the network key — can lift a credential; they simply cannot use it,
+because it names someone else's keys. A passing observer on the shard sees none
+of this, only a fixed-size ciphertext.
 
 **Credentials expire, and that is the point.** A gossip bus lets an attacker
 suppress a revocation it cannot forge; expiry is what bounds that, and gossiped

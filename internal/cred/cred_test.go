@@ -247,9 +247,9 @@ func TestCredentialSizeAgainstTheAnnounceBudget(t *testing.T) {
 	}
 }
 
-// The parser reads bytes from a public bus, so every malformed shape must be
-// refused rather than panic. A credential that has not been verified yet is
-// attacker-controlled input.
+// The parser reads bytes that arrived from a mesh member, who may be hostile,
+// and it runs before anything is verified — so every malformed shape must be
+// refused rather than panic.
 func TestUnmarshalRejectsMalformedInput(t *testing.T) {
 	admin, _ := NewAdmin()
 	dev, wg := device(t)
