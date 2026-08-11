@@ -20,6 +20,7 @@ import (
 	"github.com/vpavlin/shrooms/internal/invite"
 	"github.com/vpavlin/shrooms/internal/rendezvous"
 	"github.com/vpavlin/shrooms/internal/state"
+	"github.com/vpavlin/shrooms/internal/waku"
 )
 
 // A daemon with no mesh yet.
@@ -48,8 +49,28 @@ func runWaiting(ctx context.Context, log *slog.Logger, cfgPath, stateDir, sock s
 		return err
 	}
 
+	// The rendezvous node starts now rather than when someone joins.
+	//
+	// It used to start inside the join, which put its three seconds of dialling
+	// at exactly the moment a human is watching — and worse, the first request
+	// was often published before the node had peers, so the exchange waited out
+	// a five-second retry before it could possibly work. Connecting while
+	// nobody is waiting makes redeeming an invite immediate.
+	//
+	// The cost is honest: an idle node on a machine that has not joined
+	// anything still carries the fleet's traffic, ~20 MB/h in the default Core
+	// mode. A machine that will sit prepared for a long time should say
+	// mode = "Edge" in its config, which is a sixth of that.
+	fleet := waitingFleet(cfgPath)
+	node, err := startNode(nodeConfig(fleet))
+	if err != nil {
+		return err
+	}
+	defer node.Close()
+
 	log.Info("waiting to be told which mesh this is",
-		"socket", sock, "device", hex.EncodeToString(st.Identity.DevicePub[:8]))
+		"socket", sock, "device", hex.EncodeToString(st.Identity.DevicePub[:8]),
+		"preset", fleet.Preset, "cluster", fleet.ClusterID, "mode", fleet.Mode)
 
 	joined := make(chan struct{})
 	mux := http.NewServeMux()
@@ -88,7 +109,7 @@ func runWaiting(ctx context.Context, log *slog.Logger, cfgPath, stateDir, sock s
 		jctx, cancel := context.WithTimeout(r.Context(), wait)
 		defer cancel()
 
-		res, err := joinHere(jctx, log, st, cfgPath, stateDir, in.Token, in.Key,
+		res, err := joinHere(jctx, log, node, st, cfgPath, stateDir, in.Token, in.Key,
 			in.Name, in.Port, in.Advert, in.Relay)
 		if err != nil {
 			log.Warn("join failed", "err", err)
@@ -142,6 +163,10 @@ func runWaiting(ctx context.Context, log *slog.Logger, cfgPath, stateDir, sock s
 	case <-joined:
 		srv.Close()
 		os.Remove(sock)
+		// Closed explicitly: syscall.Exec replaces the process image, so no
+		// deferred call runs, and a socket the library still holds would be
+		// inherited by the daemon that comes up next and refuse to rebind.
+		node.Close()
 		return reexec(log)
 	}
 }
@@ -158,7 +183,7 @@ type joinResult struct {
 
 // joinHere writes the config for the mesh this device has been invited to, or
 // told the key of.
-func joinHere(ctx context.Context, log *slog.Logger, st *state.State, cfgPath, stateDir,
+func joinHere(ctx context.Context, log *slog.Logger, node *waku.Node, st *state.State, cfgPath, stateDir,
 	token, key, name string, port uint16, advertise string, relay bool) (*joinResult, error) {
 
 	if _, err := os.Stat(cfgPath); err == nil {
@@ -180,36 +205,8 @@ func joinHere(ctx context.Context, log *slog.Logger, st *state.State, cfgPath, s
 		if err != nil {
 			return nil, err
 		}
-		// This machine's own fleet settings, not the shipped defaults.
-		//
-		// The invite is not allowed to say which fleet to use — a device that
-		// could be told that could be told to use somebody else's — but the
-		// local config may, and ignoring it was wrong: a node whose config
-		// names a different preset or cluster than today's default would
-		// publish its request onto a fleet the inviter is not on. Both sides
-		// behave perfectly and never meet, which presents as a join that waits
-		// out its timeout with nothing in either log.
-		fleet := state.DefaultConfig()
-		if onDisk, err := state.LoadConfigUnvalidated(cfgPath); err == nil {
-			if onDisk.Preset != "" {
-				fleet.Preset = onDisk.Preset
-			}
-			fleet.ClusterID = onDisk.ClusterID
-			fleet.EntryNodes = onDisk.EntryNodes
-			if onDisk.Mode != "" {
-				fleet.Mode = onDisk.Mode
-			}
-		}
-		node, err := startNode(nodeConfig(fleet))
-		if err != nil {
-			return nil, err
-		}
-		defer node.Close()
 
-		// Logged, because a mismatch here is invisible otherwise: the only
-		// symptom is that nobody answers.
-		log.Info("redeeming an invite",
-			"preset", fleet.Preset, "cluster", fleet.ClusterID, "mode", fleet.Mode)
+		log.Info("redeeming an invite")
 		resp, err := invite.Redeem(ctx, rendezvous.InviteTransport(node), secret, &invite.Request{
 			DevicePub: st.Identity.DevicePub,
 			WGPub:     st.Identity.WGPub[:],
@@ -305,6 +302,30 @@ func reexec(log *slog.Logger) error {
 	}
 	log.Info("restarting into the mesh")
 	return syscall.Exec(exe, os.Args, os.Environ())
+}
+
+// waitingFleet is which rendezvous network to sit on while waiting.
+//
+// This machine's own config, not the shipped defaults: a node whose config
+// names a different preset or cluster would otherwise publish its join request
+// onto a fleet the inviter is not on, and both ends would behave perfectly and
+// never meet. The invite is still not allowed to say — a device that could be
+// told which fleet to use could be told to use somebody else's.
+func waitingFleet(cfgPath string) state.Config {
+	fleet := state.DefaultConfig()
+	onDisk, err := state.LoadConfigUnvalidated(cfgPath)
+	if err != nil {
+		return fleet
+	}
+	if onDisk.Preset != "" {
+		fleet.Preset = onDisk.Preset
+	}
+	if onDisk.Mode != "" {
+		fleet.Mode = onDisk.Mode
+	}
+	fleet.ClusterID = onDisk.ClusterID
+	fleet.EntryNodes = onDisk.EntryNodes
+	return fleet
 }
 
 // configHasNoKey reports whether this machine has yet to join anything.
