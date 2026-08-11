@@ -25,22 +25,36 @@ func TestResolveFindsPeerByName(t *testing.T) {
 	}
 }
 
-// Names are self-asserted, so two peers can claim one. Picking either would
-// send traffic to a machine the user did not mean; the qualified form and the
-// address still work.
-func TestResolveRefusesAmbiguousName(t *testing.T) {
+// Names are self-asserted, so two entries can claim one — and the ordinary way
+// that happens is one device that has changed identity, announcing under a new
+// key while the old entry lives out its ForgetAfter. The live one is the one
+// still announcing.
+func TestResolvePicksTheFreshestClaimant(t *testing.T) {
 	nk, _ := identity.NewNetworkKey()
 	self, _ := identity.New()
-	a, _ := identity.New()
-	b, _ := identity.New()
+	old, _ := identity.New()
+	live, _ := identity.New()
 
 	m := &Mesh{roster: NewRoster(nk, self.DevicePub)}
 	now := time.Now()
-	m.roster.Apply(newAnnounce(t, a, "box", nil, 1), now)
-	m.roster.Apply(newAnnounce(t, b, "box", nil, 1), now)
+	m.roster.Apply(newAnnounce(t, old, "box", nil, 1), now.Add(-2*time.Hour))
+	m.roster.Apply(newAnnounce(t, live, "box", nil, 1), now)
 
-	if _, ok := m.Resolve("box"); ok {
-		t.Error("resolved a name two peers claim")
+	addr, ok := m.Resolve("box")
+	if !ok {
+		t.Fatal("a name claimed twice resolved to nothing")
+	}
+	if addr != identity.OverlayAddr(nk, live.DevicePub) {
+		t.Errorf("resolved to the stale entry: %v", addr)
+	}
+
+	// Order of arrival must not decide it — the same two entries applied the
+	// other way round resolve the same.
+	m2 := &Mesh{roster: NewRoster(nk, self.DevicePub)}
+	m2.roster.Apply(newAnnounce(t, live, "box", nil, 1), now)
+	m2.roster.Apply(newAnnounce(t, old, "box", nil, 1), now.Add(-2*time.Hour))
+	if addr, _ := m2.Resolve("box"); addr != identity.OverlayAddr(nk, live.DevicePub) {
+		t.Errorf("resolution depends on insertion order: %v", addr)
 	}
 }
 

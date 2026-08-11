@@ -3,6 +3,7 @@ package mesh
 import (
 	"net/netip"
 	"strings"
+	"time"
 
 	"github.com/vpavlin/shrooms/internal/v4"
 )
@@ -13,10 +14,23 @@ import (
 // file renders names, so what resolves is exactly what is written there —
 // otherwise a name would work in one and not the other.
 //
-// A name claimed by more than one peer resolves to none of them. Names are
-// self-asserted (ADR-008), and silently picking one would send traffic to a
-// machine the user did not mean; the qualified `<peer>.<mesh>` form and the
-// address itself both still work.
+// A name claimed by more than one peer resolves to the one heard from most
+// recently.
+//
+// This used to resolve to none of them, reasoning that names are self-asserted
+// (ADR-008) and picking one silently could send traffic to a machine the user
+// did not mean. What that missed is the ordinary way a name ends up claimed
+// twice: one device, whose identity changed — re-enrolled, re-installed, or
+// given a per-mesh identity by ADR-015 — announcing under a key the roster has
+// not seen before while the old entry sits there for its remaining hours of
+// ForgetAfter. Both entries are the same machine, one of them is dead, and
+// refusing to answer means the name stops working for up to six hours after a
+// device is re-added. That is what "k11.mesh resolves to nothing while k11 is
+// a direct peer with a fresh handshake" was.
+//
+// The freshest announce is the live device, and where two genuinely different
+// machines share a name it is the one still running. The qualified
+// `<peer>.<mesh>` form and the address itself work regardless.
 func (m *Mesh) Resolve(host string) (netip.Addr, bool) {
 	want := sanitiseName(host)
 	if want == "" {
@@ -24,17 +38,17 @@ func (m *Mesh) Resolve(host string) (netip.Addr, bool) {
 	}
 
 	var found netip.Addr
-	n := 0
+	var freshest time.Time
 	for _, p := range m.roster.Peers() {
-		if sanitiseName(p.Name) == want {
-			found = p.Overlay
-			n++
+		if sanitiseName(p.Name) != want {
+			continue
 		}
+		if found.IsValid() && !p.LastSeen.After(freshest) {
+			continue
+		}
+		found, freshest = p.Overlay, p.LastSeen
 	}
-	if n != 1 {
-		return netip.Addr{}, false
-	}
-	return found, true
+	return found, found.IsValid()
 }
 
 // ResolveSelf answers for this device's own name, so `ping <myname>.mesh`
