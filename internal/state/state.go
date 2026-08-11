@@ -418,6 +418,18 @@ type stateFile struct {
 	// identity it names, and a device that lost it would be unable to prove
 	// membership until re-enrolled.
 	Credential string `json:"credential,omitempty"`
+
+	// Master is the secret every per-mesh identity derives from (ADR-015),
+	// base64. Absent in every file written so far, and generated the first time
+	// a second mesh is joined — never for a device that only ever has one, so
+	// nothing is created that nothing uses.
+	Master string `json:"master,omitempty"`
+
+	// Meshes is per-mesh state, keyed by network id. The fields above remain
+	// the single-mesh form and are not duplicated into it for the mesh that
+	// owns them, so an older binary reading this file still finds what it
+	// expects.
+	Meshes map[string]meshStateFile `json:"meshes,omitempty"`
 }
 
 // State is the daemon-owned persistent state.
@@ -434,6 +446,14 @@ type State struct {
 	// ReplayGuard until they forget it, which looks exactly like the device
 	// having vanished.
 	Seq uint64
+
+	// Master derives this device's identity in every mesh but its first
+	// (ADR-015). Zero until a second mesh is joined.
+	Master identity.Master
+
+	// Meshes is per-mesh state, keyed by network id. Empty on a single-mesh
+	// device, where the fields above are the whole story.
+	Meshes map[string]*MeshState
 }
 
 // LoadOrCreateState reads device state, generating a fresh identity on first run.
@@ -489,6 +509,16 @@ func LoadOrCreateState(dir string) (*State, error) {
 	id.WGPub = pub
 
 	st := &State{dir: dir, Identity: id, Seq: sf.Seq}
+	if sf.Master != "" {
+		raw, err := base64.StdEncoding.DecodeString(sf.Master)
+		if err != nil || len(raw) != identity.MasterLen {
+			return nil, errors.New("state.json: bad master secret")
+		}
+		copy(st.Master[:], raw)
+	}
+	if st.Meshes, err = decodeMeshes(sf.Meshes); err != nil {
+		return nil, err
+	}
 	if sf.Credential != "" {
 		c, err := base64.StdEncoding.DecodeString(sf.Credential)
 		if err != nil {
@@ -510,9 +540,13 @@ func (s *State) Save() error {
 		DevicePriv: base64.StdEncoding.EncodeToString(s.Identity.DevicePriv),
 		WGPriv:     base64.StdEncoding.EncodeToString(s.Identity.WGPriv[:]),
 		Seq:        s.Seq,
+		Meshes:     encodeMeshes(s.Meshes),
 	}
 	if len(s.Credential) > 0 {
 		sf.Credential = base64.StdEncoding.EncodeToString(s.Credential)
+	}
+	if s.Master != (identity.Master{}) {
+		sf.Master = base64.StdEncoding.EncodeToString(s.Master[:])
 	}
 	raw, err := json.MarshalIndent(sf, "", "  ")
 	if err != nil {
