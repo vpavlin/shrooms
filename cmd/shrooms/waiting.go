@@ -20,7 +20,6 @@ import (
 	"github.com/vpavlin/shrooms/internal/invite"
 	"github.com/vpavlin/shrooms/internal/rendezvous"
 	"github.com/vpavlin/shrooms/internal/state"
-	"github.com/vpavlin/shrooms/internal/waku"
 )
 
 // A daemon with no mesh yet.
@@ -67,12 +66,18 @@ func runWaiting(ctx context.Context, log *slog.Logger, cfgPath, stateDir, sock s
 	// instead would turn a rendezvous problem into a service that systemd
 	// restarts forever.
 	fleet := waitingFleet(cfgPath)
+	var tr invite.Transport
 	node, err := startNode(nodeConfig(fleet))
 	if err != nil {
 		log.Warn("rendezvous node did not start; will try again when joining", "err", err)
 		node = nil
 	} else {
 		defer node.Close()
+		// Immediately, not when a join arrives: the node's event channel is
+		// bounded and its callback drops when full, so an unread node fills
+		// with the fleet's traffic within seconds and then discards the
+		// response an invite is waiting for.
+		tr = rendezvous.InviteTransport(node)
 	}
 
 	log.Info("waiting to be told which mesh this is",
@@ -117,7 +122,7 @@ func runWaiting(ctx context.Context, log *slog.Logger, cfgPath, stateDir, sock s
 		jctx, cancel := context.WithTimeout(r.Context(), wait)
 		defer cancel()
 
-		res, err := joinHere(jctx, log, node, st, cfgPath, stateDir, in.Token, in.Key,
+		res, err := joinHere(jctx, log, tr, cfgPath, st, stateDir, in.Token, in.Key,
 			in.Name, in.Mesh, in.Port, in.Advert, in.Relay)
 		if err != nil {
 			log.Warn("join failed", "err", err)
@@ -194,7 +199,7 @@ type joinResult struct {
 
 // joinHere writes the config for the mesh this device has been invited to, or
 // told the key of.
-func joinHere(ctx context.Context, log *slog.Logger, node *waku.Node, st *state.State, cfgPath, stateDir,
+func joinHere(ctx context.Context, log *slog.Logger, tr invite.Transport, cfgPath string, st *state.State, stateDir,
 	token, key, name, label string, port uint16, advertise string, relay bool) (*joinResult, error) {
 
 	if _, err := os.Stat(cfgPath); err == nil {
@@ -219,17 +224,17 @@ func joinHere(ctx context.Context, log *slog.Logger, node *waku.Node, st *state.
 
 		// A node of our own only if the waiting daemon has none, which happens
 		// when starting it failed earlier.
-		if node == nil {
+		if tr == nil {
 			own, err := startNode(nodeConfig(waitingFleet(cfgPath)))
 			if err != nil {
 				return nil, err
 			}
 			defer own.Close()
-			node = own
+			tr = rendezvous.InviteTransport(own)
 		}
 
 		log.Info("redeeming an invite")
-		resp, err := invite.Redeem(ctx, rendezvous.InviteTransport(node), secret, &invite.Request{
+		resp, err := invite.Redeem(ctx, tr, secret, &invite.Request{
 			DevicePub: st.Identity.DevicePub,
 			WGPub:     st.Identity.WGPub[:],
 			Name:      name,

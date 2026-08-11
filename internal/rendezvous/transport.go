@@ -8,6 +8,8 @@
 package rendezvous
 
 import (
+	"sync/atomic"
+
 	"github.com/vpavlin/shrooms/internal/invite"
 	"github.com/vpavlin/shrooms/internal/waku"
 )
@@ -16,14 +18,32 @@ import (
 //
 // The node's event channel has a single consumer, so this takes it over: use it
 // on a node dedicated to the exchange, not on one a mesh is running.
+//
+// **Start it as soon as the node exists, not when the exchange begins.** The
+// node's channel is bounded and its C callback drops events when it is full,
+// so a node nobody is reading fills with the fleet's traffic within seconds and
+// then discards everything that arrives — including the response the exchange
+// is waiting for. That cost a working invite exchange once already.
 func InviteTransport(node *waku.Node) invite.Transport {
-	return &transport{node: node}
+	t := &transport{node: node}
+	t.start()
+	return t
 }
 
 type transport struct {
-	node *waku.Node
-	msgs chan invite.Message
+	node    *waku.Node
+	msgs    chan invite.Message
+	dropped atomic.Uint64
 }
+
+// buffered generously. The exchange reads promptly, but a Core node carries
+// every shard in the cluster — measured at 745 messages where 693 belonged to
+// another application — and a response dropped for want of a slot looks exactly
+// like nobody answering.
+const buffered = 512
+
+// Dropped reports messages discarded because the reader was behind.
+func (t *transport) Dropped() uint64 { return t.dropped.Load() }
 
 func (t *transport) Subscribe(topic string) error   { return t.node.Subscribe(topic) }
 func (t *transport) Unsubscribe(topic string) error { return t.node.Unsubscribe(topic) }
@@ -32,25 +52,25 @@ func (t *transport) Send(topic string, payload []byte, ephemeral bool) (string, 
 	return t.node.Send(topic, payload, ephemeral)
 }
 
-func (t *transport) Messages() <-chan invite.Message {
-	if t.msgs == nil {
-		t.msgs = make(chan invite.Message, 16)
-		go func() {
-			defer close(t.msgs)
-			for ev := range t.node.Events() {
-				msg, _, ok := waku.ParseMessage(ev.JSON)
-				if !ok {
-					continue
-				}
-				select {
-				case t.msgs <- invite.Message{Topic: msg.ContentTopic, Payload: msg.Payload}:
-				default:
-					// Dropped rather than blocked: the shard carries other
-					// applications' traffic, and an exchange that stalled
-					// behind it would look like nobody answering.
-				}
+func (t *transport) start() {
+	t.msgs = make(chan invite.Message, buffered)
+	go func() {
+		defer close(t.msgs)
+		for ev := range t.node.Events() {
+			msg, _, ok := waku.ParseMessage(ev.JSON)
+			if !ok {
+				continue
 			}
-		}()
-	}
-	return t.msgs
+			select {
+			case t.msgs <- invite.Message{Topic: msg.ContentTopic, Payload: msg.Payload}:
+			default:
+				// Dropped rather than blocked: blocking here would stall the
+				// node's own reader, which puts the drop one level down where
+				// it is invisible. Counted so it is not.
+				t.dropped.Add(1)
+			}
+		}
+	}()
 }
+
+func (t *transport) Messages() <-chan invite.Message { return t.msgs }
