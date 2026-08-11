@@ -75,7 +75,19 @@ func (s *State) MeshState(networkID string, legacy bool) (*MeshState, error) {
 
 // SetMeshCredential stores this device's membership of one mesh.
 func (s *State) SetMeshCredential(networkID string, raw []byte) error {
-	ms, err := s.MeshState(networkID, false)
+	return s.SetMeshCredentialFor(networkID, false, raw)
+}
+
+// SetMeshCredentialFor stores it, saying whether the mesh uses this device's
+// original identity.
+//
+// The flag matters and is easy to get wrong: storing a credential creates the
+// mesh's state entry if it does not exist, and creating it with the wrong flag
+// derives a fresh identity — leaving a credential that names one set of keys
+// beside a mesh that announces with another. Every peer then refuses it,
+// correctly and silently.
+func (s *State) SetMeshCredentialFor(networkID string, legacy bool, raw []byte) error {
+	ms, err := s.MeshState(networkID, legacy)
 	if err != nil {
 		return err
 	}

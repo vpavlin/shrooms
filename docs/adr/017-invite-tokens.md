@@ -116,6 +116,25 @@ accepted and ignored, measured identical at FATAL, ERROR and the default. So
 `join --invite` points fd 1 at `/dev/null` for the length of the exchange and
 keeps the real descriptor for its own three lines. `-v` gets the logs back.
 
+### One round is not enough for per-mesh identities
+
+Found building the mobile side. The request carries the joining device's keys,
+and the inviter issues a credential naming them — but the device cannot know
+*which* mesh it is joining until the response arrives, so it cannot send a
+per-mesh identity ([ADR-015](015-multiple-meshes-one-daemon.md)). It sends its
+base identity, and the credential names that.
+
+The consequence: a mesh joined by invite uses the device's base identity, so a
+device on two such meshes presents the same device key to both, and anyone in
+both can tell it is the same device. That is precisely the linkability ADR-015
+set out to close.
+
+Fixing it needs a second round — learn the mesh, derive the identity for it,
+then ask for the credential — which is a wire-format change to this ADR and is
+not built. Written down because the alternative is a surprise later, and
+because the workaround (joining an additional mesh with its network key, where
+the mesh is known before the identity is chosen) already avoids it.
+
 ## What this does not fix
 
 **It does not remove the shared key**, which is the thing actually worth

@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -279,4 +281,43 @@ func DNSAddress(configDir string) string {
 		return ""
 	}
 	return dnssrv.ServiceAddr(nk.Prefix()).String()
+}
+
+// resolveAll answers a name across every mesh on this device (ADR-015).
+//
+// The qualified form wins — vps.home.mesh is answered only by the mesh it names
+// — and the short form only when exactly one mesh has that name. A phone with
+// one mesh, which is every phone today, sees no change.
+func resolveAll(instances []*meshInstance) dnssrv.Lookup {
+	return func(host string) (netip.Addr, bool) {
+		if dev, rest, ok := strings.Cut(host, "."); ok {
+			for _, in := range instances {
+				if in.label == rest {
+					return in.mesh.Lookup(dev)
+				}
+			}
+		}
+		var found netip.Addr
+		hits := 0
+		for _, in := range instances {
+			if addr, ok := in.mesh.Lookup(host); ok {
+				found, hits = addr, hits+1
+			}
+		}
+		return found, hits == 1
+	}
+}
+
+// aliasAll maps an overlay address to its synthetic IPv4, whichever mesh owns
+// it. Overlay addresses are unique across meshes, so there is nothing to
+// disambiguate.
+func aliasAll(instances []*meshInstance) func(netip.Addr) (netip.Addr, bool) {
+	return func(overlay netip.Addr) (netip.Addr, bool) {
+		for _, in := range instances {
+			if a, ok := in.mesh.LookupV4(overlay); ok {
+				return a, true
+			}
+		}
+		return netip.Addr{}, false
+	}
 }

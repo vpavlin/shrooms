@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"sync"
@@ -80,8 +81,12 @@ type session struct {
 	overlay string
 	prefix  string
 
-	mesh   *mesh.Mesh
-	dev    *wg.Device
+	// instances is one per mesh (ADR-015). The first is what the single-mesh
+	// fields above describe, so an app that knows nothing about several meshes
+	// sees what it always saw.
+	instances []*meshInstance
+	mux       *wg.Mux
+
 	cancel context.CancelFunc
 	done   chan struct{}
 
@@ -98,6 +103,17 @@ type session struct {
 
 // b32 matches how admin keys are written in a config: uppercase, unpadded.
 var b32 = base32.StdEncoding.WithPadding(base32.NoPadding)
+
+// meshInstance is one mesh running on the phone: its own WireGuard device and
+// identity, on a virtual TUN carved out of the single descriptor Android gives.
+type meshInstance struct {
+	label   string
+	mesh    *mesh.Mesh
+	dev     *wg.Device
+	aliases *v4.Table
+	self    netip.Addr
+	prefix  netip.Prefix
+}
 
 // Init creates a new mesh and returns its network key.
 func Init(name, configDir string) (string, error) {
@@ -124,10 +140,17 @@ func Join(key, name, configDir string) error {
 // On success the device has a config, the mesh's admin keys, and a credential
 // signed for the keys generated here. On failure it has written nothing.
 func JoinWithInvite(token, name, configDir string, timeoutSeconds int) error {
-	cfgPath, stateDir := paths(configDir)
+	cfgPath, _ := paths(configDir)
 	if _, err := os.Stat(cfgPath); err == nil {
 		return errors.New("this device has already joined a mesh")
 	}
+	return joinInvite(token, name, "", configDir, timeoutSeconds)
+}
+
+// joinInvite is the exchange itself. label empty writes the single-mesh form;
+// otherwise the mesh is added alongside whatever is already there.
+func joinInvite(token, name, label, configDir string, timeoutSeconds int) error {
+	cfgPath, stateDir := paths(configDir)
 	secret, err := invite.ParseToken(token)
 	if err != nil {
 		return err
@@ -175,17 +198,36 @@ func JoinWithInvite(token, name, configDir string, timeoutSeconds int) error {
 	if err != nil {
 		return err
 	}
+	// An additional mesh keeps everything already configured and adds itself;
+	// a first one writes the single-mesh form every config in the field uses.
 	cfg := state.DefaultConfig()
+	if existing, err := state.LoadConfig(cfgPath); err == nil {
+		cfg = existing
+	}
 	cfg.Name = name
-	cfg.NetworkKey = nk.String()
+	if label != "" {
+		if cfg.MeshSet == nil {
+			cfg.MeshSet = map[string]state.Mesh{}
+		}
+	} else {
+		cfg.NetworkKey = nk.String()
+	}
 	if resp.Suffix != "" {
 		cfg.HostsSuffix = resp.Suffix
 	}
+	var adminKeys []string
 	for _, k := range resp.AdminKeys {
 		if len(k) != ed25519.PublicKeySize {
 			return errors.New("the invitation carried a malformed admin key")
 		}
-		cfg.AdminKeys = append(cfg.AdminKeys, b32.EncodeToString(k))
+		adminKeys = append(adminKeys, b32.EncodeToString(k))
+	}
+	if label != "" {
+		cfg.MeshSet[label] = state.Mesh{
+			Label: label, NetworkKey: nk.String(), AdminKeys: adminKeys,
+		}
+	} else {
+		cfg.AdminKeys = adminKeys
 	}
 	if err := cfg.Validate(); err != nil {
 		return err
@@ -198,7 +240,12 @@ func JoinWithInvite(token, name, configDir string, timeoutSeconds int) error {
 		if err != nil {
 			return fmt.Errorf("the invitation carried a malformed credential: %w", err)
 		}
+		// The authority of the mesh being joined, which on an additional mesh
+		// is not the config's top-level one.
 		auth, err := cfg.Authority()
+		if label != "" {
+			auth, err = cfg.MeshSet[label].Authority()
+		}
 		if err != nil {
 			return err
 		}
@@ -213,7 +260,16 @@ func JoinWithInvite(token, name, configDir string, timeoutSeconds int) error {
 		return fmt.Errorf("write config: %w", err)
 	}
 	if len(resp.Credential) > 0 {
-		if err := st.SetCredential(resp.Credential); err != nil {
+		// Against the identity the request actually carried.
+		//
+		// The credential names the keys we sent, and we sent this device's base
+		// identity — we could not have sent a per-mesh one, because the mesh is
+		// not known until the response arrives. So an invite-joined mesh uses
+		// the base identity, and the per-mesh derivation of ADR-015 applies to
+		// meshes joined with a key. Closing that properly needs a second round
+		// in the invite exchange: learn the mesh, derive, then ask for the
+		// credential. Noted in ADR-017 rather than left as a surprise.
+		if err := st.SetMeshCredentialFor(state.NetworkID(nk), true, resp.Credential); err != nil {
 			return err
 		}
 	}
@@ -272,6 +328,73 @@ func OverlayV4(configDir string) string {
 		DevicePub: st.Identity.DevicePub,
 	}, nil)
 	return t.Self().String()
+}
+
+// MeshesJSON lists every mesh this device belongs to, with the address and
+// routes VpnService.Builder must install for it (ADR-015).
+//
+// One call rather than several, because the Builder needs all of it before the
+// tunnel exists, and a phone with two meshes that routed only one would look
+// like a mesh that silently does not work.
+func MeshesJSON(configDir string) string {
+	cfg, st, err := load(configDir)
+	if err != nil {
+		return "[]"
+	}
+	type entry struct {
+		Label   string `json:"label"`
+		Overlay string `json:"overlay"`
+		Prefix  string `json:"prefix"`
+		V4      string `json:"v4"`
+		V4Block string `json:"v4_block"`
+	}
+	var out []entry
+	for _, m := range cfg.Meshes() {
+		nk, err := m.Key()
+		if err != nil {
+			continue
+		}
+		networkID := state.NetworkID(nk)
+		ms, err := st.MeshState(networkID, cfg.NetworkKey != "" && m.Label == state.DefaultLabel)
+		if err != nil {
+			continue
+		}
+		self := identity.OverlayAddr(nk, ms.Identity.DevicePub)
+		aliases := v4.NewTable(networkID, v4.Entry{Overlay: self, DevicePub: ms.Identity.DevicePub}, nil)
+		out = append(out, entry{
+			Label:   m.Label,
+			Overlay: self.String(),
+			Prefix:  nk.Prefix().String(),
+			V4:      aliases.Self().String(),
+			V4Block: aliases.Block().String(),
+		})
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+// JoinAnotherWithInvite redeems an invite for an ADDITIONAL mesh, keeping the
+// ones this device already has.
+//
+// label is what this phone calls it. There is no way to learn it later: mesh
+// names are local and never travel on the wire.
+func JoinAnotherWithInvite(token, label, name, configDir string, timeoutSeconds int) error {
+	cfg, _, err := load(configDir)
+	if err != nil {
+		return fmt.Errorf("this device has no mesh yet; use JoinWithInvite: %w", err)
+	}
+	if label == "" {
+		return errors.New("an additional mesh needs a name to tell it apart")
+	}
+	for _, m := range cfg.Meshes() {
+		if m.Label == label {
+			return fmt.Errorf("this device already has a mesh called %q", label)
+		}
+	}
+	return joinInvite(token, name, label, configDir, timeoutSeconds)
 }
 
 // OverlayV4Range is the range the synthetic addresses come from, as
@@ -399,7 +522,20 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 	// Answered on the service address, not this device's: a packet to an
 	// address the interface holds is delivered locally and never reaches the
 	// tun, so nothing could answer it there.
-	dnsAddr := dnssrv.ServiceAddr(mustKey(cfg).Prefix())
+	meshes := cfg.Meshes()
+	if len(meshes) == 0 {
+		return errors.New("no meshes in the config")
+	}
+	primary := meshes[0]
+	primaryKey, err := primary.Key()
+	if err != nil {
+		return err
+	}
+
+	// The resolver answers on one address — the first mesh's — because Android
+	// takes a single DNS server. It resolves names across every mesh, so the
+	// one address is enough (see resolveAll).
+	dnsAddr := dnssrv.ServiceAddr(primaryKey.Prefix())
 	var resolver atomic.Pointer[dnssrv.Server]
 	intercept := dnssrv.NewIntercept(rawTun, dnsAddr, func(q []byte) ([]byte, error) {
 		r := resolver.Load()
@@ -409,59 +545,130 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 		return r.Answer(q)
 	})
 
-	// Synthetic IPv4 (ADR-021). Below the DNS intercept, so a query to the
-	// resolver is still an IPv6 packet by the time the intercept sees it, and
-	// above WireGuard, so what gets encrypted is always IPv6.
-	aliases := v4.NewTable(state.NetworkID(mustKey(cfg)), v4.Entry{
-		Overlay:   identity.OverlayAddr(mustKey(cfg), st.Identity.DevicePub),
-		DevicePub: st.Identity.DevicePub,
-	}, nil)
-	translated := v4.NewDevice(intercept, aliases, wg.DefaultMTU-40-20)
+	// One descriptor, several meshes. VpnService hands back exactly one tun,
+	// and a WireGuard device cannot be shared between meshes — one static key
+	// each, one preshared key per peer — so the descriptor is multiplexed by
+	// destination prefix instead. Below the DNS intercept, so a query is still
+	// an ordinary packet when the intercept sees it.
+	mux := wg.NewMux(intercept)
 
-	dev, err := wg.NewDevice(translated, st.Identity.WGPriv, cfg.ListenPort,
-		device.NewLogger(device.LogLevelError, "[wg] "))
-	if err != nil {
-		return fmt.Errorf("wireguard: %w", err)
-	}
-
-	// Before any traffic. An unprotected socket is the failure that looks like
-	// nothing working at all.
-	fds := dev.Bind.SocketFds()
-	if len(fds) == 0 {
-		dev.Close()
-		return errors.New("no sockets to protect: the bind exposed none, so the tunnel would carry its own control traffic")
-	}
-	for _, fd := range fds {
-		if !p.Protect(fd) {
-			dev.Close()
-			return fmt.Errorf("VpnService.protect(%d) refused", fd)
+	var instances []*meshInstance
+	closeAll := func() {
+		for _, in := range instances {
+			in.dev.Close()
 		}
+		mux.Close()
 	}
-	log.Info("data plane up", "port", cfg.ListenPort, "protected_sockets", len(fds))
+
+	for i, mc := range meshes {
+		nk, err := mc.Key()
+		if err != nil {
+			closeAll()
+			return fmt.Errorf("mesh %q: %w", mc.Label, err)
+		}
+		networkID := state.NetworkID(nk)
+		// The mesh written as network_key keeps the identity this device
+		// already had; anything else derives its own.
+		ms, err := st.MeshState(networkID, cfg.NetworkKey != "" && mc.Label == state.DefaultLabel)
+		if err != nil {
+			closeAll()
+			return fmt.Errorf("mesh %q: %w", mc.Label, err)
+		}
+		self := identity.OverlayAddr(nk, ms.Identity.DevicePub)
+		aliases := v4.NewTable(networkID, v4.Entry{Overlay: self, DevicePub: ms.Identity.DevicePub}, nil)
+
+		// This mesh's slice of the tun: its own /48 and its own block of the
+		// synthetic IPv4 range. Exact, so a packet belongs to one mesh or none.
+		port := mux.Port(nk.Prefix(), aliases.Block())
+		translated := v4.NewDevice(port, aliases, wg.DefaultMTU-40-20)
+
+		// A port each: two WireGuard devices cannot share one, since a
+		// transport packet names its device only by an index that device
+		// allocated.
+		listen := cfg.ListenPort + uint16(i)
+		dev, err := wg.NewDevice(translated, ms.Identity.WGPriv, listen,
+			device.NewLogger(device.LogLevelError, "[wg "+mc.Label+"] "))
+		if err != nil {
+			closeAll()
+			return fmt.Errorf("mesh %q: wireguard: %w", mc.Label, err)
+		}
+
+		// Before any traffic. An unprotected socket is the failure that looks
+		// like nothing working at all.
+		fds := dev.Bind.SocketFds()
+		if len(fds) == 0 {
+			dev.Close()
+			closeAll()
+			return errors.New("no sockets to protect: the bind exposed none, so the tunnel would carry its own control traffic")
+		}
+		for _, fd := range fds {
+			if !p.Protect(fd) {
+				dev.Close()
+				closeAll()
+				return fmt.Errorf("VpnService.protect(%d) refused", fd)
+			}
+		}
+
+		instances = append(instances, &meshInstance{
+			label: mc.Label, dev: dev, aliases: aliases, self: self, prefix: nk.Prefix(),
+		})
+		log.Info("data plane up", "mesh", mc.Label, "port", listen,
+			"overlay", self, "protected_sockets", len(fds))
+	}
 
 	// Reuse the node across reconnects; see the comment on the package
 	// variable. Only the first connect creates one.
 	if node == nil {
 		n, err := waku.New(nodeConfig(cfg))
 		if err != nil {
-			dev.Close()
+			closeAll()
 			return fmt.Errorf("rendezvous plane: %w", err)
 		}
 		node = n
 	}
 	if err := node.Start(); err != nil {
-		dev.Close()
+		closeAll()
 		return fmt.Errorf("start rendezvous plane: %w", err)
 	}
 	log.Info("rendezvous plane up", "preset", cfg.Preset)
 
-	m, err := mesh.New(log, cfg, st, node, dev)
-	if err != nil {
-		_ = node.Stop()
-		dev.Close()
-		return err
+	for i, in := range instances {
+		mc := meshes[i]
+		// Each mesh sees its own key, relay setting, admin keys and services;
+		// the rest of the config is the device's and shared.
+		meshCfg := cfg
+		meshCfg.NetworkKey = mc.NetworkKey
+		meshCfg.AdminKeys = mc.AdminKeys
+		meshCfg.Relay = mc.Relay
+		meshCfg.Services = mc.Services
+
+		nk, _ := mc.Key()
+		ms, err := st.MeshState(state.NetworkID(nk), cfg.NetworkKey != "" && mc.Label == state.DefaultLabel)
+		if err != nil {
+			_ = node.Stop()
+			closeAll()
+			return err
+		}
+		mst := st
+		if ms.Identity != st.Identity {
+			mst = st.View(ms)
+		}
+
+		m, err := mesh.New(log.With("mesh", mc.Label), meshCfg, mst, node, in.dev)
+		if err != nil {
+			_ = node.Stop()
+			closeAll()
+			return err
+		}
+		m.SetV4(in.aliases)
+		if len(instances) > 1 {
+			// One reader on the node, every mesh fed from it: a channel hands
+			// each event to exactly one reader, so meshes reading it directly
+			// would take turns and each drop what the other should have had.
+			m.SetFed()
+		}
+		in.mesh = m
 	}
-	m.SetV4(aliases)
 
 	// Names. On Android this is what makes `laptop.mesh` work at all: there is
 	// no hosts file to write, and VpnService.Builder.addDnsServer is a
@@ -482,32 +689,64 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	nk, _ := cfg.Key()
 	s := &session{
-		name:    cfg.Name,
-		suffix:  cfg.HostsSuffix,
-		overlay: identity.OverlayAddr(nk, st.Identity.DevicePub).String(),
-		prefix:  nk.Prefix().String(),
-		mesh:    m, dev: dev, cancel: cancel, done: make(chan struct{}),
+		name:      cfg.Name,
+		suffix:    cfg.HostsSuffix,
+		overlay:   instances[0].self.String(),
+		prefix:    instances[0].prefix.String(),
+		instances: instances,
+		mux:       mux,
+		cancel:    cancel, done: make(chan struct{}),
 		dnsIntercept: intercept,
+	}
+
+	// One reader on the node, feeding every mesh. See SetFed above.
+	if len(instances) > 1 {
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case ev, ok := <-node.Events():
+					if !ok {
+						return
+					}
+					for _, in := range instances {
+						in.mesh.Deliver(ev)
+					}
+				}
+			}
+		}()
+	}
+
+	var wgRun sync.WaitGroup
+	for _, in := range instances {
+		wgRun.Add(1)
+		go func(in *meshInstance) {
+			defer wgRun.Done()
+			if err := in.mesh.Run(ctx); err != nil && ctx.Err() == nil {
+				log.Error("mesh stopped", "mesh", in.label, "err", err)
+			}
+		}(in)
 	}
 	go func() {
 		defer close(s.done)
-		if err := m.Run(ctx); err != nil && ctx.Err() == nil {
-			log.Error("mesh stopped", "err", err)
-		}
+		wgRun.Wait()
 	}()
+
 	if forward != nil {
-		// No socket and no port: the intercept already holds the packets.
+		// No socket and no port: the intercept already holds the packets. The
+		// lookups span every mesh, so one resolver address serves them all.
 		srv := &dnssrv.Server{
 			Suffix:   cfg.HostsSuffix,
-			Lookup:   m.Lookup,
-			Alias:    m.LookupV4,
+			Lookup:   resolveAll(instances),
+			Alias:    aliasAll(instances),
 			Upstream: forward,
 		}
 		resolver.Store(srv)
 		s.dnsServer = srv
-		log.Info("name resolution up", "address", dnsAddr, "suffix", cfg.HostsSuffix)
+		log.Info("name resolution up", "address", dnsAddr, "suffix", cfg.HostsSuffix,
+			"meshes", len(instances))
 	}
 	running = s
 	return nil
@@ -534,7 +773,10 @@ func Stop() error {
 	if node != nil {
 		_ = node.Stop()
 	}
-	return s.dev.Close()
+	for _, in := range s.instances {
+		in.dev.Close()
+	}
+	return s.mux.Close()
 }
 
 // Running reports whether the mesh is up.
@@ -553,7 +795,7 @@ func StatusJSON() string {
 	if s == nil {
 		return "{}"
 	}
-	snap := snapshot(s.mesh, s.suffix)
+	snap := snapshot(s.instances[0].mesh, s.suffix)
 	snap.Name, snap.Overlay, snap.Prefix = s.name, s.overlay, s.prefix
 	snap.DNSName = mesh.DNSName(s.name, s.suffix)
 	if s.dnsIntercept != nil {
