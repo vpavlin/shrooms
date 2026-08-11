@@ -216,6 +216,11 @@ type statusPayload struct {
 	// until someone tells it which one it belongs to.
 	Waiting bool `json:"waiting,omitempty"`
 
+	// OverlayV4 is this device's synthetic IPv4 address (ADR-021). Reported
+	// because two addresses now name the same machine, and an address nothing
+	// explains gets reported as a bug.
+	OverlayV4 string `json:"overlay_v4,omitempty"`
+
 	Name    string       `json:"name"`
 	Overlay string       `json:"overlay"`
 	Prefix  string       `json:"prefix"`
@@ -286,6 +291,9 @@ type rendezvousStatus struct {
 
 type peerStatus struct {
 	Name string `json:"name"`
+	// OverlayV4 is the synthetic IPv4 address this device uses for the peer
+	// (ADR-021). Local to this node: another device may call it something else.
+	OverlayV4 string `json:"overlay_v4,omitempty"`
 	// DNSName, Relayed and RTTMs exist so a viewer never has to re-derive what
 	// the daemon already knows — parsing "relay:" out of an endpoint string, or
 	// reimplementing name sanitising, is how a front-end drifts from what
@@ -516,6 +524,14 @@ func listenControl(ctx context.Context, log *slog.Logger, path string, h http.Ha
 	return srv, nil
 }
 
+// v4Of renders a peer's synthetic address, or "" when there is none.
+func v4Of(m *mesh.Mesh, overlay netip.Addr) string {
+	if a, ok := m.LookupV4(overlay); ok {
+		return a.String()
+	}
+	return ""
+}
+
 // serveControl exposes status over a unix socket.
 func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Mesh, cfg state.Config, self netip.Addr, services *service.Publisher) (*http.Server, error) {
 
@@ -530,6 +546,9 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Me
 			Name:    cfg.Name,
 			Overlay: self.String(),
 			Prefix:  nk.Prefix().String(),
+		}
+		if v4self, ok := m.LookupV4(self); ok {
+			out.OverlayV4 = v4self.String()
 		}
 		h := m.Health()
 		out.Rendezvous = rendezvousStatus{
@@ -549,6 +568,7 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Me
 			ps := peerStatus{
 				Name:      p.Name,
 				Overlay:   p.Overlay.String(),
+				OverlayV4: v4Of(m, p.Overlay),
 				Endpoints: p.Endpoints,
 				Seq:       p.Seq,
 				LastSeen:  p.LastSeen.Format(time.RFC3339),

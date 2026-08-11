@@ -130,6 +130,11 @@ func cmdStatus(args []string) error {
 	head := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintf(head, "network\t%s\tpeers %d (%d up)\n", st.Prefix, len(st.Peers), online)
 	fmt.Fprintf(head, "self\t%s  %s\t\n", st.Name, st.Overlay)
+	if st.OverlayV4 != "" {
+		// Said plainly, because the second address is the one people ask about:
+		// it exists so browsers can use mesh names on a network with no IPv6.
+		fmt.Fprintf(head, "ipv4\t%s\tfor clients that ask only for A records\n", st.OverlayV4)
+	}
 	head.Flush()
 
 	// The rendezvous plane is reported whenever it is unhealthy, and quietly
