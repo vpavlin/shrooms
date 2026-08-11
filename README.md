@@ -709,6 +709,22 @@ the short name rather than silently picking a network for you.
 The first mesh in a config keeps the interface, port and identity it always had,
 so adding a second changes nothing about the first.
 
+### HTTPS
+
+The name router serves **http** by default, and browsers try **https** first.
+That combination used to hang: 443 was accepted, the name matched, and the
+browser's ClientHello was handed to a plain HTTP server, which answered with an
+error no TLS client can read. Now 443 is not served at all unless a service says
+it speaks TLS, so the browser's attempt is refused immediately and it falls back
+to http.
+
+```toml
+services = ["jellyfin:8096", "vault:8200/tls"]
+```
+
+`/tls` means "this backend speaks TLS; route it on SNI". Everything else is
+http, and `http://jellyfin.k11.mesh` is the address that works.
+
 ### Firewalls
 
 A host firewall does not know the mesh interface is the mesh, and puts it

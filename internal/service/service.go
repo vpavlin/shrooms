@@ -45,6 +45,15 @@ type Spec struct {
 	// Port is the port published on the overlay address.
 	Port uint16
 
+	// TLS says the service speaks TLS, so the name router may accept HTTPS for
+	// it and route on SNI.
+	//
+	// Off unless asked for, because the alternative was worse than not serving
+	// HTTPS at all: the router accepted 443, matched the name, and handed a
+	// browser's ClientHello to a plain HTTP server, which answered with an
+	// error the browser could make no sense of. Written as "name:port/tls".
+	TLS bool
+
 	// Target is where connections are forwarded, as host:port.
 	// Defaults to 127.0.0.1:<Port>.
 	Target string
@@ -52,10 +61,14 @@ type Spec struct {
 
 // String renders a Spec in the config syntax that produced it.
 func (s Spec) String() string {
-	if s.Target == defaultTarget(s.Port) {
-		return fmt.Sprintf("%s:%d", s.Name, s.Port)
+	suffix := ""
+	if s.TLS {
+		suffix = "/tls"
 	}
-	return fmt.Sprintf("%s:%d->%s", s.Name, s.Port, s.Target)
+	if s.Target == defaultTarget(s.Port) {
+		return fmt.Sprintf("%s:%d%s", s.Name, s.Port, suffix)
+	}
+	return fmt.Sprintf("%s:%d->%s%s", s.Name, s.Port, s.Target, suffix)
 }
 
 func defaultTarget(port uint16) string {
@@ -79,6 +92,13 @@ func ParseSpec(s string) (Spec, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return Spec{}, errors.New("empty service")
+	}
+
+	// "/tls" anywhere in the declaration marks a service the name router may
+	// serve over HTTPS.
+	tlsFlag := false
+	if rest, ok := strings.CutSuffix(strings.TrimSpace(s), "/tls"); ok {
+		tlsFlag, s = true, rest
 	}
 
 	decl, target, hasTarget := strings.Cut(s, "->")
@@ -113,7 +133,7 @@ func ParseSpec(s string) (Spec, error) {
 		}
 	}
 
-	spec := Spec{Name: name, Port: uint16(port), Target: defaultTarget(uint16(port))}
+	spec := Spec{Name: name, Port: uint16(port), TLS: tlsFlag, Target: defaultTarget(uint16(port))}
 	if hasTarget {
 		if target == "" {
 			return Spec{}, fmt.Errorf("%q: nothing after ->", s)

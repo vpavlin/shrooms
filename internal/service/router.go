@@ -69,7 +69,22 @@ func (p *Publisher) serveNames(ctx context.Context, addr netip.Addr, device stri
 		r.routes[s.Name] = s
 	}
 
-	for _, port := range []uint16{HTTPPort, TLSPort} {
+	// 443 only when something actually speaks TLS.
+	//
+	// Binding it unconditionally meant a browser's HTTPS-first attempt was
+	// accepted, matched by SNI, and handed to a plain HTTP server — which
+	// replied to a ClientHello with an HTTP error, so the browser saw a broken
+	// TLS conversation rather than a closed port and hung. Not listening lets
+	// it fail immediately and fall back to http, which works.
+	ports := []uint16{HTTPPort}
+	for _, s := range specs {
+		if s.TLS {
+			ports = append(ports, TLSPort)
+			break
+		}
+	}
+
+	for _, port := range ports {
 		st := RouterStatus{Port: port}
 		ap := netip.AddrPortFrom(addr, port)
 		ln, err := net.Listen("tcp6", ap.String())

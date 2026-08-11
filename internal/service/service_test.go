@@ -317,3 +317,39 @@ func TestPortDefaultsToTheTargetPort(t *testing.T) {
 		t.Error("a target with no port was accepted")
 	}
 }
+
+// A browser tries HTTPS first. If the router listens on 443 and forwards a
+// ClientHello to a plain HTTP server, the browser gets a broken TLS
+// conversation instead of a closed port and hangs — so 443 is served only for
+// services that say they speak it.
+func TestTLSIsOptIn(t *testing.T) {
+	plain, err := ParseSpec("jellyfin:8096")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.TLS {
+		t.Error("a plain service claimed TLS")
+	}
+
+	secure, err := ParseSpec("vault:8200/tls")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !secure.TLS || secure.Name != "vault" || secure.Port != 8200 {
+		t.Errorf("parsed as %+v", secure)
+	}
+	// And with a target, which is the form that redirects elsewhere.
+	withTarget, err := ParseSpec("ha->192.168.0.116:443/tls")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !withTarget.TLS || withTarget.Target != "192.168.0.116:443" {
+		t.Errorf("parsed as %+v", withTarget)
+	}
+	// The string form round-trips, or a config rewritten by the daemon would
+	// quietly lose the flag.
+	back, err := ParseSpec(secure.String())
+	if err != nil || !back.TLS {
+		t.Errorf("%q did not round-trip: %+v (%v)", secure.String(), back, err)
+	}
+}
