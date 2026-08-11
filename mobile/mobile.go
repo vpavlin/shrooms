@@ -267,7 +267,7 @@ func OverlayV4(configDir string) string {
 	if err != nil {
 		return ""
 	}
-	t := v4.NewTable(v4.Entry{
+	t := v4.NewTable(state.NetworkID(nk), v4.Entry{
 		Overlay:   identity.OverlayAddr(nk, st.Identity.DevicePub),
 		DevicePub: st.Identity.DevicePub,
 	}, nil)
@@ -276,7 +276,12 @@ func OverlayV4(configDir string) string {
 
 // OverlayV4Range is the range the synthetic addresses come from, as
 // "address/bits", for the route the VpnService has to install.
-func OverlayV4Range() string { return v4.Prefix.String() }
+func OverlayV4Range() string {
+	// The whole range: the app has one mesh, and routing the umbrella is
+	// correct while that is true. A multi-mesh app must route each mesh's
+	// block separately, as the daemon does.
+	return v4.Prefix.String()
+}
 
 // NetworkKey returns the mesh key, for showing a QR code to another device.
 func NetworkKey(configDir string) string {
@@ -407,7 +412,7 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 	// Synthetic IPv4 (ADR-021). Below the DNS intercept, so a query to the
 	// resolver is still an IPv6 packet by the time the intercept sees it, and
 	// above WireGuard, so what gets encrypted is always IPv6.
-	aliases := v4.NewTable(v4.Entry{
+	aliases := v4.NewTable(state.NetworkID(mustKey(cfg)), v4.Entry{
 		Overlay:   identity.OverlayAddr(mustKey(cfg), st.Identity.DevicePub),
 		DevicePub: st.Identity.DevicePub,
 	}, nil)

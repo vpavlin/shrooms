@@ -43,7 +43,7 @@ func testTable(t *testing.T) (*Table, netip.Addr) {
 	t.Helper()
 	selfPub, _, _ := ed25519.GenerateKey(nil)
 	peerPub, _, _ := ed25519.GenerateKey(nil)
-	tbl := NewTable(
+	tbl := NewTable("testnetid",
 		Entry{Overlay: self6, DevicePub: selfPub},
 		[]Entry{{Overlay: peer6, DevicePub: peerPub}},
 	)
@@ -170,6 +170,9 @@ func TestUnmappedIPv4IsDropped(t *testing.T) {
 	d := NewDevice(ft, tbl, 1360)
 
 	stray := netip.MustParseAddr("198.19.200.200")
+	if !Prefix.Contains(stray) {
+		t.Fatal("the stray address is outside the range entirely")
+	}
 	if _, mapped := tbl.Overlay(stray); mapped {
 		t.Skip("the random alias happened to be this address")
 	}

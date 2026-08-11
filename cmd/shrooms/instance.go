@@ -86,9 +86,12 @@ func startInstance(ctx context.Context, log *slog.Logger, cfg state.Config, st *
 	// Synthetic IPv4 (ADR-021), per mesh: with per-mesh identities the aliases
 	// cannot collide by construction, but the table must still be per mesh or
 	// one mesh's peer would answer another's name.
-	in.aliases = v4.NewTable(v4.Entry{Overlay: self, DevicePub: ms.Identity.DevicePub}, nil)
+	in.aliases = v4.NewTable(networkID, v4.Entry{Overlay: self, DevicePub: ms.Identity.DevicePub}, nil)
 
-	tunDev, err := wg.CreateTUN(iface, self, nk.Prefix(), wg.DefaultMTU, in.aliases.Self(), v4.Prefix)
+	// The mesh's own slice of the range, routed at its own interface. One
+	// route for the whole range would send another mesh's traffic here.
+	tunDev, err := wg.CreateTUN(iface, self, nk.Prefix(), wg.DefaultMTU,
+		in.aliases.Self(), in.aliases.Block())
 	if err != nil {
 		return nil, fmt.Errorf("mesh %q: tun: %w (need CAP_NET_ADMIN)", m.Label, err)
 	}

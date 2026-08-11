@@ -23,7 +23,8 @@ import (
 	"sync"
 )
 
-// Prefix is the range aliases come from: RFC 2544, reserved for benchmarking.
+// Prefix is the whole range aliases come from: RFC 2544, reserved for
+// benchmarking. Each mesh gets a slice of it — see Block.
 //
 // Chosen for what it avoids. 100.64/10 is carrier-grade NAT — what Tailscale
 // uses, and it collides with exactly the mobile networks a phone sits behind.
@@ -31,20 +32,51 @@ import (
 // dropped by several stacks.
 var Prefix = netip.MustParsePrefix("198.18.0.0/15")
 
-// Alias derives a peer's synthetic address from its device key.
+// MeshBits is how much of the range identifies the mesh, and DeviceBits what
+// is left for devices within it.
+//
+// Every mesh needs its OWN sub-range, because the range is routed at an
+// interface and there is one interface per mesh. Sharing it meant the kernel
+// installed a single route, so packets for a peer on the second mesh entered
+// the first mesh's translator, which had never heard of it and dropped them —
+// visible as a browser that cannot reach a service while curl over IPv6 can.
+//
+// 4 bits is 16 meshes, and 13 bits is 8192 addresses each: far more of both
+// than a personal mesh needs.
+const (
+	MeshBits   = 4
+	DeviceBits = 13
+)
+
+// Block is the slice of the range belonging to one mesh, as a prefix to route.
+//
+// Derived from the network id, so two nodes on the same mesh agree — not that
+// they have to, since aliases never leave the machine, but a mesh whose
+// addresses look the same everywhere is easier to reason about.
+func Block(networkID string) netip.Prefix {
+	sum := sha256.Sum256([]byte("mesh/v1/v4block" + networkID))
+	tag := uint32(sum[0]) & ((1 << MeshBits) - 1)
+
+	base := Prefix.Addr().As4()
+	addr := binary.BigEndian.Uint32(base[:]) | (tag << DeviceBits)
+	var out [4]byte
+	binary.BigEndian.PutUint32(out[:], addr)
+	return netip.PrefixFrom(netip.AddrFrom4(out), 32-DeviceBits)
+}
+
+// Alias derives a peer's synthetic address within one mesh's block.
 //
 // The nonce breaks a collision: two devices whose hashes land on the same
 // address are resolved locally, by whoever noticed, without telling anyone.
-func Alias(devicePub ed25519.PublicKey, nonce uint8) netip.Addr {
+func Alias(block netip.Prefix, devicePub ed25519.PublicKey, nonce uint8) netip.Addr {
 	h := sha256.New()
 	h.Write([]byte("mesh/v1/v4alias"))
 	h.Write([]byte{nonce})
 	h.Write(devicePub)
 	sum := h.Sum(nil)
 
-	// The low 17 bits of the /15, so both /16s are used.
-	v := binary.BigEndian.Uint32(sum[:4]) & 0x0001FFFF
-	base := Prefix.Addr().As4()
+	v := binary.BigEndian.Uint32(sum[:4]) & ((1 << DeviceBits) - 1)
+	base := block.Addr().As4()
 	addr := binary.BigEndian.Uint32(base[:]) | v
 
 	var out [4]byte
@@ -54,8 +86,8 @@ func Alias(devicePub ed25519.PublicKey, nonce uint8) netip.Addr {
 	// .0 and .255 in any /24 confuse enough software to be worth skipping, and
 	// so does the first address of the range.
 	last := out[3]
-	if last == 0 || last == 255 || !Prefix.Contains(a) {
-		return Alias(devicePub, nonce+1)
+	if last == 0 || last == 255 || !block.Contains(a) {
+		return Alias(block, devicePub, nonce+1)
 	}
 	return a
 }
@@ -66,6 +98,7 @@ func Alias(devicePub ed25519.PublicKey, nonce uint8) netip.Addr {
 // or going away — so the read path is a plain map lookup under an RWMutex
 // rather than anything clever.
 type Table struct {
+	block netip.Prefix
 	mu    sync.RWMutex
 	to4   map[netip.Addr]netip.Addr // overlay -> alias
 	to6   map[netip.Addr]netip.Addr // alias -> overlay
@@ -79,9 +112,11 @@ type Entry struct {
 	DevicePub ed25519.PublicKey
 }
 
-// NewTable builds a mapping for this device and its peers.
-func NewTable(self Entry, peers []Entry) *Table {
+// NewTable builds a mapping for this device and its peers, within the block
+// belonging to networkID.
+func NewTable(networkID string, self Entry, peers []Entry) *Table {
 	t := &Table{
+		block: Block(networkID),
 		to4:   make(map[netip.Addr]netip.Addr, len(peers)+1),
 		to6:   make(map[netip.Addr]netip.Addr, len(peers)+1),
 		self6: self.Overlay,
@@ -105,7 +140,7 @@ func (t *Table) add(e Entry) {
 		return
 	}
 	for nonce := uint8(0); nonce < 64; nonce++ {
-		a := Alias(e.DevicePub, nonce)
+		a := Alias(t.block, e.DevicePub, nonce)
 		if _, taken := t.to6[a]; taken {
 			continue
 		}
@@ -142,6 +177,10 @@ func (t *Table) Overlay(alias netip.Addr) (netip.Addr, bool) {
 	a, ok := t.to6[alias]
 	return a, ok
 }
+
+// Block returns the range this mesh's aliases come from, which is what has to
+// be routed at its interface.
+func (t *Table) Block() netip.Prefix { return t.block }
 
 // Self returns this device's own alias, which translated packets are sent from.
 func (t *Table) Self() netip.Addr {
