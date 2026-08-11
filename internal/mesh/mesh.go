@@ -768,6 +768,13 @@ func localAddrs() []netip.Addr {
 			if ip.Is6() && ip.As16()[0] == 0xfd {
 				continue
 			}
+			// And the synthetic IPv4 ones (ADR-021), for the same reason. These
+			// live on the tunnel interface, so they were being announced as
+			// candidate endpoints — an address reachable only through the
+			// tunnel it is meant to establish.
+			if v4.Prefix.Contains(ip) {
+				continue
+			}
 			out = append(out, ip)
 		}
 	}

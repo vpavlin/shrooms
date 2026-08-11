@@ -1,6 +1,11 @@
 package mesh
 
-import "testing"
+import (
+	"net/netip"
+	"testing"
+
+	"github.com/vpavlin/shrooms/internal/v4"
+)
 
 // The bug that took a mesh down for fourteen minutes. A peer announces every
 // address it has, including LAN ones, and taking the head of the list meant a
@@ -50,5 +55,23 @@ func TestBootstrapPrefersRoutableAddress(t *testing.T) {
 		if got := bootstrapEndpoint(c.in); got != c.want {
 			t.Errorf("%s: bootstrapEndpoint(%v) = %q, want %q", c.name, c.in, got, c.want)
 		}
+	}
+}
+
+// Our own addresses must never be announced as places to reach us: the overlay
+// address is circular, and so is the synthetic IPv4 alias, which lives on the
+// same tunnel interface. A peer that tried one would be dialling through the
+// tunnel it is trying to build.
+func TestLocalAddrsSkipOurOwnOverlay(t *testing.T) {
+	for _, addr := range []string{"fd7b:15fb:5ec1:f228::1", "198.19.56.185", "198.18.0.1"} {
+		ip := netip.MustParseAddr(addr)
+		skipped := (ip.Is6() && ip.As16()[0] == 0xfd) || v4.Prefix.Contains(ip)
+		if !skipped {
+			t.Errorf("%s would be announced as an endpoint", addr)
+		}
+	}
+	// An ordinary LAN address still is.
+	if v4.Prefix.Contains(netip.MustParseAddr("192.168.0.125")) {
+		t.Error("a LAN address was treated as a synthetic alias")
 	}
 }
