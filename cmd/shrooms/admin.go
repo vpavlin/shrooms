@@ -61,13 +61,15 @@ func adminPathFor(dir, label string) string {
 
 func cmdAdmin(args []string) error {
 	if len(args) < 1 {
-		return errors.New("usage: shrooms admin {init|issue|revoke|show} [flags]")
+		return errors.New("usage: shrooms admin {init|issue|renew|revoke|show} [flags]")
 	}
 	switch args[0] {
 	case "init":
 		return cmdAdminInit(args[1:])
 	case "issue":
 		return cmdAdminIssue(args[1:])
+	case "renew":
+		return cmdAdminRenew(args[1:])
 	case "revoke":
 		return cmdAdminRevoke(args[1:])
 	case "show":

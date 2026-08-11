@@ -91,6 +91,7 @@ Usage:
   shrooms admin init                      mint an authority separately, when
                                             init was run with --no-admin
   shrooms admin issue --name N            sign a credential for this device
+  shrooms admin renew                    reissue for everyone near expiry
   shrooms admin revoke --device HEX       withdraw one before it expires
   shrooms admin show                      the mesh id and its trusted keys
   shrooms set-key                       write the key into a prepared config,

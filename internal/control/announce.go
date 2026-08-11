@@ -65,6 +65,7 @@ const (
 	KindAnnounce Kind = "announce"
 	KindRelay    Kind = "relay"
 	KindRevoke   Kind = "revoke"
+	KindGrant    Kind = "grant"
 )
 
 // Announce is a device advertising itself and its reachable endpoints.
@@ -318,6 +319,56 @@ func OpenRevoke(nk identity.NetworkKey, epoch int64, raw []byte, now time.Time) 
 		return nil, fmt.Errorf("timestamp skew %s exceeds %s", skew.Round(time.Second), MaxClockSkew)
 	}
 	return &r, nil
+}
+
+// Grant carries an admin-signed credential towards the device it names.
+//
+// The mirror of Revoke, and for the same reason: credentials expire (ADR-018),
+// so every device needs a new one before its thirty days are up, and the admin
+// is not on every device. The admin signs one and hands it to any node; the
+// mesh carries it to whoever it names.
+//
+// Safe to relay for the same reason a revocation is: a credential is public,
+// it says nothing secret, and it is worthless to anyone but the device whose
+// keys it names. A hostile relayer can drop one — which is indistinguishable
+// from being offline, and ends in the same place expiry already does — but it
+// cannot forge one or make a device accept another's.
+type Grant struct {
+	Kind      Kind   `json:"kind"`
+	DevicePub []byte `json:"device_pub"` // the relayer, not the device named
+	Payload   []byte `json:"payload"`    // cred.Credential, wire form
+	Timestamp int64  `json:"ts"`
+}
+
+// OpenGrant reads a renewal message. The credential inside is not checked
+// here, exactly as OpenRevoke does not check the withdrawal: only the mesh's
+// authority can, and this package does not know it.
+func OpenGrant(nk identity.NetworkKey, epoch int64, raw []byte, now time.Time) (*Grant, error) {
+	plain, err := open(nk, epoch, raw)
+	if err != nil {
+		return nil, err
+	}
+	var env envelope
+	if err := json.Unmarshal(plain, &env); err != nil {
+		return nil, fmt.Errorf("unmarshal envelope: %w", err)
+	}
+	var g Grant
+	if err := json.Unmarshal(env.Body, &g); err != nil {
+		return nil, fmt.Errorf("unmarshal grant: %w", err)
+	}
+	if g.Kind != KindGrant {
+		return nil, fmt.Errorf("unexpected kind %q", g.Kind)
+	}
+	if len(g.DevicePub) != ed25519.PublicKeySize {
+		return nil, errors.New("bad device public key length")
+	}
+	if !ed25519.Verify(ed25519.PublicKey(g.DevicePub), env.Body, env.Sig) {
+		return nil, errors.New("signature verification failed")
+	}
+	if skew := now.Sub(time.Unix(g.Timestamp, 0)); skew > MaxClockSkew || skew < -MaxClockSkew {
+		return nil, fmt.Errorf("timestamp skew %s exceeds %s", skew.Round(time.Second), MaxClockSkew)
+	}
+	return &g, nil
 }
 
 // OpenAnnounceWindow tries each epoch in the acceptance window. Peers whose

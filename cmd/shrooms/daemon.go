@@ -261,6 +261,13 @@ type meshStatus struct {
 	Iface     string `json:"interface"`
 	Port      uint16 `json:"port"`
 	Peers     int    `json:"peers"`
+
+	// Expires is when this device's credential on this mesh runs out. Reported
+	// because a credential expiring is the one failure in this system that is
+	// scheduled: it happens on a known day, it takes the device off the mesh,
+	// and nothing else on the status page hints at it. Zero when the mesh has
+	// no admin keys, where membership is the network key and does not lapse.
+	Expires int64 `json:"expires,omitempty"`
 }
 
 // statusPayload is what the daemon reports over the control socket.
@@ -639,6 +646,9 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 				Port:    in.port,
 				Peers:   len(in.mesh.Roster().Peers()),
 			}
+			if e := in.mesh.SelfExpiry(); !e.IsZero() {
+				ms.Expires = e.Unix()
+			}
 			if a, ok := in.mesh.LookupV4(in.self); ok {
 				ms.OverlayV4 = a.String()
 			}
@@ -769,6 +779,17 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 		}))
 	}
 
+	// Which mesh an admin request is about. Empty means the primary one, which
+	// is what a single-mesh node has and what older tooling sends.
+	pickMesh := func(label string) *mesh.Mesh {
+		for _, in := range instances {
+			if label == "" || in.label == label {
+				return in.mesh
+			}
+		}
+		return nil
+	}
+
 	inviteHandlers(mux, func(label string) inviteHolder {
 		for _, in := range instances {
 			if label == "" || in.label == label {
@@ -806,6 +827,73 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	// The mirror of /revoke: how a renewed credential reaches the mesh.
+	//
+	// Same reasoning about permissions. This one carries a credential rather
+	// than a withdrawal, and the mesh verifies the admin signature on arrival
+	// exactly as every other node will — a caller who can reach this socket
+	// cannot mint membership with it.
+	mux.HandleFunc("/grant", requireRoot(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST a credential", http.StatusMethodNotAllowed)
+			return
+		}
+		raw, err := io.ReadAll(io.LimitReader(r.Body, 4096))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		blob, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(raw)))
+		if err != nil {
+			http.Error(w, "credential is not base64: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		target := pickMesh(r.URL.Query().Get("mesh"))
+		if target == nil {
+			http.Error(w, "no such mesh", http.StatusNotFound)
+			return
+		}
+		if err := target.Grant(blob); err != nil {
+			log.Warn("refused a credential", "err", err)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	// Who is on the mesh, in the form the admin tooling needs to reissue for
+	// them: both public keys, the name, and when what they hold runs out.
+	//
+	// Not part of /status, which is a display: this is keys, and a renewal
+	// sweep is the only thing that wants them.
+	mux.HandleFunc("/members", requireRoot(func(w http.ResponseWriter, r *http.Request) {
+		type member struct {
+			DevicePub string `json:"device_pub"`
+			WGPub     string `json:"wg_pub"`
+			Name      string `json:"name"`
+			NotAfter  int64  `json:"not_after,omitempty"`
+		}
+		target := pickMesh(r.URL.Query().Get("mesh"))
+		if target == nil {
+			http.Error(w, "no such mesh", http.StatusNotFound)
+			return
+		}
+		out := []member{}
+		for _, mem := range target.Members() {
+			e := member{
+				DevicePub: hex.EncodeToString(mem.DevicePub),
+				WGPub:     hex.EncodeToString(mem.WGPub),
+				Name:      mem.Name,
+			}
+			if !mem.NotAfter.IsZero() {
+				e.NotAfter = mem.NotAfter.Unix()
+			}
+			out = append(out, e)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(out)
 	}))
 
 	// A file, not a port: QML can read a file and cannot open a unix socket,

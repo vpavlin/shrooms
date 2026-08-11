@@ -9,6 +9,7 @@ package mesh
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -133,6 +134,17 @@ type Mesh struct {
 	// a device by staying quiet.
 	revoked *cred.List
 
+	// grants remembers renewals already seen, so relaying one does not become
+	// a broadcast storm: every node passes on what is new to it, and without
+	// this "new to it" would be true every time it came back round.
+	grants map[[32]byte]time.Time
+
+	// expiry is when each peer's credential runs out, learned from the
+	// announces we have already verified. Kept here rather than on the roster
+	// because it is not part of how a peer is reached — it is how long the
+	// admin has to renew before it stops being one.
+	expiry map[string]int64
+
 	// authority is the set of admin keys this mesh trusts, or nil when
 	// membership is still the network key alone. Both worlds run at once
 	// during migration (ADR-018): nil behaves exactly as before.
@@ -175,6 +187,8 @@ func New(log *slog.Logger, cfg state.Config, st *state.State, node *waku.Node, d
 		roster:     NewRoster(nk, st.Identity.DevicePub),
 		authority:  auth,
 		revoked:    cred.NewList(),
+		grants:     map[[32]byte]time.Time{},
+		expiry:     map[string]int64{},
 		guard:      control.NewReplayGuard(),
 		self:       identity.OverlayAddr(nk, st.Identity.DevicePub),
 		discoKey:   disco.DeriveKey(nk),
@@ -428,7 +442,63 @@ func (m *Mesh) checkMembership(a *control.Announce, now time.Time) error {
 	if m.revoked.Revoked(c) {
 		return cred.ErrRevoked
 	}
+	m.mu.Lock()
+	if m.expiry == nil {
+		m.expiry = map[string]int64{}
+	}
+	m.expiry[hex.EncodeToString(a.DevicePub)] = c.NotAfter
+	m.mu.Unlock()
 	return nil
+}
+
+// Member is what an admin needs to renew one device: the two public keys the
+// credential binds together, the name it carries, and when the one it holds
+// runs out.
+type Member struct {
+	DevicePub []byte
+	WGPub     []byte
+	Name      string
+	NotAfter  time.Time // zero when this mesh has no authority
+}
+
+// Members reports every device this node knows to be on the mesh, itself
+// included.
+//
+// Itself included because renewal is a sweep and the node running the admin
+// tooling is as much a member as any other — leaving it out is how the machine
+// with the admin key on it becomes the one that expires.
+func (m *Mesh) Members() []Member {
+	m.mu.Lock()
+	exp := make(map[string]int64, len(m.expiry))
+	for k, v := range m.expiry {
+		exp[k] = v
+	}
+	m.mu.Unlock()
+
+	out := []Member{{
+		DevicePub: m.st.Identity.DevicePub,
+		WGPub:     m.st.Identity.WGPub[:],
+		Name:      m.cfg.Name,
+		NotAfter:  m.SelfExpiry(),
+	}}
+	for _, p := range m.roster.Peers() {
+		mem := Member{DevicePub: p.DevicePub, WGPub: p.WGPub[:], Name: p.Name}
+		if t, ok := exp[p.ID()]; ok {
+			mem.NotAfter = time.Unix(t, 0)
+		}
+		out = append(out, mem)
+	}
+	return out
+}
+
+// SelfExpiry is when this device's own credential runs out, or the zero time
+// when it holds none.
+func (m *Mesh) SelfExpiry() time.Time {
+	c, err := cred.UnmarshalCredential(m.st.Credential)
+	if err != nil {
+		return time.Time{}
+	}
+	return time.Unix(c.NotAfter, 0)
 }
 
 // publishRevocation puts a withdrawal on the bus.
@@ -513,6 +583,115 @@ func (m *Mesh) applyRevocation(raw []byte, now time.Time) (bool, error) {
 		m.log.Debug("could not relay a revocation", "err", err)
 	}
 	return true, nil
+}
+
+// Grant takes a renewed credential from the admin tooling and puts it on the
+// mesh, exactly as Revoke does for a withdrawal.
+//
+// The admin signs one credential per device and hands the lot to whichever
+// node it can reach; each one travels to the device it names. Nothing here
+// assumes that device is online now — a node that was away picks its own up
+// from the next admin sweep, which is why renewal starts well before expiry.
+func (m *Mesh) Grant(raw []byte) error {
+	if err := m.handleGrant(raw, time.Now()); err != nil {
+		return err
+	}
+	// Publish even when it was ours to keep: a credential for this device is
+	// still news to nobody else, but one for a peer must travel, and the admin
+	// cannot tell from here which case it handed us.
+	return m.publishGrant(raw, time.Now())
+}
+
+// publishGrant puts a renewed credential on the bus.
+func (m *Mesh) publishGrant(raw []byte, now time.Time) error {
+	if m.node == nil {
+		// A mesh with no rendezvous connection can still keep a credential
+		// handed to it directly; it just cannot pass one on.
+		return errors.New("no rendezvous connection")
+	}
+	msg := &control.Grant{
+		Kind:      control.KindGrant,
+		DevicePub: m.st.Identity.DevicePub,
+		Payload:   raw,
+		Timestamp: now.Unix(),
+	}
+	sealed, err := control.Seal(m.nk, topic.Epoch(now), m.st.Identity.DevicePriv, msg)
+	if err != nil {
+		return err
+	}
+	_, err = m.node.Send(topic.Current(m.nk, now), sealed, true)
+	return err
+}
+
+// handleGrant takes a renewed credential off the bus: keeps it if it is ours,
+// relays it if it is new, and refuses it if this mesh did not sign it.
+//
+// The check that matters is the last one. A credential is public and travels
+// through other members' hands, so the only thing standing between a renewal
+// and a forgery is the admin signature — which is verified here, on arrival,
+// against the same authority that admits peers.
+func (m *Mesh) handleGrant(raw []byte, now time.Time) error {
+	if m.authority == nil {
+		return errors.New("this mesh has no admin keys, so a credential means nothing here")
+	}
+	c, err := cred.UnmarshalCredential(raw)
+	if err != nil {
+		return fmt.Errorf("unreadable credential: %w", err)
+	}
+	if err := cred.VerifyBy(m.authority, c, now); err != nil {
+		return fmt.Errorf("this mesh did not sign that credential: %w", err)
+	}
+
+	if !bytes.Equal(c.DevicePub, m.st.Identity.DevicePub) {
+		// Somebody else's. Relay it once — they may be the reason it was sent
+		// through us — and forget it.
+		m.relayGrant(raw, now)
+		return nil
+	}
+	if !bytes.Equal(c.WGPub, m.st.Identity.WGPub[:]) {
+		return errors.New("credential names this device but a different tunnel key")
+	}
+
+	// Ours. Keep the later one: an admin sweep may reissue while an older
+	// credential is still in flight, and going backwards would shorten the
+	// life of the thing that is keeping this device on the mesh.
+	if cur, err := cred.UnmarshalCredential(m.st.Credential); err == nil && cur.NotAfter >= c.NotAfter {
+		return nil
+	}
+	m.st.Credential = raw
+	if err := m.st.Save(); err != nil {
+		return fmt.Errorf("store the renewed credential: %w", err)
+	}
+	m.log.Info("credential renewed",
+		"until", time.Unix(c.NotAfter, 0).UTC().Format(time.RFC3339), "serial", c.Serial)
+	// Announce with it now rather than at the next tick: peers check the
+	// credential on every announce, and the one they hold for us is the old.
+	m.requestAnnounce()
+	return nil
+}
+
+// relayGrant passes a renewal on, once.
+func (m *Mesh) relayGrant(raw []byte, now time.Time) {
+	sum := sha256.Sum256(raw)
+	m.mu.Lock()
+	_, seen := m.grants[sum]
+	if !seen {
+		m.grants[sum] = now
+		// Drop what can no longer be relevant. Cheap: this map holds one entry
+		// per renewal in flight, which is one per device per month.
+		for k, t := range m.grants {
+			if now.Sub(t) > cred.DefaultLife {
+				delete(m.grants, k)
+			}
+		}
+	}
+	m.mu.Unlock()
+	if seen {
+		return
+	}
+	if err := m.publishGrant(raw, now); err != nil {
+		m.log.Debug("could not relay a renewal", "err", err)
+	}
 }
 
 // reportUnknown logs packets WireGuard rejected as an unknown message type.
@@ -841,6 +1020,11 @@ func (m *Mesh) handle(ev waku.Event) {
 			if r, rerr := control.OpenRevoke(m.nk, ep, msg.Payload, now); rerr == nil {
 				m.health.announceOpened(now)
 				m.handleRevocation(r.Payload, now)
+				return
+			}
+			if g, gerr := control.OpenGrant(m.nk, ep, msg.Payload, now); gerr == nil {
+				m.health.announceOpened(now)
+				m.handleGrant(g.Payload, now)
 				return
 			}
 		}

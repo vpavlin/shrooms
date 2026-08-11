@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"text/tabwriter"
 	"time"
+
+	"github.com/vpavlin/shrooms/internal/cred"
 )
 
 // fetchStatus reads the daemon's status over its unix socket.
@@ -134,8 +136,14 @@ func cmdStatus(args []string) error {
 	// is this peer on" is the first question a split raises.
 	if len(st.Meshes) > 1 {
 		for _, m := range st.Meshes {
-			fmt.Fprintf(head, "mesh %s\t%s\t%s  %s  peers %d\n",
-				m.Label, m.Overlay, m.Prefix, m.Iface, m.Peers)
+			fmt.Fprintf(head, "mesh %s\t%s\t%s  %s  peers %d%s\n",
+				m.Label, m.Overlay, m.Prefix, m.Iface, m.Peers, expiryNote(m.Expires))
+		}
+	} else if len(st.Meshes) == 1 {
+		if note := expiryNote(st.Meshes[0].Expires); note != "" {
+			fmt.Fprintf(head, "member\t%s\tuntil %s\n",
+				strings.TrimSpace(note),
+				time.Unix(st.Meshes[0].Expires, 0).Format("2006-01-02"))
 		}
 	}
 	if st.OverlayV4 != "" {
@@ -354,4 +362,28 @@ func cmdPaths(args []string) error {
 		fmt.Println("no peers known yet")
 	}
 	return nil
+}
+
+// expiryNote says how long this device's membership has left, and only when
+// that is worth saying.
+//
+// Silent while there is plenty of time, because a countdown nobody has to act
+// on is noise, and noise is what makes the line invisible on the day it
+// matters. A credential lapsing takes the device off the mesh on a known date
+// — the one scheduled failure in the system — so the warning starts as soon as
+// a renewal sweep would act (cred.RenewBefore) and gets shorter and louder.
+func expiryNote(unix int64) string {
+	if unix == 0 {
+		return ""
+	}
+	left := time.Until(time.Unix(unix, 0))
+	switch {
+	case left <= 0:
+		return "  !! membership expired — shrooms admin renew"
+	case left < 24*time.Hour:
+		return fmt.Sprintf("  !! membership ends in %s", left.Round(time.Hour))
+	case left < cred.RenewBefore(cred.DefaultLife):
+		return fmt.Sprintf("  membership ends in %d days", int(left.Hours()/24))
+	}
+	return ""
 }
