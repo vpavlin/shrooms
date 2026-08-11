@@ -5,14 +5,20 @@
 # image, generates the config, installs a systemd unit and starts it. There is
 # no separate "now run the daemon" step.
 #
+#   sudo ./install.sh prepare --name fedora          # then redeem an invite
 #   sudo ./install.sh join <NETWORK-KEY> --name laptop
 #   sudo ./install.sh init --relay                   # create a new mesh
+#
+# `prepare` is the one to use with invites: it installs and starts the daemon
+# with no mesh, and the daemon waits. Then, on a machine already on the mesh,
+# `shrooms invite` — and back here `sudo shrooms join --invite <TOKEN>`, which
+# brings it up without a restart.
 #
 # Everything after init/join goes straight to shrooms, so its flags are
 # whatever that version supports rather than a copy that drifts.
 #
-# Needs only docker and /dev/net/tun. No Go toolchain, no repository checkout,
-# no liblogosdelivery — everything is in the image.
+# Needs docker or podman, and /dev/net/tun. No Go toolchain, no repository
+# checkout, no liblogosdelivery — everything is in the image.
 #
 # This is the counterpart to scripts/deploy.sh, which pushes to a remote host
 # from a machine that has the repo. Here you are already on the box, which is
@@ -38,7 +44,8 @@ usage() {
 usage: $0 [--image REF] [--force] (init | join <NETWORK-KEY> | prepare) [flags...]
 
   init                 create a new mesh and print its key
-  join KEY             join an existing mesh
+  join KEY             join an existing mesh with its network key
+  prepare              install and wait; join later with an invite
   prepare              write the config with the key left blank, for setting a
                        machine up without the key passing through anyone else
 
@@ -55,6 +62,7 @@ This script's own options:
   --force              regenerate the config if one exists
 
 Examples:
+  sudo $0 prepare --name fedora        # then: sudo shrooms join --invite TOKEN
   sudo $0 join P27KNQ2... --name laptop
   sudo $0 init --relay
 EOF
@@ -88,10 +96,22 @@ SETUP=("$@")
 [ "$(id -u)" -eq 0 ] || { echo "run as root (sudo $0 ...)"; exit 1; }
 
 echo "==> checking this machine"
-command -v docker >/dev/null || { echo "docker is not installed"; exit 1; }
+# docker or podman. Fedora ships podman and no docker, and everything used here
+# — host networking, NET_ADMIN, a device, bind mounts — is spelled identically
+# in both. Run as root either way: a rootless container cannot create a TUN in
+# the host's namespace, which is the entire job.
+RUNTIME=$(command -v docker || command -v podman || true)
+[ -n "$RUNTIME" ] || { echo "neither docker nor podman is installed"; exit 1; }
 [ -e /dev/net/tun ] || { echo "no /dev/net/tun — the kernel needs the tun module"; exit 1; }
 command -v systemctl >/dev/null || { echo "no systemd; see docker/compose-node.yml to run it yourself"; exit 1; }
-echo "  docker $(docker version --format '{{.Server.Version}}' 2>/dev/null || echo '?'), /dev/net/tun present"
+echo "  $(basename "$RUNTIME") $("$RUNTIME" version --format '{{.Server.Version}}' 2>/dev/null || echo '?'), /dev/net/tun present"
+
+# podman has no daemon to wait for, and ordering after a unit that does not
+# exist would hold the service back on every boot.
+AFTER="network-online.target"
+if [ "$(basename "$RUNTIME")" = docker ]; then
+    AFTER="docker.service network-online.target"
+fi
 
 # SELinux relabels bind mounts; without :Z the container cannot read its config
 # and reports it as missing rather than as a permission problem.
@@ -102,9 +122,9 @@ if command -v getenforce >/dev/null && [ "$(getenforce 2>/dev/null)" = "Enforcin
 fi
 
 echo "==> fetching $IMAGE"
-docker pull -q "$IMAGE" >/dev/null || {
+"$RUNTIME" pull -q "$IMAGE" >/dev/null || {
     echo "could not pull $IMAGE"
-    echo "if the package is private, either make it public or run: docker login ghcr.io"
+    echo "if the package is private, either make it public or run: $(basename "$RUNTIME") login ghcr.io"
     exit 1
 }
 
@@ -125,7 +145,7 @@ else
     #
     # --config/--state are appended, so they win over anything the caller typed:
     # the service unit mounts these paths and nothing else would be read.
-    docker run --rm \
+    "$RUNTIME" run --rm \
         --hostname "$(hostname -s 2>/dev/null || hostname)" \
         -v "/etc/shrooms:/etc/shrooms$Z" \
         -v "/var/lib/shrooms:/var/lib/shrooms$Z" \
@@ -151,12 +171,12 @@ cat > /etc/systemd/system/shrooms.service <<EOF
 [Unit]
 Description=shrooms overlay mesh
 Documentation=https://github.com/vpavlin/shrooms
-After=docker.service network-online.target
+After=$AFTER
 Wants=network-online.target
 
 [Service]
-ExecStartPre=-/usr/bin/docker rm -f shrooms
-ExecStart=/usr/bin/docker run --rm --name shrooms \\
+ExecStartPre=-$RUNTIME rm -f shrooms
+ExecStart=$RUNTIME run --rm --name shrooms \\
     --network host \\
     --cap-add NET_ADMIN \\
     --device /dev/net/tun \\
@@ -164,7 +184,7 @@ ExecStart=/usr/bin/docker run --rm --name shrooms \\
     -v /var/lib/shrooms:/var/lib/shrooms$Z \\
     -v /run/shrooms:/run/shrooms \\
     $IMAGE daemon --socket /run/shrooms/shrooms.sock
-ExecStop=/usr/bin/docker stop shrooms
+ExecStop=$RUNTIME stop shrooms
 Restart=always
 RestartSec=5
 
@@ -178,15 +198,20 @@ EOF
 # No --socket appended: the daemon listens on the CLI's own default, and
 # appending it would break every subcommand that does not take the flag —
 # `shrooms key show` among them.
-cat > /usr/local/bin/shrooms <<'EOF'
+# The runtime is baked in by the first (unquoted) heredoc; everything after it
+# is quoted so that "$@" and the inspect format survive verbatim.
+cat > /usr/local/bin/shrooms <<EOF
 #!/bin/sh
+RUNTIME=$RUNTIME
+EOF
+cat >> /usr/local/bin/shrooms <<'EOF'
 # Thin wrapper: run the CLI inside the running node container.
-if ! docker inspect -f '{{.State.Running}}' shrooms 2>/dev/null | grep -q true; then
+if ! "$RUNTIME" inspect -f '{{.State.Running}}' shrooms 2>/dev/null | grep -q true; then
     echo "the shrooms container is not running" >&2
     echo "  sudo systemctl status shrooms" >&2
     exit 1
 fi
-exec docker exec shrooms shrooms "$@"
+exec "$RUNTIME" exec shrooms shrooms "$@"
 EOF
 chmod 755 /usr/local/bin/shrooms
 
@@ -245,7 +270,7 @@ EOF
 # typed: the config is the source of truth, and a --relay that failed to take
 # effect should not produce advice implying it did.
 if [ "${SETUP[0]}" = "init" ]; then
-    KEY=$(docker run --rm -v "/etc/shrooms:/etc/shrooms$Z" "$IMAGE" \
+    KEY=$("$RUNTIME" run --rm -v "/etc/shrooms:/etc/shrooms$Z" "$IMAGE" \
         key show --config /etc/shrooms/config.toml)
     cat <<EOF
 This machine created the mesh. Add others with:
@@ -256,7 +281,7 @@ Treat that key as a password: anyone holding it is a member of the mesh.
 EOF
 fi
 
-if docker run --rm --entrypoint /bin/sh -v "/etc/shrooms:/etc/shrooms$Z" "$IMAGE" \
+if "$RUNTIME" run --rm --entrypoint /bin/sh -v "/etc/shrooms:/etc/shrooms$Z" "$IMAGE" \
        -c 'grep -q "^relay *= *\"true\"" /etc/shrooms/config.toml' 2>/dev/null; then
     echo "This node relays. Open its UDP port if a firewall is in the way:"
     echo "  ufw allow 51820/udp    # or the equivalent"
