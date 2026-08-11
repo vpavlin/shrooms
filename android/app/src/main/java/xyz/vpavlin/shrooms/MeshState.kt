@@ -10,6 +10,8 @@ import org.json.JSONObject
  * Deliberately a mirror of `status --json` rather than a set of bound types:
  * adding a field in Go must not be an API change on both sides. See ADR-016.
  */
+data class MeshInfo(val label: String, val overlay: String, val prefix: String, val peers: Int)
+
 data class Peer(
     val name: String,
     /** What this peer answers to on the mesh, e.g. `laptop.mesh`. */
@@ -24,6 +26,8 @@ data class Peer(
     val rxBytes: Long,
     val txBytes: Long,
     val tunnelAfterS: Double,
+    /** Which mesh this peer is on; empty on a single-mesh device (ADR-015). */
+    val mesh: String = "",
 ) {
     /**
      * Three states, not two. A peer can be announcing yet unreachable, which is
@@ -161,6 +165,7 @@ object MeshState {
             for (i in 0 until arr.length()) {
                 val p = arr.getJSONObject(i)
                 peers += Peer(
+                    mesh = p.optString("mesh"),
                     name = p.optString("name"),
                     dnsName = p.optString("dns_name"),
                     overlay = p.optString("overlay"),

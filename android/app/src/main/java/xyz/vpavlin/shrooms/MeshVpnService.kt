@@ -84,23 +84,52 @@ class MeshVpnService : VpnService() {
 
                 val builder = Builder()
                     .setSession("Shrooms")
-                    .addAddress(overlay, 128)
-                    .addRoute(prefix, 48)
                     .setMtu(MTU)
                     .setBlocking(false)
 
-                // The synthetic IPv4 side (ADR-021). Without an address and a
-                // route in this range, Android never hands us the packets a
-                // browser sends to a mesh name — and a browser only ever asks
-                // for A records when the network has no IPv6, which is most
-                // wifi. The route is narrow, so ordinary IPv4 still bypasses.
-                val v4 = Mobile.overlayV4(dir)
-                val v4Range = Mobile.overlayV4Range()
-                if (v4.isNotEmpty() && v4Range.contains("/")) {
-                    builder.addAddress(v4, 32)
-                    builder.addRoute(v4Range.substringBefore("/"), v4Range.substringAfter("/").toInt())
-                    Log.i(TAG, "ipv4 aliases at $v4 in $v4Range")
+                // An address and routes for every mesh (ADR-015).
+                //
+                // Go decides what these are, because it is where the identities
+                // and the address derivation live — and a mesh whose route is
+                // missing looks like a mesh that silently does not work, with
+                // nothing in the log to say so.
+                var installed = 0
+                runCatching {
+                    val arr = org.json.JSONArray(Mobile.meshesJSON(dir))
+                    for (i in 0 until arr.length()) {
+                        val m = arr.getJSONObject(i)
+                        val ov = m.optString("overlay")
+                        val pfx = m.optString("prefix")
+                        if (ov.isEmpty() || !pfx.contains("/")) continue
+                        builder.addAddress(ov, 128)
+                        builder.addRoute(pfx.substringBefore("/"), pfx.substringAfter("/").toInt())
+
+                        // The synthetic IPv4 side, per mesh: browsers ask for A
+                        // records, and each mesh owns its own block.
+                        val v4 = m.optString("v4")
+                        val v4b = m.optString("v4_block")
+                        if (v4.isNotEmpty() && v4b.contains("/")) {
+                            builder.addAddress(v4, 32)
+                            builder.addRoute(v4b.substringBefore("/"), v4b.substringAfter("/").toInt())
+                        }
+                        installed++
+                        Log.i(TAG, "mesh ${m.optString("label")} at $ov ($pfx), v4 $v4b")
+                    }
+                }.onFailure { Log.w(TAG, "could not read the mesh list: ${it.message}") }
+
+                if (installed == 0) {
+                    // The single-mesh fallback, for a config this build cannot
+                    // enumerate. Better than a tunnel with no addresses at all.
+                    builder.addAddress(overlay, 128)
+                    builder.addRoute(prefix, 48)
+                    val v4 = Mobile.overlayV4(dir)
+                    val v4Range = Mobile.overlayV4Range()
+                    if (v4.isNotEmpty() && v4Range.contains("/")) {
+                        builder.addAddress(v4, 32)
+                        builder.addRoute(v4Range.substringBefore("/"), v4Range.substringAfter("/").toInt())
+                    }
                 }
+
 
                 // Let everything that is not the mesh bypass the tunnel.
                 //

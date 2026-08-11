@@ -108,6 +108,8 @@ func dupFd(fd int) (int, error) {
 // --- status ---------------------------------------------------------------
 
 type statusPeer struct {
+	// Mesh is which mesh this peer is on, empty on a single-mesh device.
+	Mesh             string  `json:"mesh,omitempty"`
 	Name             string  `json:"name"`
 	DNSName          string  `json:"dns_name,omitempty"`
 	Overlay          string  `json:"overlay"`
@@ -126,7 +128,17 @@ type statusPeer struct {
 	TunnelAfterS     float64 `json:"tunnel_after_s,omitempty"`
 }
 
+// statusMesh is one mesh, for a device that has more than one.
+type statusMesh struct {
+	Label   string `json:"label"`
+	Overlay string `json:"overlay"`
+	Prefix  string `json:"prefix"`
+	Peers   int    `json:"peers"`
+}
+
 type statusPayload struct {
+	// Meshes is present only when there is more than one.
+	Meshes     []statusMesh `json:"meshes,omitempty"`
 	Name       string       `json:"name"`
 	DNSName    string       `json:"dns_name,omitempty"`
 	Overlay    string       `json:"overlay"`
@@ -165,6 +177,35 @@ type statusPayload struct {
 		Forwarded     uint64 `json:"forwarded"`
 		ForwardFailed uint64 `json:"forward_failed"`
 	} `json:"dns"`
+}
+
+// snapshotAll reports every mesh on the device. The first one fills the
+// top-level fields, so an app build that knows nothing about several meshes
+// shows exactly what it always did.
+func snapshotAll(instances []*meshInstance, suffix string) statusPayload {
+	out := snapshot(instances[0].mesh, suffix)
+	if len(instances) == 1 {
+		return out
+	}
+	now := time.Now()
+	out.Peers = nil
+	for _, in := range instances {
+		part := snapshot(in.mesh, suffix)
+		for i := range part.Peers {
+			// Which mesh a peer is on, since two meshes may hold devices with
+			// the same name and the address is the only thing that differs.
+			part.Peers[i].Mesh = in.label
+		}
+		out.Peers = append(out.Peers, part.Peers...)
+		out.Meshes = append(out.Meshes, statusMesh{
+			Label:   in.label,
+			Overlay: in.self.String(),
+			Prefix:  in.prefix.String(),
+			Peers:   len(in.mesh.Roster().Peers()),
+		})
+	}
+	_ = now
+	return out
 }
 
 func snapshot(m *mesh.Mesh, suffix string) statusPayload {

@@ -795,7 +795,7 @@ func StatusJSON() string {
 	if s == nil {
 		return "{}"
 	}
-	snap := snapshot(s.instances[0].mesh, s.suffix)
+	snap := snapshotAll(s.instances, s.suffix)
 	snap.Name, snap.Overlay, snap.Prefix = s.name, s.overlay, s.prefix
 	snap.DNSName = mesh.DNSName(s.name, s.suffix)
 	if s.dnsIntercept != nil {

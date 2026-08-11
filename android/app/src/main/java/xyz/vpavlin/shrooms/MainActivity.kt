@@ -87,6 +87,7 @@ class MainActivity : ComponentActivity() {
             LogosTheme {
                 val dir = filesDir.absolutePath
                 var configured by remember { mutableStateOf(Mobile.configured(dir)) }
+                var addingMesh by remember { mutableStateOf(false) }
                 val snap by MeshState.snapshot.collectAsStateWithLifecycle()
 
                 Surface(
@@ -95,6 +96,13 @@ class MainActivity : ComponentActivity() {
                 ) {
                     if (!configured) {
                         JoinScreen(dir, onScan = ::scanInvite) { configured = true }
+                    } else if (addingMesh) {
+                        AddMeshScreen(
+                            dir = dir,
+                            onScan = ::scanInvite,
+                            onDone = { addingMesh = false },
+                            onCancel = { addingMesh = false },
+                        )
                     } else {
                         MeshScreen(
                             snap = snap,
@@ -104,6 +112,7 @@ class MainActivity : ComponentActivity() {
                                 startService(Intent(this, MeshVpnService::class.java)
                                     .setAction(MeshVpnService.ACTION_DISCONNECT))
                             },
+                            onAddMesh = { addingMesh = true },
                         )
                     }
                 }
@@ -243,8 +252,109 @@ private fun JoinScreen(dir: String, onScan: ((String) -> Unit) -> Unit, onDone: 
     }
 }
 
+/**
+ * Join a second mesh, keeping the ones this device already has (ADR-015).
+ *
+ * The name is asked for and required, because it is local to this device and
+ * there is no way to learn it later — mesh names deliberately never travel on
+ * the wire, so nobody else can tell you what to call theirs.
+ */
 @Composable
-private fun MeshScreen(snap: Snapshot, dir: String, onConnect: () -> Unit, onDisconnect: () -> Unit) {
+private fun AddMeshScreen(
+    dir: String,
+    onScan: ((String) -> Unit) -> Unit,
+    onDone: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    var token by remember { mutableStateOf("") }
+    var label by remember { mutableStateOf("") }
+    var name by remember { mutableStateOf(Build.MODEL.replace(' ', '-').lowercase()) }
+    var error by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    Column(
+        Modifier.fillMaxSize().padding(24.dp).verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text("Another mesh", style = MaterialTheme.typography.headlineSmall, color = Palette.Bone)
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "joining a second mesh does not connect the two — this device is an " +
+                "endpoint on each, not a bridge between them",
+            style = MaterialTheme.typography.bodySmall, color = Palette.Ash,
+        )
+
+        Spacer(Modifier.height(28.dp))
+        Label("INVITE")
+        Spacer(Modifier.height(8.dp))
+        KeyField(token) { token = it.trim() }
+
+        Spacer(Modifier.height(12.dp))
+        Action("SCAN A CODE", enabled = !busy) {
+            error = ""
+            onScan { scanned ->
+                val t = runCatching { Mobile.inviteToken(scanned) }.getOrNull().orEmpty()
+                if (t.isNotEmpty()) token = t else error = "that is not an invite"
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
+        Label("CALL IT")
+        Spacer(Modifier.height(8.dp))
+        KeyField(label, singleLine = true) { label = it.trim() }
+
+        Spacer(Modifier.height(20.dp))
+        Label("THIS DEVICE")
+        Spacer(Modifier.height(8.dp))
+        KeyField(name, singleLine = true) { name = it.trim() }
+
+        if (error.isNotEmpty()) {
+            Spacer(Modifier.height(16.dp))
+            Text(error, color = Palette.Rust, style = MaterialTheme.typography.bodySmall)
+        }
+
+        Spacer(Modifier.height(28.dp))
+        Action(
+            if (busy) "WAITING FOR THE OTHER DEVICE…" else "ADD",
+            enabled = token.isNotEmpty() && label.isNotEmpty() && !busy,
+        ) {
+            busy = true
+            error = ""
+            scope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    runCatching { Mobile.joinAnotherWithInvite(token, label, name, dir, 120L) }
+                }
+                result
+                    .onSuccess { onDone() }
+                    .onFailure { error = it.message ?: "could not join"; busy = false }
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+        Text(
+            "reconnect afterwards for it to come up",
+            style = MaterialTheme.typography.bodySmall, color = Palette.Ash,
+        )
+
+        Spacer(Modifier.height(24.dp))
+        Text(
+            "cancel",
+            style = MaterialTheme.typography.bodySmall,
+            color = Palette.Phosphor,
+            modifier = Modifier.clickable(enabled = !busy) { onCancel() },
+        )
+    }
+}
+
+@Composable
+private fun MeshScreen(
+    snap: Snapshot,
+    dir: String,
+    onConnect: () -> Unit,
+    onDisconnect: () -> Unit,
+    onAddMesh: () -> Unit = {},
+) {
     val clipboard = LocalClipboardManager.current
 
     Column(Modifier.fillMaxSize()) {
@@ -434,6 +544,14 @@ private fun MeshScreen(snap: Snapshot, dir: String, onConnect: () -> Unit, onDis
         }
 
         ModeSetting(dir, connected = snap.connected)
+
+        Spacer(Modifier.height(18.dp))
+        Text(
+            "join another mesh",
+            style = MaterialTheme.typography.bodySmall,
+            color = Palette.Phosphor,
+            modifier = Modifier.clickable { onAddMesh() },
+        )
 
         Text(
             buildLabel(),
