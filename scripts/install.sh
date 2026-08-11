@@ -218,21 +218,34 @@ chmod 755 /usr/local/bin/shrooms
 systemctl daemon-reload
 systemctl enable shrooms >/dev/null 2>&1
 
-# A prepared machine has no key yet, so starting it would only fail. Everything
-# else is installed and enabled; it comes up on the first start and on boot
-# after that.
+# A prepared machine used not to be started, on the grounds that a daemon with
+# no key would only fail. That stopped being true: a daemon without a mesh now
+# holds the control socket and waits to be told which one it is on, which is
+# precisely what an invite needs it to be doing. Leaving it stopped meant
+# `shrooms join --invite` had nothing to talk to.
 if [ "${SETUP[0]}" = "prepare" ]; then
+    if ! systemctl restart shrooms; then
+        echo
+        echo "the service failed to start:"
+        journalctl -u shrooms -n 20 --no-pager || true
+        exit 1
+    fi
+    sleep 2
     cat <<EOF
 
-Installed and enabled, but NOT started: the mesh key is not set yet.
+Installed and running, waiting for a mesh.
 
-  sudo nano /etc/shrooms/config.toml     # replace the network_key placeholder
-  sudo systemctl start shrooms
-  shrooms status
+On a machine already on one:
+  shrooms invite                        # or --mesh <name> if it has several
 
-Get the key from a machine already on the mesh — \`shrooms key show\`, or
-\`--qr\` to scan it. It never needs to pass through anyone else.
+and back here:
+  sudo shrooms join --invite <TOKEN> --name $(hostname)
+
+That brings the mesh up without a restart. A network key still works if you
+have one rather than an invite:
+  sudo shrooms join <NETWORK-KEY> --name $(hostname)
 EOF
+    shrooms status 2>/dev/null || true
     exit 0
 fi
 # Not `enable --now ... || enable`: that swallowed a failed start and left the
