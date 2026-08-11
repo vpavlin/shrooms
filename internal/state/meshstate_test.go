@@ -2,6 +2,7 @@ package state
 
 import (
 	"bytes"
+	"sync"
 	"testing"
 )
 
@@ -138,5 +139,58 @@ func TestCredentialsArePerMesh(t *testing.T) {
 	}
 	if string(st.Credential) != "home-credential" {
 		t.Errorf("a second mesh overwrote the first mesh's credential: %q", st.Credential)
+	}
+}
+
+// Several meshes advance their sequence numbers independently and all write
+// one file. Two saving at once wrote the same temporary path and raced to
+// rename it: one won, the other failed with "no such file or directory" and
+// lost its announce — a mesh that then never announced at all.
+func TestConcurrentSavesDoNotRace(t *testing.T) {
+	dir := t.TempDir()
+	st, err := LoadOrCreateState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := st.MeshState("meshaaa", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := st.MeshState("meshbbb", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// One goroutine per mesh, as the daemon has: each advances its own
+	// sequence number and saves. What is shared is the file, which is exactly
+	// what raced.
+	views := []*State{st.View(a), st.View(b)}
+	errs := make(chan error, 200)
+	var wg sync.WaitGroup
+	for _, v := range views {
+		wg.Add(1)
+		go func(v *State) {
+			defer wg.Done()
+			for i := 0; i < 100; i++ {
+				v.Seq++
+				errs <- v.Save()
+			}
+		}(v)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("a concurrent save failed: %v", err)
+		}
+	}
+
+	// And the file is still readable afterwards, with both meshes in it.
+	back, err := LoadOrCreateState(dir)
+	if err != nil {
+		t.Fatalf("state.json is unreadable after concurrent saves: %v", err)
+	}
+	if len(back.Meshes) != 2 {
+		t.Errorf("read back %d meshes, want 2", len(back.Meshes))
 	}
 }

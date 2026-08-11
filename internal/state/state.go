@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/vpavlin/shrooms/internal/cred"
 	"github.com/vpavlin/shrooms/internal/identity"
@@ -461,6 +462,13 @@ type State struct {
 	// so one mesh cannot overwrite another's.
 	owner *State
 	view  *MeshState
+
+	// mu serialises Save. Several meshes advance their sequence numbers
+	// independently and all write the same file, and two of them saving at
+	// once wrote the same temporary path and then raced to rename it — one
+	// succeeded, the other failed with "no such file or directory" and lost
+	// its announce. Held only on the owner; a view takes the owner's.
+	mu sync.Mutex
 }
 
 // LoadOrCreateState reads device state, generating a fresh identity on first run.
@@ -546,10 +554,15 @@ func (s *State) Save() error {
 	// A view writes through: it holds one mesh's fields, and the file is the
 	// whole device's.
 	if s.owner != nil {
+		s.owner.mu.Lock()
 		s.view.Seq = s.Seq
 		s.view.Credential = s.Credential
+		s.owner.mu.Unlock()
 		return s.owner.Save()
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	sf := stateFile{
 		DevicePriv: base64.StdEncoding.EncodeToString(s.Identity.DevicePriv),
 		WGPriv:     base64.StdEncoding.EncodeToString(s.Identity.WGPriv[:]),
@@ -568,8 +581,25 @@ func (s *State) Save() error {
 	}
 
 	path := filepath.Join(s.dir, "state.json")
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+	// A unique temporary name as well as the lock. The lock orders writers in
+	// this process; the name means a second process — an admin command run
+	// while the daemon is up — cannot delete the file this one is about to
+	// rename.
+	tmpf, err := os.CreateTemp(s.dir, "state-*.json.tmp")
+	if err != nil {
+		return fmt.Errorf("write state: %w", err)
+	}
+	tmp := tmpf.Name()
+	defer os.Remove(tmp) // no-op once renamed
+	if _, err := tmpf.Write(raw); err != nil {
+		tmpf.Close()
+		return fmt.Errorf("write state: %w", err)
+	}
+	if err := tmpf.Chmod(0o600); err != nil {
+		tmpf.Close()
+		return fmt.Errorf("write state: %w", err)
+	}
+	if err := tmpf.Close(); err != nil {
 		return fmt.Errorf("write state: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
