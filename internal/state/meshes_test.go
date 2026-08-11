@@ -122,3 +122,40 @@ func TestNetworkIDIsPerKey(t *testing.T) {
 		t.Error("network id is not stable for one key")
 	}
 }
+
+// A config written out must read back as the same config. The parser learned
+// the multi-mesh form and the writer did not, so a join that named its mesh
+// wrote a file with no meshes in it at all — reported, accurately and
+// uselessly, as "network_key is not set".
+func TestMeshesSurviveAWriteAndRead(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Name = "k11"
+	cfg.MeshSet = map[string]Mesh{"test": {
+		Label:      "test",
+		NetworkKey: validKey,
+		Relay:      true,
+		AdminKeys:  []string{"L3JS74BU74ICIUEKOB37H4ZYC3DDENTDT4TYOGVEXSQLFZPU3I2Q"},
+		Services:   []string{"immich:2283"},
+	}}
+
+	path := t.TempDir() + "/config.toml"
+	if err := WriteConfig(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	back, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("the config it just wrote does not load: %v", err)
+	}
+
+	meshes := back.Meshes()
+	if len(meshes) != 1 {
+		t.Fatalf("read back %d meshes, want 1", len(meshes))
+	}
+	m := meshes[0]
+	if m.Label != "test" || m.NetworkKey != validKey || !m.Relay {
+		t.Errorf("mesh came back as %+v", m)
+	}
+	if len(m.AdminKeys) != 1 || len(m.Services) != 1 {
+		t.Errorf("admin keys %d, services %d", len(m.AdminKeys), len(m.Services))
+	}
+}

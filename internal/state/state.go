@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/vpavlin/shrooms/internal/cred"
@@ -318,7 +319,7 @@ func (c *Config) Validate() error {
 		return c.validateMeshes()
 	}
 	if c.NetworkKey == "" {
-		return errors.New("network_key is not set — run `logos-vpn init` or `logos-vpn join`")
+		return errors.New("network_key is not set — run `shrooms init` or `shrooms join`")
 	}
 	if c.NetworkKey == KeyPlaceholder {
 		// Named specifically: "invalid base32" would send someone hunting a
@@ -827,6 +828,32 @@ func WriteConfig(path string, c Config) error {
 		b.WriteString("\n# The admin keys this mesh trusts to sign membership. Public values,\n")
 		b.WriteString("# fixed when the mesh was minted: the mesh id commits to the set.\n")
 		fmt.Fprintf(&b, "admin_keys = %s\n", formatArray(c.AdminKeys))
+	}
+
+	// Additional meshes (ADR-015). The parser has read these since multi-mesh
+	// landed and this did not write them, so a config built in memory and
+	// written out came back with no meshes at all — reported, accurately and
+	// unhelpfully, as "network_key is not set".
+	if len(c.MeshSet) > 0 {
+		labels := make([]string, 0, len(c.MeshSet))
+		for label := range c.MeshSet {
+			labels = append(labels, label)
+		}
+		sort.Strings(labels) // stable across writes, so diffs mean something
+		for _, label := range labels {
+			m := c.MeshSet[label]
+			b.WriteString("\n# A mesh this node belongs to. Its own key, identity, interface and port.\n")
+			fmt.Fprintf(&b, "mesh.%s.key   = %q\n", label, m.NetworkKey)
+			if m.Relay {
+				fmt.Fprintf(&b, "mesh.%s.relay = \"true\"\n", label)
+			}
+			if len(m.AdminKeys) > 0 {
+				fmt.Fprintf(&b, "mesh.%s.admin_keys = %s\n", label, formatArray(m.AdminKeys))
+			}
+			if len(m.Services) > 0 {
+				fmt.Fprintf(&b, "mesh.%s.services = %s\n", label, formatArray(m.Services))
+			}
+		}
 	}
 
 	b.WriteString("\n# The group allowed to use the control socket. The daemon runs as root,\n")
