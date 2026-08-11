@@ -295,12 +295,19 @@ func cmdJoinInvite(token string, args []string) error {
 	// A waiting daemon is the better end to do this at: it comes up on the mesh
 	// straight away, with no restart and nothing for anyone to remember.
 	if !*local {
-		if st, err := fetchStatus(*sock); err == nil {
-			if !st.Waiting {
-				return errors.New("the daemon on this machine already has a mesh; " +
-					"stop it and remove its config to join another one")
-			}
+		st, err := fetchStatus(*sock)
+		switch {
+		case err == nil && !st.Waiting:
+			return errors.New("the daemon on this machine already has a mesh; " +
+				"stop it and remove its config to join another one")
+		case err == nil:
 			return joinViaDaemon(*sock, token, deviceName, *label, uint16(*port), *advertise, *relay, *timeout)
+		default:
+			// Said out loud. This used to fall through in silence, and the
+			// only symptom was a join that succeeded while the daemon carried
+			// on waiting — with nothing anywhere to say which path had run.
+			fmt.Printf("No daemon on %s (%v).\nJoining directly; "+
+				"the daemon will be told when it is done.\n\n", *sock, err)
 		}
 	}
 
@@ -365,7 +372,7 @@ func cmdJoinInvite(token string, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := setup(*cfgPath, *stateDir, nk, deviceName, uint16(*port), *advertise, *relay, false); err != nil {
+	if err := setupMesh(*cfgPath, *stateDir, nk, deviceName, *label, uint16(*port), *advertise, *relay, false); err != nil {
 		return err
 	}
 
@@ -406,6 +413,13 @@ func cmdJoinInvite(token string, args []string) error {
 		}
 		fmt.Printf("\nEnrolled. Credential serial %d, expires %s.\n",
 			c.Serial, time.Unix(c.NotAfter, 0).Format(time.RFC3339))
+	}
+
+	// A daemon that was waiting has just had its mesh written out from under
+	// it. Telling it is the difference between a node that is up and a node
+	// that reports "waiting for a mesh" after a join that plainly worked.
+	if nudgeDaemon(*sock) {
+		fmt.Println("\nThe daemon was waiting for this and is bringing the mesh up now.")
 	}
 	return nil
 }

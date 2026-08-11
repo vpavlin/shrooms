@@ -189,6 +189,12 @@ func inviteFlag(args []string) (token string, rest []string, ok bool) {
 
 // setup writes the config and generates the device identity.
 func setup(cfgPath, stateDir string, nk identity.NetworkKey, name string, port uint16, advertise string, relay, fresh bool) error {
+	return setupMesh(cfgPath, stateDir, nk, name, "", port, advertise, relay, fresh)
+}
+
+// setupMesh is setup with a local name for the mesh (ADR-015). An empty label
+// writes the single-mesh form, which is what init and `join <KEY>` want.
+func setupMesh(cfgPath, stateDir string, nk identity.NetworkKey, name, label string, port uint16, advertise string, relay, fresh bool) error {
 	cfg := state.DefaultConfig()
 	cfg.NetworkKey = nk.String()
 	cfg.ListenPort = port
@@ -199,6 +205,12 @@ func setup(cfgPath, stateDir string, nk identity.NetworkKey, name string, port u
 		cfg.Advertise = []string{advertise}
 	}
 	cfg.Relay = relay
+	if label != "" && label != state.DefaultLabel {
+		cfg.NetworkKey, cfg.Relay = "", false
+		cfg.MeshSet = map[string]state.Mesh{label: {
+			Label: label, NetworkKey: nk.String(), Relay: relay,
+		}}
+	}
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
