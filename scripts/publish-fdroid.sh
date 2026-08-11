@@ -20,7 +20,7 @@ HOST=${FDROID_HOST:-192.168.0.152}
 FDROID_DIR=${FDROID_DIR:-'~/fdroid'}
 FDROID_BIN=${FDROID_BIN:-'~/fdroid-venv/bin/fdroid'}
 APP_ID=${APP_ID:-xyz.vpavlin.shrooms}
-VERSION_NAME=${VERSION_NAME:-0.1-prototype}
+VERSION_NAME=${VERSION_NAME:-1.2-invites}
 
 echo "==> checking $HOST"
 ssh "$HOST" "test -f $FDROID_DIR/config.yml" || { echo "no fdroid config on $HOST"; exit 1; }
@@ -130,8 +130,13 @@ Description: |
   no address collisions. Peers that cannot reach each other directly fall back
   to a relay, discovered from its own announcement rather than configured.
 
-  Prototype. Requires a network key from another device on your mesh.
-License: MIT
+  To join, scan the code that "shrooms invite" prints on a machine already on
+  the mesh. The invite is good for one device and fifteen minutes, and brings
+  back a membership credential signed for this phone's own keys. A network key
+  still works where there is no invite to scan.
+
+  Prototype.
+License: Apache-2.0 OR MIT
 AuthorName: vpavlin
 SourceCode: https://github.com/vpavlin/shrooms
 IssueTracker: https://github.com/vpavlin/shrooms/issues
