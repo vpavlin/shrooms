@@ -3,6 +3,8 @@ package mesh
 import (
 	"net/netip"
 	"strings"
+
+	"github.com/vpavlin/shrooms/internal/v4"
 )
 
 // Resolve maps a device name to its overlay address.
@@ -117,4 +119,20 @@ func (m *Mesh) lookupDevice(name string) (netip.Addr, bool) {
 		return addr, true
 	}
 	return m.Resolve(name)
+}
+
+// SetV4 attaches the synthetic IPv4 table, so names can be answered with A
+// records as well as AAAA (ADR-021).
+func (m *Mesh) SetV4(t *v4.Table) { m.v4 = t }
+
+// LookupV4 resolves a mesh name to its synthetic IPv4 address.
+//
+// Separate from Lookup rather than folded into it, because the two answer
+// different questions: Lookup says where a name is on the overlay, and this
+// says what this device calls that place when it has to speak IPv4.
+func (m *Mesh) LookupV4(overlay netip.Addr) (netip.Addr, bool) {
+	if m.v4 == nil {
+		return netip.Addr{}, false
+	}
+	return m.v4.Alias(overlay)
 }

@@ -21,7 +21,7 @@ const DefaultMTU = 1420
 // Requires CAP_NET_ADMIN. Interface configuration shells out to `ip` rather
 // than pulling in a netlink dependency — this is a handful of one-shot commands
 // at startup, not a hot path.
-func CreateTUN(name string, addr netip.Addr, prefix netip.Prefix, mtu int) (tun.Device, error) {
+func CreateTUN(name string, addr netip.Addr, prefix netip.Prefix, mtu int, v4Addr netip.Addr, v4Prefix netip.Prefix) (tun.Device, error) {
 	if mtu == 0 {
 		mtu = DefaultMTU
 	}
@@ -45,6 +45,17 @@ func CreateTUN(name string, addr netip.Addr, prefix netip.Prefix, mtu int) (tun.
 		// Route the whole mesh prefix at the interface; per-peer AllowedIPs
 		// inside WireGuard decides which peer each packet actually goes to.
 		{"route", "add", prefix.String(), "dev", actual},
+	}
+	if v4Addr.IsValid() {
+		// The synthetic IPv4 side (ADR-021). The MTU is 20 bytes lower than the
+		// interface's, because translating to IPv6 grows every packet by
+		// exactly one header's difference — carried on the route, since an
+		// interface has only one MTU and the IPv6 side must keep the full one.
+		steps = append(steps,
+			[]string{"address", "add", v4Addr.String() + "/32", "dev", actual},
+			[]string{"route", "add", v4Prefix.String(), "dev", actual,
+				"mtu", strconv.Itoa(mtu - 20)},
+		)
 	}
 	for _, args := range steps {
 		if out, err := exec.Command("ip", args...).CombinedOutput(); err != nil {

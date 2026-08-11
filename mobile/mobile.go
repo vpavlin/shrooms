@@ -37,6 +37,7 @@ import (
 	"github.com/vpavlin/shrooms/internal/mesh"
 	"github.com/vpavlin/shrooms/internal/rendezvous"
 	"github.com/vpavlin/shrooms/internal/state"
+	"github.com/vpavlin/shrooms/internal/v4"
 	"github.com/vpavlin/shrooms/internal/waku"
 	"github.com/vpavlin/shrooms/internal/wg"
 )
@@ -252,6 +253,31 @@ func OverlayAddress(configDir string) string {
 	return identity.OverlayAddr(nk, st.Identity.DevicePub).String()
 }
 
+// OverlayV4 returns this device's synthetic IPv4 address, or "" if the device
+// is not configured (ADR-021).
+//
+// The VpnService needs it before anything starts: an address the interface does
+// not hold is an address the operating system will not send us packets for.
+func OverlayV4(configDir string) string {
+	cfg, st, err := load(configDir)
+	if err != nil {
+		return ""
+	}
+	nk, err := cfg.Key()
+	if err != nil {
+		return ""
+	}
+	t := v4.NewTable(v4.Entry{
+		Overlay:   identity.OverlayAddr(nk, st.Identity.DevicePub),
+		DevicePub: st.Identity.DevicePub,
+	}, nil)
+	return t.Self().String()
+}
+
+// OverlayV4Range is the range the synthetic addresses come from, as
+// "address/bits", for the route the VpnService has to install.
+func OverlayV4Range() string { return v4.Prefix.String() }
+
 // NetworkKey returns the mesh key, for showing a QR code to another device.
 func NetworkKey(configDir string) string {
 	cfg, _, err := load(configDir)
@@ -378,7 +404,16 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 		return r.Answer(q)
 	})
 
-	dev, err := wg.NewDevice(intercept, st.Identity.WGPriv, cfg.ListenPort,
+	// Synthetic IPv4 (ADR-021). Below the DNS intercept, so a query to the
+	// resolver is still an IPv6 packet by the time the intercept sees it, and
+	// above WireGuard, so what gets encrypted is always IPv6.
+	aliases := v4.NewTable(v4.Entry{
+		Overlay:   identity.OverlayAddr(mustKey(cfg), st.Identity.DevicePub),
+		DevicePub: st.Identity.DevicePub,
+	}, nil)
+	translated := v4.NewDevice(intercept, aliases, wg.DefaultMTU-40-20)
+
+	dev, err := wg.NewDevice(translated, st.Identity.WGPriv, cfg.ListenPort,
 		device.NewLogger(device.LogLevelError, "[wg] "))
 	if err != nil {
 		return fmt.Errorf("wireguard: %w", err)
@@ -421,6 +456,7 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 		dev.Close()
 		return err
 	}
+	m.SetV4(aliases)
 
 	// Names. On Android this is what makes `laptop.mesh` work at all: there is
 	// no hosts file to write, and VpnService.Builder.addDnsServer is a
@@ -461,6 +497,7 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 		srv := &dnssrv.Server{
 			Suffix:   cfg.HostsSuffix,
 			Lookup:   m.Lookup,
+			Alias:    m.LookupV4,
 			Upstream: forward,
 		}
 		resolver.Store(srv)

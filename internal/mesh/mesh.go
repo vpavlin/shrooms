@@ -26,6 +26,7 @@ import (
 	"github.com/vpavlin/shrooms/internal/relay"
 	"github.com/vpavlin/shrooms/internal/state"
 	"github.com/vpavlin/shrooms/internal/topic"
+	"github.com/vpavlin/shrooms/internal/v4"
 	"github.com/vpavlin/shrooms/internal/waku"
 	"github.com/vpavlin/shrooms/internal/wg"
 )
@@ -79,6 +80,10 @@ type Mesh struct {
 
 	// inv are invite topics held open for an enrolment. See invite.go.
 	inv invites
+
+	// v4 maps peers to synthetic IPv4 addresses. Nil when the translator is
+	// not in use, which is what the network-key-only path looks like.
+	v4 *v4.Table
 
 	discoKey disco.Key
 	prober   *disco.Prober
@@ -892,6 +897,18 @@ func hasBest(m *Mesh, id string, now time.Time) bool {
 // syncPeers pushes the roster into WireGuard.
 func (m *Mesh) syncPeers() error {
 	peers := m.roster.Peers()
+
+	// And into the IPv4 aliases (ADR-021), here rather than on its own timer:
+	// this is already the one place that runs when the roster changes, and an
+	// alias that lagged the roster would answer DNS for a peer the data plane
+	// has not been told about.
+	if m.v4 != nil {
+		entries := make([]v4.Entry, 0, len(peers))
+		for _, p := range peers {
+			entries = append(entries, v4.Entry{Overlay: p.Overlay, DevicePub: p.DevicePub})
+		}
+		m.v4.Update(entries)
+	}
 	out := make([]wg.Peer, 0, len(peers))
 	drifted := false
 

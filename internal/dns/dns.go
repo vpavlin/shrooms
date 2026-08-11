@@ -62,6 +62,14 @@ type Server struct {
 	Suffix string
 	// Lookup resolves a host label within the suffix.
 	Lookup Lookup
+
+	// Alias maps an overlay address to this device's synthetic IPv4 address
+	// for it (ADR-021), and is what lets an A query be answered at all.
+	//
+	// Nil means no A records, which is correct and which browsers cannot use:
+	// Chromium stops asking for AAAA when its IPv6 probe fails, so on a v4-only
+	// network every mesh name simply fails to resolve for it.
+	Alias func(netip.Addr) (netip.Addr, bool)
 	// Log receives one line per interesting event; may be nil.
 	Log func(msg string, args ...any)
 
@@ -242,17 +250,35 @@ func (s *Server) answer(query []byte) ([]byte, error) {
 	// NOERROR with no records, not NXDOMAIN: NXDOMAIN means the name does not
 	// exist at all, and a resolver that believes it will not then try AAAA.
 	if q.Type == dnsmessage.TypeA {
-		// Counted separately, and it is the interesting one. The overlay is
-		// IPv6-only, so a client that asks only for A gets a correct empty
-		// answer and concludes the name is unusable — which is a working
-		// resolver and a broken experience, and looks from outside exactly
-		// like a resolver that is not working at all.
-		s.mu.Lock()
-		s.nodataA++
-		s.mu.Unlock()
+		alias, aliased := netip.Addr{}, false
+		if s.Alias != nil {
+			alias, aliased = s.Alias(addr)
+		}
+		if !aliased {
+			// No alias: a correct empty answer, which a client that asked only
+			// for A reads as "unusable". Counted, because that is a working
+			// resolver and a broken experience, and from outside it looks
+			// exactly like a resolver that is not working at all.
+			s.mu.Lock()
+			s.nodataA++
+			s.mu.Unlock()
+			if err := reply.StartAnswers(); err != nil {
+				return nil, err
+			}
+			return reply.Finish()
+		}
 		if err := reply.StartAnswers(); err != nil {
 			return nil, err
 		}
+		if err := reply.AResource(
+			dnsmessage.ResourceHeader{Name: q.Name, Type: dnsmessage.TypeA, Class: q.Class, TTL: TTL},
+			dnsmessage.AResource{A: alias.As4()},
+		); err != nil {
+			return nil, err
+		}
+		s.mu.Lock()
+		s.answers++
+		s.mu.Unlock()
 		return reply.Finish()
 	}
 	if q.Type != dnsmessage.TypeAAAA {

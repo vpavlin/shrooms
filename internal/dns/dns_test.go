@@ -193,3 +193,50 @@ func TestResolvesServiceName(t *testing.T) {
 		t.Errorf("got %v, want the device address %v", netip.AddrFrom16(aaaa.AAAA), laptop)
 	}
 }
+
+// A records are the whole point of ADR-021: without them a browser on a
+// v4-only network cannot use a mesh name at all, because it never asks for
+// AAAA.
+func TestAnswersAWhenThereIsAnAlias(t *testing.T) {
+	v4 := netip.MustParseAddr("198.18.7.9")
+	s := testServer()
+	s.Alias = func(a netip.Addr) (netip.Addr, bool) { return v4, a == laptop }
+
+	reply, err := s.answer(query(t, "laptop.mesh.", dnsmessage.TypeA))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, answers := parse(t, reply)
+	if h.RCode != dnsmessage.RCodeSuccess || len(answers) != 1 {
+		t.Fatalf("rcode %v with %d answers, want NOERROR and one A record", h.RCode, len(answers))
+	}
+	got, ok := answers[0].Body.(*dnsmessage.AResource)
+	if !ok {
+		t.Fatalf("answer is %T, want an A record", answers[0].Body)
+	}
+	if netip.AddrFrom4(got.A) != v4 {
+		t.Errorf("A record is %v, want %v", netip.AddrFrom4(got.A), v4)
+	}
+
+	// AAAA is untouched, and remains what anything IPv6-capable will use.
+	reply, err = s.answer(query(t, "laptop.mesh.", dnsmessage.TypeAAAA))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, answers = parse(t, reply); len(answers) != 1 {
+		t.Fatalf("got %d AAAA answers, want 1", len(answers))
+	}
+
+	// A name we know but have no alias for stays NOERROR and empty. Never
+	// NXDOMAIN: that would tell the client the name does not exist at all, and
+	// stop it asking for AAAA either.
+	s.Alias = func(netip.Addr) (netip.Addr, bool) { return netip.Addr{}, false }
+	reply, err = s.answer(query(t, "laptop.mesh.", dnsmessage.TypeA))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, answers = parse(t, reply)
+	if h.RCode != dnsmessage.RCodeSuccess || len(answers) != 0 {
+		t.Errorf("rcode %v with %d answers, want NOERROR and none", h.RCode, len(answers))
+	}
+}

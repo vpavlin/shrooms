@@ -89,6 +89,19 @@ class MeshVpnService : VpnService() {
                     .setMtu(MTU)
                     .setBlocking(false)
 
+                // The synthetic IPv4 side (ADR-021). Without an address and a
+                // route in this range, Android never hands us the packets a
+                // browser sends to a mesh name — and a browser only ever asks
+                // for A records when the network has no IPv6, which is most
+                // wifi. The route is narrow, so ordinary IPv4 still bypasses.
+                val v4 = Mobile.overlayV4(dir)
+                val v4Range = Mobile.overlayV4Range()
+                if (v4.isNotEmpty() && v4Range.contains("/")) {
+                    builder.addAddress(v4, 32)
+                    builder.addRoute(v4Range.substringBefore("/"), v4Range.substringAfter("/").toInt())
+                    Log.i(TAG, "ipv4 aliases at $v4 in $v4Range")
+                }
+
                 // Let everything that is not the mesh bypass the tunnel.
                 //
                 // This is the trap that cost three builds and looked like a DNS

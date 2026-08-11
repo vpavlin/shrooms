@@ -29,6 +29,7 @@ import (
 	"github.com/vpavlin/shrooms/internal/mesh"
 	"github.com/vpavlin/shrooms/internal/service"
 	"github.com/vpavlin/shrooms/internal/state"
+	"github.com/vpavlin/shrooms/internal/v4"
 	"github.com/vpavlin/shrooms/internal/waku"
 	"github.com/vpavlin/shrooms/internal/wg"
 )
@@ -84,16 +85,28 @@ func cmdDaemon(args []string) error {
 	log.Info("starting", "name", cfg.Name, "overlay", self, "prefix", nk.Prefix())
 
 	// --- data plane ---
-	tunDev, err := wg.CreateTUN(cfg.Interface, self, nk.Prefix(), wg.DefaultMTU)
+	// Synthetic IPv4 (ADR-021), so that browsers can use mesh names on a
+	// v4-only network. Built before the interface, because the interface has to
+	// carry this device's own alias.
+	aliases := v4.NewTable(v4.Entry{Overlay: self, DevicePub: st.Identity.DevicePub}, nil)
+
+	tunDev, err := wg.CreateTUN(cfg.Interface, self, nk.Prefix(), wg.DefaultMTU,
+		aliases.Self(), v4.Prefix)
 	if err != nil {
 		return fmt.Errorf("tun: %w (need CAP_NET_ADMIN)", err)
 	}
+	// Wrapped so translation happens below WireGuard: what it encrypts is
+	// always IPv6, whatever the application spoke.
+	//
+	// The clamp is the interface MTU less both headers' difference and the TCP
+	// header, which is what a segment may be once it has become IPv6.
+	translated := v4.NewDevice(tunDev, aliases, wg.DefaultMTU-40-20)
 
 	wgLevel := device.LogLevelError
 	if *verbose {
 		wgLevel = device.LogLevelVerbose
 	}
-	dev, err := wg.NewDevice(tunDev, st.Identity.WGPriv, cfg.ListenPort, device.NewLogger(wgLevel, "[wg] "))
+	dev, err := wg.NewDevice(translated, st.Identity.WGPriv, cfg.ListenPort, device.NewLogger(wgLevel, "[wg] "))
 	if err != nil {
 		return fmt.Errorf("wireguard: %w", err)
 	}
@@ -132,6 +145,8 @@ func cmdDaemon(args []string) error {
 	if err != nil {
 		return err
 	}
+	m.SetV4(aliases)
+	log.Info("data plane up (ipv4 aliases)", "self", aliases.Self(), "range", v4.Prefix)
 
 	ctx := ctx0
 
