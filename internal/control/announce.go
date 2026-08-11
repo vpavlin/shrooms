@@ -271,6 +271,55 @@ func open(nk identity.NetworkKey, epoch int64, raw []byte) ([]byte, error) {
 	return padded[2 : 2+n], nil
 }
 
+// Revoke carries an admin-signed withdrawal to every node.
+//
+// A separate message rather than a field on the announce: an announce is
+// padded to a fixed size and already carries a credential, and a node that has
+// nothing to revoke should not pay for the space. Sealed under the same epoch
+// key and published to the same topic, so it reaches exactly the nodes that
+// could act on it and nobody else.
+//
+// The payload is verified against the mesh's admin keys by the receiver, so
+// this envelope's own signature only says which member relayed it — anyone may
+// pass a revocation on, and that is the point of gossiping one.
+type Revoke struct {
+	Kind      Kind   `json:"kind"`
+	DevicePub []byte `json:"device_pub"` // the relayer, not the revoked device
+	Payload   []byte `json:"payload"`    // cred.Revocation, wire form
+	Timestamp int64  `json:"ts"`
+}
+
+// OpenRevoke reads a revocation message. The withdrawal inside is not checked
+// here: only its mesh's authority can do that, and this package does not know
+// it.
+func OpenRevoke(nk identity.NetworkKey, epoch int64, raw []byte, now time.Time) (*Revoke, error) {
+	plain, err := open(nk, epoch, raw)
+	if err != nil {
+		return nil, err
+	}
+	var env envelope
+	if err := json.Unmarshal(plain, &env); err != nil {
+		return nil, fmt.Errorf("unmarshal envelope: %w", err)
+	}
+	var r Revoke
+	if err := json.Unmarshal(env.Body, &r); err != nil {
+		return nil, fmt.Errorf("unmarshal revoke: %w", err)
+	}
+	if r.Kind != KindRevoke {
+		return nil, fmt.Errorf("unexpected kind %q", r.Kind)
+	}
+	if len(r.DevicePub) != ed25519.PublicKeySize {
+		return nil, errors.New("bad device public key length")
+	}
+	if !ed25519.Verify(ed25519.PublicKey(r.DevicePub), env.Body, env.Sig) {
+		return nil, errors.New("signature verification failed")
+	}
+	if skew := now.Sub(time.Unix(r.Timestamp, 0)); skew > MaxClockSkew || skew < -MaxClockSkew {
+		return nil, fmt.Errorf("timestamp skew %s exceeds %s", skew.Round(time.Second), MaxClockSkew)
+	}
+	return &r, nil
+}
+
 // OpenAnnounceWindow tries each epoch in the acceptance window. Peers whose
 // clocks differ will be publishing under a neighbouring epoch key.
 func OpenAnnounceWindow(nk identity.NetworkKey, epochs []int64, raw []byte, now time.Time) (*Announce, error) {

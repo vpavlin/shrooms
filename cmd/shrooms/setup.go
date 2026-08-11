@@ -242,6 +242,19 @@ func cmdSetKey(args []string) error {
 	return nil
 }
 
+// stdinReader is shared, because a bufio.Reader reads ahead: a second one
+// would find the buffer already drained and report EOF. That is exactly what
+// happened confirming a passphrase from a pipe — the first read swallowed both
+// lines and the confirmation failed with "EOF".
+var stdinReader *bufio.Reader
+
+func stdin() *bufio.Reader {
+	if stdinReader == nil {
+		stdinReader = bufio.NewReader(os.Stdin)
+	}
+	return stdinReader
+}
+
 // readSecret reads one line without echoing it, falling back to plain input
 // when there is no terminal — which is what makes `... | shrooms set-key`
 // work in a script.
@@ -252,8 +265,7 @@ func readSecret(prompt string) (string, error) {
 		fmt.Fprintln(os.Stderr)
 		return string(b), err
 	}
-	r := bufio.NewReader(os.Stdin)
-	line, err := r.ReadString('\n')
+	line, err := stdin().ReadString('\n')
 	if err != nil && line == "" {
 		return "", err
 	}

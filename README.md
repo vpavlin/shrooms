@@ -578,8 +578,21 @@ revocation is only the fast path. The lifetime is the admin's choice per device
 (30 days by default) and lives inside the signature, so a device cannot extend
 its own membership.
 
-Not built yet: distributing revocations over the mesh, and automatic renewal.
-Until then a revocation is carried by hand and expiry does the work.
+**Revocations travel over the mesh.** The admin publishes one; every node
+verifies it against the admin keys *itself*, drops the device, and passes it on
+— so a compromised node cannot un-revoke anyone by staying quiet, and a node
+that was offline learns it from whoever is up. Entries are kept until the
+credential they withdraw would have expired anyway; after that expiry does the
+same job.
+
+**The admin key is encrypted at rest** with a passphrase (scrypt + XChaCha20),
+prompted once and confirmed. Not the system keystore: Secret Service needs
+D-Bus and an unlocked session — so a stolen powered-on laptop still yields the
+key — and does not exist on a headless machine. `--no-passphrase` is there for
+a file you keep on an encrypted volume.
+
+Not built yet: automatic renewal, so a credential is re-issued by hand every 30
+days.
 
 ## Bandwidth, and what a node contributes
 

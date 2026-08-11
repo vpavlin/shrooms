@@ -116,6 +116,11 @@ type Mesh struct {
 	reannounce   chan struct{}
 	lastAnnounce time.Time
 
+	// revoked holds withdrawals this node has verified for itself. Kept per
+	// node rather than asked of anyone, so a compromised peer cannot un-revoke
+	// a device by staying quiet.
+	revoked *cred.List
+
 	// authority is the set of admin keys this mesh trusts, or nil when
 	// membership is still the network key alone. Both worlds run at once
 	// during migration (ADR-018): nil behaves exactly as before.
@@ -157,6 +162,7 @@ func New(log *slog.Logger, cfg state.Config, st *state.State, node *waku.Node, d
 		dev:        dev,
 		roster:     NewRoster(nk, st.Identity.DevicePub),
 		authority:  auth,
+		revoked:    cred.NewList(),
 		guard:      control.NewReplayGuard(),
 		self:       identity.OverlayAddr(nk, st.Identity.DevicePub),
 		discoKey:   disco.DeriveKey(nk),
@@ -401,7 +407,68 @@ func (m *Mesh) checkMembership(a *control.Announce, now time.Time) error {
 	if !bytes.Equal(c.WGPub, a.WGPub) {
 		return errors.New("credential names a different tunnel key")
 	}
+	if m.revoked.Revoked(c) {
+		return cred.ErrRevoked
+	}
 	return nil
+}
+
+// publishRevocation puts a withdrawal on the bus.
+//
+// Re-published by every node that learns one, not only by the admin: an admin
+// is rarely online, and a revocation that only travels while it is would arrive
+// nowhere. Anyone may relay one because nobody has to be trusted to — the
+// signature inside is what makes it true.
+func (m *Mesh) publishRevocation(raw []byte, now time.Time) error {
+	msg := &control.Revoke{
+		Kind:      control.KindRevoke,
+		DevicePub: m.st.Identity.DevicePub,
+		Payload:   raw,
+		Timestamp: now.Unix(),
+	}
+	sealed, err := control.Seal(m.nk, topic.Epoch(now), m.st.Identity.DevicePriv, msg)
+	if err != nil {
+		return err
+	}
+	_, err = m.node.Send(topic.Current(m.nk, now), sealed, true)
+	return err
+}
+
+// handleRevocation takes a withdrawal off the bus.
+//
+// Verified here rather than trusted: the message arrives from a mesh member,
+// and a member may be hostile. Only a signature from this mesh's authority
+// makes it a revocation rather than an assertion.
+//
+// Kept until the credential it withdraws would have expired anyway. After that
+// expiry does the same job, and keeping them forever would grow without bound
+// on precisely the input an attacker controls — the number of device keys they
+// can invent.
+func (m *Mesh) handleRevocation(raw []byte, now time.Time) {
+	if m.authority == nil {
+		return // no authority, no revocations to honour
+	}
+	r, err := cred.UnmarshalRevocation(raw)
+	if err != nil {
+		m.log.Debug("ignoring an unreadable revocation", "err", err)
+		return
+	}
+	if err := cred.VerifyRevocationBy(m.authority, r); err != nil {
+		m.log.Warn("ignoring a revocation this mesh did not sign", "err", err)
+		return
+	}
+	if m.revoked.Add(r, raw, now.Add(cred.DefaultLife)) {
+		m.log.Info("device revoked",
+			"device", hex.EncodeToString(r.DevicePub)[:16], "serial", r.Serial)
+		// Drop it now rather than waiting for its announce to lapse.
+		m.roster.Forget(r.DevicePub)
+		m.requestResync()
+		// Pass it on. New to us means possibly new to a peer, and a node that
+		// was offline when the admin published learns it from whoever is up.
+		if err := m.publishRevocation(raw, now); err != nil {
+			m.log.Debug("could not relay a revocation", "err", err)
+		}
+	}
 }
 
 // reportUnknown logs packets WireGuard rejected as an unknown message type.
@@ -695,6 +762,16 @@ func (m *Mesh) handle(ev waku.Event) {
 	e := topic.Epoch(now)
 	a, err := control.OpenAnnounceWindow(m.nk, []int64{e - 1, e, e + 1}, msg.Payload, now)
 	if err != nil {
+		// A revocation is sealed the same way and published to the same topic,
+		// so it lands here too. Tried second because announces are almost all
+		// the traffic.
+		for _, ep := range []int64{e - 1, e, e + 1} {
+			if r, rerr := control.OpenRevoke(m.nk, ep, msg.Payload, now); rerr == nil {
+				m.health.announceOpened(now)
+				m.handleRevocation(r.Payload, now)
+				return
+			}
+		}
 		// Expected: the shard carries other applications' traffic, and we
 		// cannot decrypt any of it.
 		m.log.Debug("ignoring undecryptable message", "topic", msg.ContentTopic)

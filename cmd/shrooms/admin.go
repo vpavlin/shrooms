@@ -30,8 +30,12 @@ const adminFileName = "admin.json"
 var b32 = base32.StdEncoding.WithPadding(base32.NoPadding)
 
 type adminFile struct {
-	// Priv is the day-to-day signing key: enrolling and revoking.
+	// Priv is the day-to-day signing key: enrolling and revoking. Base64 when
+	// plain, or a sealed blob when Encrypted is set.
 	Priv string `json:"priv"`
+
+	// Encrypted says Priv is sealed under a passphrase (scrypt + XChaCha20).
+	Encrypted bool `json:"encrypted,omitempty"`
 	// Keys are every public key the mesh trusts, including ones whose private
 	// halves are elsewhere — the recovery key, and later a renewal key.
 	Keys []string `json:"keys"`
@@ -66,6 +70,7 @@ func cmdAdmin(args []string) error {
 func cmdAdminInit(args []string) error {
 	fs := flag.NewFlagSet("admin init", flag.ExitOnError)
 	dir := fs.String("dir", defaultAdminDir(), "where to keep the admin key")
+	plain := fs.Bool("no-passphrase", false, "store the admin key unencrypted")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -92,8 +97,20 @@ func cmdAdminInit(args []string) error {
 		return err
 	}
 	af := adminFile{
-		Priv: base64.StdEncoding.EncodeToString(primary.Priv),
 		Keys: []string{b32.EncodeToString(primary.Pub), b32.EncodeToString(recovery.Pub)},
+	}
+	if *plain {
+		af.Priv = base64.StdEncoding.EncodeToString(primary.Priv)
+	} else {
+		pass, err := readPassphraseTwice()
+		if err != nil {
+			return err
+		}
+		sealed, err := encryptAdminKey(primary.Priv, pass)
+		if err != nil {
+			return err
+		}
+		af.Priv, af.Encrypted = sealed, true
 	}
 	raw, err := json.MarshalIndent(af, "", "  ")
 	if err != nil {
@@ -127,9 +144,24 @@ func loadAdmin(dir string) (*cred.Admin, *cred.Authority, error) {
 	if err := json.Unmarshal(raw, &af); err != nil {
 		return nil, nil, fmt.Errorf("parse %s: %w", adminPath(dir), err)
 	}
-	priv, err := base64.StdEncoding.DecodeString(af.Priv)
-	if err != nil || len(priv) != ed25519.PrivateKeySize {
-		return nil, nil, errors.New("admin key is unreadable")
+	var priv []byte
+	if af.Encrypted {
+		pass, err := readSecret("Passphrase for the admin key: ")
+		if err != nil {
+			return nil, nil, err
+		}
+		priv, err = decryptAdminKey(af.Priv, strings.TrimRight(pass, "\r\n"))
+		if err != nil {
+			return nil, nil, err
+		}
+	} else {
+		priv, err = base64.StdEncoding.DecodeString(af.Priv)
+		if err != nil {
+			return nil, nil, errors.New("admin key is unreadable")
+		}
+	}
+	if len(priv) != ed25519.PrivateKeySize {
+		return nil, nil, errors.New("admin key is the wrong size")
 	}
 	keys := make([]ed25519.PublicKey, 0, len(af.Keys))
 	for _, k := range af.Keys {
@@ -284,6 +316,27 @@ func cmdAdminShow(args []string) error {
 	}
 	fmt.Println("]")
 	return nil
+}
+
+// readPassphraseTwice asks once and confirms, because a mistyped passphrase on
+// a key that is only used twice a year is discovered far too late to fix.
+func readPassphraseTwice() (string, error) {
+	first, err := readSecret("Passphrase for the admin key: ")
+	if err != nil {
+		return "", err
+	}
+	first = strings.TrimRight(first, "\r\n")
+	if first == "" {
+		return "", errors.New("an empty passphrase is not encryption; use --no-passphrase if that is what you want")
+	}
+	second, err := readSecret("Again: ")
+	if err != nil {
+		return "", err
+	}
+	if first != strings.TrimRight(second, "\r\n") {
+		return "", errors.New("the two passphrases differ")
+	}
+	return first, nil
 }
 
 func defaultAdminDir() string {

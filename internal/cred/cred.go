@@ -513,6 +513,29 @@ func (a *Admin) Revoke(devicePub []byte, serial uint64, now time.Time) (*Revocat
 	return r, nil
 }
 
+// VerifyRevocationBy checks a revocation against every key a mesh trusts.
+func VerifyRevocationBy(auth *Authority, r *Revocation) error {
+	if auth == nil || len(auth.Keys) == 0 {
+		return errors.New("no admin keys to verify against")
+	}
+	if r == nil {
+		return errors.New("no revocation")
+	}
+	d, err := r.Digest()
+	if err != nil {
+		return fmt.Errorf("revocation is malformed: %w", err)
+	}
+	for _, k := range auth.Keys {
+		if ed25519.Verify(k, d[:], r.Sig) {
+			if r.MeshID != auth.ID() {
+				return ErrWrongMesh
+			}
+			return nil
+		}
+	}
+	return ErrBadSignature
+}
+
 // VerifyRevocation checks a revocation is genuine.
 func VerifyRevocation(adminPub ed25519.PublicKey, r *Revocation) error {
 	if r == nil {
