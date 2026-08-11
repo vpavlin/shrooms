@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -24,6 +25,7 @@ import (
 
 	dnssrv "github.com/vpavlin/shrooms/internal/dns"
 	"github.com/vpavlin/shrooms/internal/identity"
+	"github.com/vpavlin/shrooms/internal/invite"
 	"github.com/vpavlin/shrooms/internal/mesh"
 	"github.com/vpavlin/shrooms/internal/service"
 	"github.com/vpavlin/shrooms/internal/state"
@@ -340,6 +342,102 @@ func serveUI(ctx context.Context, log *slog.Logger, addr string, h http.Handler)
 	return nil
 }
 
+// inviteHolder is the part of the mesh the enrolment endpoints need. An
+// interface so the handlers can be tested without a rendezvous node, which is
+// otherwise the only way to reach them.
+type inviteHolder interface {
+	HoldInvite(ctx context.Context, s invite.Secret) (*invite.Request, error)
+	ReplyInvite(s invite.Secret, req *invite.Request, credential []byte) error
+}
+
+// inviteHandlers registers the enrolment endpoints.
+func inviteHandlers(mux *http.ServeMux, m inviteHolder) {
+	// Enrolment, held open by the daemon because it is the thing that is
+	// already connected — `shrooms invite` used to start a Logos Delivery node
+	// of its own for the sake of two messages.
+	//
+	// Two calls rather than one, because a credential can only be signed once
+	// the joining device's keys are known, and the admin key is deliberately
+	// not here. /invite/hold blocks until a request arrives and returns it; the
+	// CLI signs; /invite/reply publishes what it signed. The token is what
+	// names the exchange, so this cannot be used to publish on any other topic.
+	mux.HandleFunc("/invite/hold", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Token string `json:"token"`
+			TTLS  int    `json:"ttl_s"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		secret, err := invite.Parse(req.Token)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		ttl := time.Duration(req.TTLS) * time.Second
+		if ttl <= 0 || ttl > 2*time.Hour {
+			ttl = invite.DefaultTTL
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), ttl)
+		defer cancel()
+
+		got, err := m.HoldInvite(ctx, secret)
+		if err != nil {
+			// Expiry is the ordinary outcome of an invite nobody used, so it
+			// is a status rather than an error the CLI has to interpret.
+			if errors.Is(err, context.DeadlineExceeded) {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"device_pub": hex.EncodeToString(got.DevicePub),
+			"wg_pub":     hex.EncodeToString(got.WGPub),
+			"name":       got.Name,
+			"eph_pub":    hex.EncodeToString(got.EphPub),
+		})
+	})
+
+	mux.HandleFunc("/invite/reply", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Token      string `json:"token"`
+			EphPub     string `json:"eph_pub"`
+			Name       string `json:"name"`
+			Credential string `json:"credential"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 8192)).Decode(&in); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		secret, err := invite.Parse(in.Token)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		eph, err := hex.DecodeString(in.EphPub)
+		if err != nil {
+			http.Error(w, "eph_pub: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		var credential []byte
+		if in.Credential != "" {
+			if credential, err = base64.StdEncoding.DecodeString(in.Credential); err != nil {
+				http.Error(w, "credential: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
+		if err := m.ReplyInvite(secret, &invite.Request{EphPub: eph, Name: in.Name}, credential); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+}
+
 // serveControl exposes status over a unix socket.
 func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Mesh, cfg state.Config, self netip.Addr, services *service.Publisher) (*http.Server, error) {
 	// systemd's RuntimeDirectory creates this, but the daemon must also work
@@ -477,6 +575,8 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Me
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(snapshot())
 	})
+
+	inviteHandlers(mux, m)
 
 	// The way a revocation reaches the bus. The admin key signs offline — that
 	// is the whole point of it — so something with a rendezvous connection has

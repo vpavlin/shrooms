@@ -259,8 +259,9 @@ $ ssh root@VPS_IP 'ufw allow 51820/udp'    # or your firewall's equivalent
 
 ### 3. Join from your laptop
 
-On the machine that is already a member, ask it to admit one device. It prints
-a token and waits:
+On the machine that is already a member — with its daemon running, since that is
+what holds the invite open — ask it to admit one device. It prints a token and
+waits:
 
 ```console
 $ shrooms invite
@@ -593,8 +594,13 @@ screen.
 
 "Used once" needs no consensus: an invite is answered only by the machine that
 issued it, so it is one machine's local decision. The price is that **the
-inviter must be running while the other device joins** — which is also the
-point, since it means a human is present.
+inviter's daemon must be running while the other device joins** — which is also
+the point, since it means a human is present.
+
+The daemon is the end that listens and publishes, because it is the node already
+connected to the fleet; the CLI only mints the token and signs the credential.
+So the admin key never reaches the daemon and the network key never reaches the
+CLI, and neither one can admit a device by itself.
 
 `shrooms join <NETWORK-KEY>` is still there for bootstrapping and recovery, and
 `shrooms admin init` mints an authority separately for a mesh created with

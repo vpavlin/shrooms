@@ -89,6 +89,33 @@ mesh's traffic already uses (ADR-006) rather than on one of its own.
 128 bits is far beyond guessing, and there is nothing to guess against: a wrong
 token addresses a topic nobody is listening on.
 
+### Where each end runs
+
+**The inviting end is the daemon, not the CLI.** `shrooms invite` first ran a
+Logos Delivery node of its own, which worked and cost three seconds of dialling,
+a page of library logging, and a second Core node joining the fleet to send two
+messages. The daemon is already connected, so it holds the topic and publishes;
+the CLI mints the token and signs.
+
+That split falls out of the same reasoning the admin key exists for. The daemon
+has the network key and the connection and never sees the admin key; the CLI has
+the admin key and never sees the network key. Neither half can admit a device
+alone, and the daemon will only ever publish a well-formed response on a topic
+derived from a token it was handed — so a caller who can reach the control
+socket has not gained a general-purpose way to publish.
+
+The cost is that `shrooms invite` requires a running daemon. That is not much of
+a constraint, since it can only invite people to a mesh it is already on.
+
+**The joining end cannot do the same**, because a device that has not joined
+anything has no daemon and no config for one. It runs a node for the length of
+the exchange and throws it away. Two consequences worth writing down: the join
+takes a few seconds to connect before it can ask, and the rendezvous library
+logs at INFO to **stdout** — not stderr, and its `logLevel` config key is
+accepted and ignored, measured identical at FATAL, ERROR and the default. So
+`join --invite` points fd 1 at `/dev/null` for the length of the exchange and
+keeps the real descriptor for its own three lines. `-v` gets the logs back.
+
 ## What this does not fix
 
 **It does not remove the shared key**, which is the thing actually worth

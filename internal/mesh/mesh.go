@@ -77,6 +77,9 @@ type Mesh struct {
 
 	self netip.Addr
 
+	// inv are invite topics held open for an enrolment. See invite.go.
+	inv invites
+
 	discoKey disco.Key
 	prober   *disco.Prober
 
@@ -780,6 +783,13 @@ func (m *Mesh) handle(ev waku.Event) {
 
 	msg, _, ok := waku.ParseMessage(ev.JSON)
 	if !ok {
+		return
+	}
+
+	// An enrolment in progress, on a topic derived from a token rather than
+	// from the network key. Checked first and cheaply: normally there is no
+	// invite open and this is a map lookup on a topic that never matches.
+	if m.handleInvite(msg.ContentTopic, msg.Payload, now) {
 		return
 	}
 

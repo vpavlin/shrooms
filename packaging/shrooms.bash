@@ -69,13 +69,13 @@ _shrooms() {
             COMPREPLY=($(compgen -W "--name --relay --advertise --port --admin-dir --no-admin $common" -- "$cur"))
             ;;
         join)
-            COMPREPLY=($(compgen -W "--invite --name --relay --advertise --port --timeout $common" -- "$cur"))
+            COMPREPLY=($(compgen -W "--invite --name --relay --advertise --port --timeout -v $common" -- "$cur"))
             ;;
         prepare)
             COMPREPLY=($(compgen -W "--name --relay --advertise --port $common" -- "$cur"))
             ;;
         invite)
-            COMPREPLY=($(compgen -W "--name --ttl --life --serial --qr --admin-dir $common" -- "$cur"))
+            COMPREPLY=($(compgen -W "--name --ttl --life --serial --qr --admin-dir --socket $common" -- "$cur"))
             ;;
         daemon)
             COMPREPLY=($(compgen -W "--socket -v $common" -- "$cur"))
@@ -116,7 +116,7 @@ _shrooms() {
             if [ "$cword" -eq 2 ]; then
                 COMPREPLY=($(compgen -W "init issue revoke show" -- "$cur"))
             else
-                COMPREPLY=($(compgen -W "--dir --name --device --wg --serial --life --write --no-passphrase $common" -- "$cur"))
+                COMPREPLY=($(compgen -W "--dir --name --device --wg --serial --life --write --no-passphrase --publish --socket $common" -- "$cur"))
             fi
             ;;
         *)

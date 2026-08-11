@@ -1,15 +1,23 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -35,8 +43,9 @@ import (
 
 func cmdInvite(args []string) error {
 	fs := flag.NewFlagSet("invite", flag.ExitOnError)
-	cfgPath, stateDir := commonFlags(fs)
+	cfgPath, _ := commonFlags(fs)
 	dir := fs.String("admin-dir", defaultAdminDir(), "where the admin key is kept")
+	sock := fs.String("socket", DefaultSocket, "control socket of the local daemon")
 	name := fs.String("name", "", "the joining device's name (it may choose its own)")
 	ttl := fs.Duration("ttl", invite.DefaultTTL, "how long the invite stays open")
 	life := fs.Duration("life", cred.DefaultLife, "how long the issued credential is valid")
@@ -45,15 +54,18 @@ func cmdInvite(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	_ = stateDir
 
 	cfg, err := state.LoadConfig(*cfgPath)
 	if err != nil {
 		return err
 	}
-	nk, err := cfg.Key()
-	if err != nil {
-		return err
+
+	// Checked before the passphrase prompt. Typing a passphrase and then being
+	// told the daemon is down is the wrong order to learn it in.
+	client := socketClient(*sock, *ttl+time.Minute)
+	if _, err := fetchStatus(*sock); err != nil {
+		return fmt.Errorf("%w\n\nThe daemon holds the invite open, since it is the node already "+
+			"connected to the fleet", err)
 	}
 
 	// The admin key only if this mesh has an authority. A mesh minted with
@@ -88,104 +100,129 @@ func cmdInvite(args []string) error {
 			fmt.Print(art, "\n")
 		}
 	}
-	fmt.Printf("Waiting. Keep this running — an invite is answered only by the\n")
-	fmt.Printf("machine that issued it, which is what makes it single-use.\n\n")
+	fmt.Printf("Waiting. An invite is answered only by the node that issued it,\n")
+	fmt.Printf("which is what makes it single-use — so leave this running.\n\n")
 
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
-	ctx, cancelTTL := context.WithTimeout(ctx, *ttl)
-	defer cancelTTL()
-
-	node, err := startNode(nodeConfig(cfg))
+	req, err := holdInvite(client, secret, *ttl)
 	if err != nil {
 		return err
 	}
-	defer node.Close()
-
-	topicName := secret.Topic()
-	if err := node.Subscribe(topicName); err != nil {
-		return fmt.Errorf("subscribe: %w", err)
+	if req == nil {
+		return errors.New("the invite expired before anyone used it")
 	}
 
-	for {
-		select {
-		case <-ctx.Done():
-			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return errors.New("the invite expired before anyone used it")
-			}
-			return nil
-		case ev, ok := <-node.Events():
-			if !ok {
-				return errors.New("the rendezvous node stopped")
-			}
-			msg, _, ok := waku.ParseMessage(ev.JSON)
-			if !ok || msg.ContentTopic != topicName {
-				continue
-			}
-			req, err := invite.OpenRequest(secret, msg.Payload, time.Now())
-			if err != nil {
-				// Our own published response comes back to us, and other
-				// applications share the shard. Neither is worth a word.
-				continue
-			}
+	joiner := req.Name
+	if *name != "" {
+		joiner = *name
+	}
+	if joiner == "" {
+		joiner = "device"
+	}
+	fmt.Printf("Request from %q (%s).\n", joiner, req.DevicePub[:16])
 
-			joiner := req.Name
-			if *name != "" {
-				joiner = *name
-			}
-			if joiner == "" {
-				joiner = "device"
-			}
-			fmt.Printf("Request from %q (%x).\n", joiner, req.DevicePub[:8])
-
-			resp := &invite.Response{
-				NetworkKey: nk[:],
-				Suffix:     cfg.HostsSuffix,
-				Timestamp:  time.Now().Unix(),
-			}
-			for _, k := range cfg.AdminKeys {
-				raw, err := b32.DecodeString(strings.ToUpper(strings.TrimSpace(k)))
-				if err != nil {
-					return fmt.Errorf("admin_keys in the config are unreadable: %w", err)
-				}
-				resp.AdminKeys = append(resp.AdminKeys, raw)
-			}
-			var issued *cred.Credential
-			if admin != nil {
-				raw, err := issueFor(admin, auth, req.DevicePub, req.WGPub, joiner, *serial, time.Now(), *life)
-				if err != nil {
-					return err
-				}
-				if issued, err = cred.UnmarshalCredential(raw); err != nil {
-					return err
-				}
-				resp.Credential = raw
-			}
-
-			blob, err := invite.SealResponse(secret, req.EphPub, resp)
-			if err != nil {
-				return err
-			}
-			if _, err := node.Send(topicName, blob, true); err != nil {
-				return fmt.Errorf("send: %w", err)
-			}
-
-			fmt.Printf("Admitted %q.\n", joiner)
-			if issued != nil {
-				fmt.Printf("  credential serial %d, valid %s\n", issued.Serial, *life)
-			} else {
-				fmt.Printf("  no credential: this mesh has no admin keys\n")
-			}
-			// One invite, one device. Anything else that arrives on this topic
-			// is either a retransmission or somebody else holding the token,
-			// and neither should get a second answer.
-			//
-			// The response is sent once and Waku may lose it. That failure is
-			// visible and cheap — the joining device says so and you run
-			// `shrooms invite` again — where answering repeatedly would quietly
-			// turn a single-use token into a reusable one.
-			return nil
+	// Sign here, publish there. The admin key never reaches the daemon and the
+	// network key never reaches this process: neither half admits a device on
+	// its own, which is the whole point of having an authority at all.
+	var credential []byte
+	var issued *cred.Credential
+	if admin != nil {
+		devPub, err := hex.DecodeString(req.DevicePub)
+		if err != nil {
+			return fmt.Errorf("device key: %w", err)
 		}
+		wgPub, err := hex.DecodeString(req.WGPub)
+		if err != nil {
+			return fmt.Errorf("tunnel key: %w", err)
+		}
+		if credential, err = issueFor(admin, auth, devPub, wgPub, joiner, *serial, time.Now(), *life); err != nil {
+			return err
+		}
+		if issued, err = cred.UnmarshalCredential(credential); err != nil {
+			return err
+		}
+	}
+
+	if err := replyInvite(client, secret, req.EphPub, joiner, credential); err != nil {
+		return err
+	}
+
+	fmt.Printf("Admitted %q.\n", joiner)
+	if issued != nil {
+		fmt.Printf("  credential serial %d, valid %s\n", issued.Serial, *life)
+	} else {
+		fmt.Printf("  no credential: this mesh has no admin keys\n")
+	}
+	return nil
+}
+
+// inviteRequest is what the daemon reports when someone redeems a token.
+type inviteRequest struct {
+	DevicePub string `json:"device_pub"`
+	WGPub     string `json:"wg_pub"`
+	Name      string `json:"name"`
+	EphPub    string `json:"eph_pub"`
+}
+
+// holdInvite asks the daemon to listen on the invite topic and blocks until
+// somebody redeems the token. Returns nil when the invite expires unused.
+func holdInvite(client *http.Client, s invite.Secret, ttl time.Duration) (*inviteRequest, error) {
+	body, _ := json.Marshal(map[string]any{"token": s.String(), "ttl_s": int(ttl.Seconds())})
+	resp, err := client.Post("http://unix/invite/hold", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("hold the invite: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNoContent {
+		return nil, nil
+	}
+	if resp.StatusCode/100 != 2 {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return nil, fmt.Errorf("the daemon refused the invite: %s", strings.TrimSpace(string(msg)))
+	}
+	var req inviteRequest
+	if err := json.NewDecoder(resp.Body).Decode(&req); err != nil {
+		return nil, err
+	}
+	return &req, nil
+}
+
+// replyInvite hands the daemon the credential to publish.
+func replyInvite(client *http.Client, s invite.Secret, ephPub, name string, credential []byte) error {
+	body, _ := json.Marshal(map[string]any{
+		"token":      s.String(),
+		"eph_pub":    ephPub,
+		"name":       name,
+		"credential": base64.StdEncoding.EncodeToString(credential),
+	})
+	resp, err := client.Post("http://unix/invite/reply", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("publish the response: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("the daemon refused the response: %s", strings.TrimSpace(string(msg)))
+	}
+	return nil
+}
+
+// socketClient dials the daemon's unix socket. The timeout is generous because
+// holding an invite open is a long poll by design.
+func socketClient(sock string, timeout time.Duration) *http.Client {
+	if sock == DefaultSocket {
+		if _, err := os.Stat(sock); err != nil {
+			if _, err := os.Stat(LegacySocket); err == nil {
+				sock = LegacySocket
+			}
+		}
+	}
+	return &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, "unix", sock)
+			},
+		},
+		Timeout: timeout,
 	}
 }
 
@@ -198,6 +235,7 @@ func cmdJoinInvite(token string, args []string) error {
 	advertise := fs.String("advertise", "", "public endpoint, only if it is not on a local interface")
 	relay := fs.Bool("relay", false, "forward traffic for peers that cannot reach each other")
 	timeout := fs.Duration("timeout", 2*time.Minute, "how long to wait for the inviter to answer")
+	verbose := fs.Bool("v", false, "show the rendezvous library's own logging")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -232,9 +270,24 @@ func cmdJoinInvite(token string, args []string) error {
 	ctx, cancelTimeout := context.WithTimeout(ctx, *timeout)
 	defer cancelTimeout()
 
+	// The joining side cannot use a daemon the way `invite` does: there is no
+	// config yet, so there is no daemon. It runs a node for the length of the
+	// exchange and throws it away.
+	// Anything printed between here and unhush() has to go to `out`: fd 1 is
+	// pointed at /dev/null for the length of the exchange.
+	var out io.Writer = os.Stdout
+	unhush := func() {}
+	if !*verbose {
+		if w, restore, err := hushStdout(); err == nil {
+			out, unhush = w, restore
+			defer unhush()
+		}
+	}
+
 	// No config yet, so the defaults: preset, cluster and mode as shipped. The
 	// invite says nothing about which fleet to use because a device that could
 	// be told that could be told to use somebody else's.
+	fmt.Fprintln(out, "Connecting to the fleet...")
 	node, err := startNode(nodeConfig(state.DefaultConfig()))
 	if err != nil {
 		return err
@@ -258,7 +311,7 @@ func cmdJoinInvite(token string, args []string) error {
 		return err
 	}
 
-	fmt.Printf("Asking to join as %q...\n", deviceName)
+	fmt.Fprintf(out, "Asking to join as %q...\n", deviceName)
 
 	// Retried, because the joining device is usually the one on the worse
 	// network and the first publish often lands before the subscription has
@@ -298,6 +351,10 @@ func cmdJoinInvite(token string, args []string) error {
 			resp = r
 		}
 	}
+
+	// Everything from here is ours to print, and the node has nothing left to
+	// say that anyone wants to read.
+	unhush()
 
 	nk, err := identity.NetworkKeyFromBytes(resp.NetworkKey)
 	if err != nil {
@@ -395,6 +452,47 @@ func startNode(cfg waku.Config) (*waku.Node, error) {
 	// the node is still dialling wastes the human's fifteen minutes.
 	time.Sleep(3 * time.Second)
 	return node, nil
+}
+
+// hushStdout points fd 1 at /dev/null and returns a writer on the real one.
+//
+// The rendezvous library logs at INFO from its own threads, to **stdout** —
+// checked, because the obvious assumption is stderr and it is wrong — and its
+// logLevel setting is accepted and ignored: FATAL, ERROR and the default all
+// produce the same 162 lines. That is right for the daemon, whose output the
+// journal keeps, and wrong for a command someone is watching a prompt on, where
+// a page of dialler output reads as a failure.
+//
+// Redirected at the descriptor level rather than by reassigning os.Stdout,
+// because the writes come from C. The returned writer is the original
+// descriptor, so this command's own messages still reach the terminal, and
+// restore is idempotent so it can be called early and deferred as well.
+func hushStdout() (io.Writer, func(), error) {
+	null, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		return nil, nil, err
+	}
+	fd := int(os.Stdout.Fd())
+	saved, err := syscall.Dup(fd)
+	if err != nil {
+		null.Close()
+		return nil, nil, err
+	}
+	if err := syscall.Dup3(int(null.Fd()), fd, 0); err != nil {
+		syscall.Close(saved)
+		null.Close()
+		return nil, nil, err
+	}
+
+	real := os.NewFile(uintptr(saved), "stdout")
+	var once sync.Once
+	return real, func() {
+		once.Do(func() {
+			syscall.Dup3(saved, fd, 0)
+			syscall.Close(saved)
+			null.Close()
+		})
+	}, nil
 }
 
 // groupToken breaks a token into fives, which is how people read digits aloud.
