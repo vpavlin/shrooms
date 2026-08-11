@@ -36,6 +36,25 @@ it are exactly the ones for whom a list is useful.
 That asymmetry is the whole decision, and it maps onto something that already
 exists: meshes are separate, with separate configs.
 
+### The control that matters is elsewhere
+
+Worth stating plainly, because it is easy to mistake this setting for a
+security boundary: it is not one. **Whether a service is published on a mesh is
+the access decision**, and `services` is per mesh. A service published on your
+own mesh and not on a shared one is unreachable from the shared one — different
+prefix, different WireGuard device, different AllowedIPs — whatever any
+announce says.
+
+Announcing is metadata about something a member can already reach. Someone you
+have admitted to a mesh can scan the device and connect to it; hiding the names
+does not change that, and treating this switch as protection would be worse than
+not having it.
+
+What survives is smaller and still real: an inventory shortens the work for
+whoever has compromised a member's laptop, and service names can be personal in
+a way open ports are not. Enough to default it off on a mesh with other people
+on it. Not enough to refuse the feature.
+
 ## Decision
 
 **Announce services, per mesh, off by default.**
