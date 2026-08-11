@@ -104,6 +104,9 @@ type session struct {
 // b32 matches how admin keys are written in a config: uppercase, unpadded.
 var b32 = base32.StdEncoding.WithPadding(base32.NoPadding)
 
+// tap lets a join listen to the running node. See eventTap.
+var tap eventTap
+
 // meshInstance is one mesh running on the phone: its own WireGuard device and
 // identity, on a virtual TUN carved out of the single descriptor Android gives.
 type meshInstance struct {
@@ -169,13 +172,43 @@ func joinInvite(token, name, label, configDir string, timeoutSeconds int) error 
 		name = "phone"
 	}
 
-	node, err := waku.New(nodeConfig(state.DefaultConfig()))
-	if err != nil {
-		return fmt.Errorf("rendezvous plane: %w", err)
-	}
-	defer node.Close()
-	if err := node.Start(); err != nil {
-		return fmt.Errorf("start rendezvous plane: %w", err)
+	// The node this device is already using, if it has one.
+	//
+	// Starting a second one here did not work and could not: the library has a
+	// single global event callback, so a join attempted while the mesh was up
+	// simply never heard an answer. It also used the shipped fleet defaults
+	// rather than this device's, which is a second way to hear nothing.
+	mu.Lock()
+	live := node
+	running := running != nil
+	mu.Unlock()
+
+	var tr invite.Transport
+	if live != nil && running {
+		msgs, detach := tap.attach()
+		defer detach()
+		tr = tapTransport{node: live, msgs: msgs}
+	} else {
+		fleet := state.DefaultConfig()
+		if onDisk, err := state.LoadConfigUnvalidated(cfgPath); err == nil {
+			if onDisk.Preset != "" {
+				fleet.Preset = onDisk.Preset
+			}
+			if onDisk.Mode != "" {
+				fleet.Mode = onDisk.Mode
+			}
+			fleet.ClusterID = onDisk.ClusterID
+			fleet.EntryNodes = onDisk.EntryNodes
+		}
+		own, err := waku.New(nodeConfig(fleet))
+		if err != nil {
+			return fmt.Errorf("rendezvous plane: %w", err)
+		}
+		defer own.Close()
+		if err := own.Start(); err != nil {
+			return fmt.Errorf("start rendezvous plane: %w", err)
+		}
+		tr = rendezvous.InviteTransport(own)
 	}
 	// Nothing arrives until the node has peers. The inviter is waiting at a
 	// prompt, so a few seconds here costs nothing and asking too early costs a
@@ -185,7 +218,7 @@ func joinInvite(token, name, label, configDir string, timeoutSeconds int) error 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSeconds)*time.Second)
 	defer cancel()
 
-	resp, err := invite.Redeem(ctx, rendezvous.InviteTransport(node), secret, &invite.Request{
+	resp, err := invite.Redeem(ctx, tr, secret, &invite.Request{
 		DevicePub: st.Identity.DevicePub,
 		WGPub:     st.Identity.WGPub[:],
 		Name:      name,
@@ -661,12 +694,9 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 			return err
 		}
 		m.SetV4(in.aliases)
-		if len(instances) > 1 {
-			// One reader on the node, every mesh fed from it: a channel hands
-			// each event to exactly one reader, so meshes reading it directly
-			// would take turns and each drop what the other should have had.
-			m.SetFed()
-		}
+		// Always fed, even with one mesh: the dispatcher is also what lets an
+		// enrolment listen in while the mesh is up (see eventTap).
+		m.SetFed()
 		in.mesh = m
 	}
 
@@ -700,24 +730,25 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 		dnsIntercept: intercept,
 	}
 
-	// One reader on the node, feeding every mesh. See SetFed above.
-	if len(instances) > 1 {
-		go func() {
-			for {
-				select {
-				case <-ctx.Done():
+	// One reader on the node, feeding every mesh — and any enrolment in
+	// progress. A channel delivers each event to exactly one reader, so
+	// everything that wants them has to be fed from here.
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case ev, ok := <-node.Events():
+				if !ok {
 					return
-				case ev, ok := <-node.Events():
-					if !ok {
-						return
-					}
-					for _, in := range instances {
-						in.mesh.Deliver(ev)
-					}
 				}
+				for _, in := range instances {
+					in.mesh.Deliver(ev)
+				}
+				tap.feed(ev)
 			}
-		}()
-	}
+		}
+	}()
 
 	var wgRun sync.WaitGroup
 	for _, in := range instances {

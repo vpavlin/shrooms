@@ -1,8 +1,11 @@
 package mobile
 
 import (
+	"sync"
+
 	"context"
 	"fmt"
+	"github.com/vpavlin/shrooms/internal/invite"
 	"log/slog"
 	"net/netip"
 	"path/filepath"
@@ -323,6 +326,63 @@ func DNSAddress(configDir string) string {
 	}
 	return dnssrv.ServiceAddr(nk.Prefix()).String()
 }
+
+// eventTap lets an enrolment listen in on the running node.
+//
+// The phone has one rendezvous node and the library has one global callback, so
+// a second node started for a join is not merely wasteful — it does not work.
+// And the node's event channel has a single consumer, so the exchange cannot
+// simply read it alongside the meshes. Both problems have the same answer: one
+// reader, feeding everything that wants events.
+type eventTap struct {
+	mu sync.Mutex
+	ch chan invite.Message
+}
+
+// attach opens the tap. The returned function closes it, and must be called.
+func (t *eventTap) attach() (<-chan invite.Message, func()) {
+	ch := make(chan invite.Message, 512)
+	t.mu.Lock()
+	t.ch = ch
+	t.mu.Unlock()
+	return ch, func() {
+		t.mu.Lock()
+		t.ch = nil
+		t.mu.Unlock()
+	}
+}
+
+// feed offers an event to whatever is listening. Nothing usually is.
+func (t *eventTap) feed(ev waku.Event) {
+	t.mu.Lock()
+	ch := t.ch
+	t.mu.Unlock()
+	if ch == nil {
+		return
+	}
+	msg, _, ok := waku.ParseMessage(ev.JSON)
+	if !ok {
+		return
+	}
+	select {
+	case ch <- invite.Message{Topic: msg.ContentTopic, Payload: msg.Payload}:
+	default: // the exchange is behind; it retries
+	}
+}
+
+// tapTransport runs an enrolment over the node a session is already using:
+// subscribing and sending on it directly, and receiving through the tap.
+type tapTransport struct {
+	node *waku.Node
+	msgs <-chan invite.Message
+}
+
+func (t tapTransport) Subscribe(topic string) error   { return t.node.Subscribe(topic) }
+func (t tapTransport) Unsubscribe(topic string) error { return t.node.Unsubscribe(topic) }
+func (t tapTransport) Send(topic string, payload []byte, ephemeral bool) (string, error) {
+	return t.node.Send(topic, payload, ephemeral)
+}
+func (t tapTransport) Messages() <-chan invite.Message { return t.msgs }
 
 // resolveAll answers a name across every mesh on this device (ADR-015).
 //

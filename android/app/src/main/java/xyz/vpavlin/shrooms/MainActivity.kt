@@ -300,12 +300,23 @@ private fun AddMeshScreen(
         }
 
         Spacer(Modifier.height(20.dp))
-        Label("CALL IT")
+        Label("NAME FOR THIS MESH")
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "your own label for it — “home”, “bobs” — used in names like " +
+                "nas.home.mesh. Only this phone sees it.",
+            style = MaterialTheme.typography.bodySmall, color = Palette.Ash,
+        )
         Spacer(Modifier.height(8.dp))
         KeyField(label, singleLine = true) { label = it.trim() }
 
         Spacer(Modifier.height(20.dp))
-        Label("THIS DEVICE")
+        Label("NAME FOR THIS PHONE")
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "how the other devices on that mesh will see this one",
+            style = MaterialTheme.typography.bodySmall, color = Palette.Ash,
+        )
         Spacer(Modifier.height(8.dp))
         KeyField(name, singleLine = true) { name = it.trim() }
 
@@ -316,7 +327,7 @@ private fun AddMeshScreen(
 
         Spacer(Modifier.height(28.dp))
         Action(
-            if (busy) "WAITING FOR THE OTHER DEVICE…" else "ADD",
+            if (busy) "WAITING — KEEP `shrooms invite` RUNNING" else "ADD",
             enabled = token.isNotEmpty() && label.isNotEmpty() && !busy,
         ) {
             busy = true
