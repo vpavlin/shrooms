@@ -184,6 +184,35 @@ func cmdDaemon(args []string) error {
 		}
 	}
 
+	// One reader, every mesh.
+	//
+	// The node's event channel delivers each event to exactly one reader, so
+	// meshes reading it directly take turns and each drops what the other
+	// should have had — which presents as a second mesh that discovers peers
+	// slowly, or in one direction only. Left alone for a single mesh, where
+	// there is nothing to share and the existing path is well travelled.
+	if len(instances) > 1 {
+		for _, in := range instances {
+			in.mesh.SetFed()
+		}
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case ev, ok := <-node.Events():
+					if !ok {
+						return
+					}
+					for _, in := range instances {
+						in.mesh.Deliver(ev)
+					}
+				}
+			}
+		}()
+		log.Info("rendezvous events fanned out", "meshes", len(instances))
+	}
+
 	// Every mesh runs; the first one to stop stops the daemon, because a node
 	// that is half up is worse than one that restarts.
 	errs := make(chan error, len(instances))

@@ -85,6 +85,10 @@ type Mesh struct {
 	// not in use, which is what the network-key-only path looks like.
 	v4 *v4.Table
 
+	// fed says events arrive through Deliver rather than being read from the
+	// node. Set when this mesh shares a node with others.
+	fed bool
+
 	discoKey disco.Key
 	prober   *disco.Prober
 
@@ -242,7 +246,13 @@ func (m *Mesh) Self() netip.Addr { return m.self }
 
 // Run drives the mesh until ctx is cancelled.
 func (m *Mesh) Run(ctx context.Context) error {
-	go m.consume(ctx)
+	// Unless somebody else is feeding us. Several meshes share one rendezvous
+	// node, and a channel delivers each event to exactly one reader — so two
+	// meshes reading the node directly would take it in turns, each dropping
+	// what the other should have had. See Deliver.
+	if !m.fed {
+		go m.consume(ctx)
+	}
 
 	if err := m.resubscribe(time.Now()); err != nil {
 		return fmt.Errorf("initial subscribe: %w", err)
@@ -763,6 +773,20 @@ func localAddrs() []netip.Addr {
 	}
 	return out
 }
+
+// Deliver hands this mesh one event from a shared rendezvous node.
+//
+// The node's event channel has one consumer, so a daemon running several
+// meshes must read it once and pass every event to all of them: each tries to
+// open it and ignores what is not addressed to it. That is the trial
+// decryption ADR-015 accepts as the cost of no cleartext mesh identifier —
+// and, done wrong, the reason a two-mesh node sees roughly half the traffic it
+// should.
+func (m *Mesh) Deliver(ev waku.Event) { m.handle(ev) }
+
+// SetFed says this mesh is driven by Deliver rather than by reading the node
+// itself. Must be set before Run.
+func (m *Mesh) SetFed() { m.fed = true }
 
 // consume processes inbound Waku events.
 func (m *Mesh) consume(ctx context.Context) {
