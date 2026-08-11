@@ -30,3 +30,4 @@ number appears, its source is named.
 | [018](018-credentials-instead-of-a-shared-key.md) | Credentials instead of a shared key | accepted, mostly built |
 | [019](019-service-addresses.md) | An address per service | proposed; the name router is built |
 | [020](020-membership-is-a-seam.md) | Membership is a seam | accepted |
+| [021](021-synthetic-ipv4.md) | A synthetic IPv4 address per peer | proposed |
