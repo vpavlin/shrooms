@@ -35,6 +35,11 @@ type instance struct {
 	iface   string
 	port    uint16
 
+	// relay is whether this node forwards for peers of this mesh. Per mesh:
+	// carrying traffic for one set of people does not imply carrying it for
+	// another (ADR-015).
+	relay bool
+
 	services *service.Publisher
 	// specs is what services was published from, so a reload can tell whether
 	// anything actually changed.
@@ -113,6 +118,7 @@ func startInstance(ctx context.Context, log *slog.Logger, cfg state.Config, st *
 	meshCfg.NetworkKey = m.NetworkKey
 	meshCfg.AdminKeys = m.AdminKeys
 	meshCfg.Relay = m.Relay
+	in.relay = m.Relay
 	meshCfg.Services = m.Services
 
 	in.mesh, err = mesh.New(log.With("mesh", m.Label), meshCfg, stateFor(st, ms), node, in.dev)

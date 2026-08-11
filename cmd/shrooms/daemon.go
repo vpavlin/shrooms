@@ -223,6 +223,8 @@ func cmdDaemon(args []string) error {
 		go func(in *instance) { errs <- in.mesh.Run(ctx) }(in)
 	}
 
+	go watchRendezvous(ctx, log, instances, errs)
+
 	// Reload on SIGHUP, and over the socket, so `systemctl reload shrooms` and
 	// `shrooms reload` both work. Only the safe parts change; the rest is
 	// reported rather than silently ignored.
@@ -261,6 +263,11 @@ type meshStatus struct {
 	Iface     string `json:"interface"`
 	Port      uint16 `json:"port"`
 	Peers     int    `json:"peers"`
+
+	// Relays counts the devices on this mesh that offer to forward, this one
+	// included. Reported because zero is a configuration, not a fault, and it
+	// is invisible until a peer on mobile data cannot reach anything.
+	Relays int `json:"relays"`
 
 	// Expires is when this device's credential on this mesh runs out. Reported
 	// because a credential expiring is the one failure in this system that is
@@ -615,6 +622,68 @@ func v4Of(m *mesh.Mesh, overlay netip.Addr) string {
 }
 
 // serveControl exposes status over a unix socket.
+// rendezvousGrace is how long a fresh daemon is left alone before the watchdog
+// may act. Long enough to reach the fleet, subscribe, and hear something on an
+// unhurried connection.
+const rendezvousGrace = 6 * time.Minute
+
+// rendezvousStall is how long every mesh must be unreachable on the rendezvous
+// plane before the daemon gives up on the connection it has.
+//
+// Comfortably more than mesh.RendezvousStale, which is when one mesh calls its
+// own plane stale: this is not "a message is late", it is "this connection is
+// not coming back".
+const rendezvousStall = 10 * time.Minute
+
+// watchRendezvous restarts the daemon when the rendezvous plane stays down.
+//
+// When it stops, nothing looks broken. Established tunnels keep carrying
+// traffic, the roster stops changing, and every peer quietly ages out until the
+// status page is a list of devices marked offline that are all perfectly fine.
+// What actually breaks is everything that depends on discovery: a peer that
+// moves is never found again, and — the one that is genuinely confusing — a
+// relay stops working, because relaying needs both ends to have chosen and
+// registered with the same relay, and a node whose roster says everyone is
+// offline chooses none. A phone on mobile data then reaches the relay itself
+// and nothing behind it.
+//
+// Exiting is the fix rather than reconnecting in place because the library
+// keeps process-global state and has never survived being restarted inside a
+// running process. The unit file says Restart=always, so this is a five-second
+// gap and a clean node; run by hand, it stops visibly, which is also better
+// than pretending.
+func watchRendezvous(ctx context.Context, log *slog.Logger, instances []*instance, errs chan<- error) {
+	started := time.Now()
+	healthy := started
+	tick := time.NewTicker(30 * time.Second)
+	defer tick.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-tick.C:
+			// Any mesh being healthy is enough: they share one connection, so
+			// one of them hearing something proves it is alive.
+			for _, in := range instances {
+				if in.mesh.Health().OK(now) {
+					healthy = now
+					break
+				}
+			}
+			if now.Sub(started) < rendezvousGrace || now.Sub(healthy) < rendezvousStall {
+				continue
+			}
+			log.Error("rendezvous plane has been down too long, restarting",
+				"for", now.Sub(healthy).Round(time.Second),
+				"problem", instances[0].mesh.Health().Problem(now))
+			errs <- fmt.Errorf("no rendezvous connection for %s",
+				now.Sub(healthy).Round(time.Second))
+			return
+		}
+	}
+}
+
 func serveControl(ctx context.Context, log *slog.Logger, path string, instances []*instance, cfg state.Config, rl *reloader) (*http.Server, error) {
 	// The first mesh is what the top-level fields describe, so a reader that
 	// knows nothing about several meshes — the Android app, Basecamp, an older
@@ -645,6 +714,14 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 				Iface:   in.iface,
 				Port:    in.port,
 				Peers:   len(in.mesh.Roster().Current(now)),
+			}
+			if in.relay {
+				ms.Relays++
+			}
+			for _, p := range in.mesh.Roster().Current(now) {
+				if p.Relay {
+					ms.Relays++
+				}
 			}
 			if e := in.mesh.SelfExpiry(); !e.IsZero() {
 				ms.Expires = e.Unix()

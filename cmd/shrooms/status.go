@@ -136,10 +136,14 @@ func cmdStatus(args []string) error {
 	// is this peer on" is the first question a split raises.
 	if len(st.Meshes) > 1 {
 		for _, m := range st.Meshes {
-			fmt.Fprintf(head, "mesh %s\t%s\t%s  %s  peers %d%s\n",
-				m.Label, m.Overlay, m.Prefix, m.Iface, m.Peers, expiryNote(m.Expires))
+			fmt.Fprintf(head, "mesh %s\t%s\t%s  %s  peers %d%s%s\n",
+				m.Label, m.Overlay, m.Prefix, m.Iface, m.Peers,
+				relayNote(m), expiryNote(m.Expires))
 		}
 	} else if len(st.Meshes) == 1 {
+		if relayNote(st.Meshes[0]) != "" {
+			fmt.Fprintf(head, "relay\tnone\tpeers on mobile data may reach only public addresses\n")
+		}
 		if note := expiryNote(st.Meshes[0].Expires); note != "" {
 			fmt.Fprintf(head, "member\t%s\tuntil %s\n",
 				strings.TrimSpace(note),
@@ -386,4 +390,19 @@ func expiryNote(unix int64) string {
 		return fmt.Sprintf("  membership ends in %d days", int(left.Hours()/24))
 	}
 	return ""
+}
+
+// relayNote says when a mesh has nowhere to relay through.
+//
+// Zero relays is a configuration, not a fault, and it is invisible until
+// somebody is on mobile data: a phone behind carrier NAT can open a path to a
+// publicly-addressable peer and to nothing else, so the mesh appears to work
+// from the sofa and to be broken from the street. Relaying is per mesh
+// (ADR-015), so a second mesh joined by invite has none until it is told to —
+// which is exactly the case that looked like a regression.
+func relayNote(m meshStatus) string {
+	if m.Relays > 0 || m.Peers == 0 {
+		return ""
+	}
+	return "  no relay"
 }
