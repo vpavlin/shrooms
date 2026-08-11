@@ -24,7 +24,6 @@ import (
 	dnssrv "github.com/vpavlin/shrooms/internal/dns"
 	"github.com/vpavlin/shrooms/internal/invite"
 	"github.com/vpavlin/shrooms/internal/mesh"
-	"github.com/vpavlin/shrooms/internal/service"
 	"github.com/vpavlin/shrooms/internal/state"
 	"github.com/vpavlin/shrooms/internal/waku"
 )
@@ -143,7 +142,7 @@ func cmdDaemon(args []string) error {
 	log.Info("data plane up", "meshes", len(instances),
 		"self", self, "ipv4", primary.aliases.Self())
 
-	srv, err := serveControl(ctx, log, *sock, primary.mesh, cfg, self, primary.services)
+	srv, err := serveControl(ctx, log, *sock, instances, cfg)
 	if err != nil {
 		return err
 	}
@@ -200,6 +199,17 @@ func cmdDaemon(args []string) error {
 	return nil
 }
 
+// meshStatus is one mesh, for a node that has more than one.
+type meshStatus struct {
+	Label     string `json:"label"`
+	Overlay   string `json:"overlay"`
+	OverlayV4 string `json:"overlay_v4,omitempty"`
+	Prefix    string `json:"prefix"`
+	Iface     string `json:"interface"`
+	Port      uint16 `json:"port"`
+	Peers     int    `json:"peers"`
+}
+
 // statusPayload is what the daemon reports over the control socket.
 type statusPayload struct {
 	// Waiting means this daemon has no mesh yet and is holding the socket open
@@ -210,6 +220,10 @@ type statusPayload struct {
 	// because two addresses now name the same machine, and an address nothing
 	// explains gets reported as a bug.
 	OverlayV4 string `json:"overlay_v4,omitempty"`
+
+	// Meshes is one entry per mesh this node has joined (ADR-015). A
+	// single-mesh node reports one, and everything above still describes it.
+	Meshes []meshStatus `json:"meshes,omitempty"`
 
 	Name    string       `json:"name"`
 	Overlay string       `json:"overlay"`
@@ -378,7 +392,10 @@ type inviteHolder interface {
 }
 
 // inviteHandlers registers the enrolment endpoints.
-func inviteHandlers(mux *http.ServeMux, m inviteHolder) {
+//
+// pick chooses which mesh an invite belongs to: an empty label means the first,
+// which is what a single-mesh node and an older CLI both send.
+func inviteHandlers(mux *http.ServeMux, pick func(string) inviteHolder) {
 	// Enrolment, held open by the daemon because it is the thing that is
 	// already connected — `shrooms invite` used to start a Logos Delivery node
 	// of its own for the sake of two messages.
@@ -392,6 +409,7 @@ func inviteHandlers(mux *http.ServeMux, m inviteHolder) {
 		var req struct {
 			Token string `json:"token"`
 			TTLS  int    `json:"ttl_s"`
+			Mesh  string `json:"mesh"`
 		}
 		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&req); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -400,6 +418,11 @@ func inviteHandlers(mux *http.ServeMux, m inviteHolder) {
 		secret, err := invite.Parse(req.Token)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		m := pick(req.Mesh)
+		if m == nil {
+			http.Error(w, "no mesh called "+req.Mesh+" on this node", http.StatusBadRequest)
 			return
 		}
 		ttl := time.Duration(req.TTLS) * time.Second
@@ -435,6 +458,7 @@ func inviteHandlers(mux *http.ServeMux, m inviteHolder) {
 			EphPub     string `json:"eph_pub"`
 			Name       string `json:"name"`
 			Credential string `json:"credential"`
+			Mesh       string `json:"mesh"`
 		}
 		if err := json.NewDecoder(io.LimitReader(r.Body, 8192)).Decode(&in); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -456,6 +480,11 @@ func inviteHandlers(mux *http.ServeMux, m inviteHolder) {
 				http.Error(w, "credential: "+err.Error(), http.StatusBadRequest)
 				return
 			}
+		}
+		m := pick(in.Mesh)
+		if m == nil {
+			http.Error(w, "no mesh called "+in.Mesh+" on this node", http.StatusBadRequest)
+			return
 		}
 		if err := m.ReplyInvite(secret, &invite.Request{EphPub: eph, Name: in.Name}, credential); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -523,7 +552,12 @@ func v4Of(m *mesh.Mesh, overlay netip.Addr) string {
 }
 
 // serveControl exposes status over a unix socket.
-func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Mesh, cfg state.Config, self netip.Addr, services *service.Publisher) (*http.Server, error) {
+func serveControl(ctx context.Context, log *slog.Logger, path string, instances []*instance, cfg state.Config) (*http.Server, error) {
+	// The first mesh is what the top-level fields describe, so a reader that
+	// knows nothing about several meshes — the Android app, Basecamp, an older
+	// CLI — sees exactly what it always saw. The rest are added alongside.
+	primary := instances[0]
+	m, self, services := primary.mesh, primary.self, primary.services
 
 	nk, _ := cfg.Key()
 
@@ -539,6 +573,20 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Me
 		}
 		if v4self, ok := m.LookupV4(self); ok {
 			out.OverlayV4 = v4self.String()
+		}
+		for _, in := range instances {
+			ms := meshStatus{
+				Label:   in.label,
+				Overlay: in.self.String(),
+				Prefix:  in.prefix.String(),
+				Iface:   in.iface,
+				Port:    in.port,
+				Peers:   len(in.mesh.Roster().Peers()),
+			}
+			if a, ok := in.mesh.LookupV4(in.self); ok {
+				ms.OverlayV4 = a.String()
+			}
+			out.Meshes = append(out.Meshes, ms)
 		}
 		h := m.Health()
 		out.Rendezvous = rendezvousStatus{
@@ -636,7 +684,14 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, m *mesh.Me
 		json.NewEncoder(w).Encode(snapshot())
 	})
 
-	inviteHandlers(mux, m)
+	inviteHandlers(mux, func(label string) inviteHolder {
+		for _, in := range instances {
+			if label == "" || in.label == label {
+				return in.mesh
+			}
+		}
+		return nil
+	})
 
 	// The way a revocation reaches the bus. The admin key signs offline — that
 	// is the whole point of it — so something with a rendezvous connection has

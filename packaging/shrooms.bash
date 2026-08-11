@@ -66,7 +66,7 @@ _shrooms() {
     local cmd=${words[1]}
     case $cmd in
         init)
-            COMPREPLY=($(compgen -W "--name --relay --advertise --port --admin-dir --no-admin --socket $common" -- "$cur"))
+            COMPREPLY=($(compgen -W "--name --relay --advertise --port --admin-dir --no-admin --socket --mesh $common" -- "$cur"))
             ;;
         join)
             COMPREPLY=($(compgen -W "--invite --name --relay --advertise --port --timeout --socket --local -v $common" -- "$cur"))
@@ -75,7 +75,7 @@ _shrooms() {
             COMPREPLY=($(compgen -W "--name --relay --advertise --port $common" -- "$cur"))
             ;;
         invite)
-            COMPREPLY=($(compgen -W "--name --ttl --life --serial --qr --admin-dir --socket $common" -- "$cur"))
+            COMPREPLY=($(compgen -W "--name --ttl --life --serial --qr --admin-dir --socket --mesh $common" -- "$cur"))
             ;;
         daemon)
             COMPREPLY=($(compgen -W "--socket -v $common" -- "$cur"))

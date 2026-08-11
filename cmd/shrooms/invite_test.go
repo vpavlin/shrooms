@@ -47,6 +47,12 @@ func (f *fakeHolder) ReplyInvite(s invite.Secret, req *invite.Request, credentia
 	return f.replyErr
 }
 
+// only is a node with one mesh, which answers to any label — including the
+// empty one an older CLI sends.
+func only(h inviteHolder) func(string) inviteHolder {
+	return func(string) inviteHolder { return h }
+}
+
 // serveHolder runs the real handlers on a real unix socket, so the test covers
 // the wire contract between `shrooms invite` and the daemon rather than a
 // hand-written imitation of it.
@@ -58,7 +64,7 @@ func serveHolder(t *testing.T, h inviteHolder) string {
 		t.Fatal(err)
 	}
 	mux := http.NewServeMux()
-	inviteHandlers(mux, h)
+	inviteHandlers(mux, only(h))
 	// ConnContext as the daemon sets it, so the tests exercise the peer
 	// credential check rather than routing around it.
 	srv := &http.Server{Handler: mux, ConnContext: withPeerCred}
@@ -138,7 +144,7 @@ func TestInviteExpiryIsNotAnError(t *testing.T) {
 // mesh is a different thing, and must not come with it.
 func TestMutatingEndpointsRefuseStrangers(t *testing.T) {
 	mux := http.NewServeMux()
-	inviteHandlers(mux, &fakeHolder{})
+	inviteHandlers(mux, only(&fakeHolder{}))
 
 	// A handler reached with no credentials on the context — what a caller the
 	// kernel would not vouch for looks like — must be refused.
@@ -161,6 +167,32 @@ func TestInviteRefusalIsReported(t *testing.T) {
 
 // A mesh with no authority still issues invites — they move the network key
 // without putting it on a screen — and the reply simply carries no credential.
+// A label naming a mesh this node has not joined must be refused, not silently
+// served by whichever mesh happened to be first — that would enrol a device
+// into the wrong network.
+func TestInviteForAnUnknownMeshIsRefused(t *testing.T) {
+	mux := http.NewServeMux()
+	inviteHandlers(mux, func(label string) inviteHolder {
+		if label == "home" {
+			return &fakeHolder{}
+		}
+		return nil
+	})
+	sock := filepath.Join(t.TempDir(), "s.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: mux, ConnContext: withPeerCred}
+	go srv.Serve(ln)
+	t.Cleanup(func() { srv.Close() })
+
+	secret, _ := invite.New()
+	if _, err := holdInviteOn(socketClient(sock, 5*time.Second), secret, time.Second, "elsewhere"); err == nil {
+		t.Error("held an invite for a mesh this node has not joined")
+	}
+}
+
 func TestInviteWithoutACredential(t *testing.T) {
 	secret, _ := invite.New()
 	h := &fakeHolder{}

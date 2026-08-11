@@ -48,6 +48,17 @@ type adminFile struct {
 
 func adminPath(dir string) string { return filepath.Join(dir, adminFileName) }
 
+// adminPathFor is where one mesh's admin key lives. A node may hold the
+// authority for several meshes (ADR-015), and one file per mesh keeps them
+// apart — including their passphrases, since they are different secrets
+// protecting different networks.
+func adminPathFor(dir, label string) string {
+	if label == "" || label == state.DefaultLabel {
+		return adminPath(dir)
+	}
+	return filepath.Join(dir, "admin-"+label+".json")
+}
+
 func cmdAdmin(args []string) error {
 	if len(args) < 1 {
 		return errors.New("usage: shrooms admin {init|issue|revoke|show} [flags]")
@@ -76,6 +87,7 @@ func cmdAdminInit(args []string) error {
 	fs := flag.NewFlagSet("admin init", flag.ExitOnError)
 	dir := fs.String("dir", defaultAdminDir(), "where to keep the admin key")
 	plain := fs.Bool("no-passphrase", false, "store the admin key unencrypted")
+	label := fs.String("mesh", "", "which mesh this authority is for (ADR-015)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -85,20 +97,25 @@ func cmdAdminInit(args []string) error {
 			adminPath(*dir))
 	}
 
-	return mintAuthorityAt(*dir, *plain, "", "", "")
+	return mintAuthorityAt(*dir, *plain, "", "", "", *label)
 }
 
 // mintAuthority mints a mesh's authority, writes admin_keys into the config and
 // issues this device its own credential — everything `init` needs so that
 // creating a mesh is one command.
 func mintAuthority(dir, cfgPath, stateDir, name string) error {
-	return mintAuthorityAt(dir, false, cfgPath, stateDir, name)
+	return mintAuthorityAt(dir, false, cfgPath, stateDir, name, "")
 }
 
-func mintAuthorityAt(dir string, plain bool, cfgPath, stateDir, name string) error {
-	if _, err := os.Stat(adminPath(dir)); err == nil {
-		return fmt.Errorf("%s already exists; minting again would create a different mesh",
-			adminPath(dir))
+// mintAuthorityFor does the same for an additional mesh.
+func mintAuthorityFor(dir, cfgPath, stateDir, label, name string) error {
+	return mintAuthorityAt(dir, false, cfgPath, stateDir, name, label)
+}
+
+func mintAuthorityAt(dir string, plain bool, cfgPath, stateDir, name, label string) error {
+	path := adminPathFor(dir, label)
+	if _, err := os.Stat(path); err == nil {
+		return fmt.Errorf("%s already exists; minting again would create a different mesh", path)
 	}
 	primary, err := cred.NewAdmin()
 	if err != nil {
@@ -136,7 +153,7 @@ func mintAuthorityAt(dir string, plain bool, cfgPath, stateDir, name string) err
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(adminPath(dir), append(raw, '\n'), 0o600); err != nil {
+	if err := os.WriteFile(path, append(raw, '\n'), 0o600); err != nil {
 		return err
 	}
 
@@ -144,7 +161,7 @@ func mintAuthorityAt(dir string, plain bool, cfgPath, stateDir, name string) err
 	// usable the moment init returns.
 	enrolled := false
 	if cfgPath != "" {
-		if err := addAdminKeys(cfgPath, af.Keys); err != nil {
+		if err := addAdminKeysFor(cfgPath, label, af.Keys); err != nil {
 			return err
 		}
 		admin := &cred.Admin{Priv: primary.Priv, Pub: primary.Pub}
@@ -155,7 +172,7 @@ func mintAuthorityAt(dir string, plain bool, cfgPath, stateDir, name string) err
 
 	fmt.Printf("\nMinted the mesh authority.\n\n")
 	fmt.Printf("  mesh id     %s\n", auth.ID())
-	fmt.Printf("  admin key   %s\n", adminPath(dir))
+	fmt.Printf("  admin key   %s\n", path)
 	if enrolled {
 		fmt.Printf("  this device is enrolled\n")
 	}
@@ -170,6 +187,21 @@ func mintAuthorityAt(dir string, plain bool, cfgPath, stateDir, name string) err
 	fmt.Printf("\n  %s\n\n", base64.StdEncoding.EncodeToString(recovery.Priv))
 	fmt.Println("Store it away from this machine. A password manager, a Keycard, paper.")
 	return nil
+}
+
+// addAdminKeysFor appends an authority to a config, for one mesh or for the
+// single-mesh form.
+func addAdminKeysFor(cfgPath, label string, keys []string) error {
+	if label == "" || label == state.DefaultLabel {
+		return addAdminKeys(cfgPath, keys)
+	}
+	f, err := os.OpenFile(cfgPath, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = fmt.Fprintf(f, "mesh.%s.admin_keys = [%q, %q]\n", label, keys[0], keys[1])
+	return err
 }
 
 // addAdminKeys appends the authority to a config that already exists.
@@ -232,11 +264,17 @@ func issueLocal(admin *cred.Admin, auth *cred.Authority, stateDir, name string, 
 }
 
 func loadAdmin(dir string) (*cred.Admin, *cred.Authority, error) {
-	raw, err := os.ReadFile(adminPath(dir))
+	return loadAdminFor(dir, "")
+}
+
+// loadAdminFor opens one mesh's admin key.
+func loadAdminFor(dir, label string) (*cred.Admin, *cred.Authority, error) {
+	path := adminPathFor(dir, label)
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, nil, fmt.Errorf("no admin key at %s.\n"+
 			"It is created by `shrooms init` on the machine that made the mesh, and "+
-			"stays there — this command has to run where it lives", adminPath(dir))
+			"stays there — this command has to run where it lives", path)
 	}
 	var af adminFile
 	if err := json.Unmarshal(raw, &af); err != nil {

@@ -130,6 +130,14 @@ func cmdStatus(args []string) error {
 	head := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintf(head, "network\t%s\tpeers %d (%d up)\n", st.Prefix, len(st.Peers), online)
 	fmt.Fprintf(head, "self\t%s  %s\t\n", st.Name, st.Overlay)
+	// More than one mesh: show them before the roster, because "which network
+	// is this peer on" is the first question a split raises.
+	if len(st.Meshes) > 1 {
+		for _, m := range st.Meshes {
+			fmt.Fprintf(head, "mesh %s\t%s\t%s  %s  peers %d\n",
+				m.Label, m.Overlay, m.Prefix, m.Iface, m.Peers)
+		}
+	}
 	if st.OverlayV4 != "" {
 		// Said plainly, because the second address is the one people ask about:
 		// it exists so browsers can use mesh names on a network with no IPv6.

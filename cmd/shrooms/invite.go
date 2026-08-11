@@ -51,6 +51,7 @@ func cmdInvite(args []string) error {
 	life := fs.Duration("life", cred.DefaultLife, "how long the issued credential is valid")
 	serial := fs.Uint64("serial", 0, "credential serial; must increase per device (default: now)")
 	asQR := fs.Bool("qr", true, "show the token as a QR code")
+	label := fs.String("mesh", "", "which mesh to admit the device to (ADR-015)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -58,6 +59,24 @@ func cmdInvite(args []string) error {
 	cfg, err := state.LoadConfig(*cfgPath)
 	if err != nil {
 		return err
+	}
+	// Which mesh this invite admits to. Named explicitly on a node with more
+	// than one, because "whichever was first" is how someone ends up in the
+	// wrong network.
+	meshes := cfg.Meshes()
+	target := meshes[0]
+	if *label != "" {
+		found := false
+		for _, m := range meshes {
+			if m.Label == *label {
+				target, found = m, true
+			}
+		}
+		if !found {
+			return fmt.Errorf("this node has no mesh called %q", *label)
+		}
+	} else if len(meshes) > 1 {
+		return fmt.Errorf("this node has %d meshes; say which one with --mesh <name>", len(meshes))
 	}
 
 	// Checked before the passphrase prompt. Typing a passphrase and then being
@@ -73,13 +92,13 @@ func cmdInvite(args []string) error {
 	// the network key without putting it on a screen.
 	var admin *cred.Admin
 	var auth *cred.Authority
-	if len(cfg.AdminKeys) > 0 {
-		admin, auth, err = loadAdmin(*dir)
+	if len(target.AdminKeys) > 0 {
+		admin, auth, err = loadAdminFor(*dir, target.Label)
 		if err != nil {
 			return fmt.Errorf("%w\n\nThe invite has to issue a credential, which needs the admin key. "+
 				"Run this on the machine that holds it.", err)
 		}
-		if cfgAuth, err := cfg.Authority(); err == nil && cfgAuth != nil && cfgAuth.ID() != auth.ID() {
+		if cfgAuth, err := target.Authority(); err == nil && cfgAuth != nil && cfgAuth.ID() != auth.ID() {
 			return fmt.Errorf("this admin key belongs to mesh %s, but the config is for %s",
 				auth.ID(), cfgAuth.ID())
 		}
@@ -90,6 +109,9 @@ func cmdInvite(args []string) error {
 		return err
 	}
 
+	if len(meshes) > 1 {
+		fmt.Printf("Admitting one device to %q.\n", target.Label)
+	}
 	fmt.Printf("Invite valid for %s. On the joining device:\n\n", *ttl)
 	fmt.Printf("  shrooms join --invite %s\n\n", groupToken(secret.String()))
 	if *asQR {
@@ -103,7 +125,7 @@ func cmdInvite(args []string) error {
 	fmt.Printf("Waiting. An invite is answered only by the node that issued it,\n")
 	fmt.Printf("which is what makes it single-use — so leave this running.\n\n")
 
-	req, err := holdInvite(client, secret, *ttl)
+	req, err := holdInviteOn(client, secret, *ttl, target.Label)
 	if err != nil {
 		return err
 	}
@@ -142,7 +164,7 @@ func cmdInvite(args []string) error {
 		}
 	}
 
-	if err := replyInvite(client, secret, req.EphPub, joiner, credential); err != nil {
+	if err := replyInviteOn(client, secret, req.EphPub, joiner, credential, target.Label); err != nil {
 		return err
 	}
 
@@ -166,7 +188,15 @@ type inviteRequest struct {
 // holdInvite asks the daemon to listen on the invite topic and blocks until
 // somebody redeems the token. Returns nil when the invite expires unused.
 func holdInvite(client *http.Client, s invite.Secret, ttl time.Duration) (*inviteRequest, error) {
-	body, _ := json.Marshal(map[string]any{"token": s.String(), "ttl_s": int(ttl.Seconds())})
+	return holdInviteOn(client, s, ttl, "")
+}
+
+// holdInviteOn names which mesh the invite admits to. Empty means the first,
+// which is what a single-mesh node has always meant.
+func holdInviteOn(client *http.Client, s invite.Secret, ttl time.Duration, meshLabel string) (*inviteRequest, error) {
+	body, _ := json.Marshal(map[string]any{
+		"token": s.String(), "ttl_s": int(ttl.Seconds()), "mesh": meshLabel,
+	})
 	resp, err := client.Post("http://unix/invite/hold", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("hold the invite: %w", err)
@@ -188,11 +218,16 @@ func holdInvite(client *http.Client, s invite.Secret, ttl time.Duration) (*invit
 
 // replyInvite hands the daemon the credential to publish.
 func replyInvite(client *http.Client, s invite.Secret, ephPub, name string, credential []byte) error {
+	return replyInviteOn(client, s, ephPub, name, credential, "")
+}
+
+func replyInviteOn(client *http.Client, s invite.Secret, ephPub, name string, credential []byte, meshLabel string) error {
 	body, _ := json.Marshal(map[string]any{
 		"token":      s.String(),
 		"eph_pub":    ephPub,
 		"name":       name,
 		"credential": base64.StdEncoding.EncodeToString(credential),
+		"mesh":       meshLabel,
 	})
 	resp, err := client.Post("http://unix/invite/reply", "application/json", bytes.NewReader(body))
 	if err != nil {

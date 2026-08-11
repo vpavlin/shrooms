@@ -665,6 +665,50 @@ a file you keep on an encrypted volume.
 Not built yet: automatic renewal, so a credential is re-issued by hand every 30
 days — `shrooms invite` again is the shortest way to do it.
 
+## More than one mesh
+
+A node can belong to several networks at once — your own machines, and a shared
+one with somebody else — without either being able to see the other
+([ADR-015](docs/adr/015-multiple-meshes-one-daemon.md)).
+
+```console
+$ shrooms init --mesh shared          # mint a second network on this node
+$ sudo systemctl restart shrooms
+$ shrooms invite --mesh shared        # admit one device to it
+```
+
+```console
+$ shrooms status
+mesh default  fd69:bd41:d9bc:7fb7:…  fd69:bd41:d9bc::/48  shrooms0   peers 2
+mesh shared   fdfb:6ad9:cb3f:2e1a:…  fdfb:6ad9:cb3f::/48  shrooms01  peers 1
+```
+
+Each mesh gets its own key, its own identity, its own interface and its own
+port. The identity matters: the overlay's host bits are a hash of the device
+key, so reusing one identity would carry the same 80-bit suffix into every mesh
+and let anyone in two of them correlate you. It is also forced — WireGuard
+allows one preshared key per peer and ours is per mesh, so a peer you share two
+meshes with cannot be one entry on one device.
+
+**Joining a mesh does not bridge it to another.** Each node is an endpoint, not
+a router: there is no forwarding, and `AllowedIPs` bounds what each peer may
+send. The obvious fear — "I joined a shared mesh and exposed my home network" —
+is not what happens.
+
+Names take a mesh label when they need one:
+
+```console
+$ ping vps.shared.mesh     # unambiguous
+$ ping nas.mesh            # fine while only one mesh has a `nas`
+```
+
+The short form is answered only when exactly one mesh has that name, so a node
+with one mesh — which is most of them — sees no change, and ambiguity removes
+the short name rather than silently picking a network for you.
+
+The first mesh in a config keeps the interface, port and identity it always had,
+so adding a second changes nothing about the first.
+
 ## Bandwidth, and what a node contributes
 
 A node joins a **public, shared cluster**, and by default it relays for it. That

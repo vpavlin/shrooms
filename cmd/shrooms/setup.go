@@ -33,12 +33,20 @@ func cmdInit(args []string) error {
 	adminDir := fs.String("admin-dir", defaultAdminDir(), "where to keep the admin key")
 	noAdmin := fs.Bool("no-admin", false, "do not mint an authority; membership is the network key alone")
 	sock := fs.String("socket", DefaultSocket, "control socket, so a waiting daemon picks this up")
+	label := fs.String("mesh", "", "create an additional mesh with this name (ADR-015)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
+	// A second mesh on a machine that already has one. Everything else about
+	// the config stays as it is: this adds a network, it does not replace one.
+	if *label != "" {
+		return addMesh(*cfgPath, *stateDir, *adminDir, *label, *relay, *noAdmin, *sock)
+	}
+
 	if _, err := os.Stat(*cfgPath); err == nil {
-		return fmt.Errorf("%s already exists — remove it or use a different --config", *cfgPath)
+		return fmt.Errorf("%s already exists — remove it, use a different --config, "+
+			"or add a second mesh with --mesh <name>", *cfgPath)
 	}
 
 	nk, err := identity.NewNetworkKey()
@@ -99,6 +107,63 @@ func cmdJoin(args []string) error {
 		return fmt.Errorf("%s already exists — remove it or use a different --config", *cfgPath)
 	}
 	return setup(*cfgPath, *stateDir, nk, *name, uint16(*port), *advertise, *relay, false)
+}
+
+// addMesh appends a mesh to a config that already names one (ADR-015).
+//
+// Deliberately not a variant of join: this mints a network rather than being
+// admitted to one, and the difference matters — whoever runs this holds the new
+// mesh's admin key and can enrol into it.
+func addMesh(cfgPath, stateDir, adminDir, label string, relay, noAdmin bool, sock string) error {
+	cfg, err := state.LoadConfig(cfgPath)
+	if err != nil {
+		return fmt.Errorf("%w\n\n--mesh adds a network to an existing config; "+
+			"run plain `shrooms init` first", err)
+	}
+	for _, m := range cfg.Meshes() {
+		if m.Label == label {
+			return fmt.Errorf("this node already has a mesh called %q", label)
+		}
+	}
+
+	nk, err := identity.NewNetworkKey()
+	if err != nil {
+		return err
+	}
+	if err := appendMesh(cfgPath, label, nk.String(), relay); err != nil {
+		return err
+	}
+
+	fmt.Printf("Created the mesh %q.\n\n", label)
+	fmt.Printf("  network key  %s\n", nk)
+	fmt.Printf("  prefix       %s\n", nk.Prefix())
+	fmt.Println()
+
+	if !noAdmin {
+		if err := mintAuthorityFor(adminDir, cfgPath, stateDir, label, cfg.Name); err != nil {
+			return err
+		}
+	}
+	fmt.Printf("Restart the daemon to bring it up, then admit a device:\n")
+	fmt.Printf("  shrooms invite --mesh %s\n", label)
+	return nil
+}
+
+// appendMesh writes the prefixed keys for one mesh.
+func appendMesh(cfgPath, label, key string, relay bool) error {
+	f, err := os.OpenFile(cfgPath, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := fmt.Fprintf(f, "\n# An additional mesh (ADR-015). Its own key, its own identity,\n"+
+		"# its own interface and port.\nmesh.%s.key   = %q\n", label, key); err != nil {
+		return err
+	}
+	if relay {
+		_, err = fmt.Fprintf(f, "mesh.%s.relay = \"true\"\n", label)
+	}
+	return err
 }
 
 // inviteFlag pulls --invite out of the arguments, wherever it appears.
