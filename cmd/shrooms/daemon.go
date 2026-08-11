@@ -225,6 +225,15 @@ func cmdDaemon(args []string) error {
 
 	go watchRendezvous(ctx, log, instances, errs)
 
+	// Ask the router for a way in, per mesh, unless told not to. Best effort
+	// by construction: a router that refuses leaves the node exactly where it
+	// was (ADR-024).
+	if cfg.PortMapping {
+		for _, in := range instances {
+			go keepMapped(ctx, log, in)
+		}
+	}
+
 	// Reload on SIGHUP, and over the socket, so `systemctl reload shrooms` and
 	// `shrooms reload` both work. Only the safe parts change; the rest is
 	// reported rather than silently ignored.

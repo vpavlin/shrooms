@@ -1,6 +1,12 @@
 # 021. A synthetic IPv4 address per peer
 
-**Status:** accepted; `internal/v4` built and unit-tested, not yet wired in
+**Status:** accepted; built, wired in, and in daily use
+
+`internal/v4` is carried by the daemon and by the Android app, not only by its
+tests: every node holds a 198.18.0.0/15 alias per peer, split into a block per
+mesh ([ADR-015](015-multiple-meshes-one-daemon.md)). This is what makes a
+browser work on an IPv4-only network, which is the failure the rest of this
+document is about.
 
 ## Context
 

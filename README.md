@@ -51,10 +51,14 @@ and a metadata surface: the shard is visible, and the crowd on it is the only
 cover there is. Your *traffic* never touches it — tunnels keep working with
 the fleet unreachable — but "no third party anywhere" would be false.
 
-**Membership is a shared secret.** One network key grants membership, so a
-leak from any device compromises the mesh, and revocation means rotating for
-everyone. [ADR-018](docs/adr/018-credentials-instead-of-a-shared-key.md) is the
-design that fixes this; it is not built yet.
+**The network key is still a shared secret.** Membership itself is now an
+admin-signed credential that expires and can be revoked
+([ADR-018](docs/adr/018-credentials-instead-of-a-shared-key.md), built), so
+removing a device no longer means rotating for everyone. But the network key
+still derives the rendezvous topics, the announce payload key and the pairwise
+PSKs, so leaking it still exposes the control plane.
+[ADR-020](docs/adr/020-membership-is-a-seam.md) explains why the rewrite that
+would remove it is deliberately not built.
 
 **It is a prototype**, used daily by its author and nobody else. See
 [Status](#status) for exactly what is proven and what is not, and
@@ -871,8 +875,10 @@ download.
 | **M6** name resolution | ✅ resolver registered with the host, on Linux and Android; `<service>.<device>.mesh` too |
 | **services** | ✅ local ports and LAN devices published by name, including things that never joined the mesh |
 | **Android** | ✅ a full participant, in daily use — tunnels, names, roaming between wifi and mobile data |
-| **M4** seamless operation | 🟨 roaming survives and the mesh repairs itself after a rendezvous outage; switching networks is still rough on the phone |
-| **M5** credentials | 🟨 issued, carried and verified ([ADR-018](docs/adr/018-credentials-instead-of-a-shared-key.md)); revocation is not yet distributed and renewal is manual |
+| **M4** seamless operation | 🟨 roaming survives, the mesh repairs itself after a rendezvous outage, and both daemon and app now restart themselves when that plane dies quietly; switching networks is still rough on the phone |
+| **M5** credentials | ✅ issued, carried, verified, revoked over the control plane, and renewed by a sweep ([ADR-018](docs/adr/018-credentials-instead-of-a-shared-key.md)) — though no credential has yet been watched roll over on live devices |
+| **multi-mesh** | ✅ several meshes in one daemon and one app, each with its own identity, addresses, relay and services ([ADR-015](docs/adr/015-multiple-meshes-one-daemon.md)) |
+| **invites** | ✅ one device at a time, fifteen minutes, no key pasted ([ADR-017](docs/adr/017-invite-tokens.md)) |
 | **Basecamp view** | ✅ published, with `shrooms_core` reading the daemon from outside the QML sandbox |
 
 `make m0` / `make m1` / `make m3` / `make s1` / `make s3` reproduce these.
@@ -954,16 +960,43 @@ establish. `--down` removes the test node again.
 
 ### Known gaps, honestly
 
-**The relay has not been tested on real infrastructure.** Relays now announce
-themselves and are discovered from the roster, so no node needs to be told where
-one is — but that has only been exercised in containers. The path that matters,
-two NATed devices meeting through a VPS over the real internet, is untested.
+**Relaying works on real infrastructure, as of 2026-08-11.** A phone on mobile
+data reached a peer through a relay on a public VPS, over the real internet —
+`shrooms status` shows the endpoint as `relay:<key>@<vps>:51820`. Relays are
+discovered from the roster, so nothing is told where one is. Relaying is per
+mesh: a mesh joined by invite has no relay until a member is told to be one.
 
-**Punching between two NATed peers is unproven.** A NATed node reaching a public
-one works for real. Two NATed nodes reaching *each other* has only been
-attempted in containers, where the harness turned out to be the obstacle: plain
-Linux `MASQUERADE` is not endpoint-independent, so it tests the hard case while
-claiming to test the easy one.
+**Punching between two NATed peers is still unproven**, and the reasons it is
+hard are now clearer than they were:
+
+- *Both ends must choose the same relay, independently.* A relay forwards by
+  destination WireGuard key and only for peers that have registered with it, and
+  each side picks one only among peers it currently believes are online. A node
+  whose rendezvous plane has quietly failed therefore stops relaying without
+  anything looking wrong.
+- *A NATed node learns its public address by reflection* — a peer's pong echoes
+  the address it observed. That needs a peer outside your NAT. On a mesh whose
+  members are all behind one NAT, no node can learn its own public address at
+  all, and `advertise` has to be set by hand. Asking the router instead is the
+  next thing on the roadmap.
+- *Carrier-grade NAT cannot be punched or mapped.* A phone on mobile data is
+  behind a NAT that is not yours. One publicly reachable member is enough for
+  the whole mesh, which is why relays exist.
+
+**The rendezvous plane can fail while everything looks fine.** Tunnels keep
+carrying traffic, the roster stops changing, and peers age out one at a time
+until the status page is a list of devices marked offline that are all healthy.
+Both the daemon and the app now watch for it — including the case where a node
+goes deaf to *some* publishers and not others, which a "nothing has arrived"
+check sails straight past. The signal is a peer whose WireGuard tunnel is still
+rekeying, which proves its daemon is running and therefore announcing, while its
+announces have been missing for twelve minutes. Recovery is a restart in both
+places, because the delivery library keeps process-global state and has never
+survived being restarted inside a live process.
+
+**Renewal has not been run against a real mesh.** The sweep, the control message
+and the storage are built and unit-tested; nobody has yet watched a credential
+actually roll over on live devices. The clock is thirty days.
 
 **A fleet migration broke everything once, silently.** On 2026-08-07 logos.dev
 moved to cluster 3 while the preset compiled into our pinned
@@ -972,12 +1005,9 @@ disagreed and hung up — which looks exactly like an outage. The default is now
 `logos.test`, whose preset is correct, and `cluster_id` exists as an override
 for the next time a fleet moves ahead of the library. `make s1` detects this.
 
-**Nothing has been through M4.** Roaming, restarts, a VPS reboot, the fleet
-being briefly unreachable — none of it is tested. Treat this as working rather
-than dependable.
-
-**Testing on real infrastructure has found two bugs that containers hid**, both
-timing- or NAT-dependent. Prefer hardware for anything in those categories.
+**Testing on real infrastructure keeps finding bugs that containers hide**, all
+of them timing-, NAT- or lossy-network-dependent. Prefer hardware for anything
+in those categories.
 
 ## Security
 
@@ -986,15 +1016,16 @@ short version:
 
 - Control messages and discovery probes are both **encrypted**, fixed-size and
   fixed-rate, on a rotating topic, and not archived.
-- The network key is a **bearer credential**: anyone holding it is a member,
-  permanently. There is no per-device revocation and no expiry.
-  `shrooms key rotate` re-creates the mesh and forces everyone to re-join —
-  blunt, and the only option today. **Treat the key as the whole security of
-  the mesh.**
-- There is a [concrete plan to fix this](SECURITY.md#roadmap), in four phases.
-  The first — one-time invite tokens, so the copy/pasted secret stops being
-  permanent — is small, has no dependencies, and should land before this runs
-  anywhere exposed.
+- Membership is an **admin-signed credential** on a mesh with `admin_keys` set:
+  bound to one device's keys, valid for thirty days, revocable, and renewed by
+  a sweep from the machine holding the admin key. Removing a device costs that
+  device rather than the mesh.
+- The network key is **still a shared secret**, and still derives the topics,
+  the announce payload key and the pairwise PSKs. It is no longer what
+  *membership* is, but leaking it still exposes the control plane and still
+  means rotating for everyone.
+  [ADR-020](docs/adr/020-membership-is-a-seam.md) explains why the rewrite that
+  would remove it is deliberately not built.
 - Some things leak inherently and cannot be fixed here: the messaging layer leaves the content
   topic and timestamp in cleartext, relay peers see your IP, and WireGuard is
   identifiable as WireGuard.
@@ -1025,15 +1056,31 @@ Done, and in daily use:
 - [x] Roaming between wifi and mobile data without user action
 - [x] A Basecamp view for watching a mesh
 
+- [x] One-time invite tokens, so the key stops being pasted
+      ([ADR-017](docs/adr/017-invite-tokens.md))
+- [x] Admin-signed credentials, expiry, revocation and renewal, so a
+      compromised device costs that device
+      ([ADR-018](docs/adr/018-credentials-instead-of-a-shared-key.md))
+- [x] Services published by name — `<service>.<device>.mesh`, routed by `Host`
+      and SNI. An address *per service*, which is what makes any protocol work
+      without a port, is still only designed
+      ([ADR-019](docs/adr/019-service-addresses.md))
+- [x] Several meshes from one daemon, each with its own identity, addresses,
+      relay and services ([ADR-015](docs/adr/015-multiple-meshes-one-daemon.md))
+- [x] A synthetic IPv4 address per peer, so browsers work on networks with no
+      IPv6 ([ADR-021](docs/adr/021-synthetic-ipv4.md))
+
 Next, roughly in order:
 
-- [ ] One-time invite tokens, so the key stops being pasted
+- [ ] Ask the router for a port mapping (PCP, NAT-PMP, UPnP), so a node behind
+      a home NAT learns its own public address and opens its own port instead
+      of needing `advertise` and a forwarding rule
+- [ ] Announce services, so the roster shows what the mesh offers rather than
+      what you remember ([ADR-023](docs/adr/023-announcing-services.md))
+- [ ] An invite that carries a per-mesh identity, so a device joining a second
+      mesh derives a fresh address rather than sharing a suffix
       ([ADR-017](docs/adr/017-invite-tokens.md))
-- [ ] Admin-signed credentials and real revocation, so a compromised device
-      costs that device ([ADR-018](docs/adr/018-credentials-instead-of-a-shared-key.md))
-- [ ] An address per service, so any protocol works without a port
-      ([ADR-019](docs/adr/019-service-addresses.md))
-- [ ] Several meshes from one daemon ([ADR-015](docs/adr/015-multiple-meshes-one-daemon.md))
+- [ ] The admin key on a Keycard ([ADR-022](docs/adr/022-keycard-for-the-admin-key.md))
 
 ---
 

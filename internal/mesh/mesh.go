@@ -139,6 +139,10 @@ type Mesh struct {
 	// this "new to it" would be true every time it came back round.
 	grants map[[32]byte]time.Time
 
+	// mapped is the external address the router gave us, if it was willing to
+	// give one (ADR-024). Zero when there is none.
+	mapped netip.AddrPort
+
 	// expiry is when each peer's credential runs out, learned from the
 	// announces we have already verified. Kept here rather than on the roster
 	// because it is not part of how a peer is reached — it is how long the

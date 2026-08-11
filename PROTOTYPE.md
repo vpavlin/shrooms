@@ -1,69 +1,73 @@
-# logos-vpn — Prototype plan (Linux first)
+# shrooms — Prototype plan (Linux first)
 
 What to build, in what order, and what to prove before building it.
 
 See [DESIGN.md](DESIGN.md) for the architecture and its justification.
 
-**Scope: Linux only.** Android comes after Linux works seamlessly. See §8.
+**Scope note.** This plan was written Linux-first, with Android deferred to §8.
+Android has since been built and ships (§8, [ADR-016](docs/adr/016-android-reuses-the-go-core.md));
+the ordering below is left as it was written.
 
 ---
 
-## Where we are (2026-08-07)
+## Where we are (2026-08-11)
 
 Scored against the **original constraints**, not the milestone list — those are
 what the project is for.
 
 | Constraint | Status |
 |---|---|
-| Android phones are full mesh participants | ⬜ not started. Design is done (DESIGN §6) and the code is kept platform-neutral, but nothing runs there yet |
+| Android phones are full mesh participants | ✅ built and shipping. The app runs the same Go core through gomobile ([ADR-016](docs/adr/016-android-reuses-the-go-core.md)), joins by invite, carries several meshes at once through one `VpnService` with a demultiplexer, auto-connects on launch, restarts itself after boot and after its own update, and draws the mesh as a graph. Distributed from a self-hosted F-Droid repo, currently versionCode 16/17 |
 | No self-run Waku cluster | ✅ running on the public logos.dev fleet |
-| A VPS is acceptable, but **auto-discovered** | ✅ met in code. Relays advertise themselves in their ordinary announce and are picked up from the roster; nothing is hardcoded. Exercised in containers, not yet on real infrastructure |
-| Daily driver, not a demo | 🟨 partly. A NATed laptop ↔ VPS tunnel works over the real internet and carries ssh, but M4 (survive roaming, restarts, outages) is untested |
+| A VPS is acceptable, but **auto-discovered** | ✅ met in code **and on the real internet**. Relays advertise themselves in their ordinary announce and are picked up from the roster; nothing is hardcoded. A phone on 5G reached a peer through a relay on a public VPS |
+| Daily driver, not a demo | ✅ in daily use — a laptop and a phone on two meshes each, a VPS and two LAN machines. Roaming, suspend/resume and outage recovery are still not measured, and where the rendezvous plane fails the daemon exits and is restarted rather than recovering in place (M4) |
 
-**The remaining gap is evidence, not code.** Every original constraint except
-Android is now met by the implementation; what is missing is proof that the two
-hardest paths — punching between two NATed peers, and relaying between them —
-work outside a container. Both need a second NATed machine, not more code.
+**The remaining gap is one path.** Punching between two NATed peers is still
+unproven, and the last month made it clear it is blocked on more than a test
+rig — see M2. Everything else the constraints ask for now runs daily, including
+the relay path that carries the pairs a punch would have served.
 
 ### Spikes and milestones
 
 | | State |
 |---|---|
 | **S1** cgo → liblogosdelivery | ✅ round trip over the real fleet |
-| **S2** logos.dev Store retention | ⬜ **never run.** Matters for intermittent peers and therefore for Android |
+| **S2** logos.dev Store retention | ⬜ **never run.** Android shipped without depending on it, so it is no longer on the critical path — still unmeasured |
 | **S3** rotating topics stay on one shard | ✅ 6 epochs → one shard |
 | **S4** WireGuard throughput baseline | ⬜ never run, minor |
 | **M0** data plane + shared socket | ✅ containers |
 | **M1** Waku-discovered peers | ✅ containers **and real internet** |
-| **M2** NAT traversal | 🟨 reflexive discovery proven on real NAT; punching between two NATed nodes still unproven |
-| **M3** relay | 🟨 auto-discovery implemented and exercised in containers; untested on real infrastructure |
-| **M4** make it seamless | ⬜ not started |
-| **M5** credentials, enrolment, revocation | ⬜ not started — see SECURITY.md §Roadmap |
-| **M6** name resolution | 🟨 `logos-vpn hosts` + `manage_hosts` verified on real infrastructure (`ssh root@vps.mesh`); DNS server not started |
+| **M2** NAT traversal | 🟨 reflexive discovery proven on real NAT; punching between two NATed nodes still unproven, and now understood to need conditions we have not had — see below |
+| **M3** relay | ✅ containers **and real internet** — a phone on carrier-grade NAT reached a peer through a relay on a public VPS, showing as `relay:<key>@<vps-ip>:51820` in `shrooms status`. Selection is per mesh |
+| **M4** make it seamless | 🟨 partly. Six nodes run it daily, and two watchdogs restart the daemon when the rendezvous plane dies silently. Roaming, suspend/resume and VPS reboot are unmeasured |
+| **M5** credentials, enrolment, revocation | ✅ built — `internal/cred`, `shrooms admin`, enrolment carried inside the invite exchange ([ADR-017](docs/adr/017-invite-tokens.md)), gossiped revocation. Renewal landed today and is verified by unit tests; the sweep has not been run against the live mesh |
+| **M6** name resolution | ✅ the daemon serves the roster over DNS, across meshes, and answers `A` with synthetic IPv4 ([ADR-021](docs/adr/021-synthetic-ipv4.md)) so browsers work on v4-only networks. `shrooms hosts` and `manage_hosts` remain |
+
+**Built outside this list:** several meshes in one daemon, with per-mesh
+identity, WireGuard device, credentials, relay selection and address block
+([ADR-015](docs/adr/015-multiple-meshes-one-daemon.md),
+[ADR-021](docs/adr/021-synthetic-ipv4.md)); services published under their own
+names with a Host/SNI router (`internal/service`); and the Android app.
 
 ### What I would do next, in order
 
-1. **A second NATed node** (finishes M2 and M3). Now the only thing standing
-   between the current state and every original constraint being *demonstrated*
-   rather than merely implemented. Two unknowns fall out of one test: whether
-   punching works between real NATs, and whether the relay carries the pairs
-   where it does not.
+1. **Prove the punch, or stop claiming it is close** (finishes M2). The last
+   original property that is implemented but not demonstrated. The relay makes
+   it an optimisation rather than a requirement, which is also why it keeps
+   being deferred.
 
-   Half of this needs no new hardware: `make m3-remote HOST=user@vps` runs a
-   NATed node on the relay host itself, which cannot reach the local machine
-   directly, so the relay path is exercised over a real internet leg with real
-   latency. That closes M3.
-
-   **M2 still needs a genuinely different network.** A synthetic NAT built to
-   be endpoint-independent proves only that the code works against a NAT we
-   made cooperative. Tethering a machine to a phone is the cheapest honest
-   test, and gets CGNAT — the case that actually matters.
-2. **Security phase 1** — one-time invite tokens. Small, no dependencies, and
-   the exposure it removes grows every day this runs on a VPS holding a
-   permanent bearer credential.
-3. **S2** — half an hour, and it determines whether the Android design holds.
-4. **M4** — the unglamorous work that decides whether this is actually a daily
-   driver.
+   The test needs two NATs that are genuinely different networks and neither of
+   them carrier-grade — mobile data cannot be punched or port-mapped at all, so
+   the tethering trick this file used to recommend tests the wrong thing. A
+   synthetic NAT built to be endpoint-independent proves only that the code
+   works against a NAT we made cooperative.
+2. **Run the renewal sweep against the live mesh.** It is unit-tested and
+   nothing else; credentials expire in 30 days, so the first real deadline
+   arrives on its own.
+3. **M4 properly** — roaming, suspend/resume, VPS reboot, logos.dev briefly
+   unreachable. The watchdogs cover the failure that was actually found; the
+   rest of the list is still assumption.
+4. **S2** — half an hour, and no longer urgent.
 
 ---
 
@@ -107,7 +111,7 @@ disturbing the working pair.
 ### Configuration is one secret
 
 ```toml
-# /etc/logos-vpn/config.toml
+# /etc/shrooms/config.toml
 network_key = "K7QF3M2XVBNP8SDLR4WYZC6HAJT9EUG5"   # the only secret
 name        = "home-nas"                            # optional, defaults to hostname
 ```
@@ -128,7 +132,7 @@ so that migration is cheap:
   the signed payload. Peers ignore it while `admin_pk` is unset.
 
 The **device identity** needs no configuration: an Ed25519 keypair generated on
-first start in `/var/lib/logos-vpn/`, never transmitted. Its public key is the
+first start in `/var/lib/shrooms/`, never transmitted. Its public key is the
 device's identity and the overlay address is derived from it — no allocation, no
 registration, no IPAM.
 
@@ -140,48 +144,48 @@ personal mesh. No uniqueness enforcement in v1.
 
 ```
 # first machine
-$ logos-vpn init --name home-nas
+$ shrooms init --name home-nas
 Network key: K7QF3M2XVBNP8SDLR4WYZC6HAJT9EUG5
   copy this to your other machines — it is the only secret
 Device:      home-nas
 Overlay IP:  fd3a:9c21:7e04::8f21:aa03
-Wrote /etc/logos-vpn/config.toml
+Wrote /etc/shrooms/config.toml
 
-$ systemctl enable --now logos-vpn
+$ systemctl enable --now shrooms
 
 # every other machine
-$ logos-vpn join K7QF3M2XVBNP8SDLR4WYZC6HAJT9EUG5 --name office-box
-$ systemctl enable --now logos-vpn
+$ shrooms join K7QF3M2XVBNP8SDLR4WYZC6HAJT9EUG5 --name office-box
+$ systemctl enable --now shrooms
 ```
 
 ### CLI
 
 ```
-logos-vpn init [--name N]        generate identity + a new network
-logos-vpn join <KEY> [--name N]  generate identity, join an existing network
-logos-vpn status [--json]        roster + tunnel state (see §3)
-logos-vpn peers                  roster from gossip, including offline devices
-logos-vpn paths <name>           candidates gathered, which won, and why
-logos-vpn ping <name>            overlay reachability
-logos-vpn key show               print the network key (for adding a machine)
-logos-vpn key rotate             replace it: new mesh, everyone re-joins
+shrooms init [--name N]        generate identity + a new network
+shrooms join <KEY> [--name N]  generate identity, join an existing network
+shrooms status [--json]        roster + tunnel state (see §3)
+shrooms peers                  roster from gossip, including offline devices
+shrooms paths <name>           candidates gathered, which won, and why
+shrooms ping <name>            overlay reachability
+shrooms key show               print the network key (for adding a machine)
+shrooms key rotate             replace it: new mesh, everyone re-joins
 ```
 
-The daemon exposes a unix socket (`/run/logos-vpn.sock`) with a small JSON API;
+The daemon exposes a unix socket (`/run/shrooms/shrooms.sock`) with a small JSON API;
 the CLI is a thin client over it. That also gives you a monitoring hook for free.
 
 ### systemd
 
 ```ini
 [Unit]
-Description=logos-vpn overlay mesh
+Description=shrooms overlay mesh
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart=/usr/bin/logos-vpn daemon
+ExecStart=/usr/bin/shrooms daemon
 AmbientCapabilities=CAP_NET_ADMIN
-StateDirectory=logos-vpn
+StateDirectory=shrooms
 Restart=always
 RestartSec=5
 
@@ -205,7 +209,7 @@ holds the full roster**. Compose that with local WireGuard state:
 | your own path racing | direct vs relayed, v4 vs v6, which candidate won, RTT |
 
 ```
-$ logos-vpn status
+$ shrooms status
 network  fd3a:9c21:7e04::/48          peers 4 (3 up)
 self     home-nas  fd3a:...:8f21:aa03
 
@@ -401,7 +405,7 @@ Unit tests cover the part most likely to break silently: compaction keeping
 `packets`/`sizes`/`eps` aligned. Misalignment there attributes a packet to the
 wrong peer and surfaces much later as an inexplicable handshake failure.
 
-- Embed `wireguard-go` in `logos-vpn daemon`.
+- Embed `wireguard-go` in `shrooms daemon`.
 - `conn.Bind` wrapper with first-byte demux (magic > `0x04`, ≠ `0x54`), following
   NetBird's `ICEBind`. **Verify `ReadBatch` / `SplitCoalescedMessages` / GSO
   survive** — that is the entire point of the exercise.
@@ -434,7 +438,7 @@ Peers discover each other; Waku becomes load-bearing.
   30–60 s.
 - Rotating topic derivation (or the S3 fallback).
 - Replay rejection: `seq` must strictly increase per device.
-- `logos-vpn init` / `join` / `status`, and the systemd unit.
+- `shrooms init` / `join` / `status`, and the systemd unit.
 
 **Also needed for a real-world test, and easy to under-scope:**
 
@@ -449,7 +453,7 @@ Peers discover each other; Waku becomes load-bearing.
   is rejected by every peer's `ReplayGuard` until they forget it.
 
 **Done when:** you can move a box to a new IP and the other side reconnects with
-no config change, and `logos-vpn status` shows an accurate roster.
+no config change, and `shrooms status` shows an accurate roster.
 
 **~4–6 days.** ✅ **PASSED (2026-08-06)** — see below.
 
@@ -539,7 +543,7 @@ milestone.**
 - `PunchRequest` publish/subscribe, deduped by nonce, fire-and-forget.
 - **Always reply to the observed source, never an announced address.**
 - Optional: UPnP/NAT-PMP/PCP mapping of the WireGuard port, advisory only.
-- `logos-vpn paths <name>` to make the racing legible.
+- `shrooms paths <name>` to make the racing legible.
 
 **Test deliberately.** Home ↔ office may both sit behind cooperative NATs and
 prove nothing. Get a hard case: a laptop tethered to a phone hotspot gives you
@@ -553,7 +557,7 @@ can see which candidate won.
 #### M2 status (2026-08-06)
 
 Implemented and unit-tested: `internal/disco` (encrypted probes, path prober),
-wired into the mesh loop, `logos-vpn paths` for diagnosis. `make m2` runs the
+wired into the mesh loop, `shrooms paths` for diagnosis. `make m2` runs the
 NAT harness.
 
 **Proven end to end, over the real logos.dev fleet:**
@@ -593,7 +597,7 @@ code:
 Real home and VPS NATs are genuine; the emulation is a proxy that is proving
 harder to get right than the thing it proxies. Step 3 of the plan (one public
 VPS, one NATed VPS, plus a laptop) tests the same property without the
-emulation in the way — and `logos-vpn paths` already reports whether the NAT is
+emulation in the way — and `shrooms paths` already reports whether the NAT is
 endpoint-independent, which is the diagnostic that matters:
 ```
 reflexive addresses (as peers observe us):
@@ -603,11 +607,33 @@ reflexive addresses (as peers observe us):
         where hole punching fails and a relay is needed.
 ```
 
+#### Why this is harder than a missing test rig (2026-08-11)
+
+Still unproven, and three things learned since say why it is not simply a
+matter of finding a second NATed machine.
+
+**Reflexive discovery needs a peer outside your NAT.** A node learns its public
+address only because a peer's pong echoes the source address it observed. On a
+mesh whose members are all behind the *same* NAT, no peer is outside it, so no
+node can learn its public address at all and `advertise` has to be set by hand.
+The property the design leans on is not "some peer is reachable" but "some peer
+is on the other side of your NAT".
+
+**Carrier-grade NAT cannot be punched or port-mapped.** Mobile data is the case
+that most needs traversal and the one case where no amount of correct code
+helps. It is a relay case, permanently.
+
+**A relay only works if both ends pick the same one, and only online peers are
+candidates** ([ADR-014](docs/adr/014-relay-discovery-via-announce.md)). So a
+node whose rendezvous plane has failed silently stops being seen as online,
+stops being selected, and stops relaying — without any component reporting an
+error. That failure is what the M4 watchdogs are for.
+
 ### M3 — VPS relay, auto-discovered
 
 Connectivity when punching fails, with nothing hardcoded.
 
-- `logos-vpn relay` mode: DERP-style UDP reflector keyed by 32-byte pubkey,
+- `shrooms relay` mode: DERP-style UDP reflector keyed by 32-byte pubkey,
   HMAC-authenticated header. ~200 lines.
 - ~~VPS publishes signed `RelayAnnounce` to a Store-backed topic every 30–60 s,
   fetched via `waku_store_query` on start.~~ **Built differently:** a relay is
@@ -646,11 +672,8 @@ This is the property that makes the mesh usable: any pair connects regardless of
 NAT, whether or not punching works. It also sidesteps the M2 harness problem
 entirely, since the relay path does not depend on endpoint-independent mapping.
 
-**Still only proven in containers.** The relay path over the real internet is
-untested; see the open items at the top of this file.
-
-**Two bugs this run surfaced**, both invisible until the numbers were read
-carefully:
+**Two bugs this container run surfaced**, both invisible until the numbers were
+read carefully:
 
 *The harness was lying about its own timings.* `$SECONDS` is measured from
 process start, so the reported connect time silently included the docker build —
@@ -676,6 +699,18 @@ dropped every frame — with no error logged anywhere. It presented as a network
 failure. `ParseEndpoint` now returns an error instead of building an endpoint
 that cannot work, with a regression test.
 
+#### M3 on real infrastructure ✅ (2026-08-11)
+
+A phone on 5G — carrier-grade NAT, which cannot be punched or port-mapped —
+reached a peer through a relay running on a public VPS, over the real internet.
+The endpoint appears in `shrooms status` as `relay:<key>@<vps-ip>:51820`, so the
+path is visibly relayed rather than inferred. Neither end was told the relay
+existed; both picked it out of the roster.
+
+This closes the last "containers only" item on the relay, and it is the case the
+design was for: a pair that can never punch still connects. Relay selection is
+per mesh, so a node on several meshes may relay through a different node on each.
+
 ### M4 — Make it seamless
 
 The difference between "works" and "daily driver". This is the milestone that
@@ -690,15 +725,48 @@ earns the project.
 - Handle Waku being down entirely: existing tunnels must keep working, since
   Waku is only rendezvous (DESIGN §2).
 - DNS for overlay names (`office-box.mesh`) — hosts-file sync is fine to start.
-- Useful logs and `logos-vpn status` accuracy under every failure above.
+- Useful logs and `shrooms status` accuracy under every failure above.
 
 **Done when:** you stop thinking about it for a week.
 
-**~1 week, spread over real use.**
+**~1 week, spread over real use.** 🟨 **PARTIAL** — see below.
+
+#### M4 status (2026-08-11)
+
+Six nodes run this daily, which is the only way most of the list above gets
+exercised. DNS for overlay names is done and then some (M6). What has been
+built deliberately is the recovery from one failure the list did not anticipate.
+
+**The rendezvous plane can die while the tunnels keep working.** WireGuard has
+no dependency on Waku once a tunnel is up, so a daemon that has stopped
+receiving announces looks healthy from every direction: traffic flows, the
+interface is up, nothing logs an error. Meanwhile the roster ages out, every
+peer is judged offline, and — because a relay is only ever selected from peers
+believed online (M2 above) — relaying quietly stops.
+
+Two watchdogs, both of which exit and let systemd restart the daemon rather than
+attempt repair in place:
+
+- **Nothing arriving for 10 minutes** on the rendezvous plane.
+- **Deaf for 12 minutes to a specific peer** whose WireGuard tunnel is still
+  rekeying. The rekey proves that peer's daemon is alive and therefore
+  announcing, so silence from it is our fault, not its absence. This catches the
+  case the first watchdog misses, where some publishers still get through.
+
+The Android app does the same, and additionally kills its own process when the
+delivery node reports `Disconnected`, because the library holds process-global
+state and cannot be restarted in place.
+
+Restarting is a blunt answer, and it is the honest one for now: the failure is
+inside a library we do not control, and a restart demonstrably recovers it.
+
+**Not measured:** roaming, DHCP lease change, suspend/resume, VPS reboot, and
+logos.dev being briefly unreachable. Those are the original list and they are
+still assumption.
 
 ### M6 — Name resolution
 
-`logos-vpn hosts` ✅ writes `/etc/hosts` entries from the live roster, in a
+`shrooms hosts` ✅ writes `/etc/hosts` entries from the live roster, in a
 marked block, atomically. With `manage_hosts = "true"` the daemon keeps it
 current as the roster changes, so it is no longer stale between runs.
 
@@ -717,7 +785,23 @@ why mDNS is the wrong shape for a point-to-point mesh.
 **Done when:** `ssh vps.mesh` works on Linux and macOS without editing a file,
 and a peer that joins becomes resolvable without anything being regenerated.
 
-**~3–5 days**, most of it per-OS resolver wiring rather than the server.
+**~3–5 days**, most of it per-OS resolver wiring rather than the server. ✅
+**PASSED (2026-08-11)** — see below.
+
+#### M6 status (2026-08-11)
+
+`internal/dns` serves the roster from the daemon, resolves names **across the
+meshes a node belongs to**, and forwards everything outside the mesh domain. On
+Android it is wired in through `VpnService.Builder.addDnsServer`, which is the
+platform hook this section predicted would be the easiest of the four.
+
+One thing the plan did not foresee: **an AAAA-only answer is not enough for a
+browser.** On a v4-only underlay Chromium-family browsers send `A` and `HTTPS`
+queries and no `AAAA` at all, so a correct empty answer reads to them as an
+unusable name. The resolver now also answers `A` with a synthetic 198.18.0.0/15
+address per peer, translated at the tun — see
+[ADR-021](docs/adr/021-synthetic-ipv4.md). That, not the DNS server, is what
+made names work in a browser.
 
 ### M5 — Credentials, enrolment, revocation
 
@@ -729,12 +813,12 @@ version is that `NK` currently conflates rendezvous, confidentiality and
 per-pair PSKs. Authorization moves to an admin-signed credential verified against
 `admin_pk`, which is a **public** value in config rather than a secret.
 
-- `logos-vpn admin init` — generate `admin_k`, print the recovery backup. Keep it
+- `shrooms admin init` — generate `admin_k`, print the recovery backup. Keep it
   on one machine; it only signs at enrolment and renewal, so it can live offline.
 - Credential: ~100 bytes of signed CBOR over `{device_pk, wg_pk, name,
   overlay_ip, not_before, not_after, caps}`, 7–30 day expiry, auto-renewed while
   the admin is reachable.
-- `logos-vpn invite` — **one-time-use token, ~15 minute expiry.** This is the
+- `shrooms invite` — **one-time-use token, ~15 minute expiry.** This is the
   highest-value single change: the thing you copy/paste stops being a permanent
   credential, so a leaked clipboard or shell history is worth nothing.
 - Redemption over Waku Noise Pairing (RFC 43): device generates its own keys,
@@ -744,13 +828,39 @@ per-pair PSKs. Authorization moves to an admin-signed credential verified agains
 - Gossiped `Revocation{device_pk, serial, not_before, sig}`, monotonic serial,
   republished on epoch rotation. **Tear down live tunnels on receipt** — Nebula's
   documented gap is that its blocklist isn't distributed at all, and yours is.
-- `logos-vpn revoke <name>`, `logos-vpn peers` showing credential expiry.
+- `shrooms revoke <name>`, `shrooms peers` showing credential expiry.
 
 **Done when:** a new machine joins with a token that is dead 15 minutes later,
 and a revoked device loses access within seconds while online, without touching
 any other machine.
 
-**~1 week.**
+**~1 week.** ✅ **BUILT (2026-08-11)** — see below.
+
+#### M5 status (2026-08-11)
+
+`internal/cred` carries it: an Ed25519 admin key set, **fixed at mint** rather
+than configurable afterwards, so the set of keys that can authorize membership
+is decided once; credentials binding device key, WireGuard key and name;
+30-day expiry; signing over a digest; and revocation lists gossiped over the
+control plane. Driven by `shrooms admin init` / `issue` / `renew` / `revoke` /
+`show`. See [ADR-018](docs/adr/018-credentials-instead-of-a-shared-key.md).
+
+**Enrolment came out differently from the plan above.** Not Waku Noise Pairing:
+a one-time invite token is 128 bits, and those bits derive a rendezvous topic
+and a payload key of their own, so the exchange happens on a topic nobody
+without the token can find. Ephemeral X25519 over it, padded to 1024 bytes, and
+the invitee is issued its credential in the same exchange rather than in a
+second step. See [ADR-017](docs/adr/017-invite-tokens.md).
+
+**Renewal landed today.** A `KindGrant` control message that any member may
+relay — so the admin does not have to reach each device, only the mesh — an
+`admin renew` sweep, and credential expiry shown in `shrooms status`.
+
+**Verified by unit tests only.** The renewal sweep has not been run against the
+live mesh. Invite enrolment has been run end to end; the sweep has not.
+
+**Not built, deliberately:** the per-recipient announce wrapping, for the
+reasons in [ADR-020](docs/adr/020-membership-is-a-seam.md).
 
 **Deferred:** pairwise rendezvous topics (DESIGN §7) eliminate the group secret
 entirely at the cost of N² topics. Worth doing if metadata privacy on the public
@@ -769,7 +879,7 @@ traversal — roughly 2–3 weeks. Add M2 to make it fast, M4 to make it yours.
 
 ```
 cmd/
-  logos-vpn/      single binary: daemon, CLI, relay mode
+  shrooms/        single binary: daemon, CLI, relay mode
 internal/
   wg/             wireguard-go embedding, conn.Bind demux
   waku/           cgo bindings to liblogosdelivery
@@ -796,9 +906,18 @@ Not needed: `pion/*`, `go-libp2p`, anything RLN/zerokit.
 
 ---
 
-## 8. Android, later
+## 8. Android, built ✅
 
-Deferred, but keep these true so the port stays cheap:
+The phone is a full mesh participant, not a client of one. It runs **the same Go
+core** as the Linux daemon, exposed through gomobile rather than hand-written
+JNI — see [ADR-016](docs/adr/016-android-reuses-the-go-core.md). It joins by
+invite like any other device, carries **several meshes at once** through one
+`VpnService` using the same demultiplexer the daemon uses, auto-connects on
+launch, restarts itself after boot and after its own update, and draws the mesh
+as a live graph. Distributed from a self-hosted F-Droid repo, currently
+versionCode 16/17.
+
+**The four rules below are why the port was cheap, and they held:**
 
 - **Everything in `internal/` must be platform-neutral.** No `netlink`, no
   `/proc`, no systemd assumptions outside `cmd/` and `packaging/`.
@@ -809,9 +928,19 @@ Deferred, but keep these true so the port stays cheap:
   will have one; Android cannot (DESIGN §6). Model announce/punch as periodic
   idempotent operations, not as a session.
 
-When you pick Android up, the remaining work is the two deferred spikes (mix
-publishing from Edge mode, and the Nim→Go→JNI build chain), the intermittency
-scheduler, and the VpnService app. DESIGN §6 has the landmines.
+Two things this section expected turned out not to be needed. The Nim→Go→JNI
+build chain became a gomobile `.aar`, and the mix-publishing question was
+settled by decision rather than by spike
+([ADR-011](docs/adr/011-no-mixnet.md)). S2 was never run and the app ships
+anyway.
+
+What Android needed that Linux did not: **synthetic IPv4**, because a browser on
+a v4-only network will not resolve an AAAA-only name (M6,
+[ADR-021](docs/adr/021-synthetic-ipv4.md)); and a **self-kill** when the
+delivery node reports `Disconnected`, because the library holds process-global
+state and cannot be restarted in place (M4). Mobile data is carrier-grade NAT,
+so the phone is a permanent relay case — it cannot punch and it cannot map a
+port, which is precisely the pair M3 now proves works.
 
 ---
 

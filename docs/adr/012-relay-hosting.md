@@ -1,6 +1,12 @@
 # 012. Who runs the relay
 
-**Status:** accepted for tiers 1–2; tier 3 deliberately deferred
+**Status:** accepted for tiers 1–2, and proven on real infrastructure; tier 3
+deliberately deferred
+
+A phone on carrier-grade NAT reached a peer through a tier-1 relay — an ordinary
+mesh member on a public VPS — over the real internet. That is the case this ADR
+argues most people can solve with a machine they already have, and it now has
+evidence rather than a container behind it.
 
 ## Context
 

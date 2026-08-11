@@ -1,6 +1,14 @@
 # 014. Relay discovery: a flag on the announce, not a separate message
 
-**Status:** accepted; implemented (M3)
+**Status:** accepted; implemented and proven on real infrastructure (M3)
+
+A phone on carrier-grade NAT reached a peer through a relay on a public VPS,
+with neither end told the relay existed — both found it in the roster, and
+selection is made per mesh. The deterministic-selection rule below has one
+consequence worth stating here: candidates are drawn only from peers *believed
+online*, so a node whose rendezvous plane fails silently stops being selected
+and quietly stops relaying, with nothing reporting an error. That is what the
+daemon's rendezvous watchdogs exist to catch.
 
 ## Context
 

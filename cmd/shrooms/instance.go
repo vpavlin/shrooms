@@ -35,6 +35,10 @@ type instance struct {
 	iface   string
 	port    uint16
 
+	// mapped is the external address the router gave us for this mesh's port,
+	// if it gave one (ADR-024).
+	mapped netip.AddrPort
+
 	// relay is whether this node forwards for peers of this mesh. Per mesh:
 	// carrying traffic for one set of people does not imply carrying it for
 	// another (ADR-015).

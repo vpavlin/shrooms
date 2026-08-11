@@ -1,18 +1,18 @@
 # 015. Multiple meshes in one daemon
 
-**Status:** accepted; design agreed, implementation staged.
+**Status:** accepted; built and in daily use.
 
-**First piece built:** a daemon with no key in its config now waits on the
-control socket instead of exiting, and gains a mesh at runtime through
-`/join` — one mesh so far, but "join a running daemon" is the primitive this
-design needs, and it is in place. What remains is the plural: per-mesh identity
-derivation, one TUN carrying several prefixes, and the naming below.
+Per-mesh identity is derived from one master secret, each mesh gets its own
+WireGuard device rather than one TUN carrying several prefixes, and
+credentials, relay selection, services and the synthetic IPv4 block
+([ADR-021](021-synthetic-ipv4.md)) are all per mesh. Names resolve across the
+meshes a node belongs to. Running now on a laptop and a phone with two meshes
+each, plus a VPS and two LAN machines.
 
-**One thing to settle before the rest.** This ADR derives `mesh_id` from the
-network key; [ADR-018](018-credentials-instead-of-a-shared-key.md) then
-introduced a different mesh id, the hash of the admin key set. Two things with
-one name, and the address prefix depends on which one is meant. That has to be
-decided — not papered over — before per-mesh derivation is built.
+**The `mesh_id` collision is settled**, in favour of
+[ADR-018](018-credentials-instead-of-a-shared-key.md): a mesh is named by the
+hash of its admin public key, and the address prefix derives from that
+(`cred.MeshID.Prefix`), not from the network key as this ADR originally had it.
 
 ## Context
 

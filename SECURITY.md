@@ -57,7 +57,11 @@ machines you control; not acceptable beyond that.
 → **Largely addressed.** A mesh with `admin_keys` set admits devices by
 admin-signed credential with a 30-day expiry and gossiped revocation, and
 `shrooms invite` enrols one device at a time with a token good for fifteen
-minutes. What remains is that the network key still derives the topics, payload
+minutes. Expiry is renewed by a sweep — `shrooms admin renew` signs a fresh
+credential for every device near its expiry and puts them on the mesh, where
+each one travels to the device it names and is verified there against the same
+admin keys. That closes the obvious hole in expiry, which is that a guarantee
+nobody can maintain gets turned off. What remains is that the network key still derives the topics, payload
 key and PSKs, so a leak of it still exposes the control plane to reading and
 still means rotating for everyone — it is no longer what *membership* is, but it
 is still a shared secret. ADR-020 explains why the per-recipient rewrite that
@@ -131,9 +135,16 @@ carries the old exposure when used.
 
 Built as `internal/cred` and the `admin` commands, and the wire format is binary
 rather than CBOR — a credential rides an announce padded to a fixed size, and
-the JSON form did not fit at the time it was measured. Auto-renewal is the piece
-still missing: a credential is re-issued by hand, or by inviting the device
-again.
+the JSON form did not fit at the time it was measured.
+
+Renewal is built too, as a sweep rather than a ceremony per device:
+`shrooms admin renew` asks a running node who is on the mesh, signs a fresh
+credential for everyone inside ten days of expiry, and hands them back for
+delivery over a control message any member may relay. What is deliberately not
+built is renewal with nobody present — that needs a signing key that is online,
+which is a different posture from an admin key used a handful of times a year,
+and the fixed authority set already allows for a separate renewal key if it is
+ever wanted.
 
 **Problem:** holding the network key makes you a member, so there is no
 per-device revocation and no expiry.

@@ -1,6 +1,14 @@
 # 019. An address per service
 
-**Status:** proposed — the general form of what the name router does for HTTP
+**Status:** still proposed — the general form of what the name router already
+does for HTTP
+
+What ships is the Context section below, not the Decision: `services =
+["immich:2283"]` publishes `immich.nas.mesh`, and `internal/service` forwards to
+it, routing on the HTTP `Host` header or the TLS SNI on the two shared ports.
+That is in daily use. The address derivation proposed here — reserving the low
+bits of the host part per service — is **not built**, and it is a flag day when
+it is.
 
 ## Context
 

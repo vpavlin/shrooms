@@ -114,6 +114,16 @@ type Config struct {
 	// authenticates only as "the device holding key X calls itself this".
 	Name string
 
+	// PortMapping asks the local router to open this node's port, so a machine
+	// behind a home NAT can be dialled without anyone editing a router page
+	// (ADR-024). On by default: it is best effort, a refusal costs one request
+	// at startup, and the alternative is that a mesh with no publicly
+	// reachable member simply does not work from outside the house.
+	//
+	// Off is a legitimate choice — it does ask to be reachable from the
+	// internet — which is why it is a setting rather than a fact.
+	PortMapping bool
+
 	// Advertise lists extra endpoints to announce as dialable.
 	//
 	// Usually unnecessary. A node enumerates its own interface addresses, so a
@@ -305,6 +315,7 @@ func DefaultConfig() Config {
 	return Config{
 		Name:        host,
 		ListenPort:  51820,
+		PortMapping: true,
 		Interface:   "shrooms0",
 		Preset:      DefaultPreset,
 		Mode:        "Core",
@@ -731,6 +742,8 @@ func parseConfig(text string) (Config, error) {
 				return c, fmt.Errorf("line %d: listen_port: %w", n+1, err)
 			}
 			c.ListenPort = p
+		case "port_mapping":
+			c.PortMapping = unquote(val) == "true"
 		case "advertise":
 			c.Advertise = parseArray(val)
 		case "services":
@@ -836,6 +849,14 @@ func WriteConfig(path string, c Config) error {
 		b.WriteString("manage_hosts = \"true\"\n")
 	} else {
 		b.WriteString("# manage_hosts = \"true\"\n")
+	}
+	b.WriteString("\n# Ask the router (PCP, NAT-PMP) to open this node's port, so a machine\n")
+	b.WriteString("# behind a home NAT can be dialled without a forwarding rule. Best effort:\n")
+	b.WriteString("# a router that refuses costs one request at startup.\n")
+	if c.PortMapping {
+		b.WriteString("# port_mapping = \"false\"\n")
+	} else {
+		b.WriteString("port_mapping = \"false\"\n")
 	}
 	b.WriteString("\n# Extra endpoints to announce. Usually unnecessary: interface addresses\n")
 	b.WriteString("# are announced automatically and a NATed node learns its public address\n")

@@ -254,12 +254,31 @@ func parseCandidates(eps []string) []netip.AddrPort {
 	return out
 }
 
+// SetMapped records an address the router handed us (ADR-024), or clears it
+// when passed the zero value.
+//
+// Kept separate from cfg.Advertise even though both end up in the same list,
+// because they answer to different things: advertise is what a person
+// configured and stays until they change it, this is a lease that expires and
+// may come back different after the router reboots.
+func (m *Mesh) SetMapped(ap netip.AddrPort) {
+	m.mu.Lock()
+	m.mapped = ap
+	m.mu.Unlock()
+	// Say so now rather than at the next tick. The whole value of a mapping is
+	// that peers can dial it, and they cannot until they have been told.
+	m.requestAnnounce()
+}
+
 // candidates returns the endpoints we advertise, most useful first.
 //
 // Order matters: reflexive addresses (what peers actually observed) come first
-// because they are the only ones that work from outside a NAT. Configured
-// advertise entries follow, then local addresses, which help peers on the same
-// LAN and are harmless elsewhere.
+// because they are the only ones that work from outside a NAT. A port mapping
+// from the router follows — it is a claim rather than an observation, but it is
+// a claim about the outside, which is more than a LAN address ever is, and on a
+// mesh with no publicly reachable member it is the only such claim available.
+// Configured advertise entries follow, then local addresses, which help peers
+// on the same LAN and are harmless elsewhere.
 func (m *Mesh) candidates() []string {
 	seen := map[string]bool{}
 	var out []string
@@ -273,6 +292,12 @@ func (m *Mesh) candidates() []string {
 
 	for _, ap := range m.prober.Reflexive(time.Now()) {
 		add(ap.String())
+	}
+	m.mu.Lock()
+	mapped := m.mapped
+	m.mu.Unlock()
+	if mapped.IsValid() {
+		add(mapped.String())
 	}
 	for _, a := range m.cfg.Advertise {
 		add(a)

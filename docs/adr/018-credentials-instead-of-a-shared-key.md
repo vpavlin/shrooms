@@ -9,6 +9,11 @@ deliberately: the per-recipient announce wrapping, for the reasons in
 [ADR-020](020-membership-is-a-seam.md). Not built: renewal without a person,
 which needs a key that is online and is therefore its own decision.
 
+**Renewal is verified by unit tests only.** The `admin renew` sweep and the
+`KindGrant` relay have not been run against the live mesh; issuance through the
+invite exchange has. Credentials last 30 days, so the first real test of the
+sweep arrives whether or not it is scheduled.
+
 ## Context
 
 Everything protecting the mesh derives from one secret. The network key gives
