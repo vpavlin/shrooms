@@ -700,6 +700,13 @@ const rendezvousStall = 10 * time.Minute
 // does not cost a restart.
 const deafConfirm = 2 * time.Minute
 
+// regraftEvery bounds how often the cheap repair is attempted.
+//
+// Two of them inside deafConfirm, so a restart only ever happens after
+// rejoining the gossip mesh has been tried and has not brought the announces
+// back.
+const regraftEvery = 45 * time.Second
+
 // silentCooldown is how long to leave a silent plane alone after acting on it.
 // Long, because a small mesh whose every peer is genuinely off looks exactly
 // like this and must not be restarted in a loop.
@@ -731,6 +738,9 @@ func watchRendezvous(ctx context.Context, log *slog.Logger, instances []*instanc
 	// The same, for a plane carrying nothing of ours, and when we last acted
 	// on it.
 	var silentSince, lastSilentAct time.Time
+	// When the cheap repair was last tried, so it is not attempted on every
+	// tick while the expensive one waits for its threshold.
+	var lastRegraft time.Time
 	tick := time.NewTicker(30 * time.Second)
 	defer tick.Stop()
 
@@ -789,6 +799,27 @@ func watchRendezvous(ctx context.Context, log *slog.Logger, instances []*instanc
 			if now.Sub(started) < rendezvousGrace {
 				continue
 			}
+			// The cheap rung first. A node that has gone deaf is still
+			// connected and still receiving other applications' traffic, so
+			// the connection is not what is broken — the gossip mesh
+			// membership for our topics is — and rejoining it costs two
+			// library calls and no downtime at all. Restarting the process
+			// works and is a sledgehammer; it should be what happens when this
+			// has already been tried and did not take.
+			if (deafTo != "" || silent) && now.Sub(lastRegraft) >= regraftEvery {
+				lastRegraft = now
+				for _, in := range instances {
+					if err := in.mesh.Regraft(now); err != nil {
+						log.Warn("could not rejoin the gossip mesh",
+							"mesh", in.label, "err", err)
+					}
+				}
+				// Give it a chance before deciding it failed: the timers below
+				// keep running, so a regraft that works simply means they
+				// never reach their thresholds.
+				continue
+			}
+
 			var problem string
 			switch {
 			case now.Sub(healthy) >= rendezvousStall:

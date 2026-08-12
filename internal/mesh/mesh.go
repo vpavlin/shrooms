@@ -11,11 +11,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/netip"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -146,6 +149,10 @@ type Mesh struct {
 	// services is what each peer says it offers (ADR-023), keyed by peer id.
 	services map[string]peerServices
 
+	// lastServices is when this node last published its own list, so a burst
+	// of arrivals does not become a burst of messages.
+	lastServices time.Time
+
 	// mapped is the external address the router gave us, if it was willing to
 	// give one (ADR-024). Zero when there is none.
 	mapped netip.AddrPort
@@ -262,6 +269,73 @@ func (m *Mesh) requestResync() {
 
 // PeerStats exposes the data-plane view of peers.
 func (m *Mesh) PeerStats() (map[string]wg.PeerStat, error) { return m.dev.PeerStats() }
+
+// GossipPeers reports how many peers this node shares its shard's gossipsub
+// mesh with, or -1 when the library will not say.
+//
+// The measurement the deafness checks have been working around. Being deaf to
+// half the mesh while other applications' traffic keeps arriving is what a
+// degraded gossipsub mesh looks like from the outside — few enough peers that
+// some publishers' messages never reach us — and this asks the question
+// directly rather than inferring it from what did not arrive.
+//
+// Not used to decide anything on its own: a healthy node can briefly hold few
+// peers, and the number means nothing without the announces it explains. It
+// goes in the log beside a repair so that "why did this node go deaf" has an
+// answer next time.
+func (m *Mesh) GossipPeers() int {
+	if m.node == nil {
+		return -1
+	}
+	raw, err := m.node.PeersInMesh(topic.MeshPubsubTopic(m.cfg.ClusterID, topic.NumShardsLogosDev))
+	if err != nil {
+		return -1
+	}
+	// The library answers with a bare number as a string, or a JSON array of
+	// peer ids depending on version; count either rather than trusting one.
+	raw = strings.TrimSpace(raw)
+	if n, err := strconv.Atoi(strings.Trim(raw, `"`)); err == nil {
+		return n
+	}
+	var ids []string
+	if err := json.Unmarshal([]byte(raw), &ids); err == nil {
+		return len(ids)
+	}
+	return -1
+}
+
+// Regraft tries to rejoin the shard's gossipsub mesh without restarting
+// anything, by dropping every subscription and taking it out again.
+//
+// The cheap rung of the ladder. A node that has gone deaf is usually still
+// connected and still receiving other applications' traffic, so the connection
+// is not the problem — the mesh membership for our topics is — and unsubscribe
+// followed by subscribe is what asks the library to graft again.
+//
+// Reports whether it got as far as re-announcing, which is what a peer needs
+// to see from us before it will believe we are back.
+func (m *Mesh) Regraft(now time.Time) error {
+	m.mu.Lock()
+	had := len(m.subscribed)
+	m.subscribed = map[string]bool{}
+	m.mu.Unlock()
+
+	for _, name := range topic.Window(m.nk, now) {
+		// Best effort: unsubscribing from a topic we are not on is not an
+		// error worth stopping for, and the subscribe below is the half that
+		// matters.
+		if err := m.node.Unsubscribe(name); err != nil {
+			m.log.Debug("unsubscribe during regraft", "topic", name, "err", err)
+		}
+	}
+	m.log.Info("rejoining the shard's gossip mesh",
+		"topics", had, "gossip_peers", m.GossipPeers())
+
+	if err := m.resubscribe(now); err != nil {
+		return err
+	}
+	return m.announceFresh(now)
+}
 
 // Deaf reports which peers this node can plainly reach but has stopped hearing
 // announce from, and how many it can reach at all.
@@ -1134,6 +1208,10 @@ func (m *Mesh) handle(ev waku.Event) {
 	if m.timing.mark(peer.ID(), func(x *Milestones) *time.Time { return &x.Discovered }, now) {
 		m.log.Info("peer discovered", "peer", peer.Name,
 			"after", m.Timing(peer.ID()).DiscoveredAfter.Round(time.Millisecond))
+		// Tell it what we offer. It has just arrived and the list goes out
+		// every five minutes, so without this it sees nothing for most of
+		// that — which is every reconnect (ADR-023).
+		m.offerServices(now)
 	}
 
 	// Introduce ourselves when asked, or when this peer plainly cannot reach us.

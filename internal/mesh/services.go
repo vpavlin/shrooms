@@ -37,6 +37,35 @@ const ServicesInterval = 5 * time.Minute
 // asleep still offers them.
 const ServicesStale = 3 * ServicesInterval
 
+// ServicesDebounce bounds how often the list is repeated outside its own
+// timer, so a burst of peers arriving cannot turn into a burst of messages.
+const ServicesDebounce = 30 * time.Second
+
+// offerServices repeats the list because somebody new turned up.
+//
+// Without this a device that joins between two five-minute broadcasts sees no
+// services at all until the next one — which is exactly what happens after any
+// reconnect, so the common experience of the feature was "it shows nothing".
+// An announce already gets this treatment for the same reason (shouldReplyTo);
+// this is the same courtesy for the thing that is otherwise silent for minutes.
+func (m *Mesh) offerServices(now time.Time) {
+	if !m.cfg.AnnounceServices {
+		return
+	}
+	m.mu.Lock()
+	due := now.Sub(m.lastServices) >= ServicesDebounce
+	if due {
+		m.lastServices = now
+	}
+	m.mu.Unlock()
+	if !due {
+		return
+	}
+	if err := m.publishServices(now); err != nil {
+		m.log.Debug("could not offer services to a new peer", "err", err)
+	}
+}
+
 // publishServices puts this node's service names on the mesh.
 //
 // Names only, and only the ones that parse — a malformed spec is already
@@ -46,6 +75,9 @@ func (m *Mesh) publishServices(now time.Time) error {
 	if !m.cfg.AnnounceServices || m.node == nil {
 		return nil
 	}
+	m.mu.Lock()
+	m.lastServices = now
+	m.mu.Unlock()
 	specs, err := m.cfg.ServiceSpecs()
 	if err != nil || len(specs) == 0 {
 		return nil
