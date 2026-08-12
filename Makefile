@@ -239,6 +239,27 @@ basecamp-lgx:
 	nix build ./basecamp#lgx-portable --print-build-logs
 	@find -L result -name '*.lgx' -exec ls -lL {} \;
 
+## Build the Basecamp module and put it where a device can install it.
+##
+## The .lgx is a package rather than a repository, so there is no update
+## mechanism: publishing means putting the file somewhere and saying where.
+## That somewhere is the machine already serving the F-Droid repo, next to it,
+## because a second host to remember is a host nobody remembers.
+##
+## Two names are written: a stable one to point people at, and a versioned one
+## so an install can be pinned or an old one kept.
+basecamp-publish: basecamp-lgx
+	@lgx=$$(readlink -f result/*.lgx); \
+	ver=$$(tar xzOf "$$lgx" manifest.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])'); \
+	host=$${FDROID_HOST:-192.168.0.152}; \
+	dir=$${LGX_DIR:-/home/vpavlin/perun/dist/lan}; \
+	echo "==> publishing $$(basename $$lgx) $$ver to $$host:$$dir"; \
+	scp -q "$$lgx" "$$host:$$dir/logos-shrooms-module.lgx"; \
+	scp -q "$$lgx" "$$host:$$dir/logos-shrooms-module-$$ver.lgx"; \
+	ssh "$$host" "chmod 644 $$dir/logos-shrooms-module*.lgx"; \
+	echo "    http://$$host:8090/logos-shrooms-module.lgx"; \
+	echo "    http://$$host:8090/logos-shrooms-module-$$ver.lgx"
+
 ## Build the .aar for the Android app. Container-based: gomobile needs a JDK
 ## and Go >= 1.25, which the core deliberately does not.
 aar: android-deps

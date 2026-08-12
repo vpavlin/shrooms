@@ -869,7 +869,13 @@ all three.
 ```console
 $ make basecamp-check      # load the real view offscreen against a fixture
 $ make basecamp-lgx        # build the installable package
+$ make basecamp-publish    # and put it where a device can install it
 ```
+
+`basecamp-publish` copies the package next to the F-Droid repo on the same
+machine — a stable name and a versioned one — because an `.lgx` is a package
+rather than a repository and has no update mechanism of its own. Installing a
+newer one means downloading it again.
 
 Packaged as an **LGX**: a gzipped tar of `manifest.json` plus
 `variants/<platform>/`, with a content hash per directory. The build comes from
