@@ -776,18 +776,28 @@ private fun MeshScreen(
         // shown, because two devices may publish the same name and the device
         // is what tells them apart.
         val svcCtx = LocalContext.current
+        // Carries reachability, because a list outlives it on purpose: a
+        // service is a claim about what a device offers, and a device that is
+        // asleep still offers it. Drawn the same as a reachable one, though, it
+        // invites somebody to tap an address that cannot answer.
+        data class Offer(val name: String, val mesh: String, val url: String, val live: Boolean)
+        // The mesh rather than the device, because the URL already names the
+        // device — immich.k11.mesh — and which mesh a service is on is the
+        // thing you cannot read off it. Shown only when there is more than
+        // one, where it is the answer to "why can I not reach that".
         val offered = remember(snap.peers) {
             snap.peers.flatMap { p ->
                 p.services.map { svc ->
-                    Triple(svc, p.name, "http://$svc.${p.dnsName.ifEmpty { p.name }}")
+                    Offer(svc, p.mesh, "http://$svc.${p.dnsName.ifEmpty { p.name }}", p.live)
                 }
-            }.sortedWith(compareBy({ it.first }, { it.second }))
+            }.sortedWith(compareBy({ !it.live }, { it.mesh }, { it.name }))
         }
+        val showMesh = snap.meshes.size > 1
         if (offered.isNotEmpty()) {
             Spacer(Modifier.height(18.dp))
             Box(Modifier.padding(horizontal = 24.dp)) { Label("SERVICES") }
             Spacer(Modifier.height(6.dp))
-            offered.forEach { (name, device, url) ->
+            offered.forEach { (name, mesh, url, live) ->
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
@@ -810,23 +820,26 @@ private fun MeshScreen(
                     Text(
                         name,
                         style = MaterialTheme.typography.bodySmall,
-                        color = Palette.Phosphor,
+                        color = if (live) Palette.Phosphor else Palette.Ash,
                         modifier = Modifier.width(96.dp),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    if (showMesh) {
+                        Text(
+                            mesh,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Palette.Ash,
+                            modifier = Modifier.width(64.dp),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                     Text(
-                        device,
+                        if (live) url.removePrefix("http://")
+                        else url.removePrefix("http://") + "  ·  unreachable",
                         style = MaterialTheme.typography.labelSmall,
-                        color = Palette.Ash,
-                        modifier = Modifier.width(90.dp),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        url.removePrefix("http://"),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Palette.Bone,
+                        color = if (live) Palette.Bone else Palette.Line,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )

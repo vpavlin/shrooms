@@ -894,7 +894,12 @@ Item {
                                 text: root.serviceUrls(p)
                                 readOnly: true
                                 selectByMouse: true
-                                color: cPhosphor
+                                // Dimmed while the peer cannot be reached. The
+                                // list outlives reachability on purpose — a
+                                // sleeping device still offers what it offers
+                                // — but drawn identically it invites somebody
+                                // to try an address that cannot answer.
+                                color: p.live === true ? cPhosphor : cAsh
                                 font.family: "monospace"; font.pixelSize: 10
                                 wrapMode: TextEdit.Wrap
                                 Layout.fillWidth: true

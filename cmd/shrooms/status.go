@@ -285,6 +285,14 @@ func printPeerServices(out io.Writer, peers []peerStatus) {
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "MESH\tNAME\tTRY")
 	for _, p := range peers {
+		// A list outlives reachability on purpose — it is a claim about what a
+		// device offers, and a device that is asleep still offers it — but
+		// printing it the same way as a reachable one invites somebody to try
+		// an address that cannot answer.
+		note := ""
+		if !p.Live {
+			note = "  (unreachable now)"
+		}
 		for _, svc := range p.Services {
 			// The daemon already worked out the peer's DNS name; re-deriving
 			// it here is how a front-end drifts from what actually resolves.
@@ -292,7 +300,7 @@ func printPeerServices(out io.Writer, peers []peerStatus) {
 			if host == "" {
 				host = p.Name
 			}
-			fmt.Fprintf(w, "%s\t%s\thttp://%s.%s\n", p.Mesh, svc, svc, host)
+			fmt.Fprintf(w, "%s\t%s\thttp://%s.%s%s\n", p.Mesh, svc, svc, host, note)
 		}
 	}
 	w.Flush()
