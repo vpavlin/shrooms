@@ -609,6 +609,23 @@ func listenControl(ctx context.Context, log *slog.Logger, path string, h http.Ha
 		} else if err := os.Chown(path, -1, gid); err != nil {
 			log.Warn("could not set the group on the control socket", "err", err)
 		} else {
+			// The directory too, or the group setting does nothing.
+			//
+			// systemd creates RuntimeDirectory as root:root 0750, so a socket
+			// inside it is unreachable to the group however it is chowned —
+			// the group cannot traverse the directory to get to it. That made
+			// socket_group appear to work (the log line said so, the socket
+			// had the right group) while every `shrooms status` still failed
+			// with permission denied, and the error named the directory rather
+			// than the setting.
+			dir := filepath.Dir(path)
+			if err := os.Chown(dir, -1, gid); err != nil {
+				log.Warn("could not set the group on the socket directory",
+					"dir", dir, "err", err)
+			} else if err := os.Chmod(dir, 0o750); err != nil {
+				log.Warn("could not set the mode on the socket directory",
+					"dir", dir, "err", err)
+			}
 			log.Info("control socket readable by group", "group", cfg.SocketGroup)
 		}
 	}

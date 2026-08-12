@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -22,8 +23,14 @@ import (
 func fetchStatus(sock string) (statusPayload, error) {
 	// A new CLI against a daemon that predates the rename: the old socket is
 	// still there and still serving, so use it rather than reporting nothing.
+	//
+	// Only when the current one is genuinely absent. "Permission denied" means
+	// it is right there and this user may not use it, and falling back then
+	// produced an error naming a stale path from a previous install — which
+	// sends you looking at the wrong socket, the wrong daemon and the wrong
+	// day's files.
 	if sock == DefaultSocket {
-		if _, err := os.Stat(sock); err != nil {
+		if _, err := os.Stat(sock); errors.Is(err, fs.ErrNotExist) {
 			if _, err := os.Stat(LegacySocket); err == nil {
 				sock = LegacySocket
 			}
@@ -46,8 +53,12 @@ func fetchStatus(sock string) (statusPayload, error) {
 		// the daemon being down, and worth saying so rather than making
 		// everyone work it out from errno.
 		if errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EACCES) {
+			// Both ways out, because sudo is the answer once and the setting
+			// is the answer every time after.
 			return statusPayload{}, fmt.Errorf(
-				"cannot read %s: permission denied.\nThe daemon runs as root; try: sudo %s",
+				"cannot read %s: permission denied.\n"+
+					"The daemon runs as root; try: sudo %s\n"+
+					"To stop needing that, set socket_group in the config to a group you are in.",
 				sock, strings.Join(os.Args, " "))
 		}
 		if errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED) {
