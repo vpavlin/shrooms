@@ -1002,7 +1002,10 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 	// can write, but it also rebinds ports, and the socket group is for
 	// reading status.
 	if rl != nil {
-		mux.HandleFunc("/reload", requireRoot(func(w http.ResponseWriter, r *http.Request) {
+		// Re-reading the config is in the group's tier: it applies what a
+		// desktop app has just written, and it can do nothing the config does
+		// not already say.
+		mux.HandleFunc("/reload", (func(w http.ResponseWriter, r *http.Request) {
 			msg, err := rl.Reload(ctx)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
@@ -1011,6 +1014,10 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 			log.Info(msg)
 			fmt.Fprintln(w, msg)
 		}))
+
+		// Settings a desktop app may change, and leaving a mesh (ADR-025).
+		controlHandlers(mux, log, rl.cfgPath, rl)
+		mux.HandleFunc("/leave", leaveHandler(log, rl.cfgPath))
 	}
 
 	// Which mesh an admin request is about. Empty means the primary one, which

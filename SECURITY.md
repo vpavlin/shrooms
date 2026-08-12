@@ -67,6 +67,18 @@ still means rotating for everyone — it is no longer what *membership* is, but 
 is still a shared secret. ADR-020 explains why the per-recipient rewrite that
 would remove it is not built.
 
+**The control socket's group is a real grant.** `socket_group` exists so a
+desktop app — and `shrooms status` — need not run as root, and it is not a
+read-only permission: that group may change this device's settings, switch a
+mesh off, leave one, and mint an invite, which hands the network key to whoever
+redeems it. What it cannot do is admit anybody. On a mesh with `admin_keys`,
+membership is a credential signed by a key the daemon has never held, so an
+invite minted this way produces a device every peer refuses.
+→ Deliberate, and documented rather than minimised: the same shape as the
+`docker` group, with a smaller blast radius. Set it to a group you would trust
+with your mesh's metadata, which on a personal machine means your own login, and
+leave it unset on a shared one ([ADR-025](docs/adr/025-control-from-a-desktop-app.md)).
+
 **A published service is reachable by every member.** `services` forwards a
 mesh connection to a loopback port, and a great many applications treat "bound
 to 127.0.0.1" as their access control — no password, on the reasoning that only

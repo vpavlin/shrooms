@@ -80,6 +80,14 @@ func sanitiseName(s string) string {
 //
 // Computed here so the app does not reimplement the sanitising and drift from
 // what actually resolves.
+// SanitiseName reduces a name to the label that will actually resolve.
+//
+// Exported because anything that *stores* a name should store the form that
+// works: a device called "Living Room NAS" resolves as living-room-nas, and a
+// config holding the original is a device whose name works in the roster and
+// not in a browser.
+func SanitiseName(s string) string { return sanitiseName(s) }
+
 func DNSName(name, suffix string) string {
 	h := sanitiseName(name)
 	if h == "" {

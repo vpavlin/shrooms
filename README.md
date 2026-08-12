@@ -814,10 +814,28 @@ the already-weak sender anonymity [SECURITY.md](SECURITY.md) describes.
 changing what a node contributes to a shared network should be a decision rather
 than a default that quietly picks a side.
 
-## Desktop monitoring
+## Desktop monitoring and control
 
-A read-only Basecamp view — the same graph and list as the phone. It never
-changes the mesh, so it cannot break it.
+A Basecamp view — the same graph and list as the phone. It reads the mesh, and
+it can change this device's own settings: name, light or relay node, published
+services, which meshes run, and leaving one
+([ADR-025](docs/adr/025-control-from-a-desktop-app.md)).
+
+**What it cannot do is admit anybody**, and that is the line the design draws.
+On a mesh with `admin_keys`, membership is a credential signed by a key the
+daemon has never held — a passphrase-protected file in your home directory — so
+nothing reachable through this socket can make a device a member or remove one.
+Admission still runs through `shrooms invite` and a passphrase prompt, which is
+where the friction belongs.
+
+**The socket group is a real grant, like `docker`'s.** Anyone in it can read
+your mesh's control plane and change this device's behaviour. Set it to a group
+you would trust with that — on a personal machine, your own login — and leave it
+unset on a shared one:
+
+```toml
+socket_group = "vpavlin"
+```
 
 It reads the daemon through **`shrooms_core`**, a companion module installed
 alongside it. That indirection is not ceremony. A `ui_qml` app runs inside a

@@ -9,18 +9,32 @@ import (
 	"syscall"
 )
 
-// Who may do what over the control socket.
+// Who may do what over the control socket (ADR-025).
 //
-// The socket is 0660 with a group, so that `shrooms status` does not need root
-// (see serveControl). Reading the roster is what that group was opened up for.
-// Changing the mesh is not: joining, revoking and holding an invite open all
-// reconfigure the VPN, and a group that was granted read access to a status
-// page should not thereby gain the ability to enrol the machine into somebody
-// else's mesh.
+// Two tiers, and the line between them is not "does it change anything" — it
+// is what the daemon can do on its own.
 //
-// So the mutating endpoints check the peer's credentials rather than trusting
-// the file mode. SO_PEERCRED is decided by the kernel at connect time and
-// cannot be forged by the caller, which is why it is worth more here than
+// **The socket group.** The socket is 0660 with a group, so a desktop app can
+// reach it without sudo. That group may drive everything the daemon holds by
+// itself: the roster, this device's own settings, joining a mesh it has been
+// invited to, leaving one, starting an invite. This is the Docker model, said
+// plainly: membership of the group is a serious grant and the documentation
+// says so, rather than a permission that pretends to be small.
+//
+// What bounds it is [ADR-018](../../docs/adr/018-credentials-instead-of-a-shared-key.md).
+// On a mesh with admin keys, minting an invite hands over the network key and
+// admits nobody: a device is a member only once the admin key has signed a
+// credential naming it, and that key is a passphrase-protected file in
+// somebody's home directory, not something the socket can reach. So the group
+// can expose the control plane's confidentiality; it cannot make a device a
+// member, and it cannot remove one.
+//
+// **Root, or the user the daemon runs as.** Everything that would let the
+// socket alone rewrite who belongs: installing a credential for this device,
+// and anything else that decides membership without a signature to check.
+//
+// SO_PEERCRED is what decides the second tier, because it is set by the kernel
+// at connect time and cannot be forged by the caller — worth more than
 // anything in the request.
 
 type peerCredKey struct{}
