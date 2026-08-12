@@ -225,11 +225,38 @@ func joinInvite(token, name, label, configDir string, timeoutSeconds int) error 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSeconds)*time.Second)
 	defer cancel()
 
-	resp, err := invite.Redeem(ctx, tr, secret, &invite.Request{
+	base := &invite.Request{
 		DevicePub: st.Identity.DevicePub,
 		WGPub:     st.Identity.WGPub[:],
 		Name:      name,
-	})
+	}
+	// An additional mesh takes two rounds: this device cannot derive the
+	// identity it will use on a mesh it has not been told about yet (ADR-017).
+	// Without it a phone on two invited meshes announces the same device key to
+	// both, which is visible to anyone in both and is what per-mesh identities
+	// exist to prevent. The first mesh keeps the base identity, because that is
+	// what the single-mesh config form means.
+	var resp *invite.Response
+	if label != "" && label != state.DefaultLabel {
+		resp, err = invite.RedeemForMesh(ctx, tr, secret, base,
+			func(r *invite.Response) (*invite.Request, error) {
+				nk, err := identity.NetworkKeyFromBytes(r.NetworkKey)
+				if err != nil {
+					return nil, err
+				}
+				ms, err := st.MeshState(state.NetworkID(nk), false)
+				if err != nil {
+					return nil, err
+				}
+				return &invite.Request{
+					DevicePub: ms.Identity.DevicePub,
+					WGPub:     ms.Identity.WGPub[:],
+					Name:      name,
+				}, nil
+			})
+	} else {
+		resp, err = invite.Redeem(ctx, tr, secret, base)
+	}
 	if err != nil {
 		return errors.New("no answer — is `shrooms invite` still running on the other machine?")
 	}
@@ -305,16 +332,14 @@ func joinInvite(token, name, label, configDir string, timeoutSeconds int) error 
 		return fmt.Errorf("write config: %w", err)
 	}
 	if len(resp.Credential) > 0 {
-		// Against the identity the request actually carried.
-		//
-		// The credential names the keys we sent, and we sent this device's base
-		// identity — we could not have sent a per-mesh one, because the mesh is
-		// not known until the response arrives. So an invite-joined mesh uses
-		// the base identity, and the per-mesh derivation of ADR-015 applies to
-		// meshes joined with a key. Closing that properly needs a second round
-		// in the invite exchange: learn the mesh, derive, then ask for the
-		// credential. Noted in ADR-017 rather than left as a surprise.
-		if err := st.SetMeshCredentialFor(state.NetworkID(nk), true, resp.Credential); err != nil {
+		// Stored against the identity the credential actually names. The first
+		// mesh keeps this device's base identity, which is what the single-mesh
+		// config form means; an additional mesh uses the identity derived in
+		// the second round of the exchange (ADR-017). Getting this flag wrong
+		// derives a fresh identity beside a credential naming another, and
+		// every peer then refuses this device — correctly, and silently.
+		legacy := label == "" || label == state.DefaultLabel
+		if err := st.SetMeshCredentialFor(state.NetworkID(nk), legacy, resp.Credential); err != nil {
 			return err
 		}
 	}

@@ -129,11 +129,22 @@ device on two such meshes presents the same device key to both, and anyone in
 both can tell it is the same device. That is precisely the linkability ADR-015
 set out to close.
 
-Fixing it needs a second round — learn the mesh, derive the identity for it,
-then ask for the credential — which is a wire-format change to this ADR and is
-not built. Written down because the alternative is a surprise later, and
-because the workaround (joining an additional mesh with its network key, where
-the mesh is known before the identity is chosen) already avoids it.
+**Built.** The request gained a `deferred` flag: set, it asks the holder to
+answer with the mesh and hold the credential back. The joiner then derives the
+identity it will use *there* and asks again, and that second request is the one
+that admits it.
+
+Answered by the daemon rather than surfaced to the person running `shrooms
+invite`, because nothing in the first answer needs the admin key — it is the
+network key, the admin public keys and the suffix, all of which the daemon
+already holds. Only the second request is worth a human looking at.
+
+Two properties keep it safe to deploy piecemeal. The keys are still sent in the
+first round, so a holder that predates the flag issues a credential immediately
+and the exchange completes the old way. And the joiner only defers for an
+*additional* mesh: a device's first mesh keeps its base identity, because that
+is what the single-mesh config form means and re-deriving would change the
+address of a device that already has one.
 
 ## What this does not fix
 

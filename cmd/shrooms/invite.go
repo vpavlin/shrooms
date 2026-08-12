@@ -355,11 +355,23 @@ func cmdJoinInvite(token string, args []string) error {
 	}
 	fmt.Fprintf(out, "Asking to join as %q...\n", deviceName)
 
-	resp, err := invite.Redeem(ctx, rendezvous.InviteTransport(node), secret, &invite.Request{
+	base := &invite.Request{
 		DevicePub: st.Identity.DevicePub,
 		WGPub:     st.Identity.WGPub[:],
 		Name:      deviceName,
-	})
+	}
+	tr := rendezvous.InviteTransport(node)
+	var resp *invite.Response
+	// See perMeshRequest: only an additional mesh derives, because the first
+	// one is what the single-mesh config form describes.
+	if *label != "" && *label != state.DefaultLabel {
+		resp, err = invite.RedeemForMesh(ctx, tr, secret, base,
+			func(r *invite.Response) (*invite.Request, error) {
+				return perMeshRequest(st, r, deviceName)
+			})
+	} else {
+		resp, err = invite.Redeem(ctx, tr, secret, base)
+	}
 	if err != nil {
 		return errors.New("no answer. Is `shrooms invite` still running on the other machine?")
 	}
@@ -408,7 +420,15 @@ func cmdJoinInvite(token string, args []string) error {
 				return fmt.Errorf("the credential in the invite does not verify: %w", err)
 			}
 		}
-		if err := st.SetCredential(resp.Credential); err != nil {
+		// Stored against the identity the credential actually names. For the
+		// device's first mesh that is the base identity, which is what the
+		// single-mesh config form means; for an additional mesh it is the one
+		// derived in the second round of the exchange (ADR-017). Storing it
+		// with the wrong flag derives a fresh identity beside a credential
+		// naming another, and every peer then refuses this device — correctly,
+		// and silently.
+		legacy := *label == "" || *label == state.DefaultLabel
+		if err := st.SetMeshCredentialFor(state.NetworkID(nk), legacy, resp.Credential); err != nil {
 			return err
 		}
 		fmt.Printf("\nEnrolled. Credential serial %d, expires %s.\n",
@@ -555,4 +575,27 @@ func groupToken(s string) string {
 		parts = append(parts, s[i:end])
 	}
 	return strings.Join(parts, "-")
+}
+
+// perMeshRequest builds the second-round request: the keys this device will use
+// on the mesh that just answered (ADR-015, ADR-017).
+//
+// Deriving here also creates the mesh's state entry, which is the same entry the
+// daemon will load when it starts this mesh — so the credential that comes back
+// names exactly the keys it will announce with. Getting that pair out of step is
+// the failure where every peer refuses a device, correctly and silently.
+func perMeshRequest(st *state.State, r *invite.Response, name string) (*invite.Request, error) {
+	nk, err := identity.NetworkKeyFromBytes(r.NetworkKey)
+	if err != nil {
+		return nil, err
+	}
+	ms, err := st.MeshState(state.NetworkID(nk), false)
+	if err != nil {
+		return nil, err
+	}
+	return &invite.Request{
+		DevicePub: ms.Identity.DevicePub,
+		WGPub:     ms.Identity.WGPub[:],
+		Name:      name,
+	}, nil
 }

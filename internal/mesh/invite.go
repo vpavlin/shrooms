@@ -82,6 +82,23 @@ func (m *Mesh) HoldInvite(ctx context.Context, s invite.Secret) (*invite.Request
 	}
 }
 
+// answerDeferred replies to a first-round request with the mesh and no
+// credential, so the joiner can derive the identity it will use here and ask
+// again for a credential naming it (ADR-017).
+//
+// Answered by the daemon rather than surfaced to the CLI, because nothing in
+// it needs the admin key: it is the network key, the admin *public* keys and
+// the suffix, all of which this node already holds. The invite stays open for
+// the second request, which is the one worth a person looking at.
+func (m *Mesh) answerDeferred(s invite.Secret, req *invite.Request) {
+	if err := m.ReplyInvite(s, req, nil); err != nil {
+		m.log.Warn("could not answer the first round of an invite", "err", err)
+		return
+	}
+	m.log.Info("told a joining device which mesh this is; waiting for its per-mesh keys",
+		"name", req.Name)
+}
+
 // ReplyInvite seals a response under the token and publishes it.
 //
 // The mesh's own values — network key, admin keys, name suffix — are filled in
@@ -129,6 +146,18 @@ func (m *Mesh) handleInvite(contentTopic string, payload []byte, now time.Time) 
 	if err != nil {
 		return true // ours by topic, not readable as a request: drop it quietly
 	}
+	// A first-round request is answered here and does not consume the invite:
+	// it asks which mesh this is, and the answer holds no secret the token does
+	// not already imply. The device comes back with keys derived for this mesh,
+	// and that request is the one that admits it.
+	//
+	// A device that asks twice gets told twice, which costs two sealed messages
+	// on a topic only it and this node are listening to.
+	if req.Deferred {
+		go m.answerDeferred(held.secret, req)
+		return true
+	}
+
 	select {
 	case held.reqs <- req:
 	default: // already answered; an invite admits one device

@@ -112,23 +112,26 @@ func dupFd(fd int) (int, error) {
 
 type statusPeer struct {
 	// Mesh is which mesh this peer is on, empty on a single-mesh device.
-	Mesh             string  `json:"mesh,omitempty"`
-	Name             string  `json:"name"`
-	DNSName          string  `json:"dns_name,omitempty"`
-	Overlay          string  `json:"overlay"`
-	Online           bool    `json:"online"`
-	Relay            bool    `json:"relay,omitempty"`
-	Live             bool    `json:"live"`
-	HandshakeAgeS    int64   `json:"handshake_age_s,omitempty"`
-	Endpoint         string  `json:"endpoint,omitempty"`
-	Relayed          bool    `json:"relayed"`
-	RxBytes          uint64  `json:"rx_bytes"`
-	TxBytes          uint64  `json:"tx_bytes"`
-	RxBps            float64 `json:"rx_bps"`
-	TxBps            float64 `json:"tx_bps"`
-	RTTMs            int64   `json:"rtt_ms,omitempty"`
-	DiscoveredAfterS float64 `json:"discovered_after_s,omitempty"`
-	TunnelAfterS     float64 `json:"tunnel_after_s,omitempty"`
+	Mesh    string `json:"mesh,omitempty"`
+	Name    string `json:"name"`
+	DNSName string `json:"dns_name,omitempty"`
+	Overlay string `json:"overlay"`
+	Online  bool   `json:"online"`
+	Relay   bool   `json:"relay,omitempty"`
+	// Services are the names this peer says it publishes (ADR-023). A claim
+	// about what it offers, not a report that anything is listening.
+	Services         []string `json:"services,omitempty"`
+	Live             bool     `json:"live"`
+	HandshakeAgeS    int64    `json:"handshake_age_s,omitempty"`
+	Endpoint         string   `json:"endpoint,omitempty"`
+	Relayed          bool     `json:"relayed"`
+	RxBytes          uint64   `json:"rx_bytes"`
+	TxBytes          uint64   `json:"tx_bytes"`
+	RxBps            float64  `json:"rx_bps"`
+	TxBps            float64  `json:"tx_bps"`
+	RTTMs            int64    `json:"rtt_ms,omitempty"`
+	DiscoveredAfterS float64  `json:"discovered_after_s,omitempty"`
+	TunnelAfterS     float64  `json:"tunnel_after_s,omitempty"`
 }
 
 // statusMesh is one mesh, for a device that has more than one.
@@ -222,13 +225,15 @@ func snapshot(m *mesh.Mesh, suffix string) statusPayload {
 	out.Rendezvous.Detail = h.Detail(now)
 
 	stats, _ := m.PeerStats()
+	svc := m.Services(now)
 	for _, p := range m.Roster().Current(now) {
 		sp := statusPeer{
-			Name:    p.Name,
-			DNSName: mesh.DNSName(p.Name, suffix),
-			Overlay: p.Overlay.String(),
-			Online:  p.Online(now),
-			Relay:   p.Relay,
+			Services: svc[p.ID()],
+			Name:     p.Name,
+			DNSName:  mesh.DNSName(p.Name, suffix),
+			Overlay:  p.Overlay.String(),
+			Online:   p.Online(now),
+			Relay:    p.Relay,
 		}
 		if st, ok := stats[p.WGPub.String()]; ok {
 			sp.Live = st.Live(now)

@@ -45,6 +45,54 @@ const RetryEvery = 5 * time.Second
 //
 // The caller owns the transport and its lifetime. On return the invite topic is
 // unsubscribed, whether or not it succeeded.
+// RedeemForMesh runs the two-round exchange (ADR-017): ask which mesh this is,
+// derive the identity this device will use *there*, and ask again for a
+// credential naming it.
+//
+// The second round exists because of an ordering problem that has no other
+// answer. A device cannot know which mesh it is joining until the response
+// arrives, so it cannot derive a per-mesh identity (ADR-015) before it asks —
+// and if it sends its base identity, the credential names that, and a device on
+// two invited meshes shows the same key to both.
+//
+// derive is given the first response and returns the request to send second.
+// It is a callback so that this package stays ignorant of how an identity is
+// derived and of where state lives.
+//
+// Falls back to one round in the two cases where a second buys nothing: a
+// holder that predates this and issued a credential immediately, and a mesh
+// with no admin keys, where there is no credential to issue.
+func RedeemForMesh(ctx context.Context, t Transport, s Secret, first *Request,
+	derive func(*Response) (*Request, error)) (*Response, error) {
+
+	if first == nil {
+		return nil, errors.New("no request to send")
+	}
+	first.Deferred = true
+	resp, err := Redeem(ctx, t, s, first)
+	if err != nil {
+		return nil, err
+	}
+	if len(resp.Credential) > 0 || len(resp.AdminKeys) == 0 {
+		return resp, nil
+	}
+
+	second, err := derive(resp)
+	if err != nil {
+		return nil, err
+	}
+	second.Deferred = false
+	out, err := Redeem(ctx, t, s, second)
+	if err != nil {
+		// The mesh is known and usable at this point; only the credential is
+		// missing, and on a mesh with admin keys that means no peer will admit
+		// us. Say which half failed, because "the invite did not work" sends
+		// people back to the token, which was fine.
+		return nil, fmt.Errorf("the mesh answered but did not issue a credential: %w", err)
+	}
+	return out, nil
+}
+
 func Redeem(ctx context.Context, t Transport, s Secret, req *Request) (*Response, error) {
 	if req == nil {
 		return nil, errors.New("no request to send")

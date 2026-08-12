@@ -180,3 +180,152 @@ func TestRedeemIgnoresAResponseForAnotherDevice(t *testing.T) {
 		t.Fatal("accepted a response sealed to another device")
 	}
 }
+
+// holdTwoRounds plays the inviting side of the two-round exchange: answer a
+// deferred request with the mesh and no credential, then answer whatever comes
+// next with a credential naming the keys that request carried.
+//
+// It records those keys, because the whole point of the second round is which
+// keys the credential ends up naming.
+func holdTwoRounds(t *testing.T, s Secret, bus *fakeBus, admin []byte) *[]byte {
+	t.Helper()
+	got := new([]byte)
+	go func() {
+		seen := 0
+		deadline := time.After(4 * time.Second)
+		for {
+			select {
+			case <-deadline:
+				return
+			default:
+			}
+			raw := bus.lastSent()
+			if raw == nil {
+				time.Sleep(5 * time.Millisecond)
+				continue
+			}
+			req, err := OpenRequest(s, raw, time.Now())
+			if err != nil {
+				time.Sleep(5 * time.Millisecond)
+				continue
+			}
+			resp := &Response{
+				NetworkKey: bytes.Repeat([]byte{9}, 32),
+				AdminKeys:  [][]byte{admin},
+				Suffix:     "mesh",
+				Timestamp:  time.Now().Unix(),
+			}
+			if req.Deferred {
+				if seen > 0 {
+					time.Sleep(5 * time.Millisecond)
+					continue
+				}
+				seen++
+			} else {
+				// The second round: this is the request worth admitting.
+				*got = append([]byte(nil), req.DevicePub...)
+				resp.Credential = bytes.Repeat([]byte{5}, 300)
+			}
+			sealed, err := SealResponse(s, req.EphPub, resp)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			bus.deliver(Message{Topic: s.Topic(), Payload: sealed})
+			if resp.Credential != nil {
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}()
+	return got
+}
+
+// The credential must name the keys derived for the mesh that answered, not the
+// base identity the first round carried. That difference is the entire reason
+// the second round exists (ADR-017).
+func TestRedeemForMeshUsesTheDerivedIdentity(t *testing.T) {
+	s, _ := New()
+	bus := newBus()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	base := bytes.Repeat([]byte{1}, 32)
+	derived := bytes.Repeat([]byte{2}, 32)
+	admitted := holdTwoRounds(t, s, bus, bytes.Repeat([]byte{7}, 32))
+
+	var sawMesh bool
+	resp, err := RedeemForMesh(ctx, bus, s,
+		&Request{DevicePub: base, WGPub: base, Name: "phone"},
+		func(r *Response) (*Request, error) {
+			// The mesh is known by now, which is what makes deriving possible.
+			sawMesh = len(r.NetworkKey) == 32
+			return &Request{DevicePub: derived, WGPub: derived, Name: "phone"}, nil
+		})
+	if err != nil {
+		t.Fatalf("RedeemForMesh: %v", err)
+	}
+	if !sawMesh {
+		t.Error("the second round was asked for without a network key to derive from")
+	}
+	if len(resp.Credential) == 0 {
+		t.Error("no credential came back")
+	}
+	if !bytes.Equal(*admitted, derived) {
+		t.Errorf("the credential was issued for %x, wanted the derived identity %x",
+			*admitted, derived)
+	}
+}
+
+// A holder that predates the second round issues a credential straight away.
+// The joiner must take it rather than wait for a round that will never come.
+func TestRedeemForMeshFallsBackToOneRound(t *testing.T) {
+	s, _ := New()
+	bus := newBus()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	go func() {
+		deadline := time.After(4 * time.Second)
+		for {
+			select {
+			case <-deadline:
+				return
+			default:
+			}
+			raw := bus.lastSent()
+			if raw == nil {
+				time.Sleep(5 * time.Millisecond)
+				continue
+			}
+			req, err := OpenRequest(s, raw, time.Now())
+			if err != nil {
+				time.Sleep(5 * time.Millisecond)
+				continue
+			}
+			// Ignores Deferred entirely, as an older holder does.
+			sealed, _ := SealResponse(s, req.EphPub, &Response{
+				NetworkKey: bytes.Repeat([]byte{9}, 32),
+				AdminKeys:  [][]byte{bytes.Repeat([]byte{7}, 32)},
+				Credential: bytes.Repeat([]byte{5}, 300),
+				Timestamp:  time.Now().Unix(),
+			})
+			bus.deliver(Message{Topic: s.Topic(), Payload: sealed})
+			return
+		}
+	}()
+
+	called := false
+	resp, err := RedeemForMesh(ctx, bus, s,
+		&Request{DevicePub: bytes.Repeat([]byte{1}, 32), WGPub: bytes.Repeat([]byte{1}, 32)},
+		func(*Response) (*Request, error) { called = true; return nil, nil })
+	if err != nil {
+		t.Fatalf("RedeemForMesh: %v", err)
+	}
+	if called {
+		t.Error("asked for a second round when the first already carried a credential")
+	}
+	if len(resp.Credential) == 0 {
+		t.Error("dropped the credential the old holder sent")
+	}
+}

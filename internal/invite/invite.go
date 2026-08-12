@@ -169,6 +169,22 @@ type Request struct {
 	// it across two protocols buys nothing and has to be argued about.
 	EphPub []byte `json:"eph_pub"`
 
+	// Deferred asks the holder to answer with the mesh and hold the credential
+	// back for a second request (ADR-017).
+	//
+	// A device cannot know which mesh it is joining until the response arrives,
+	// so it cannot derive the identity it will use there
+	// ([ADR-015](015-multiple-meshes-one-daemon.md)) before it asks. Without
+	// this it sends its base identity, the credential names that, and a device
+	// on two invited meshes presents the same key to both — which anyone in
+	// both can see, and which is exactly the linkability per-mesh identities
+	// exist to prevent.
+	//
+	// The keys are still sent alongside it, so a holder that predates this
+	// field issues a credential for them and the exchange completes the old
+	// way rather than failing.
+	Deferred bool `json:"deferred,omitempty"`
+
 	Timestamp int64 `json:"ts"`
 }
 

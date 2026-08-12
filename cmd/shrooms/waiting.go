@@ -234,11 +234,26 @@ func joinHere(ctx context.Context, log *slog.Logger, tr invite.Transport, cfgPat
 		}
 
 		log.Info("redeeming an invite")
-		resp, err := invite.Redeem(ctx, tr, secret, &invite.Request{
+		// An additional mesh derives the identity it will use there, which
+		// takes a second round because the mesh is not known until the first
+		// one answers (ADR-017). The device's first mesh keeps its base
+		// identity: that is what the single-mesh config form means, and
+		// re-deriving would change the address of a device that already has
+		// one.
+		base := &invite.Request{
 			DevicePub: st.Identity.DevicePub,
 			WGPub:     st.Identity.WGPub[:],
 			Name:      name,
-		})
+		}
+		var resp *invite.Response
+		if label != "" && label != state.DefaultLabel {
+			resp, err = invite.RedeemForMesh(ctx, tr, secret, base,
+				func(r *invite.Response) (*invite.Request, error) {
+					return perMeshRequest(st, r, name)
+				})
+		} else {
+			resp, err = invite.Redeem(ctx, tr, secret, base)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("no answer — is `shrooms invite` still running there? (%w)", err)
 		}
@@ -321,7 +336,15 @@ func joinHere(ctx context.Context, log *slog.Logger, tr invite.Transport, cfgPat
 				return nil, fmt.Errorf("the credential in the invite does not verify: %w", err)
 			}
 		}
-		if err := st.SetCredential(credRaw); err != nil {
+		// Stored against the identity the credential actually names. For the
+		// device's first mesh that is the base identity, which is what the
+		// single-mesh config form means; for an additional mesh it is the one
+		// derived in the second round of the exchange (ADR-017). Storing it
+		// with the wrong flag derives a fresh identity beside a credential
+		// naming another, and every peer then refuses this device — correctly,
+		// and silently.
+		legacy := label == "" || label == state.DefaultLabel
+		if err := st.SetMeshCredentialFor(state.NetworkID(nk), legacy, credRaw); err != nil {
 			return nil, err
 		}
 		res.Credential = true
