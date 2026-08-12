@@ -12,7 +12,9 @@
 <meta name="theme-color" content="#07090b">
 </head>
 <body>
+<div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
 <canvas id="field"></canvas>
+<div class="grain" aria-hidden="true"></div>
 
 <div class="page">
 <nav>
@@ -26,6 +28,39 @@
 </nav>
 
 <header class="hero">
+    <div class="shroom" aria-hidden="true">
+      <svg viewBox="0 0 200 200" width="200" height="200">
+        <defs>
+          <radialGradient id="cap" cx="42%" cy="30%">
+            <stop offset="0%" stop-color="#7dffc8"/>
+            <stop offset="55%" stop-color="#35f0a0"/>
+            <stop offset="100%" stop-color="#12855a"/>
+          </radialGradient>
+          <linearGradient id="stem" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#d6dde3" stop-opacity="0.85"/>
+            <stop offset="100%" stop-color="#6b7680" stop-opacity="0.25"/>
+          </linearGradient>
+          <filter id="soft"><feGaussianBlur stdDeviation="7"/></filter>
+        </defs>
+
+        <!-- The glow is its own shape rather than a shadow on the cap, so it
+             can breathe on a different beat from the mushroom itself. -->
+        <ellipse class="halo" cx="100" cy="86" rx="74" ry="52"
+                 fill="#35f0a0" opacity="0.30" filter="url(#soft)"/>
+
+        <path d="M88 96 h24 l-5 74 h-14 z" fill="url(#stem)"/>
+        <path d="M22 96 a78 62 0 0 1 156 0 z" fill="url(#cap)"/>
+        <path d="M22 96 a78 15 0 0 0 156 0 z" fill="#07090b" opacity="0.55"/>
+
+        <!-- Spots on their own timings: a mushroom that pulsed in unison
+             would read as a warning light rather than as something alive. -->
+        <circle class="spot s1" cx="66" cy="66" r="10" fill="#07090b" opacity="0.4"/>
+        <circle class="spot s2" cx="112" cy="52" r="8"  fill="#07090b" opacity="0.4"/>
+        <circle class="spot s3" cx="136" cy="76" r="6"  fill="#07090b" opacity="0.4"/>
+        <circle class="spot s2" cx="88"  cy="82" r="5"  fill="#07090b" opacity="0.35"/>
+      </svg>
+    </div>
+
     <h1>Your devices,<br>on one network<br>that nobody runs.</h1>
     <p class="lede">
         shrooms is a personal overlay mesh. Your laptop, phone, NAS and a VPS

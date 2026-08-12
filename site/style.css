@@ -24,11 +24,83 @@
 
 * { box-sizing: border-box; }
 
+/* --- the psychedelia ---------------------------------------------------
+   Loud in the chrome, calm under the words. Everything here sits behind a
+   page that owns its own background: colour and motion carry the character,
+   contrast is left alone, because this is documentation and somebody has to
+   be able to read it at two in the morning while their mesh is down. */
+
+@keyframes drift-a {
+    0%   { transform: translate3d(-12vw, -8vh, 0) scale(1); }
+    50%  { transform: translate3d(14vw, 10vh, 0) scale(1.25); }
+    100% { transform: translate3d(-12vw, -8vh, 0) scale(1); }
+}
+@keyframes drift-b {
+    0%   { transform: translate3d(18vw, 12vh, 0) scale(1.15); }
+    50%  { transform: translate3d(-10vw, -14vh, 0) scale(0.9); }
+    100% { transform: translate3d(18vw, 12vh, 0) scale(1.15); }
+}
+@keyframes spin-slow { to { transform: rotate(360deg); } }
+@keyframes hue { to { filter: hue-rotate(360deg); } }
+@keyframes shimmer { to { background-position: 200% center; } }
+@keyframes breathe { 50% { opacity: 0.85; transform: scale(1.03); } }
+
+/* Aurora: three blurred blobs of colour, drifting on periods that never
+   coincide, so the background never repeats a frame you have already seen. */
+.aurora {
+    position: fixed;
+    inset: -20vh -20vw;
+    z-index: 0;
+    pointer-events: none;
+    filter: blur(90px) saturate(140%);
+    opacity: 0.5;
+}
+
+.aurora i {
+    position: absolute;
+    display: block;
+    border-radius: 50%;
+    mix-blend-mode: screen;
+}
+
+.aurora i:nth-child(1) {
+    width: 46vw; height: 46vw; left: 4vw; top: 2vh;
+    background: radial-gradient(circle, rgba(53,240,160,0.55), transparent 68%);
+    animation: drift-a 41s ease-in-out infinite;
+}
+.aurora i:nth-child(2) {
+    width: 52vw; height: 52vw; right: 2vw; top: 18vh;
+    background: radial-gradient(circle, rgba(154,123,255,0.5), transparent 68%);
+    animation: drift-b 57s ease-in-out infinite;
+}
+.aurora i:nth-child(3) {
+    width: 38vw; height: 38vw; left: 26vw; bottom: -8vh;
+    background: radial-gradient(circle, rgba(255,111,181,0.4), transparent 68%);
+    animation: drift-a 73s ease-in-out infinite reverse;
+}
+
+/* Grain, so the gradients have a surface instead of banding across a wide
+   screen. An SVG turbulence rather than an image: no request, no asset. */
+.grain {
+    position: fixed;
+    inset: 0;
+    z-index: 3;
+    pointer-events: none;
+    opacity: 0.16;
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+}
+
 html { scroll-behavior: smooth; }
 
 body {
     margin: 0;
-    background: var(--void);
+    /* A wash under the aurora, so the dark is never flat black. */
+    background:
+        radial-gradient(120vw 80vh at 15% -10%, rgba(53,240,160,0.10), transparent 60%),
+        radial-gradient(100vw 70vh at 90% 10%, rgba(154,123,255,0.12), transparent 60%),
+        radial-gradient(90vw 60vh at 50% 110%, rgba(255,111,181,0.08), transparent 60%),
+        var(--void);
     color: var(--bone);
     font-family: var(--mono);
     font-size: 15px;
@@ -57,6 +129,7 @@ body {
 /* --- masthead ---------------------------------------------------------- */
 
 nav {
+    backdrop-filter: blur(10px);
     position: sticky;
     top: 0;
     z-index: 2;
@@ -90,21 +163,39 @@ nav .spacer { flex: 1 1 auto; }
 h1, h2, h3 { line-height: 1.25; font-weight: 600; }
 
 h1 {
-    font-size: clamp(2.1rem, 6vw, 3.4rem);
+    font-size: clamp(2.3rem, 6.5vw, 3.8rem);
     margin: 0.6em 0 0.2em;
     letter-spacing: -0.02em;
+    /* The one place the colour is allowed to be the point. */
+    background: linear-gradient(100deg,
+        var(--phosphor), var(--chartreuse), var(--blossom),
+        var(--violet), var(--sky), var(--phosphor));
+    background-size: 200% auto;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: shimmer 14s linear infinite;
 }
 
 h2 {
     font-size: 1.35rem;
     margin: 3.2em 0 0.6em;
     color: var(--bone);
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
 }
 
+/* A cap and a stem, drawn in two characters, because a section marker that is
+   a mushroom is the whole joke and it costs nothing. */
 h2::before {
-    content: "§ ";
-    color: var(--phosphor);
-    opacity: 0.5;
+    content: "";
+    flex: none;
+    width: 14px; height: 14px;
+    border-radius: 14px 14px 3px 3px;
+    background: linear-gradient(180deg, var(--phosphor), rgba(53,240,160,0.25));
+    box-shadow: 0 0 14px rgba(53, 240, 160, 0.55);
+    animation: breathe 6s ease-in-out infinite;
 }
 
 h3 { font-size: 1.05rem; margin: 2.2em 0 0.4em; color: var(--bone); }
@@ -132,13 +223,16 @@ code {
 }
 
 pre {
-    background: var(--panel);
+    position: relative;
+    background: linear-gradient(180deg, rgba(16,21,26,0.95), rgba(10,13,17,0.95));
     border: 1px solid var(--line);
     border-radius: 10px;
     padding: 16px 18px;
     overflow-x: auto;
     font-size: 13px;
     line-height: 1.5;
+    box-shadow: inset 0 0 60px rgba(53, 240, 160, 0.04);
+    backdrop-filter: blur(4px);
 }
 
 pre code { background: none; padding: 0; color: #cfd8de; }
@@ -157,7 +251,41 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 3em 0; }
 
 /* --- hero -------------------------------------------------------------- */
 
-.hero { padding: 8vh 0 2vh; }
+.hero { padding: 8vh 0 2vh; position: relative; }
+
+/* The mark, grown rather than placed: it rises as the page loads and then
+   keeps breathing, on a period that shares no factor with the aurora's, so the
+   two never lock into a rhythm. */
+.shroom {
+    width: 200px;
+    height: 200px;
+    margin: 0 0 -14px -10px;
+    animation: sprout 1400ms cubic-bezier(0.2, 0.9, 0.2, 1) both,
+               bob 11s ease-in-out 1400ms infinite;
+    transform-origin: 50% 100%;
+}
+
+.shroom svg { display: block; overflow: visible; }
+.shroom .halo { animation: breathe 7s ease-in-out infinite; transform-origin: 100px 86px; }
+.shroom .spot { animation: wink 9s ease-in-out infinite; }
+.shroom .s1 { animation-duration: 7s; }
+.shroom .s2 { animation-duration: 13s; }
+.shroom .s3 { animation-duration: 17s; }
+
+@keyframes sprout {
+    from { transform: translateY(26px) scaleY(0.55) scaleX(0.85); opacity: 0; }
+    to   { transform: none; opacity: 1; }
+}
+@keyframes bob {
+    50% { transform: translateY(-8px) rotate(-1.2deg); }
+}
+@keyframes wink {
+    50% { opacity: 0.12; }
+}
+
+@media (max-width: 640px) {
+    .shroom { width: 132px; height: 132px; }
+}
 
 .hero .sub {
     color: var(--ash);
@@ -178,8 +306,21 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 3em 0; }
     font-size: 13px;
 }
 
-.cta a.primary { border-color: rgba(53, 240, 160, 0.4); color: var(--phosphor); }
-.cta a:hover { border-color: var(--phosphor); }
+.cta a.primary {
+    border-color: rgba(53, 240, 160, 0.45);
+    color: var(--void);
+    background: linear-gradient(100deg, var(--phosphor), var(--chartreuse));
+    font-weight: 600;
+    box-shadow: 0 0 30px rgba(53, 240, 160, 0.28);
+}
+
+.cta a:hover {
+    border-color: var(--phosphor);
+    box-shadow: 0 0 26px rgba(53, 240, 160, 0.3);
+    transform: translateY(-1px);
+}
+
+.cta a { transition: transform 150ms ease, box-shadow 200ms ease, border-color 200ms ease; }
 
 /* --- cards ------------------------------------------------------------- */
 
@@ -191,10 +332,19 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 3em 0; }
 }
 
 .card {
-    background: var(--panel);
+    position: relative;
+    background: linear-gradient(180deg, rgba(20,26,32,0.92), rgba(14,18,22,0.92));
     border: 1px solid var(--line);
-    border-radius: 12px;
+    border-radius: 14px;
     padding: 16px 18px;
+    backdrop-filter: blur(6px);
+    transition: transform 160ms ease, box-shadow 200ms ease, border-color 200ms ease;
+}
+
+.card:hover {
+    transform: translateY(-2px);
+    border-color: rgba(154, 123, 255, 0.5);
+    box-shadow: 0 10px 40px rgba(154, 123, 255, 0.16);
 }
 
 .card h3 { margin: 0 0 0.3em; font-size: 0.98rem; }
@@ -250,7 +400,22 @@ footer {
 footer a { color: var(--ash); }
 
 /* Motion is decoration; anybody who has asked for less of it gets none. */
+/* Motion is decoration, and anybody who has asked for less of it gets the
+   colours without the movement — not a stripped page. */
 @media (prefers-reduced-motion: reduce) {
     #field { display: none; }
     html { scroll-behavior: auto; }
+    .aurora i, h1, h2::before, .shroom, .shroom * { animation: none; }
+    .aurora { opacity: 0.35; }
 }
+
+/* The scrollbar is chrome too. */
+* { scrollbar-color: rgba(53, 240, 160, 0.35) transparent; scrollbar-width: thin; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, rgba(53,240,160,0.5), rgba(154,123,255,0.5));
+    border-radius: 10px;
+}
+::-webkit-scrollbar-track { background: transparent; }
+
+::selection { background: rgba(154, 123, 255, 0.35); color: var(--bone); }

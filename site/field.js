@@ -1,71 +1,99 @@
-// The spore field, behind every page.
+// Mycelium, growing.
 //
-// The same drawing the app shows while a device is joining a mesh, and the
-// same idea as the mark: a mesh is something that grows rather than something
-// that is configured. Spores drift, filaments appear between the ones that
-// happen to be close, and fade as they part — so the network assembles and
-// dissolves without ever settling, which is honest about what a mesh is.
+// The app draws a spore field while a device is joining a mesh, and the mark is
+// a mushroom, and the whole conceit is that a mesh is grown rather than
+// configured. So the site does not decorate with a spore field — it runs one,
+// properly: spores drift, hyphae reach out between the ones that come close,
+// thicken while they hold and wither when they part, and the colour breathes
+// through the palette rather than sitting on one note.
 //
-// Two rules carried over from the app, both learned the hard way:
+// Three rules, all of them learned somewhere else in this project:
 //
 //   Whole cycles only. The phase runs 0..2π and restarts, so anything that is
-//   not an integer multiple of it lands somewhere else when it wraps and the
-//   whole field jumps at once. On the phone that produced a teleport every
-//   nineteen seconds that read as a rendering bug.
+//   not an integer multiple of it lands somewhere else when it wraps. On the
+//   phone that produced a teleport every nineteen seconds which read as a
+//   rendering bug rather than as the animation's own doing.
 //
-//   Decoration must cost nothing anybody notices. A fixed number of points, no
-//   per-frame allocation, and nothing at all for a visitor who has asked for
-//   reduced motion.
+//   Decoration must never cost a reader anything. Fixed counts, no per-frame
+//   allocation, additive blending done by the compositor rather than by us, and
+//   the whole thing skipped for anybody who has asked for reduced motion.
+//
+//   It sits behind text that has to stay legible. Everything here is drawn at
+//   low alpha under a page that owns its own background; the psychedelia is in
+//   the movement and the colour, not in the contrast.
 
 (function () {
     const canvas = document.getElementById("field");
     if (!canvas) return;
-
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
-    if (reduced.matches) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
 
     const ctx = canvas.getContext("2d", { alpha: true });
-    const PHOSPHOR = "53, 240, 160";
-    const VIOLET = "154, 123, 255";
 
-    // A fixed seed: the same drift on every visit, so the page has a character
+    // The palette, as triples so alpha can vary per stroke. Status colours are
+    // deliberately absent: green means connected everywhere else in this
+    // project, and a background that flashes it means nothing at all.
+    const HUES = [
+        [53, 240, 160],   // phosphor
+        [154, 123, 255],  // violet
+        [90, 169, 255],   // sky
+        [255, 111, 181],  // blossom
+        [200, 230, 74],   // chartreuse
+    ];
+
+    // A fixed seed: the same growth on every visit, so the page has a face
     // rather than being different noise each time.
     let seed = 0x5eed;
-    function rnd() {
-        // xorshift, because Math.random cannot be seeded and a field that
-        // reshuffles on reload is a field nobody recognises.
+    const rnd = () => {
         seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5;
-        return ((seed >>> 0) % 100000) / 100000;
-    }
+        return ((seed >>> 0) % 1e5) / 1e5;
+    };
 
-    const COUNT = window.innerWidth < 700 ? 14 : 26;
+    const small = window.innerWidth < 700;
+    const COUNT = small ? 16 : 34;
+
     const spores = Array.from({ length: COUNT }, () => ({
         x: rnd(),
         y: rnd(),
-        r: 0.03 + rnd() * 0.10,          // how far it wanders
+        r: 0.04 + rnd() * 0.13,          // how far it wanders
         phase: rnd() * Math.PI * 2,
-        kx: 1 + Math.floor(rnd() * 2),   // integer harmonics, see above
+        kx: 1 + Math.floor(rnd() * 2),   // integer harmonics: see above
         ky: 2 + Math.floor(rnd() * 2),
-        size: 1.4 + rnd() * 2.4,
-        violet: rnd() < 0.22,
+        size: 1.3 + rnd() * 3.2,
+        hue: Math.floor(rnd() * HUES.length),
+        // How fast this one's own pulse runs, in whole cycles again.
+        beat: 1 + Math.floor(rnd() * 3),
     }));
 
-    let w = 0, h = 0, dpr = 1;
+    let w = 0, h = 0;
     function resize() {
-        dpr = Math.min(window.devicePixelRatio || 1, 2);
-        w = canvas.clientWidth = window.innerWidth;
-        h = canvas.clientHeight = window.innerHeight;
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        w = window.innerWidth;
+        h = window.innerHeight;
         canvas.width = Math.floor(w * dpr);
         canvas.height = Math.floor(h * dpr);
+        canvas.style.width = w + "px";
+        canvas.style.height = h + "px";
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
     resize();
     window.addEventListener("resize", resize, { passive: true });
 
-    // One phase for everything, 19 seconds a cycle, so nothing can drift out of
-    // step with anything else.
-    const PERIOD = 19000;
+    const PERIOD = 23000;               // one full cycle of everything
     const pts = spores.map(() => ({ x: 0, y: 0 }));
+
+    // A hypha is drawn as a curve rather than a line, because nothing that
+    // grows goes straight. The control point bows perpendicular to the pair,
+    // and the bow itself breathes — one whole cycle, so it closes.
+    function hypha(a, b, bow, alpha, rgb, width) {
+        const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+        const dx = b.x - a.x, dy = b.y - a.y;
+        ctx.strokeStyle = `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${alpha})`;
+        ctx.lineWidth = width;
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.quadraticCurveTo(mx - dy * bow, my + dx * bow, b.x, b.y);
+        ctx.stroke();
+    }
 
     function frame(ms) {
         const t = ((ms % PERIOD) / PERIOD) * Math.PI * 2;
@@ -77,39 +105,48 @@
             pts[i].y = (s.y + s.r * Math.sin(s.ky * t + s.phase)) * h;
         }
 
-        // Filaments first, so a spore is never drawn under a line it does not
-        // touch. Strongest as two pass closest, which is what makes the field
-        // look like it is connecting rather than merely moving.
-        const near = Math.min(w, h) * 0.30;
-        ctx.lineWidth = 1;
+        // Additive, so crossing hyphae brighten where they meet the way light
+        // does. This is the single thing that makes it look alive rather than
+        // drawn.
+        ctx.globalCompositeOperation = "lighter";
+
+        const near = Math.min(w, h) * (small ? 0.34 : 0.28);
         for (let i = 0; i < pts.length; i++) {
             for (let j = i + 1; j < pts.length; j++) {
-                const dx = pts[i].x - pts[j].x;
-                const dy = pts[i].y - pts[j].y;
-                const d = Math.hypot(dx, dy);
+                const d = Math.hypot(pts[i].x - pts[j].x, pts[i].y - pts[j].y);
                 if (d > near) continue;
+                // Strongest as the pair passes closest, which is what makes the
+                // field read as connecting rather than merely moving.
                 const k = 1 - d / near;
-                ctx.strokeStyle = `rgba(${PHOSPHOR}, ${0.03 + 0.14 * k * k})`;
-                ctx.beginPath();
-                ctx.moveTo(pts[i].x, pts[i].y);
-                ctx.lineTo(pts[j].x, pts[j].y);
-                ctx.stroke();
+                const rgb = HUES[(spores[i].hue + spores[j].hue) % HUES.length];
+                const bow = 0.10 * Math.sin(t + i + j);
+                hypha(pts[i], pts[j], bow, 0.05 + 0.22 * k * k, rgb, 0.6 + 1.8 * k);
             }
         }
 
         for (let i = 0; i < pts.length; i++) {
             const s = spores[i];
-            const c = s.violet ? VIOLET : PHOSPHOR;
-            ctx.fillStyle = `rgba(${c}, 0.07)`;
+            const rgb = HUES[s.hue];
+            // Each spore breathes on its own whole-cycle beat, so the field
+            // shimmers instead of pulsing in unison like a warning light.
+            const pulse = 0.55 + 0.45 * Math.sin(s.beat * t + s.phase);
+            const r = s.size * (0.85 + 0.5 * pulse);
+
+            const glow = ctx.createRadialGradient(pts[i].x, pts[i].y, 0, pts[i].x, pts[i].y, r * 9);
+            glow.addColorStop(0, `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${0.16 * pulse})`);
+            glow.addColorStop(1, `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, 0)`);
+            ctx.fillStyle = glow;
             ctx.beginPath();
-            ctx.arc(pts[i].x, pts[i].y, s.size * 3.4, 0, Math.PI * 2);
+            ctx.arc(pts[i].x, pts[i].y, r * 9, 0, Math.PI * 2);
             ctx.fill();
-            ctx.fillStyle = `rgba(${c}, 0.5)`;
+
+            ctx.fillStyle = `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${0.35 + 0.35 * pulse})`;
             ctx.beginPath();
-            ctx.arc(pts[i].x, pts[i].y, s.size, 0, Math.PI * 2);
+            ctx.arc(pts[i].x, pts[i].y, r, 0, Math.PI * 2);
             ctx.fill();
         }
 
+        ctx.globalCompositeOperation = "source-over";
         requestAnimationFrame(frame);
     }
     requestAnimationFrame(frame);
