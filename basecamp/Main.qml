@@ -86,6 +86,42 @@ Item {
         }
     }
 
+    // What a write said, shown until the next one. Kept as one line rather
+    // than a dialog: every one of these operations is small, and a modal for
+    // "name set" would be worse than the operation.
+    property string said: ""
+    property bool saidBad: false
+    property bool settingsOpen: false
+
+    // A write, and then a refresh, because every one of these changes
+    // something the status page shows. Reporting the daemon's own sentence is
+    // deliberate: it says what changed *and when it takes effect*, which is
+    // the part a UI cannot know and keeps getting wrong.
+    function callWrite(method, args) {
+        if (!haveCore) {
+            root.said = "no shrooms_core module; this view can only read"
+            root.saidBad = true
+            return
+        }
+        var t = String(callCore(method, args) || "").trim()
+        for (var i = 0; i < 2 && t.charAt(0) === '"'; i++) {
+            try { t = String(JSON.parse(t)).trim() } catch (e) { break }
+        }
+        var d = null
+        try { d = JSON.parse(t) } catch (e) { d = null }
+        if (!d) {
+            root.said = "the daemon said nothing readable"
+            root.saidBad = true
+        } else if (d.error) {
+            root.said = d.error + (d.detail ? " — " + d.detail : "")
+            root.saidBad = true
+        } else {
+            root.said = d.result ? d.result : "done"
+            root.saidBad = false
+        }
+        root.reload()
+    }
+
     function reload() {
         attempts++
 
@@ -449,6 +485,268 @@ Item {
                                 font.family: "monospace"; font.pixelSize: 10
                             }
                         }
+                    }
+                }
+            }
+
+            // --- settings -------------------------------------------------
+            //
+            // Collapsed by default. This view's job is to show a mesh, and a
+            // form is not that; but the settings it can change are exactly the
+            // ones that otherwise mean finding a terminal, so they belong here
+            // rather than nowhere (ADR-025).
+            //
+            // What is missing is deliberate and worth knowing while reading
+            // this: nothing here admits or removes a device. That needs the
+            // admin key, which the daemon has never held.
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                visible: root.haveCore
+
+                Text {
+                    text: root.settingsOpen ? "settings ▾" : "settings ▸"
+                    color: cPhosphor
+                    font.family: "monospace"; font.pixelSize: 11
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.settingsOpen = !root.settingsOpen
+                    }
+                }
+
+                Text {
+                    visible: root.said !== ""
+                    text: root.said
+                    color: root.saidBad ? cRust : cPhosphor
+                    font.family: "monospace"; font.pixelSize: 10
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+
+                ColumnLayout {
+                    visible: root.settingsOpen
+                    Layout.fillWidth: true
+                    spacing: 10
+
+                    // This device's name, as its peers see it. Prefilled from
+                    // status so the field starts as the truth rather than
+                    // empty, which reads as "unset".
+                    RowLayout {
+                        spacing: 8
+                        Layout.fillWidth: true
+                        Text {
+                            text: "name"
+                            color: cAsh
+                            font.family: "monospace"; font.pixelSize: 11
+                            Layout.preferredWidth: 70
+                        }
+                        Rectangle {
+                            Layout.fillWidth: true
+                            height: 26
+                            color: cPanel
+                            border.color: cLine
+                            TextInput {
+                                id: nameField
+                                anchors.fill: parent
+                                anchors.leftMargin: 6
+                                verticalAlignment: TextInput.AlignVCenter
+                                color: cBone
+                                font.family: "monospace"; font.pixelSize: 11
+                                selectByMouse: true
+                                text: root.st.name ? root.st.name : ""
+                                onAccepted: root.callWrite("setName", [text])
+                            }
+                        }
+                        Text {
+                            text: "set"
+                            color: cPhosphor
+                            font.family: "monospace"; font.pixelSize: 11
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.callWrite("setName", [nameField.text])
+                            }
+                        }
+                    }
+
+                    // Services, as the config writes them: "name:port", comma
+                    // separated. Shown in the form that is stored so that what
+                    // is typed here and what ends up in the file are the same
+                    // string.
+                    RowLayout {
+                        spacing: 8
+                        Layout.fillWidth: true
+                        Text {
+                            text: "services"
+                            color: cAsh
+                            font.family: "monospace"; font.pixelSize: 11
+                            Layout.preferredWidth: 70
+                        }
+                        Rectangle {
+                            Layout.fillWidth: true
+                            height: 26
+                            color: cPanel
+                            border.color: cLine
+                            TextInput {
+                                id: servicesField
+                                anchors.fill: parent
+                                anchors.leftMargin: 6
+                                verticalAlignment: TextInput.AlignVCenter
+                                color: cBone
+                                font.family: "monospace"; font.pixelSize: 11
+                                selectByMouse: true
+                                text: {
+                                    var out = []
+                                    var svcs = root.st.services || []
+                                    for (var i = 0; i < svcs.length; i++)
+                                        out.push(svcs[i].name + ":" + svcs[i].port)
+                                    return out.join(", ")
+                                }
+                                onAccepted: root.callWrite("setServices", [text])
+                            }
+                        }
+                        Text {
+                            text: "set"
+                            color: cPhosphor
+                            font.family: "monospace"; font.pixelSize: 11
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.callWrite("setServices", [servicesField.text])
+                            }
+                        }
+                    }
+
+                    // Light or relay node. Two words rather than a switch,
+                    // because what it costs is the part worth reading.
+                    RowLayout {
+                        spacing: 8
+                        Layout.fillWidth: true
+                        Text {
+                            text: "node"
+                            color: cAsh
+                            font.family: "monospace"; font.pixelSize: 11
+                            Layout.preferredWidth: 70
+                        }
+                        Text {
+                            text: "light  ~3 MB/h"
+                            color: cPhosphor
+                            font.family: "monospace"; font.pixelSize: 11
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.callWrite("setMode", ["Edge"])
+                            }
+                        }
+                        Text {
+                            text: "relay  ~20 MB/h"
+                            color: cAmber
+                            font.family: "monospace"; font.pixelSize: 11
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.callWrite("setMode", ["Core"])
+                            }
+                        }
+                        Item { Layout.fillWidth: true }
+                    }
+
+                    // One row per mesh, when there is more than one: switching
+                    // a mesh off is not leaving it, and both are here because
+                    // both otherwise mean a terminal.
+                    Repeater {
+                        model: (root.st.meshes && root.st.meshes.length > 1) ? root.st.meshes : []
+                        delegate: RowLayout {
+                            spacing: 8
+                            Layout.fillWidth: true
+                            Text {
+                                text: "mesh"
+                                color: cAsh
+                                font.family: "monospace"; font.pixelSize: 11
+                                Layout.preferredWidth: 70
+                            }
+                            Text {
+                                text: modelData.label
+                                color: cBone
+                                font.family: "monospace"; font.pixelSize: 11
+                                Layout.preferredWidth: 90
+                            }
+                            Text {
+                                text: "on"
+                                color: cPhosphor
+                                font.family: "monospace"; font.pixelSize: 11
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.callWrite("setMeshEnabled",
+                                                              [modelData.label, true])
+                                }
+                            }
+                            Text {
+                                text: "off"
+                                color: cAsh
+                                font.family: "monospace"; font.pixelSize: 11
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.callWrite("setMeshEnabled",
+                                                              [modelData.label, false])
+                                }
+                            }
+                            Text {
+                                // Two clicks, because this one cannot be
+                                // undone from here: coming back needs a new
+                                // invite from somebody who is already in.
+                                property bool armed: false
+                                text: armed ? "sure?" : "leave"
+                                color: armed ? cAmber : cRust
+                                font.family: "monospace"; font.pixelSize: 11
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        if (!parent.armed) { parent.armed = true; return }
+                                        parent.armed = false
+                                        root.callWrite("leaveMesh", [modelData.label])
+                                    }
+                                }
+                            }
+                            Item { Layout.fillWidth: true }
+                        }
+                    }
+
+                    RowLayout {
+                        spacing: 8
+                        Layout.fillWidth: true
+                        Text {
+                            text: "apply"
+                            color: cAsh
+                            font.family: "monospace"; font.pixelSize: 11
+                            Layout.preferredWidth: 70
+                        }
+                        Text {
+                            // Says what it does and what it cannot: services
+                            // change under a running daemon, a mesh coming or
+                            // going does not.
+                            text: "reload  ·  applies services; a mesh needs a restart"
+                            color: cPhosphor
+                            font.family: "monospace"; font.pixelSize: 11
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.callWrite("reload", [])
+                            }
+                        }
+                        Item { Layout.fillWidth: true }
+                    }
+
+                    Text {
+                        text: "adding or removing a device needs the admin key, so it stays in `shrooms invite`"
+                        color: cAsh
+                        font.family: "monospace"; font.pixelSize: 10
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
                     }
                 }
             }
