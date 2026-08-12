@@ -1,3 +1,12 @@
 <resources>
     <string name="app_name">Shrooms</string>
+
+    <!-- Widget. The strings say what is true rather than what is pretty:
+         "no peers yet" is a different state from "disconnected", and a widget
+         that conflates them is one you stop trusting. -->
+    <string name="widget_description">Your mesh at a glance, and a way in and out of it.</string>
+    <string name="widget_state">Mesh state</string>
+    <string name="widget_disconnected">not connected</string>
+    <string name="widget_connect">connect</string>
+    <string name="widget_disconnect">disconnect</string>
 </resources>

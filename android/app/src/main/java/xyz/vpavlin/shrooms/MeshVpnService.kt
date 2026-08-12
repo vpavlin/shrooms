@@ -53,6 +53,9 @@ class MeshVpnService : VpnService() {
      * failing to start.
      */
     private val sessionLock = Mutex()
+
+    /** The last summary pushed to the home-screen widget. See poll(). */
+    private var lastWidgetLine = ""
     private var tunnel: android.os.ParcelFileDescriptor? = null
 
     // Watches the underlying (non-VPN) network so the DNS forwarder can be told
@@ -350,6 +353,16 @@ class MeshVpnService : VpnService() {
                 val s = MeshState.snapshot.value
                 if (s.connected) notify(s.notificationLine())
 
+                // Only when the line changes. A widget redraw is cheap and a
+                // launcher redraw is not, and the summary is stable for
+                // minutes at a time — pushing it every two seconds would spend
+                // somebody's battery on a string that has not changed.
+                val line = s.notificationLine()
+                if (line != lastWidgetLine) {
+                    lastWidgetLine = line
+                    ShroomsWidget.refresh(this@MeshVpnService)
+                }
+
                 // Watchdog on the rendezvous plane.
                 //
                 // When it stops, tunnels keep carrying traffic and nothing
@@ -447,6 +460,8 @@ class MeshVpnService : VpnService() {
                 runCatching { tunnel?.close() }
                 tunnel = null
                 MeshState.disconnected()
+                lastWidgetLine = ""
+                ShroomsWidget.refresh(this@MeshVpnService)
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }

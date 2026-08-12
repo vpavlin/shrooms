@@ -35,6 +35,20 @@
             </intent-filter>
         </activity>
 
+        <!-- The mesh on a home screen: state, reachable peers, and a way in
+             and out. See ShroomsWidget. -->
+        <receiver
+            android:name=".ShroomsWidget"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="xyz.vpavlin.shrooms.WIDGET_TOGGLE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_info" />
+        </receiver>
+
         <!-- Bring the tunnel up after a reboot or an update, when consent has
              already been given. See BootReceiver. -->
         <receiver

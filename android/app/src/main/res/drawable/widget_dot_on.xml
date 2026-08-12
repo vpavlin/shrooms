@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Connected, carrying traffic. Same phosphor the app and the Basecamp view
+     use for the same meaning, because a colour that means one thing in one
+     place and another elsewhere is worse than no colour. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
+    <solid android:color="#35F0A0" />
+    <size android:width="10dp" android:height="10dp" />
+</shape>

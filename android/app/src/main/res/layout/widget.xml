@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A home-screen view of the mesh.
+     RemoteViews rather than Glance: a widget is drawn by the launcher's
+     process from a description we hand it, so it can use only the handful of
+     views that mechanism supports. Glance would be pleasanter to write and
+     costs a dependency and a Compose runtime for four lines of text. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@drawable/widget_background"
+    android:padding="14dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <ImageView
+            android:id="@+id/widget_dot"
+            android:layout_width="10dp"
+            android:layout_height="10dp"
+            android:src="@drawable/widget_dot_off"
+            android:contentDescription="@string/widget_state" />
+
+        <TextView
+            android:id="@+id/widget_name"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:textColor="#D6DDE3"
+            android:textSize="15sp"
+            android:fontFamily="monospace"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:text="@string/app_name" />
+    </LinearLayout>
+
+    <!-- The line worth glancing at: how many peers are actually reachable,
+         which is not the same as how many exist. -->
+    <TextView
+        android:id="@+id/widget_peers"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:textColor="#6B7680"
+        android:textSize="12sp"
+        android:fontFamily="monospace"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:text="@string/widget_disconnected" />
+
+    <Space
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <TextView
+        android:id="@+id/widget_action"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textColor="#35F0A0"
+        android:textSize="13sp"
+        android:fontFamily="monospace"
+        android:gravity="center"
+        android:paddingTop="8dp"
+        android:paddingBottom="6dp"
+        android:text="@string/widget_connect" />
+</LinearLayout>
