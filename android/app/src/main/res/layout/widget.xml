@@ -52,10 +52,17 @@
         android:ellipsize="end"
         android:text="@string/widget_disconnected" />
 
-    <Space
+    <!-- A LinearLayout as the spacer, not a Space or a View.
+         RemoteViews inflates only a fixed set of classes — the launcher builds
+         these views in its own process from a description we hand over — and
+         Space is not one of them. An unsupported view does not degrade: the
+         whole widget fails with "Can't load widget", which says nothing about
+         which line caused it. -->
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1" />
+        android:layout_weight="1"
+        android:orientation="horizontal" />
 
     <TextView
         android:id="@+id/widget_action"

@@ -29,39 +29,7 @@ class ShroomsWidget : AppWidgetProvider() {
         for (id in ids) mgr.updateAppWidget(id, render(ctx))
     }
 
-    override fun onReceive(ctx: Context, intent: Intent) {
-        super.onReceive(ctx, intent)
-        if (intent.action == ACTION_TOGGLE) toggle(ctx)
-    }
-
-    /**
-     * Connect, or disconnect, from a tap on the widget.
-     *
-     * VpnService.prepare needs an Activity to show its consent dialog, and a
-     * widget has none — so the first connection on a device that has never
-     * granted it opens the app instead of failing silently. Every connection
-     * after that happens without leaving the home screen, which is the point.
-     */
-    private fun toggle(ctx: Context) {
-        if (Mobile.running()) {
-            ctx.startService(
-                Intent(ctx, MeshVpnService::class.java).setAction(MeshVpnService.ACTION_DISCONNECT)
-            )
-            return
-        }
-        if (VpnService.prepare(ctx) != null || !Mobile.configured(ctx.filesDir.absolutePath)) {
-            ctx.startActivity(
-                Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            )
-            return
-        }
-        ctx.startForegroundService(
-            Intent(ctx, MeshVpnService::class.java).setAction(MeshVpnService.ACTION_CONNECT)
-        )
-    }
-
     companion object {
-        private const val ACTION_TOGGLE = "xyz.vpavlin.shrooms.WIDGET_TOGGLE"
 
         /**
          * Redraw every widget from the current state.
@@ -72,7 +40,7 @@ class ShroomsWidget : AppWidgetProvider() {
          * than no widget.
          */
         fun refresh(ctx: Context) {
-            val mgr = AppWidgetManager.getInstance(ctx) ?: return
+            val mgr = runCatching { AppWidgetManager.getInstance(ctx) }.getOrNull() ?: return
             val ids = mgr.getAppWidgetIds(ComponentName(ctx, ShroomsWidget::class.java))
             if (ids.isEmpty()) return
             val views = render(ctx)
@@ -86,7 +54,12 @@ class ShroomsWidget : AppWidgetProvider() {
             // parsing status again. The widget provider runs in the app's own
             // process, so this is the same state the app itself shows — a
             // second parser here would be a second thing to keep in step.
-            val running = Mobile.running()
+            //
+            // Guarded, because this can run in a process the launcher woke for
+            // a broadcast, before anything has loaded the native library. A
+            // throw here is not a blank line on the widget: it is the whole
+            // widget failing to appear, with a message that names nothing.
+            val running = runCatching { Mobile.running() }.getOrDefault(false)
             val snap = if (running) MeshState.snapshot.value else null
 
             views.setImageViewResource(
@@ -114,22 +87,53 @@ class ShroomsWidget : AppWidgetProvider() {
             // The action line toggles; everything else opens the app, because
             // the graph and the roster are what you want when the summary is
             // not enough.
-            views.setOnClickPendingIntent(R.id.widget_action, togglePending(ctx))
+            views.setOnClickPendingIntent(R.id.widget_action, actionPending(ctx, running))
             views.setOnClickPendingIntent(R.id.widget_name, openPending(ctx))
             views.setOnClickPendingIntent(R.id.widget_peers, openPending(ctx))
             return views
         }
 
-        private fun togglePending(ctx: Context): PendingIntent =
-            PendingIntent.getBroadcast(
-                ctx, 1,
-                Intent(ctx, ShroomsWidget::class.java).setAction(ACTION_TOGGLE),
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-            )
+        /**
+         * What the action line does, decided while drawing it.
+         *
+         * Aimed at the service rather than back at this receiver. The receiver
+         * has to be exported for the system to deliver APPWIDGET_UPDATE, and a
+         * custom action on an exported receiver is something any other app can
+         * send; the service is not exported, so a PendingIntent to it is
+         * usable by whoever holds it and by nobody else.
+         *
+         * VpnService.prepare needs an Activity to show its consent dialog and
+         * a widget has none, so the first connection on a device that has
+         * never granted it opens the app instead of failing silently. Every
+         * connection after that happens without leaving the home screen, which
+         * is the point of having this.
+         */
+        private fun actionPending(ctx: Context, running: Boolean): PendingIntent {
+            val flags = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            val ready = runCatching {
+                VpnService.prepare(ctx) == null && Mobile.configured(ctx.filesDir.absolutePath)
+            }.getOrDefault(false)
+
+            return when {
+                running -> PendingIntent.getService(
+                    ctx, 1,
+                    Intent(ctx, MeshVpnService::class.java)
+                        .setAction(MeshVpnService.ACTION_DISCONNECT),
+                    flags,
+                )
+                ready -> PendingIntent.getForegroundService(
+                    ctx, 2,
+                    Intent(ctx, MeshVpnService::class.java)
+                        .setAction(MeshVpnService.ACTION_CONNECT),
+                    flags,
+                )
+                else -> openPending(ctx)
+            }
+        }
 
         private fun openPending(ctx: Context): PendingIntent =
             PendingIntent.getActivity(
-                ctx, 2,
+                ctx, 3,
                 Intent(ctx, MainActivity::class.java),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )

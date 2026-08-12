@@ -37,12 +37,16 @@
 
         <!-- The mesh on a home screen: state, reachable peers, and a way in
              and out. See ShroomsWidget. -->
+        <!-- Exported, because it has to be: the system delivers
+             APPWIDGET_UPDATE to it, and a provider it cannot reach is a widget
+             that will not load. There is no custom action here for anything
+             else to abuse — the buttons carry PendingIntents aimed straight at
+             the service, which is not exported. -->
         <receiver
             android:name=".ShroomsWidget"
-            android:exported="false">
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-                <action android:name="xyz.vpavlin.shrooms.WIDGET_TOGGLE" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
