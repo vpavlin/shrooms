@@ -58,6 +58,7 @@ func TestTwoMeshesAreIndependent(t *testing.T) {
 		auth  *cred.Authority
 		ms    *state.MeshState
 		c     *cred.Credential
+		netID string
 		block string
 	}
 	var all []resolved
@@ -98,8 +99,19 @@ func TestTwoMeshesAreIndependent(t *testing.T) {
 			t.Errorf("mesh %q: credential names another tunnel key", m.Label)
 		}
 
-		all = append(all, resolved{mesh: m, auth: auth, ms: ms, c: c,
-			block: v4.Block(netID).String()})
+		all = append(all, resolved{mesh: m, auth: auth, ms: ms, c: c, netID: netID})
+	}
+
+	// Blocks across the set, as the daemon does: two network ids land on the
+	// same preferred block about once in sixteen, and assigning per mesh would
+	// make this test fail that often for a reason that is not this test's.
+	ids := make([]string, 0, len(all))
+	for _, r := range all {
+		ids = append(ids, r.netID)
+	}
+	blocks := v4.Blocks(ids)
+	for i := range all {
+		all[i].block = blocks[all[i].netID].String()
 	}
 
 	a, b := all[0], all[1]
