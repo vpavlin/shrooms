@@ -1,6 +1,15 @@
 # 024. Ask the router for a way in
 
-**Status:** accepted; `internal/portmap` built, wiring in progress
+**Status:** accepted; built, and proven on real infrastructure the first time it
+ran.
+
+On 2026-08-12 a laptop behind a domestic NAT asked its router, was granted
+`178.213.45.235:51821` over NAT-PMP, and announced it. A phone on mobile data —
+behind carrier-grade NAT, with no publicly reachable member on that mesh at all
+— dialled it and established a direct tunnel. Both meshes, no relay. That is the
+case the mesh could not previously do without somebody editing a router page,
+and it is worth being precise about what did it: this is not hole punching. The
+router was asked for a mapping and gave one.
 
 ## Context
 

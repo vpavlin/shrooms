@@ -966,8 +966,16 @@ data reached a peer through a relay on a public VPS, over the real internet —
 discovered from the roster, so nothing is told where one is. Relaying is per
 mesh: a mesh joined by invite has no relay until a member is told to be one.
 
-**Punching between two NATed peers is still unproven**, and the reasons it is
-hard are now clearer than they were:
+**A NATed node can now be reached from outside without a relay**, as of
+2026-08-12 — by asking the router rather than by punching. A laptop behind a
+domestic NAT was granted a mapping over NAT-PMP, announced it, and a phone on
+mobile data dialled it directly, on a mesh with no publicly reachable member
+([ADR-024](docs/adr/024-ask-the-router.md)). Whether your router answers is
+between you and your router; when it does not, nothing is worse than before.
+
+**Punching between two NATed peers is still unproven**, and it is a different
+mechanism from the above. The reasons it is hard are now clearer than they
+were:
 
 - *Both ends must choose the same relay, independently.* A relay forwards by
   destination WireGuard key and only for peers that have registered with it, and
