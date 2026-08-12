@@ -139,6 +139,10 @@ type Mesh struct {
 	// this "new to it" would be true every time it came back round.
 	grants map[[32]byte]time.Time
 
+	// roams counts how often each peer's endpoint has been corrected lately,
+	// so a losing fight can be conceded rather than repeated forever.
+	roams map[string]roamFight
+
 	// services is what each peer says it offers (ADR-023), keyed by peer id.
 	services map[string]peerServices
 
@@ -1265,7 +1269,15 @@ func (m *Mesh) syncPeers() error {
 		// continent, because a relayed packet had rewritten the endpoint and
 		// nothing ever wrote it back.
 		if peer.Endpoint != "" && haveStats && st.Endpoint != "" && st.Endpoint != peer.Endpoint {
-			drifted = true
+			if m.yieldRoam(p.ID(), p.Name, now) {
+				// Stop fighting and keep what the device learned. See
+				// yieldRoam: pulling it back every few seconds achieved
+				// nothing except a rewrite every few seconds.
+				peer.Endpoint = ""
+				peer.KeepEndpoint = true
+			} else {
+				drifted = true
+			}
 		}
 
 		out = append(out, peer)
@@ -1279,6 +1291,68 @@ func (m *Mesh) syncPeers() error {
 	}
 	m.refreshHosts()
 	return nil
+}
+
+// RoamFights is how many times an endpoint may be pulled back before this node
+// accepts where WireGuard has roamed it to.
+const RoamFights = 3
+
+// RoamTruce is how long to leave a peer's endpoint alone after conceding.
+const RoamTruce = 2 * time.Minute
+
+// yieldRoam decides whether to keep correcting an endpoint or accept the one
+// the device learned, and reports true when it is time to stop.
+//
+// Correcting drift is right when it is a one-off: WireGuard roams a peer to the
+// source of any authenticated packet, so a single relayed reply can move a
+// tunnel onto a relay and leave it there, which is the bug the drift check was
+// written for.
+//
+// It is wrong when the peer's source address genuinely keeps changing. A phone
+// behind carrier NAT is given a different source port often enough that the
+// address we probed and the address its packets arrive from never agree, so
+// every sync saw drift, rewrote the endpoint, and the next packet moved it
+// again — a rewrite every few seconds, for hours, visible in the log as an
+// unexplained repair loop on a mesh where nothing was wrong.
+//
+// After a few attempts this concedes. What the device learned is not a guess:
+// WireGuard only roams to an address that sent a packet it could authenticate,
+// which is stronger evidence than a probe reply. The truce expires, so a peer
+// that settles is corrected again if it ever needs to be.
+func (m *Mesh) yieldRoam(id, name string, now time.Time) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.roams == nil {
+		m.roams = map[string]roamFight{}
+	}
+	f := m.roams[id]
+	if now.Before(f.until) {
+		return true
+	}
+	// A peer that stopped drifting starts again from zero, so an occasional
+	// correction never accumulates into a concession.
+	if !f.last.IsZero() && now.Sub(f.last) > RoamTruce {
+		f.count = 0
+	}
+	f.count++
+	f.last = now
+	if f.count < RoamFights {
+		m.roams[id] = f
+		return false
+	}
+	f.count = 0
+	f.until = now.Add(RoamTruce)
+	m.roams[id] = f
+	m.log.Info("keeping the endpoint WireGuard learned; ours kept being overwritten",
+		"peer", name, "for", RoamTruce)
+	return true
+}
+
+// roamFight is how often one peer's endpoint has been corrected lately.
+type roamFight struct {
+	count int
+	last  time.Time
+	until time.Time
 }
 
 // refreshHosts keeps /etc/hosts in step with the roster, when asked to.
