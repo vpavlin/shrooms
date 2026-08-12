@@ -1,6 +1,11 @@
 package state
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+
+	"github.com/vpavlin/shrooms/internal/identity"
+)
 
 const otherKey = "D4R5TBDQ2HDSIUFIXZAGYDBSU2GU3PE4M52POFBUBOWHUZEWYSCA"
 
@@ -157,5 +162,55 @@ func TestMeshesSurviveAWriteAndRead(t *testing.T) {
 	}
 	if len(m.AdminKeys) != 1 || len(m.Services) != 1 {
 		t.Errorf("admin keys %d, services %d", len(m.AdminKeys), len(m.Services))
+	}
+}
+
+// Every per-mesh key must survive a write and a read, because the ones that
+// silently did not were unusable in exactly the way that is hardest to notice:
+// the ADRs described them, the top-level form worked, and a mesh added with
+// prefixed keys quietly ignored them.
+func TestEveryPerMeshKeyRoundTrips(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+
+	nk, err := identity.NewNetworkKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := DefaultConfig()
+	cfg.MeshSet = map[string]Mesh{"shared": {
+		Label:            "shared",
+		NetworkKey:       nk.String(),
+		Relay:            true,
+		Disabled:         true,
+		Services:         []string{"immich:2283"},
+		AnnounceServices: true,
+		AnnounceBound:    true,
+	}}
+	if err := WriteConfig(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	back, err := LoadConfigUnvalidated(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, ok := back.MeshSet["shared"]
+	if !ok {
+		t.Fatal("the mesh did not survive the round trip")
+	}
+	switch {
+	case m.NetworkKey != nk.String():
+		t.Error("key was lost")
+	case !m.Relay:
+		t.Error("relay was lost")
+	case !m.Disabled:
+		t.Error("enabled = false was lost")
+	case len(m.Services) != 1:
+		t.Error("services were lost")
+	case !m.AnnounceServices:
+		t.Error("announce_services was lost")
+	case !m.AnnounceBound:
+		t.Error("announce_bound was lost")
 	}
 }

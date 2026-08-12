@@ -198,6 +198,10 @@ func (c *Config) setMeshField(label, field, val string, line int) error {
 		m.Disabled = unquote(val) == "false"
 	case "services":
 		m.Services = parseArray(val)
+	case "announce_services":
+		m.AnnounceServices = unquote(val) == "true"
+	case "announce_bound":
+		m.AnnounceBound = unquote(val) == "true"
 	default:
 		return fmt.Errorf("line %d: unknown mesh option %q", line, field)
 	}

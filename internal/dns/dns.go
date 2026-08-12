@@ -4,10 +4,17 @@
 // does not exist on Android — the platform this is ultimately for, and the one
 // where domain-scoped resolution is a first-class API rather than a fight.
 //
-// The rule that matters is what it REFUSES to do. It is authoritative for one
-// suffix and answers nothing else: no forwarding, no recursion, no upstream. A
-// VPN that quietly becomes the system resolver is a surprise nobody asked for
-// and a privacy leak besides, since every query you make would traverse it.
+// The rule that matters is what it REFUSES to do: it is authoritative for one
+// suffix and invents nothing outside it. A VPN that quietly becomes the system
+// resolver is a surprise nobody asked for and a privacy leak besides, since
+// every query you make would traverse it.
+//
+// One exception, and it is the platform's doing rather than a change of mind.
+// Android has no split-DNS: a VpnService that sets a resolver receives *every*
+// query the device makes, so refusing the ones outside our suffix would break
+// the device's name resolution entirely. There the server forwards them
+// untouched to the resolvers of the network underneath (see Upstream), which
+// is the least this can do and still leave the phone working.
 package dns
 
 import (

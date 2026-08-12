@@ -1,0 +1,549 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shrooms — dev notes</title>
+<meta name="description" content="The architecture in three planes, the package map, every architecture decision record, how to build and test, and exactly what is proven and what is not.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="field"></canvas>
+
+<div class="page">
+<nav>
+    <span class="mark">shrooms</span>
+    <a href="index.html">what &amp; why</a>
+    <a href="install.html">install</a>
+    <a href="guides.html">guides</a>
+    <a href="dev.html" class="here">dev notes</a>
+    <span class="spacer"></span>
+    <a href="https://github.com/vpavlin/shrooms">github</a>
+</nav>
+
+<header class="hero">
+    <h1>How it works,<br>and why it was<br>built that way.</h1>
+    <p class="lede">
+        The architecture in three planes, the package map, every decision on
+        record with its reasoning, how to build and test it, and a plain list of
+        what has been proven on real infrastructure and what has only been
+        written.
+    </p>
+    <p class="sub">
+        Go, cgo, userspace WireGuard, Linux and Android.
+    </p>
+    <div class="cta">
+        <a class="primary" href="#adr">The decision record</a>
+        <a href="#build">Building</a>
+        <a href="#proven">What is proven</a>
+    </div>
+</header>
+
+<h2 id="planes">The three planes</h2>
+
+<p>
+    The front page says they are deliberately separate. Here is what each one
+    actually is, because the separation is the whole design and most of the
+    confusion about mesh VPNs comes from conflating them.
+</p>
+
+<div class="grid">
+    <div class="card t1">
+        <h3>Data</h3>
+        <p>Userspace WireGuard, the real protocol. One WireGuard device per
+        mesh, on its own interface and its own UDP port. Direct peer to peer
+        where NAT allows, through a relay you run where it does not.</p>
+    </div>
+    <div class="card t2">
+        <h3>Rendezvous</h3>
+        <p>Logos Delivery pub/sub, used intermittently: cold start, network
+        change, partition repair. Rotating content topics that stay on one
+        shard. It never carries traffic.</p>
+    </div>
+    <div class="card t3">
+        <h3>Control</h3>
+        <p>Announcements, revocations, credentials, service lists. Signed by the
+        publishing device, encrypted to the mesh, padded to a fixed size, and
+        carried over the rendezvous plane.</p>
+    </div>
+</div>
+
+<h3>Data: one socket, two protocols</h3>
+
+<p>
+    <code>internal/wg</code> embeds <code>wireguard-go</code> and shares its UDP
+    socket with our own control protocol. This is not an optimisation. NAT
+    traversal and the tunnel <strong>must</strong> use the same socket, or the
+    reflexive address you discover is not the port your data actually arrives
+    on and a hole punch lands on the wrong mapping. Kernel WireGuard owns its
+    socket and will not share it, which is the reason the data plane is in
+    userspace at all
+    (<a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/002-userspace-not-kernel-wireguard.md">ADR-002</a>).
+</p>
+
+<p>
+    The demux follows Tailscale's magicsock discriminators and separates on the
+    first two bytes:
+</p>
+
+<pre><code>WireGuard : msg[0] in 0x01..0x04 and msg[1:4] == 0x000000
+disco     : msg[0] == 0x54          <span class="c"># Tailscale's</span>
+STUN      : msg[1] == 0x01 with the magic cookie at offset 4
+
+<span class="c"># ours therefore starts with a byte &gt; 0x04 and != 0x54</span></code></pre>
+
+<p>
+    It wraps the <code>ReceiveFunc</code>s returned by <code>StdNetBind</code>
+    and filters in place, following NetBird's ICEBind. That preserves batching
+    and GSO/GRO offload — the data path never goes through a channel, which is
+    what makes go-libp2p's shared-conn approach unsuitable here
+    (<a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/001-wireguard-not-libp2p-streams.md">ADR-001</a>).
+</p>
+
+<p>
+    On that shared socket, <code>internal/disco</code> sends small probes.
+    WireGuard holds exactly one endpoint per peer, so you cannot spray
+    handshakes at five candidates and let the best win — you would be
+    overwriting the endpoint under yourself. Probe with cheap packets first,
+    then set the endpoint that answered
+    (<a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/009-probe-before-setting-endpoint.md">ADR-009</a>).
+    Every pong echoes the source address it was observed at, so with N peers you
+    get N-1 vantage points on your own public address and need no STUN server.
+</p>
+
+<div class="note">
+    <p>Probes are <strong>encrypted</strong>, not merely authenticated, under a
+    key derived from the network key. Authenticating alone would leave the
+    sender's device public key in cleartext on every packet — a stable 32-byte
+    identifier correlating a device across every network it joins. Every packet
+    is the same size regardless of type, so an observer cannot tell a ping from
+    a pong by length.</p>
+</div>
+
+<h3>Rendezvous: rotating topics, one shard</h3>
+
+<p>
+    The content topic is derived from the network key and a time epoch, so an
+    observer without the key cannot find the mesh's traffic, and linkability is
+    bounded to one epoch. The trick that makes rotation cheap is that
+    autosharding hashes only the application and version fields of the content
+    topic:
+</p>
+
+<pre><code>shard = sha256(application ‖ version) mod numShardsInCluster</code></pre>
+
+<p>
+    So rotating the <code>{name}</code> field changes the content topic while
+    leaving the shard, and therefore the underlying gossipsub topic, fixed.
+    Peers stay in one mesh and no subscribe/unsubscribe traffic announces the
+    rotation to neighbours. Rotating the pubsub topic instead would emit visible
+    subscription churn and drop the mesh into a fresh anonymity set of one
+    (<a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/006-rotating-rendezvous-topics.md">ADR-006</a>).
+</p>
+
+<p>
+    Rendezvous is used, not depended on. Once tunnels exist they sustain
+    themselves, because WireGuard relearns a peer's endpoint from any correctly
+    authenticated packet. The announce loop exists to bootstrap, to repair after
+    a move, and to carry membership changes
+    (<a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/003-waku-as-rendezvous-not-control-plane.md">ADR-003</a>).
+</p>
+
+<h3>Control: signed inside the ciphertext</h3>
+
+<p>
+    Every control message is signed by the publishing device and encrypted under
+    a per-epoch key derived from the network key. The signature lives
+    <em>inside</em> the ciphertext: the relay layer uses StrictNoSign at libp2p
+    to preserve what weak sender anonymity exists, and signing outside would
+    undo that. Messages are padded to a fixed size, so "device came online" and
+    "device changed IP" are indistinguishable from a steady-state heartbeat on
+    the wire.
+</p>
+
+<p>
+    An announce is 512 or 1024 bytes every 45 s — the larger size once a mesh
+    uses credentials, which do not fit beside the endpoints in the smaller one.
+    A relay is not a separate message type: it is a flag on the ordinary
+    announce, so relays inherit endpoint validation and path probing unchanged
+    and there are no relay addresses to distribute
+    (<a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/014-relay-discovery-via-announce.md">ADR-014</a>).
+</p>
+
+<h2 id="addressing">Derived addressing</h2>
+
+<p>
+    There is no IPAM, no DHCP and no allocator, because there is nothing to
+    allocate. Both halves of the address are a hash:
+</p>
+
+<pre><code>prefix = fd || SHA256("mesh/v1/ula"  || NK)[0:5]           <span class="c">→ a /48</span>
+addr   = prefix : SHA256("mesh/v1/addr" || device_pub)[0:10]  <span class="c">→ /128</span></code></pre>
+
+<p>
+    The prefix comes from the network key, the host bits from the device key.
+    Every node computes every other node's address locally from a public key it
+    already holds, which also makes WireGuard's <code>AllowedIPs</code>
+    self-enforcing with zero shared state. No allocation messages, no conflict
+    resolution, no leases, no split-brain when two nodes join at once. Collision
+    probability across ten devices is about 4×10⁻²³
+    (<a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/005-derived-addressing.md">ADR-005</a>).
+</p>
+
+<p>
+    Eighty host bits are ample because <strong>the address is not an
+    authenticator</strong>. cjdns and Yggdrasil commit 113–120 bits because
+    their addresses <em>are</em> the security boundary; here authentication
+    comes from WireGuard's handshake and the admin-signed credential, and the
+    address is only a stable, collision-free name. The prefix is inside
+    <code>fd00::/8</code> per RFC 4193 — deliberately not <code>fc00::/8</code>,
+    which cjdns squats, nor <code>0200::/7</code>, which is Yggdrasil's.
+</p>
+
+<div class="warn">
+    <p><strong>What it costs.</strong> An address is a function of identity, so
+    it changes when identity changes. Rotating the network key re-addresses
+    every node; losing <code>/var/lib/shrooms</code> gives that node a new
+    address and makes it a stranger to every peer. There is also no
+    human-friendly addressing — names come from the announce and are advisory —
+    and anyone holding a device's public key can compute its address. That last
+    one is not a leak, since the address was never secret, but it is worth
+    knowing.</p>
+    <p>Because the host bits are a hash of the device key, reusing one identity
+    across two meshes would carry the same 80-bit suffix into both and let
+    anyone in either correlate you. That is why each mesh gets its own identity
+    rather than sharing one
+    (<a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/015-multiple-meshes-one-daemon.md">ADR-015</a>).</p>
+</div>
+
+<p>
+    The overlay is IPv6-only, because derived addressing needs 128 bits. That
+    breaks browsers on v4-only networks: Chromium stops sending AAAA queries
+    when its IPv6 probe fails, asks only for A records, gets a correct empty
+    answer and gives up. So <code>internal/v4</code> gives each peer a synthetic
+    IPv4 alias and translates at the tun. The alias never leaves the machine, is
+    not announced, and two devices may pick different aliases for the same peer
+    without anything noticing — which is what keeps it from needing the
+    coordination this project exists to avoid
+    (<a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/021-synthetic-ipv4.md">ADR-021</a>).
+</p>
+
+<h2 id="packages">The package map</h2>
+
+<p>
+    One binary, <code>cmd/shrooms</code>, with subcommands: daemon, CLI and
+    relay mode. Everything below it is in <code>internal/</code>, and everything
+    in <code>internal/</code> is platform-neutral — no netlink, no
+    <code>/proc</code>, no systemd assumptions outside <code>cmd/</code> and
+    <code>packaging/</code>. That rule is why the Android port was cheap: the
+    app runs the same core through gomobile rather than a reimplementation
+    (<a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/016-android-reuses-the-go-core.md">ADR-016</a>).
+</p>
+
+<table>
+<tr><th>Package</th><th>What it is</th></tr>
+<tr><td><code>mesh</code></td><td>Wires Delivery discovery to the WireGuard data plane. The announce loop that bootstraps, repairs after a move, and carries membership changes.</td></tr>
+<tr><td><code>wg</code></td><td>Embeds wireguard-go and shares its UDP socket with the control protocol, filtering in place so batching and GSO/GRO survive.</td></tr>
+<tr><td><code>disco</code></td><td>Socket-level discovery: small encrypted probes over the same socket as WireGuard, for liveness and for reflexive address discovery.</td></tr>
+<tr><td><code>control</code></td><td>The control-plane message types: signed inside the ciphertext, encrypted per epoch, padded to a fixed size.</td></tr>
+<tr><td><code>topic</code></td><td>Derives the rotating rendezvous content topics, and computes the shard they land on independently of the library.</td></tr>
+<tr><td><code>waku</code></td><td>The cgo binding over liblogosdelivery. Targets the packaged build, whose API differs from upstream master in ways that break compilation rather than behaviour.</td></tr>
+<tr><td><code>rendezvous</code></td><td>Adapts a Delivery node to the interfaces the protocol packages define, so <code>invite</code> can stay free of cgo and stay testable without a node.</td></tr>
+<tr><td><code>identity</code></td><td>Device keys, the network key, and the derived addressing scheme. Two keypairs per device: Ed25519 for signing and addressing, X25519 for the tunnel.</td></tr>
+<tr><td><code>cred</code></td><td>Separates authority from participation: admin keys, credentials and the checks over them. No wire format and no I/O — it changes nothing that runs until something calls it.</td></tr>
+<tr><td><code>invite</code></td><td>One-time enrolment tokens. Crypto and wire format only: no Delivery, no files, no clock beyond what it is handed.</td></tr>
+<tr><td><code>relay</code></td><td>A DERP-style packet reflector keyed by WireGuard public key. It never terminates a tunnel, holds no session key, and cannot read what it forwards.</td></tr>
+<tr><td><code>portmap</code></td><td>Asks the local router for an inbound UDP mapping. PCP first, NAT-PMP as fallback, both on UDP 5351; UPnP-IGD deliberately not implemented.</td></tr>
+<tr><td><code>dns</code></td><td>Serves names for the mesh and nothing else. Authoritative for one suffix, and the rule that matters is what it refuses to do.</td></tr>
+<tr><td><code>hosts</code></td><td>Renders and applies <code>/etc/hosts</code> entries. The zero-dependency fallback, deliberately not the long-term answer.</td></tr>
+<tr><td><code>service</code></td><td>Publishes local ports under their own names, forwarding from the overlay address to loopback. A forwarder, not a proxy: bytes are copied, TLS is not terminated.</td></tr>
+<tr><td><code>listeners</code></td><td>Finds what is already bound to this device's mesh addresses, so it can be announced. Only sockets on exactly a mesh address count.</td></tr>
+<tr><td><code>v4</code></td><td>A synthetic IPv4 address per peer, translated before WireGuard sees it. Purely local; no peer has to agree to it.</td></tr>
+<tr><td><code>state</code></td><td>On-disk config and device state, separated by who writes them: <code>config.toml</code> is human-edited, <code>state.json</code> is daemon-owned.</td></tr>
+</table>
+
+<h2 id="adr">The decision record</h2>
+
+<p>
+    <strong>This is where the project's reasoning lives.</strong> The code says
+    what happens; these say why, and what would change our mind. Each is one
+    page — context, decision, consequences — and most rest on research that
+    would otherwise be lost: measured throughput figures, NAT prevalence data,
+    source-level findings in nwaku. Where a number appears, its source is named.
+</p>
+
+<p>
+    If you are going to read one thing before touching the code, read these.
+    Several of them exist specifically to record a decision <em>not</em> to
+    build something, which is the part of a design that is otherwise invisible.
+</p>
+
+<table>
+<tr><th>#</th><th>Decision</th><th>Status</th></tr>
+<tr><td>001</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/001-wireguard-not-libp2p-streams.md">WireGuard for the data plane, not libp2p streams</a></td><td>accepted</td></tr>
+<tr><td>002</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/002-userspace-not-kernel-wireguard.md">Userspace WireGuard, not the kernel module</a></td><td>accepted</td></tr>
+<tr><td>003</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/003-waku-as-rendezvous-not-control-plane.md">Waku as rendezvous, not a live control plane</a></td><td>accepted</td></tr>
+<tr><td>004</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/004-public-fleet-not-own-cluster.md">The public logos.dev fleet, not our own cluster</a></td><td>accepted</td></tr>
+<tr><td>005</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/005-derived-addressing.md">Overlay addresses derived from keys, no IPAM</a></td><td>accepted</td></tr>
+<tr><td>006</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/006-rotating-rendezvous-topics.md">Rotating rendezvous topics on a stable shard</a></td><td>accepted</td></tr>
+<tr><td>007</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/007-separate-device-and-wireguard-keys.md">Separate device and WireGuard keys</a></td><td>accepted</td></tr>
+<tr><td>008</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/008-bearer-network-key-for-v1.md">A bearer network key for v1</a></td><td>accepted, temporary</td></tr>
+<tr><td>009</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/009-probe-before-setting-endpoint.md">Probe candidates before setting a WireGuard endpoint</a></td><td>accepted</td></tr>
+<tr><td>010</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/010-ship-a-container-not-a-binary.md">Ship a container image, not a binary</a></td><td>accepted</td></tr>
+<tr><td>011</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/011-no-mixnet.md">No mixnet in the data path</a></td><td>accepted</td></tr>
+<tr><td>012</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/012-relay-hosting.md">Who runs the relay (you may not need a VPS)</a></td><td>accepted</td></tr>
+<tr><td>013</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/013-name-resolution.md">Name resolution: hosts file now, DNS server next</a></td><td>accepted</td></tr>
+<tr><td>014</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/014-relay-discovery-via-announce.md">Relay discovery: a flag on the announce, not a separate message</a></td><td>accepted</td></tr>
+<tr><td>015</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/015-multiple-meshes-one-daemon.md">Multiple meshes in one daemon</a></td><td>accepted</td></tr>
+<tr><td>016</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/016-android-reuses-the-go-core.md">Android reuses the Go core</a></td><td>accepted</td></tr>
+<tr><td>017</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/017-invite-tokens.md">Invite tokens</a></td><td>accepted, built</td></tr>
+<tr><td>018</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/018-credentials-instead-of-a-shared-key.md">Credentials instead of a shared key</a></td><td>accepted, mostly built</td></tr>
+<tr><td>019</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/019-service-addresses.md">An address per service</a></td><td>proposed; the name router is built</td></tr>
+<tr><td>020</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/020-membership-is-a-seam.md">Membership is a seam</a></td><td>accepted</td></tr>
+<tr><td>021</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/021-synthetic-ipv4.md">A synthetic IPv4 address per peer</a></td><td>accepted; translator built</td></tr>
+<tr><td>022</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/022-keycard-for-the-admin-key.md">A Keycard for the admin key</a></td><td>proposed; seam built, card blocked on a key-type decision</td></tr>
+<tr><td>023</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/023-announcing-services.md">Announcing services</a></td><td>accepted; built</td></tr>
+<tr><td>024</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/024-ask-the-router.md">Ask the router for a way in</a></td><td>accepted; built and proven</td></tr>
+<tr><td>025</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/025-control-from-a-desktop-app.md">Control from a desktop app</a></td><td>accepted; settings built, admission deliberately not</td></tr>
+<tr><td>026</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/026-announce-what-is-bound.md">Announce what is bound to the mesh address</a></td><td>accepted; built, off by default</td></tr>
+</table>
+
+<p>
+    Alongside them:
+    <a href="https://github.com/vpavlin/shrooms/blob/master/DESIGN.md">DESIGN.md</a>
+    for the architecture and the research behind each decision,
+    <a href="https://github.com/vpavlin/shrooms/blob/master/PROTOTYPE.md">PROTOTYPE.md</a>
+    for the build plan and what each milestone proved,
+    <a href="https://github.com/vpavlin/shrooms/blob/master/SECURITY.md">SECURITY.md</a>
+    for what is protected, what leaks and what is deferred, and
+    <a href="https://github.com/vpavlin/shrooms/blob/master/TESTING.md">TESTING.md</a>
+    for the scenarios containers cannot honestly reproduce.
+</p>
+
+<h2 id="build">Building and testing</h2>
+
+<p>
+    Go 1.23 or later with cgo and a C toolchain. The core links
+    <strong>liblogosdelivery</strong>, for which there is no canonical
+    distribution, so the first step is to get a copy:
+</p>
+
+<pre><code>$ git clone https://github.com/vpavlin/shrooms &amp;&amp; cd shrooms
+
+$ make deps-release       <span class="c"># download a prebuilt copy — works anywhere</span>
+$ make shrooms            <span class="c"># -> bin/shrooms</span></code></pre>
+
+<p>
+    <code>make deps-basecamp</code> reuses the copy Logos Basecamp installs, and
+    <code>make LD_DIR=/path/to/lib</code> points at your own build.
+    <code>make deps</code> builds it from source in a pinned container and
+    <strong>currently fails</strong>, upstream, at both master and the revision
+    the Android bindings pin — which is why <code>deps-release</code> exists at
+    all. Every target that links the library runs <code>check-lib</code> first
+    and tells you to run <code>deps-release</code> rather than failing at the
+    linker.
+</p>
+
+<table>
+<tr><th>Target</th><th>What it does, and why it is shaped that way</th></tr>
+<tr><td><code>make shrooms</code></td><td>Builds the single binary — daemon, CLI and relay mode — into <code>bin/</code>, with the version stamped from <code>git describe</code>.</td></tr>
+<tr><td><code>make test</code></td><td>The whole suite with <code>-race</code>, about twenty seconds. The race detector is not optional: the failure that motivated it was a counter incremented on the dispatch path while a read lock was held, which CI caught and a plain non-race run had been passing over for a day.</td></tr>
+<tr><td><code>make test-unit</code></td><td>The packages that do not link liblogosdelivery, also with <code>-race</code>, about five seconds. This is what CI runs on every push. <code>CGO_LDFLAGS</code> is cleared deliberately, because inheriting <code>-llogosdelivery</code> would fail the link when the library is absent — which is exactly CI's situation before the build job runs.</td></tr>
+<tr><td><code>make build-all</code></td><td>Builds every package, including the nested <code>mobile</code> module. <code>test-unit</code> skips the cgo-bound packages, so without this an API change can break a command with nothing noticing — which is what happened to <code>cmd/m0demo</code> when the control-plane signature changed.</td></tr>
+<tr><td><code>make vet-cgo</code></td><td>Vets the packages that link the library, which the no-cgo vet in CI cannot reach. Without it <code>internal/mesh</code> is never vetted at all.</td></tr>
+<tr><td><code>make image</code></td><td>Builds the container image, which is how this gets deployed: liblogosdelivery needs glibc 2.38, so a bare binary fails on Debian 12 and works only on Ubuntu 24.04 and later. Publish once from a machine that has the library; every other machine pulls.</td></tr>
+<tr><td><code>make apk</code></td><td>Builds the Android app, via <code>make aar</code>. The gomobile binding is built <strong>in a container</strong> because gomobile needs a JDK and Go 1.25 or later, which the core deliberately does not.</td></tr>
+<tr><td><code>make basecamp-check</code></td><td>Loads the real Basecamp view offscreen against a fixture and asserts it reads a status snapshot. There is no display on a build machine and the QML runtime does not need one — and "the QML looks right" is not a test.</td></tr>
+<tr><td><code>make basecamp-lgx</code></td><td>Builds the Basecamp module as a portable LGX, the installable package format. Portable rather than plain, because the plain output can reference paths in the nix store of the machine that built it: fine for a dev loop, useless as a download. Needs nix with flakes; CI builds it on every push.</td></tr>
+</table>
+
+<p>
+    The milestone and spike targets reproduce the results below rather than
+    describing them. <code>make s1</code> does a publish-and-receive round trip
+    over the real fleet — it is also the fastest way to tell whether the
+    rendezvous plane is the problem. <code>make s3</code> checks that six
+    rotated topics land on one shard. <code>make m0</code> needs no root at all,
+    since it uses a netstack TUN. <code>make m1</code>, <code>make m2</code> and
+    <code>make m3</code> run containerised nodes and need docker and
+    <code>/dev/net/tun</code>. <code>make m3-remote HOST=user@vps</code> runs the
+    relay test over the real internet instead.
+</p>
+
+<div class="note">
+    <p>Containers hide anything timing-dependent, repeatedly and expensively.
+    Two bugs found only on real infrastructure: peers recreated on every sync,
+    where a handshake arriving mid-recreation always won the race at 1 ms
+    container RTT and always lost at 100–450 ms; and paths re-probed only after
+    they had already expired, invisible when a round trip costs nothing. Both
+    were sitting inside a passing test. Prefer hardware for anything timing-,
+    NAT- or loss-dependent.</p>
+</div>
+
+<h2 id="proven">What is proven, and what is not</h2>
+
+<p>
+    The distinction that matters is between code that exists and behaviour that
+    has been observed. This is the same table the README keeps, and it is kept
+    honest on purpose.
+</p>
+
+<table>
+<tr><th></th><th>State</th></tr>
+<tr><td><span class="dot on"></span><strong>S1</strong> cgo binding to Logos Delivery</td><td>publish → receive over the real fleet</td></tr>
+<tr><td><span class="dot on"></span><strong>S3</strong> rotating topics stay on one shard</td><td>6 epochs, all to <code>/waku/2/rs/2/3</code></td></tr>
+<tr><td><span class="dot on"></span><strong>M0</strong> WireGuard sharing a socket with control traffic</td><td>tunnel and control packets on one socket, no root</td></tr>
+<tr><td><span class="dot on"></span><strong>M1</strong> discovered peers replace static config</td><td>over the real internet: NATed laptop ↔ VPS, direct tunnel, ssh across it</td></tr>
+<tr><td><span class="dot mid"></span><strong>M2</strong> NAT traversal</td><td>reflexive discovery proven on real NAT; punching between two NATed nodes still unproven</td></tr>
+<tr><td><span class="dot on"></span><strong>M3</strong> relay fallback</td><td>carrying real traffic: a phone on carrier NAT reached its peers through a VPS relay it discovered itself</td></tr>
+<tr><td><span class="dot mid"></span><strong>M4</strong> seamless operation</td><td>roaming survives and the mesh repairs itself after a rendezvous outage; switching networks is still rough on the phone</td></tr>
+<tr><td><span class="dot on"></span><strong>M5</strong> credentials</td><td>issued, carried, verified, revoked and renewed by a sweep — though no credential has yet been watched roll over on live devices</td></tr>
+<tr><td><span class="dot on"></span><strong>M6</strong> name resolution</td><td>resolver registered with the host, on Linux and Android, including <code>&lt;service&gt;.&lt;device&gt;.mesh</code></td></tr>
+<tr><td><span class="dot on"></span>services</td><td>local ports and LAN devices published by name, including things that never joined the mesh</td></tr>
+<tr><td><span class="dot on"></span>Android</td><td>a full participant, in daily use — tunnels, names, roaming between wifi and mobile data</td></tr>
+<tr><td><span class="dot on"></span>multi-mesh</td><td>several meshes in one daemon and one app, each with its own identity, addresses, relay and services</td></tr>
+<tr><td><span class="dot on"></span>invites</td><td>one device at a time, fifteen minutes, no key pasted</td></tr>
+<tr><td><span class="dot on"></span>Basecamp view</td><td>published, with <code>shrooms_core</code> reading the daemon from outside the QML sandbox</td></tr>
+<tr><td><span class="dot off"></span><strong>S2</strong> fleet Store retention</td><td>never run. Android shipped without depending on it, so it left the critical path unmeasured</td></tr>
+<tr><td><span class="dot off"></span><strong>S4</strong> WireGuard throughput baseline</td><td>never run, minor</td></tr>
+</table>
+
+<h3>The gaps, stated plainly</h3>
+
+<p>
+    <strong>Relaying works on real infrastructure</strong>, as of 2026-08-11. A
+    phone on mobile data reached a peer through a relay on a public VPS, over
+    the real internet, with the endpoint showing as
+    <code>relay:&lt;key&gt;@&lt;vps&gt;:51820</code>. Relays are discovered from
+    the roster, so nothing is told where one is. Relaying is per mesh: a mesh
+    joined by invite has no relay until a member is told to be one.
+</p>
+
+<p>
+    <strong>A NATed node can now be reached from outside without a relay</strong>,
+    as of 2026-08-12 — by asking the router rather than by punching. A laptop
+    behind a domestic NAT was granted a mapping over NAT-PMP, announced it, and
+    a phone on mobile data dialled it directly, on a mesh with no publicly
+    reachable member. Whether your router answers is between you and your
+    router; when it does not, nothing is worse than before.
+</p>
+
+<p>
+    <strong>Punching between two NATed peers is still unproven</strong>, and it
+    is a different mechanism from the above. Three reasons it is hard, all
+    learned rather than assumed:
+</p>
+
+<ul>
+    <li><strong>Both ends must choose the same relay, independently.</strong> A
+    relay forwards by destination WireGuard key and only for peers that have
+    registered with it, and each side picks one only among peers it currently
+    believes are online. A node whose rendezvous plane has quietly failed
+    therefore stops relaying without anything looking wrong.</li>
+    <li><strong>A NATed node learns its public address by reflection.</strong>
+    That needs a peer outside your NAT. On a mesh whose members are all behind
+    one NAT, no node can learn its own public address at all, and
+    <code>advertise</code> has to be set by hand.</li>
+    <li><strong>Carrier-grade NAT cannot be punched or mapped.</strong> A phone
+    on mobile data is behind a NAT that is not yours. One publicly reachable
+    member is enough for the whole mesh, which is why relays exist.</li>
+</ul>
+
+<p>
+    The test rig is part of the problem. Plain Linux <code>MASQUERADE</code> is
+    not endpoint-independent — measured here, it allocates a different external
+    port per destination, so a harness built on it tests the hard case while
+    claiming to test the easy one. A synthetic NAT built to be cooperative
+    proves only that the code works against a NAT we made cooperative.
+</p>
+
+<p>
+    <strong>The rendezvous plane can fail while everything looks fine.</strong>
+    Tunnels keep carrying traffic, the roster stops changing, and peers age out
+    one at a time until the status page is a list of healthy devices marked
+    offline. Both the daemon and the app now watch for it. Two watchdogs:
+    nothing arriving for ten minutes, and — the case a "nothing has arrived"
+    check sails straight past — deaf for twelve minutes to a specific peer whose
+    WireGuard tunnel is still rekeying, which proves that peer's daemon is
+    running and therefore announcing. Recovery is a restart in both places,
+    because the delivery library keeps process-global state and has never
+    survived being restarted inside a live process.
+</p>
+
+<div class="warn">
+    <p><strong>Renewal has not been run against a real mesh.</strong> The sweep,
+    the control message and the storage are built and unit-tested; nobody has
+    yet watched a credential actually roll over on live devices. The clock is
+    thirty days.</p>
+</div>
+
+<p>
+    <strong>A fleet migration broke everything once, silently.</strong> On
+    2026-08-07 logos.dev moved to cluster 3 while the preset compiled into the
+    pinned liblogosdelivery still said cluster 2. Every peer connected, compared
+    metadata, disagreed and hung up — which looks exactly like an outage. The
+    default is now <code>logos.test</code>, whose preset is correct, and
+    <code>cluster_id</code> exists as an override for the next time a fleet
+    moves ahead of the library. <code>make s1</code> detects this.
+</p>
+
+<h2 id="contribute">How to contribute</h2>
+
+<p>
+    There is no contribution ceremony. There are three habits the codebase
+    keeps, and keeping them is most of what a review will ask for.
+</p>
+
+<div class="grid">
+    <div class="card t1">
+        <h3>Comments say why, and name the failure</h3>
+        <p>Not what the code does — the code says that. Why it is shaped this
+        way, and the specific failure that made it so. The Makefile's own
+        comments are the model: <code>-race</code> is explained by the counter
+        it caught, <code>build-all</code> by the command that broke unnoticed.</p>
+    </div>
+    <div class="card t2">
+        <h3>Decisions go in an ADR</h3>
+        <p>One page: context, decision, consequences, and what would change our
+        mind. Where a number appears, name its source. A decision <em>not</em>
+        to build something counts, and several of the existing records are
+        exactly that.</p>
+    </div>
+    <div class="card t3">
+        <h3>Tests are named for the behaviour they protect</h3>
+        <p><code>TestMeshNamesAreNeverForwarded</code>,
+        <code>TestRoutesBySNIWithoutTouchingTheBytes</code>,
+        <code>TestPortAlreadyHeldIsNotAnError</code>. A failing test should say
+        what broke without anyone opening the file.</p>
+    </div>
+</div>
+
+<p>
+    Two practical constraints. Everything in <code>internal/</code> must be
+    platform-neutral, because Android runs the same code and a
+    <code>netlink</code> call there is a port rather than a patch. And control
+    messages must stay small and idempotent, because the Android path will
+    deliver them late, out of order, and sometimes not at all.
+</p>
+
+<p>
+    Run <code>make test</code> before pushing, and <code>make build-all</code>
+    if you have touched anything a command uses — CI's unit run cannot reach the
+    cgo-bound packages. If a change is timing-, NAT- or loss-dependent, get it
+    onto real hardware; the container harness has hidden that class of bug twice
+    and both times it looked like a passing test.
+</p>
+
+<footer>
+    <p>
+        shrooms is built in the open at
+        <a href="https://github.com/vpavlin/shrooms">github.com/vpavlin/shrooms</a>,
+        dual licensed Apache-2.0 or MIT.
+        Part of the <a href="https://logos.co">Logos</a> ecosystem: it rides on
+        Logos Delivery and ships as a Basecamp module.
+    </p>
+</footer>
+</div>
+
+<script src="field.js"></script>
+</body>
+</html>

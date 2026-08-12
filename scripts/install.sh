@@ -158,13 +158,31 @@ else
     #
     # --config/--state are appended, so they win over anything the caller typed:
     # the service unit mounts these paths and nothing else would be read.
-    "$RUNTIME" run --rm \
+    # -i, and the admin directory mounted from the invoking user's home.
+    #
+    # Both because `shrooms init` mints an authority: it prompts for a
+    # passphrase, which a container without a stdin answers with EOF, and it
+    # writes the admin key to ~/.config/shrooms — which inside a --rm container
+    # is destroyed the moment the command finishes, taking the only key that
+    # can ever admit a device to the mesh it has just created.
+    #
+    # SUDO_USER, not $HOME: this runs under sudo, so $HOME is root's, and the
+    # admin key belongs to the person rather than to the machine. The Go side
+    # resolves it exactly this way (see defaultAdminDir).
+    admin_home=$(getent passwd "${SUDO_USER:-root}" | cut -d: -f6)
+    admin_dir=${admin_home:-/root}/.config/shrooms
+    mkdir -p "$admin_dir"
+    [ -n "${SUDO_USER:-}" ] && chown "$SUDO_USER" "$admin_dir"
+
+    "$RUNTIME" run --rm -i \
         --hostname "$(hostname -s 2>/dev/null || hostname)" \
         -v "/etc/shrooms:/etc/shrooms$Z" \
         -v "/var/lib/shrooms:/var/lib/shrooms$Z" \
+        -v "$admin_dir:/root/.config/shrooms$Z" \
         "$IMAGE" "${SETUP[@]}" \
         --config /etc/shrooms/config.toml \
         --state /var/lib/shrooms
+    [ -n "${SUDO_USER:-}" ] && chown -R "$SUDO_USER" "$admin_dir" || true
     chmod 600 /etc/shrooms/config.toml
 fi
 
@@ -231,7 +249,11 @@ if ! "$RUNTIME" inspect -f '{{.State.Running}}' shrooms 2>/dev/null | grep -q tr
     echo "  sudo systemctl status shrooms" >&2
     exit 1
 fi
-exec "$RUNTIME" exec shrooms shrooms "$@"
+# -i so the commands that prompt work through the wrapper. `shrooms set-key`,
+# `shrooms invite` and `shrooms key rotate` all read from a terminal, and
+# without this they get EOF and fail in a way that reads as a broken install
+# rather than a missing flag.
+exec "$RUNTIME" exec -i shrooms shrooms "$@"
 EOF
 chmod 755 /usr/local/bin/shrooms
 

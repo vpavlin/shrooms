@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shrooms — an overlay mesh between your own devices</title>
+<meta name="description" content="A personal overlay mesh VPN: WireGuard tunnels, peers discovered over Logos Delivery, no coordination server, no account, no company in the path.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+<meta property="og:title" content="shrooms — an overlay mesh between your own devices">
+<meta property="og:description" content="Your laptop, phone, NAS and a VPS on one private network. WireGuard tunnels, peers discovered over a public gossip network, no coordination server and no account.">
+<meta name="theme-color" content="#07090b">
+</head>
+<body>
+<canvas id="field"></canvas>
+
+<div class="page">
+<nav>
+    <span class="mark">shrooms</span>
+    <a href="index.html" class="here">what &amp; why</a>
+    <a href="install.html">install</a>
+    <a href="guides.html">guides</a>
+    <a href="dev.html">dev notes</a>
+    <span class="spacer"></span>
+    <a href="https://github.com/vpavlin/shrooms">github</a>
+</nav>
+
+<header class="hero">
+    <h1>Your devices,<br>on one network<br>that nobody runs.</h1>
+    <p class="lede">
+        shrooms is a personal overlay mesh. Your laptop, phone, NAS and a VPS
+        get addresses on a private IPv6 network and talk to each other directly
+        over WireGuard — from a café, from mobile data, from another country.
+    </p>
+    <p class="sub">
+        No account. No coordination server. No company that can see your
+        traffic, switch it off, or go out of business.
+    </p>
+    <div class="cta">
+        <a class="primary" href="install.html">Install it</a>
+        <a href="#why">Why it exists</a>
+        <a href="dev.html">How it works</a>
+    </div>
+</header>
+
+<h2 id="what">What it actually is</h2>
+
+<p>
+    Three planes, deliberately separate, because they fail in different ways
+    and conflating them is how a mesh becomes unexplainable:
+</p>
+
+<div class="grid">
+    <div class="card t1">
+        <h3>The data plane</h3>
+        <p>WireGuard, in userspace. Your traffic, encrypted end to end between
+        your devices, taking the most direct path that works.</p>
+    </div>
+    <div class="card t2">
+        <h3>The rendezvous plane</h3>
+        <p>Logos Delivery — a public gossip network — carries encrypted
+        announcements so devices can find each other. It never carries your
+        traffic.</p>
+    </div>
+    <div class="card t3">
+        <h3>The control plane</h3>
+        <p>Who is a member, what they publish, what has been revoked. Signed,
+        sealed to the mesh, and readable by nobody else.</p>
+    </div>
+</div>
+
+<p>
+    Addresses are <strong>derived, not allocated</strong>: your address is a
+    hash of your device key inside a prefix that is a hash of the mesh key. So
+    there is no IPAM, no DHCP, no collisions, and nothing to coordinate — two
+    devices that hold the same mesh key already agree on every address in it.
+</p>
+
+<pre><code><span class="c"># what it looks like once it is running</span>
+$ shrooms status
+network       fd3b:ffe9:f81::/48                       peers 4 (4 up)
+self          laptop  fd3b:ffe9:f81:81a7:18bc:69b1:9bb:7e69
+
+MESH     NAME         ANNOUNCE  TUNNEL  ENDPOINT
+default  <span class="p">jimmy-crib</span>   online    up 1m   192.168.0.152:51820
+default  <span class="p">nothing</span>      online    up 1m   relay:…@128.140.55.128:51820
+default  <span class="p">vps</span> (relay)  online    up 1m   128.140.55.128:51820
+test     <span class="p">k11</span> (relay)  online    up 1m   192.168.0.125:51820
+
+$ ssh k11.mesh          <span class="c"># names, not addresses</span>
+$ open http://immich.k11.mesh   <span class="c"># services, not port numbers</span></code></pre>
+
+<h2 id="why">Why it exists</h2>
+
+<p>
+    Tailscale is excellent and it is somebody else's coordination server. Every
+    device you own asks a company where the others are, and that company can
+    see the shape of your network, change the rules, be acquired, or simply
+    stop. For a network made of <em>your own machines</em>, that is a strange
+    dependency to accept.
+</p>
+
+<p>
+    Nebula removes the company and replaces it with lighthouses you run and
+    a certificate authority you maintain by hand. Better, and still
+    infrastructure — the thing most people install a mesh to stop having.
+</p>
+
+<blockquote>
+    shrooms takes the third option: discovery over a public gossip network that
+    nobody owns, so there is no server to run and no service to depend on. The
+    fleet can be unreachable and your tunnels keep working — it is where
+    devices <em>find</em> each other, not where they talk.
+</blockquote>
+
+<div class="grid">
+    <div class="card t4">
+        <h3>A phone is a full participant</h3>
+        <p>Not a client of something else. The Android app runs the same Go
+        core as the daemon, joins several meshes at once, and roams between
+        wifi and mobile data without you touching it.</p>
+    </div>
+    <div class="card t1">
+        <h3>NAT is expected, not assumed away</h3>
+        <p>Direct where it can, through a relay you run where it cannot, and it
+        will ask your router for a port mapping so a home machine can be
+        reached without you editing anything.</p>
+    </div>
+    <div class="card t2">
+        <h3>Membership can be withdrawn</h3>
+        <p>Devices are admitted by an admin-signed credential that expires in
+        thirty days and can be revoked. Losing a laptop costs that laptop, not
+        the mesh.</p>
+    </div>
+    <div class="card t3">
+        <h3>Several meshes, one daemon</h3>
+        <p>Your own devices on one; a mesh shared with friends on another. A
+        separate identity, address and set of services on each, with nothing
+        leaking between them.</p>
+    </div>
+</div>
+
+<h2 id="honest">What it is not</h2>
+
+<p>
+    It is a <strong>prototype in daily use</strong> by its author, and the
+    documentation says exactly what is proven and what is merely written. Three
+    things are worth knowing before you run it anywhere that matters:
+</p>
+
+<ul>
+    <li><strong>It is not anonymity.</strong> Traffic is encrypted; a relay you
+    route through sees your IP address, and the gossip network sees that
+    <em>something</em> is publishing on a shard. It hides content, not the fact
+    that you exist.</li>
+    <li><strong>The network key is still a shared secret.</strong> Membership
+    is a credential now, but that key derives the rendezvous topics and the
+    announcement encryption, so leaking it exposes the control plane and means
+    rotating for everybody.</li>
+    <li><strong>Hole punching between two NATed peers is unproven.</strong> A
+    reachable member — a VPS, or a home machine whose router grants a port
+    mapping — is what makes the awkward cases work today.</li>
+</ul>
+
+<p>
+    <a href="https://github.com/vpavlin/shrooms/blob/master/SECURITY.md">SECURITY.md</a>
+    is the long version, including what leaks and what is deliberately deferred.
+</p>
+
+<h2 id="start">Start here</h2>
+
+<div class="grid">
+    <div class="card t1">
+        <h3><a href="install.html">Install →</a></h3>
+        <p>One command on Linux, an app on Android, a Basecamp module on the
+        desktop.</p>
+    </div>
+    <div class="card t2">
+        <h3><a href="guides.html">Guides →</a></h3>
+        <p>Names and services, several meshes, relays, invites, renewals, and
+        binding a service so only the mesh can reach it.</p>
+    </div>
+    <div class="card t3">
+        <h3><a href="dev.html">Dev notes →</a></h3>
+        <p>The architecture, every design decision with its reasoning, and how
+        to build and test it.</p>
+    </div>
+</div>
+
+<footer>
+    <p>
+        shrooms is built in the open at
+        <a href="https://github.com/vpavlin/shrooms">github.com/vpavlin/shrooms</a>,
+        dual licensed Apache-2.0 or MIT.
+        Part of the <a href="https://logos.co">Logos</a> ecosystem: it rides on
+        Logos Delivery and ships as a Basecamp module.
+    </p>
+</footer>
+</div>
+
+<script src="field.js"></script>
+</body>
+</html>

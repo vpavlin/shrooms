@@ -1,0 +1,623 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shrooms — install</title>
+<meta name="description" content="Installing shrooms: a Linux node from a container, the Android app, or the Basecamp module — then creating a mesh, admitting a second device, and checking it worked.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+<meta property="og:title" content="shrooms — install">
+<meta property="og:description" content="A Linux node from a container, an Android app, a Basecamp module. Then one command to create a mesh and two to admit the next device.">
+<meta name="theme-color" content="#07090b">
+</head>
+<body>
+<canvas id="field"></canvas>
+
+<div class="page">
+<nav>
+    <span class="mark">shrooms</span>
+    <a href="index.html">what &amp; why</a>
+    <a href="install.html" class="here">install</a>
+    <a href="guides.html">guides</a>
+    <a href="dev.html">dev notes</a>
+    <span class="spacer"></span>
+    <a href="https://github.com/vpavlin/shrooms">github</a>
+</nav>
+
+<header class="hero">
+    <h1>Install it once,<br>then admit<br>the next device.</h1>
+    <p class="lede">
+        Three ways in: a container on a Linux box, an app on a phone, a module
+        in the Basecamp desktop. Creating a mesh is one command and adding a
+        device is two — but which machine you run them on matters, and this page
+        says why.
+    </p>
+    <p class="sub">
+        Every command here exists in the repository. Where a step is fiddly, it
+        says so rather than pretending otherwise.
+    </p>
+    <div class="cta">
+        <a class="primary" href="#ways">Three ways in</a>
+        <a href="#first">Create a mesh</a>
+        <a href="#trouble">When it does not work</a>
+    </div>
+</header>
+
+<h2 id="ways">Three ways in</h2>
+
+<div class="grid">
+    <div class="card t1">
+        <h3>A Linux node</h3>
+        <p><code>scripts/install.sh</code> pulls a container image, writes a
+        config, installs a systemd unit and starts the daemon. Nothing is built
+        on the machine.</p>
+    </div>
+    <div class="card t2">
+        <h3>An Android phone</h3>
+        <p>The same Go core in a <code>VpnService</code>. Built with
+        <code>make apk</code>, or installed from a self-hosted F-Droid
+        repository. It is not on Google Play.</p>
+    </div>
+    <div class="card t3">
+        <h3>A Basecamp module</h3>
+        <p>An <code>.lgx</code> package that reads the local daemon and changes
+        this device's own settings. It cannot admit anybody, by design.</p>
+    </div>
+</div>
+
+<h3>What a node needs</h3>
+
+<table>
+<tr><th>Requirement</th><th>Why, and what to watch for</th></tr>
+<tr><td>Linux, x86-64</td><td>Android is a full participant; iOS is out of scope</td></tr>
+<tr><td><code>docker</code> or <code>podman</code></td><td>the installer ships an image, so no Go toolchain and no checkout on the box</td></tr>
+<tr><td><code>/dev/net/tun</code></td><td>verify this on a cheap VPS — OpenVZ and LXC hosts often disable it. Insist on KVM</td></tr>
+<tr><td>systemd</td><td>the installer writes a unit. Without it, run the container yourself from <code>docker/compose-node.yml</code></td></tr>
+<tr><td>one UDP port</td><td>51820 by default, inbound only on the nodes you want reachable</td></tr>
+<tr><td>glibc ≥ 2.38</td><td>only if you build and run a bare binary. Debian 12 has 2.36 and will not do; irrelevant when you run the container</td></tr>
+</table>
+
+<p>
+    Resource use is negligible: a measured node acting as a relay sits at about
+    20 MiB RSS and one to two per cent of one core. What matters on a VPS is
+    bandwidth allowance and latency, since relayed traffic takes a detour
+    through the node.
+</p>
+
+<h3>A Linux node, from the container</h3>
+
+<pre><code>$ curl -fsSLO https://raw.githubusercontent.com/vpavlin/shrooms/master/scripts/install.sh
+$ sudo bash install.sh prepare --name nas          <span class="c"># then redeem an invite</span></code></pre>
+
+<p>
+    Three verbs: <code>init</code> creates a mesh, <code>join &lt;NETWORK-KEY&gt;</code>
+    joins one you have the key for, and <code>prepare</code> installs and starts
+    the daemon with no mesh at all. <code>prepare</code> is the one to pair with
+    invites — a daemon without a mesh still holds its control socket and waits
+    to be told which network it is on, which is exactly what
+    <code>shrooms join --invite</code> needs it to be doing.
+</p>
+
+<p>
+    Everything after the verb is handed to <code>shrooms</code> unchanged —
+    <code>--name</code>, <code>--relay</code>, <code>--advertise</code>,
+    <code>--port</code> — so the script cannot drift out of date with the flags
+    the binary supports. The device name defaults to this machine's hostname.
+</p>
+
+<p>
+    It touches <code>/etc/shrooms/</code> (config), <code>/var/lib/shrooms/</code>
+    (device identity), <code>/run/shrooms/</code> (control socket), a
+    <code>shrooms</code> systemd unit and container, and
+    <code>/usr/local/bin/shrooms</code> — a wrapper so <code>shrooms status</code>
+    works on the host without anyone remembering the docker incantation.
+    Re-running is safe: an existing config and identity are left alone unless
+    you pass <code>--force</code>. Losing the identity would mean a new overlay
+    address and looking like a different device to every peer, so it is never
+    destroyed by accident.
+</p>
+
+<div class="warn">
+    <p>
+        <strong>That wrapper does not attach stdin.</strong> It runs
+        <code>docker exec</code> without <code>-i</code>, so any command that
+        prompts — <code>invite</code>, <code>set-key</code>,
+        <code>key rotate</code> — reads end-of-file and exits with
+        <code>error: EOF</code>. Everything that does not prompt
+        (<code>status</code>, <code>paths</code>, <code>join --invite</code>) is
+        fine. When you do need to type something:
+        <code>sudo docker exec -i shrooms shrooms set-key</code>.
+    </p>
+</div>
+
+<p>
+    Read <a href="https://github.com/vpavlin/shrooms/blob/master/scripts/install.sh">the script</a>
+    before running it as root, as you should with anything fetched this way.
+</p>
+
+<h3>A Linux node, from source</h3>
+
+<p>
+    Worth it on the machine that will <em>create</em> the mesh, because minting
+    the authority wants a terminal and a home directory that survives — see
+    below.
+</p>
+
+<pre><code>$ git clone https://github.com/vpavlin/shrooms &amp;&amp; cd shrooms
+$ make deps-release       <span class="c"># prebuilt liblogosdelivery; there is no distribution of it</span>
+$ make shrooms
+$ sudo make install       <span class="c"># binary, libraries, systemd unit, bash completion</span></code></pre>
+
+<p>
+    <code>make install</code> relinks the binary with an rpath pointing at
+    <code>/usr/local/lib/shrooms</code>, so it keeps working after you delete
+    the checkout. It needs Go 1.23+ with cgo and a C toolchain to build, and
+    glibc 2.38 or newer to run. <code>make deps</code> builds the library from
+    source and currently fails on an upstream compile error; <code>make
+    deps-release</code> downloads a repackaged copy instead, which is the one
+    you want.
+</p>
+
+<h3>An Android phone</h3>
+
+<p>
+    There is no Play Store listing. Two routes, and both are the author's rather
+    than a distribution channel:
+</p>
+
+<pre><code>$ make apk                       <span class="c"># android/shrooms.apk, debug-signed</span>
+$ adb install -r android/shrooms.apk
+
+$ make fdroid                    <span class="c"># build unsigned, sign on the repo host, publish</span></code></pre>
+
+<p>
+    <code>make fdroid</code> publishes to a <strong>self-hosted F-Droid
+    repository</strong> — a personal one, on a machine named by
+    <code>FDROID_HOST</code>, not a public index anybody can add. The signing
+    key lives on that host and never leaves it, so the APK is built here
+    unsigned and signed there. If you have not set such a repository up, there
+    is nothing to point F-Droid at, and <code>make apk</code> is your install.
+</p>
+
+<p>
+    arm64 only: there is no x86_64 build of the delivery library, so an emulator
+    has no node. The app runs the same Go core as the daemon — nothing in
+    <code>internal/</code> is reimplemented — and joins by scanning the QR that
+    <code>shrooms invite</code> prints.
+    <a href="https://github.com/vpavlin/shrooms/blob/master/ANDROID.md">ANDROID.md</a>
+    is the build in detail.
+</p>
+
+<h3>The Basecamp module</h3>
+
+<pre><code>$ make basecamp-check     <span class="c"># load the real view offscreen against a fixture</span>
+$ make basecamp-lgx       <span class="c"># build the installable package</span>
+$ make basecamp-publish   <span class="c"># and put it where a device can install it</span></code></pre>
+
+<p>
+    <code>basecamp-lgx</code> builds the portable variant through nix; CI builds
+    it on every push and uploads it as an artifact. <code>basecamp-publish</code>
+    copies the package next to the F-Droid repo on the same machine, under a
+    stable name and a versioned one.
+</p>
+
+<div class="note">
+    <p>
+        <strong>An <code>.lgx</code> is a package, not a repository.</strong> It
+        has no update mechanism of its own, so there is nothing to check for a
+        newer version and nothing to notify you. Upgrading means downloading the
+        file again and installing it over the top.
+    </p>
+</div>
+
+<p>
+    The view reads the daemon through <code>shrooms_core</code>, a companion
+    module installed alongside it, because a QML app runs in a sandbox that
+    blocks both network requests and local file reads. It can change this
+    device's own settings — name, relay or light node, published services, which
+    meshes run — and it <strong>cannot admit anybody</strong>. Membership is a
+    credential signed by a key the daemon has never held, so nothing reachable
+    through that socket can make a device a member. It also needs
+    <code>socket_group</code> set, or it says so rather than showing an empty
+    mesh.
+</p>
+
+<h2 id="first">The first mesh</h2>
+
+<p>
+    One command. It mints the network key, a pair of admin keys, and this
+    device's own credential, then asks twice for a passphrase to encrypt the
+    admin key at rest:
+</p>
+
+<pre><code>$ sudo shrooms init --name laptop
+<span class="p">Network key: GUPDIZSVIQRCBBC6APQFYDSDKTWK6Q5SYZY6ZLMVECQDQX3GIOYQ</span>
+  copy this to your other machines — it is the only secret
+
+Device:      laptop
+Overlay IP:  fd12:b993:4542:c6cd:1f4c:cc1a:496c:d791
+Mesh prefix: fd12:b993:4542::/48
+Wrote /etc/shrooms/config.toml
+
+Minted the mesh authority.
+
+  mesh id     65V5K5ISCBHQJAEYWSH2PDPLYQ
+  admin key   /home/you/.config/shrooms/admin.json
+  this device is enrolled
+
+<span class="a">RECOVERY KEY — written down now or never.</span> It is not saved anywhere,
+and it is what lets you keep this mesh if the admin key above is lost:
+
+  dmaWji2cz8403ySaOkMB18Qguy4yLx783btjYhYZMvUTHxqHJFPJuJ4ms0/QVuNSyDwRbdvx7cHO3xkHkiXzPQ==
+
+Store it away from this machine. A password manager, a Keycard, paper.</code></pre>
+
+<p>
+    Two admin keys, always, because the set is fixed at mint: the mesh id
+    commits to it and the address prefix derives from the id, so adding a key
+    later would re-address every node. One stays here, encrypted with the
+    passphrase you just typed. The other is the recovery key, printed once and
+    <strong>never written anywhere</strong> — if you skip past it and later lose
+    <code>~/.config/shrooms/admin.json</code>, you cannot enrol another device
+    into this mesh again.
+</p>
+
+<p>
+    The admin key belongs to the person rather than to the machine, so under
+    <code>sudo</code> it is written to the invoking user's home, not root's.
+    Then start the daemon:
+</p>
+
+<pre><code>$ sudo systemctl enable --now shrooms</code></pre>
+
+<div class="warn">
+    <p>
+        <strong>Do not create the mesh through the container installer.</strong>
+        <code>install.sh init</code> runs <code>shrooms init</code> inside a
+        throwaway container with stdin closed, so the passphrase prompt reads
+        end-of-file and it stops at <code>error: EOF</code> — and even fed a
+        passphrase, the admin key would be written inside that container and
+        vanish with it.
+    </p>
+    <p>
+        On a box where that is the only option,
+        <code>sudo bash install.sh init --no-admin</code> works: the flags after
+        the verb reach <code>shrooms</code> unchanged. That mesh has no
+        authority, so membership is the network key alone and nothing can be
+        revoked short of rotating it for everybody.
+    </p>
+</div>
+
+<h2 id="second">The second device</h2>
+
+<p>
+    On a machine that is already a member, with its daemon running — the daemon
+    is what holds the invite open, since it is the node already connected to the
+    fleet. It asks for the admin key's passphrase, then prints a token, a QR
+    code, and waits:
+</p>
+
+<pre><code>$ shrooms invite
+Invite valid for 15m0s. On the joining device:
+
+  <span class="p">shrooms join --invite BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U</span>
+
+  [QR code]
+
+Waiting. An invite is answered only by the node that issued it,
+which is what makes it single-use — so leave this running.</code></pre>
+
+<p>
+    Then, on the newcomer, while the other machine is still waiting:
+</p>
+
+<pre><code>$ sudo shrooms join --invite BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U --name nas
+Asking to join as "nas"...
+
+<span class="p">Enrolled. Credential serial 1786439411, expires 2026-09-10T11:03:51+02:00.</span></code></pre>
+
+<p>
+    The token is 128 bits, good for <strong>one device and fifteen
+    minutes</strong>. Both sides derive from it where to meet and what to
+    encrypt with, so a wrong token addresses a topic nobody answers rather than
+    a guess anyone can grind against. What comes back is the network key, the
+    admin keys and a credential issued to that device's own keys — the network
+    key never appears on a screen.
+</p>
+
+<p>
+    If a daemon is already running on the joining machine and has not joined
+    anything, the join goes through it and it brings the mesh up itself: no
+    second command, no restart. That is what a machine installed with
+    <code>install.sh prepare</code> looks like.
+</p>
+
+<p>
+    <strong>The phone joins the same way.</strong> Scan the QR, or paste the
+    token into the one field on the join screen — it takes an invite or a
+    network key and tells them apart itself.
+</p>
+
+<p>
+    <code>shrooms join &lt;NETWORK-KEY&gt; --name nas</code> is still there for
+    bootstrapping and recovery, and for a mesh minted with
+    <code>--no-admin</code> that has no credentials to issue. Credentials expire
+    in thirty days by default, and renewal by hand is another
+    <code>shrooms invite</code>.
+</p>
+
+<h2 id="prepared">A machine set up by somebody who never sees the key</h2>
+
+<p>
+    Handing the network key to a colleague, a script or an agent so they can
+    install a node hands them membership of the mesh. The two-step version
+    avoids that: prepare the machine without the key, and put the key in
+    yourself afterwards.
+</p>
+
+<pre><code><span class="c"># on the machine being set up, by whoever is doing the setup</span>
+$ sudo shrooms prepare --name nas --relay
+Prepared /etc/shrooms/config.toml for "nas".
+
+The mesh key is not set. Add it yourself:
+  <span class="p">sudo shrooms set-key</span>
+
+<span class="c"># later, by whoever holds the key</span>
+$ sudo shrooms set-key
+Mesh key:
+<span class="p">Key written to /etc/shrooms/config.toml.</span>
+The daemon was waiting for this and is bringing the mesh up now.</code></pre>
+
+<p>
+    The device identity is generated during <code>prepare</code>, so the
+    machine's overlay address is settled before the key arrives and does not
+    change when it does. <code>set-key</code> reads from a prompt, or from stdin
+    when there is no terminal, so the key never reaches your shell history or a
+    command line that every other process on the box can read. It validates the
+    key before writing it — a mistyped one otherwise fails much later, as a mesh
+    where nobody ever appears.
+</p>
+
+<p>
+    Get the key from a machine that is already a member with
+    <code>shrooms key show</code>, or <code>shrooms key show --qr</code> to scan
+    it. If a daemon was waiting, <code>set-key</code> nudges it and the mesh
+    comes up without a restart; otherwise
+    <code>sudo systemctl start shrooms</code>.
+</p>
+
+<div class="note">
+    <p>
+        An invite does the same job and moves no key at all, so prefer it when
+        somebody can stand in front of both machines within fifteen minutes.
+        <code>prepare</code> plus <code>set-key</code> is for when there is no
+        invite to redeem — a scripted rollout, or a machine built ahead of the
+        person who will admit it.
+    </p>
+</div>
+
+<h2 id="vps">A reachable member, and whether you need a VPS</h2>
+
+<p>
+    A node behind NAT learns its own public address by <em>reflection</em>: a
+    peer's reply echoes the address that peer observed. That needs a peer
+    outside your NAT. On a mesh whose members are all behind one router, no node
+    can learn its public address at all, every candidate it announces is a LAN
+    address, and the mesh works from the sofa and not from the street. One
+    reachable member is the anchor that fixes this — and, being reachable, it is
+    also what can relay for two peers that cannot reach each other directly.
+</p>
+
+<pre><code>$ ./scripts/deploy.sh root@VPS_IP --init --relay --name vps
+$ ssh root@VPS_IP 'ufw allow 51820/udp'    <span class="c"># or your firewall's equivalent</span></code></pre>
+
+<p>
+    <code>deploy.sh</code> ships a <strong>container image, not a binary</strong>,
+    because the delivery library needs glibc 2.38 and a tarball would fail on
+    anything older. It uses host networking on purpose: behind docker's bridge
+    the address peers observe would be the gateway's and the source port would
+    be rewritten, so traversal would be fighting a layer of NAT that does not
+    exist in reality. It refuses to overwrite an existing config without
+    <code>--force</code>, and the remote generates its own device identity, so
+    no private key crosses the wire.
+</p>
+
+<p>
+    With <code>--init</code> the config is generated <em>locally</em>, by your
+    own <code>./bin/shrooms</code>, and only then copied over — which is why the
+    passphrase prompt works and why the admin key stays on your machine rather
+    than on the VPS. It pulls the published image on the remote host by default;
+    set <code>BUILD_IMAGE=1</code> to build from your working tree instead,
+    which is what you want when testing an unpushed change.
+</p>
+
+<p>
+    <strong>You probably do not need a VPS.</strong> Any node with a reachable
+    address can relay: set <code>relay = "true"</code> in its config and restart
+    it. Nothing else needs configuring — the relay advertises itself in its
+    ordinary announce and every other node picks it up, so there are no relay
+    addresses to distribute and its IP can change freely. An office box with a
+    port forward or a home server on a static address covers every pair that
+    cannot connect directly.
+</p>
+
+<p>
+    A node will also <strong>ask the router for a way in</strong> — PCP first,
+    then NAT-PMP, both on the gateway's UDP 5351. That is on by default
+    (<code>port_mapping</code>), and on 2026-08-12 a laptop behind a domestic
+    NAT was granted a mapping, announced it, and was dialled directly by a phone
+    on mobile data, on a mesh with no publicly reachable member at all. Whether
+    your router answers is between you and your router; when it does not,
+    nothing is worse than before.
+</p>
+
+<p>
+    Two things it does not fix. Carrier-grade NAT can be neither punched nor
+    mapped, so a phone on mobile data needs a relay somewhere in the mesh. And
+    punching between two NATed peers is still unproven — a reachable member is
+    what makes the awkward cases work today.
+    <a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/012-relay-hosting.md">ADR-012</a>
+    covers who should host one.
+</p>
+
+<h2 id="check">Check it worked</h2>
+
+<p>
+    Expect discovery in 15 to 25 seconds from cold — most of that is the
+    messaging node joining the fleet — and a handshake shortly after.
+</p>
+
+<pre><code>$ shrooms status
+network  fd48:d107:3fce::/48                     peers 2 (2 up)
+self     laptop  fd48:d107:3fce:2b84:226b:ac:f2c3:9f30
+
+NAME         OVERLAY IP                              ANNOUNCE  TUNNEL  ENDPOINT                   RX/TX      CONNECTED IN
+<span class="p">vps (relay)</span>  fd48:d107:3fce:a332:855c:1059:8060:59d7  online    up 42s  203.0.113.4:51820          12.4K/8.1K  18s
+<span class="p">phone</span>        fd48:d107:3fce:9d1c:7b2e:41a:cc90:1f22   online    up 1m   relay:…@203.0.113.4:51820  1.1K/900    24s
+
+$ ping6 vps.mesh
+$ ssh vps.mesh</code></pre>
+
+<p>
+    A healthy roster has both columns and they mean different things.
+    <strong>ANNOUNCE</strong> is the gossip bus: the peer's announcement is
+    arriving, so discovery works. <strong>TUNNEL</strong> is WireGuard: a
+    handshake completed, and the age beside <code>up</code> should keep resetting,
+    since a live session rekeys about every 165 seconds. A peer that is
+    <code>online</code> with <code>no handshake</code> is a traversal problem,
+    not a discovery one — and a tunnel that says <code>stale 12m</code> is dead
+    whatever the announce column claims.
+</p>
+
+<p>
+    Names need nothing set up: the daemon runs a resolver for the mesh and
+    registers it with the system on startup, scoped to its own interface, so
+    <code>.mesh</code> is answered there and every other name keeps going
+    wherever it went before.
+</p>
+
+<pre><code>$ shrooms paths
+reflexive addresses (as peers observe us):
+  203.0.113.9:41001</code></pre>
+
+<p>
+    This is the most informative single output. One address means
+    endpoint-independent NAT, so direct connections between NATed peers should
+    work. Several means endpoint-dependent — symmetric — NAT, punching will not
+    work, and traffic falls back to the relay, which is exactly why the relay
+    exists.
+</p>
+
+<h2 id="trouble">When it does not work</h2>
+
+<table>
+<tr><th>Symptom</th><th>What it means</th><th>What to do</th></tr>
+
+<tr>
+    <td><code>tun: …&nbsp;(need CAP_NET_ADMIN)</code></td>
+    <td>the process cannot create the TUN device, or there is none to create</td>
+    <td>run it under <code>sudo</code>, and check <code>/dev/net/tun</code> exists — OpenVZ and LXC hosts often have none</td>
+</tr>
+
+<tr>
+    <td>no peers at all after 60 s</td>
+    <td>the daemon is not reaching the fleet. This is discovery, not tunnels</td>
+    <td>check outbound connectivity; <code>make s1</code> confirms whether the rendezvous plane works at all</td>
+</tr>
+
+<tr>
+    <td><code>!! rendezvous:</code> in <code>status</code></td>
+    <td>the fleet is unreachable, or you are on a different cluster than it is</td>
+    <td>established tunnels are unaffected while you fix it. <code>different clusterId reported: N vs M</code> in the log means a preset mismatch; <code>cluster_id</code> overrides it</td>
+</tr>
+
+<tr>
+    <td>peer <code>online</code> but <code>no handshake</code></td>
+    <td>traversal, not discovery: it is announced, you just cannot reach it</td>
+    <td><code>shrooms paths</code>; open the UDP port on whichever side should be reachable; make one member reachable if neither is</td>
+</tr>
+
+<tr>
+    <td>peer shows <code>stale 12m</code></td>
+    <td>the tunnel is dead — the peer has not rekeyed within WireGuard's 180 s session lifetime</td>
+    <td>check the peer is actually up; a restarted peer leaves the other side holding a session that stays valid for a while</td>
+</tr>
+
+<tr>
+    <td><code>.mesh</code> names do not resolve</td>
+    <td>the resolver is running but the host is not asking it — serving DNS and being asked are different things</td>
+    <td><code>resolvectl status shrooms0</code> should list the overlay address under DNS Servers and <code>~mesh</code> as the domain. The daemon log says why not. <code>sudo shrooms hosts --write</code> is the fallback for hosts without systemd-resolved</td>
+</tr>
+
+<tr>
+    <td><code>shrooms status</code> needs <code>sudo</code></td>
+    <td>the daemon needs <code>CAP_NET_ADMIN</code> and so runs as root, which makes its control socket <code>root:root</code></td>
+    <td>set <code>socket_group = "your-username"</code> in the config. The unit must also carry <code>CAP_CHOWN</code> in both <code>AmbientCapabilities</code> and <code>CapabilityBoundingSet</code>, or the chown fails with EPERM even for uid 0 — the setting appears to work and every read still says permission denied</td>
+</tr>
+
+<tr>
+    <td><code>error: EOF</code> from a prompt</td>
+    <td>the command wanted a passphrase or a key and stdin was closed</td>
+    <td>run it in a terminal. Through the container wrapper, use <code>sudo docker exec -i shrooms shrooms …</code></td>
+</tr>
+
+<tr>
+    <td>the daemon exits immediately</td>
+    <td>a shared library is missing under a bare binary</td>
+    <td>deploy the container rather than a tarball, or install with <code>sudo make install</code>, which sets the rpath</td>
+</tr>
+
+<tr>
+    <td><code>missing liblogosdelivery.h</code> when building</td>
+    <td>the library is not where the build expects it</td>
+    <td><code>make deps-release</code>, or <code>make deps-basecamp HDR=…</code> to reuse a local Basecamp install</td>
+</tr>
+</table>
+
+<p>
+    Two failures worth knowing about before they happen, because neither looks
+    like a failure. <strong>The rendezvous plane can die while everything looks
+    fine</strong> — tunnels keep carrying traffic, the roster stops changing, and
+    peers age out one at a time until the status page is a list of healthy
+    devices marked offline. Both the daemon and the app watch for it now, and
+    recovery is a restart in both places. And <strong>renewal has never been
+    watched happen on a live mesh</strong>: the sweep is built and unit-tested,
+    but the clock on a credential is thirty days, and
+    <code>shrooms invite</code> again is the shortest way to reset it.
+</p>
+
+<h2 id="next">Where to go next</h2>
+
+<div class="grid">
+    <div class="card t1">
+        <h3><a href="guides.html">Guides →</a></h3>
+        <p>Names and services, several meshes at once, relays, renewals, and
+        binding a service so only the mesh can reach it.</p>
+    </div>
+    <div class="card t2">
+        <h3><a href="dev.html">Dev notes →</a></h3>
+        <p>The architecture, every design decision with its reasoning, and how
+        to build and test it.</p>
+    </div>
+    <div class="card t3">
+        <h3><a href="https://github.com/vpavlin/shrooms/blob/master/SECURITY.md">SECURITY.md →</a></h3>
+        <p>What leaks, what is deliberately deferred, and what to know before
+        running this anywhere that matters.</p>
+    </div>
+</div>
+
+<footer>
+    <p>
+        shrooms is built in the open at
+        <a href="https://github.com/vpavlin/shrooms">github.com/vpavlin/shrooms</a>,
+        dual licensed Apache-2.0 or MIT.
+        Part of the <a href="https://logos.co">Logos</a> ecosystem: it rides on
+        Logos Delivery and ships as a Basecamp module.
+    </p>
+</footer>
+</div>
+
+<script src="field.js"></script>
+</body>
+</html>

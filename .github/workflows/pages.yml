@@ -1,0 +1,85 @@
+# Publish the website.
+#
+# The site is plain HTML, CSS and one canvas animation, with no build step and
+# no generator — so this workflow only has to hand the directory to Pages. That
+# is deliberate: a site about a project whose whole claim is "no infrastructure
+# you have to run" should not need a toolchain to change a paragraph.
+name: pages
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'site/**'
+      - '.github/workflows/pages.yml'
+  # So the site can be republished without a commit, after a Pages setting
+  # changes or a failed deploy.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time, and never cancel one half way: a partially uploaded
+# site is worse than an old one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Cheap checks, because the site has no tests and a broken link or a
+      # malformed page would otherwise be found by a reader.
+      - name: Check the pages parse and their links exist
+        run: |
+          python3 - <<'PY'
+          import html.parser, pathlib, re, sys
+
+          site = pathlib.Path("site")
+          pages = sorted(site.glob("*.html"))
+          if not pages:
+              sys.exit("no pages found")
+
+          bad = []
+          for p in pages:
+              text = p.read_text()
+              try:
+                  parser = html.parser.HTMLParser()
+                  parser.feed(text)
+                  parser.close()
+              except Exception as e:
+                  bad.append(f"{p}: does not parse: {e}")
+
+              # Local links only; anything with a scheme is somebody else's
+              # problem and not worth failing a deploy over.
+              for href in re.findall(r'href="([^"#]+)', text):
+                  if "://" in href or href.startswith("mailto:"):
+                      continue
+                  if not (site / href).exists():
+                      bad.append(f"{p}: dead link to {href}")
+
+              for src in re.findall(r'src="([^"#]+)', text):
+                  if "://" in src:
+                      continue
+                  if not (site / src).exists():
+                      bad.append(f"{p}: missing asset {src}")
+
+          if bad:
+              sys.exit("\n".join(bad))
+          print(f"ok: {len(pages)} pages, links and assets resolve")
+          PY
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4

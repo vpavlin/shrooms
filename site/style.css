@@ -1,0 +1,256 @@
+/* shrooms — the same palette as the app, the daemon's status output and the
+   Basecamp view, because a colour that means one thing in one place and
+   something else elsewhere is worse than no colour at all. */
+
+:root {
+    --void: #07090b;
+    --panel: #0e1216;
+    --line: #1c2229;
+    --ash: #6b7680;
+    --bone: #d6dde3;
+
+    --phosphor: #35f0a0;  /* connected, carrying traffic */
+    --amber: #f0b429;     /* reaching, not there yet */
+    --rust: #e05252;      /* failed */
+    --violet: #9a7bff;    /* relayed */
+
+    --sky: #5aa9ff;       /* mesh tints: never a status colour */
+    --blossom: #ff6fb5;
+    --chartreuse: #c8e64a;
+
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    --measure: 68ch;
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+    margin: 0;
+    background: var(--void);
+    color: var(--bone);
+    font-family: var(--mono);
+    font-size: 15px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* --- the canvas behind everything ------------------------------------- */
+
+#field {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    /* Decoration, and decoration must never eat a click. */
+    pointer-events: none;
+}
+
+.page {
+    position: relative;
+    z-index: 1;
+    max-width: 1000px;
+    margin: 0 auto;
+    padding: 0 24px 96px;
+}
+
+/* --- masthead ---------------------------------------------------------- */
+
+nav {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    flex-wrap: wrap;
+    padding: 14px 0;
+    background: linear-gradient(var(--void) 70%, transparent);
+    font-size: 13px;
+}
+
+nav .mark {
+    color: var(--phosphor);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+}
+
+nav a {
+    color: var(--ash);
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+}
+
+nav a:hover { color: var(--bone); border-bottom-color: var(--line); }
+nav a.here { color: var(--bone); border-bottom-color: var(--phosphor); }
+nav .spacer { flex: 1 1 auto; }
+
+/* --- type -------------------------------------------------------------- */
+
+h1, h2, h3 { line-height: 1.25; font-weight: 600; }
+
+h1 {
+    font-size: clamp(2.1rem, 6vw, 3.4rem);
+    margin: 0.6em 0 0.2em;
+    letter-spacing: -0.02em;
+}
+
+h2 {
+    font-size: 1.35rem;
+    margin: 3.2em 0 0.6em;
+    color: var(--bone);
+}
+
+h2::before {
+    content: "§ ";
+    color: var(--phosphor);
+    opacity: 0.5;
+}
+
+h3 { font-size: 1.05rem; margin: 2.2em 0 0.4em; color: var(--bone); }
+
+p, li { max-width: var(--measure); color: #b9c2ca; }
+
+.lede {
+    font-size: 1.15rem;
+    color: var(--bone);
+    max-width: var(--measure);
+}
+
+a { color: var(--phosphor); text-decoration-color: rgba(53, 240, 160, 0.35); }
+a:hover { text-decoration-color: var(--phosphor); }
+
+strong { color: var(--bone); }
+em { color: var(--bone); font-style: italic; }
+
+code {
+    font-size: 0.9em;
+    color: var(--chartreuse);
+    background: rgba(255, 255, 255, 0.04);
+    padding: 0.1em 0.35em;
+    border-radius: 4px;
+}
+
+pre {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px 18px;
+    overflow-x: auto;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+pre code { background: none; padding: 0; color: #cfd8de; }
+pre .p { color: var(--phosphor); }  /* prompts and good news */
+pre .c { color: var(--ash); }       /* comments */
+pre .a { color: var(--amber); }     /* warnings */
+
+blockquote {
+    margin: 1.6em 0;
+    padding: 2px 0 2px 18px;
+    border-left: 2px solid var(--violet);
+    color: var(--bone);
+}
+
+hr { border: 0; border-top: 1px solid var(--line); margin: 3em 0; }
+
+/* --- hero -------------------------------------------------------------- */
+
+.hero { padding: 8vh 0 2vh; }
+
+.hero .sub {
+    color: var(--ash);
+    font-size: 1rem;
+    letter-spacing: 0.02em;
+}
+
+.cta { display: flex; gap: 12px; flex-wrap: wrap; margin: 2em 0 0; }
+
+.cta a {
+    display: inline-block;
+    padding: 9px 16px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--panel);
+    color: var(--bone);
+    text-decoration: none;
+    font-size: 13px;
+}
+
+.cta a.primary { border-color: rgba(53, 240, 160, 0.4); color: var(--phosphor); }
+.cta a:hover { border-color: var(--phosphor); }
+
+/* --- cards ------------------------------------------------------------- */
+
+.grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 14px;
+    margin: 1.4em 0;
+}
+
+.card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 16px 18px;
+}
+
+.card h3 { margin: 0 0 0.3em; font-size: 0.98rem; }
+.card p { margin: 0; font-size: 0.9rem; color: var(--ash); max-width: none; }
+.card a { text-decoration: none; }
+
+/* A tinted rule at the top of a card, per mesh-tint, purely to carry the
+   palette through the page the way the graph does. */
+.card.t1 { border-top: 2px solid var(--sky); }
+.card.t2 { border-top: 2px solid var(--blossom); }
+.card.t3 { border-top: 2px solid var(--chartreuse); }
+.card.t4 { border-top: 2px solid var(--violet); }
+
+/* --- callouts ---------------------------------------------------------- */
+
+.note, .warn {
+    border: 1px solid var(--line);
+    border-left-width: 3px;
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin: 1.6em 0;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.note { border-left-color: var(--sky); }
+.warn { border-left-color: var(--amber); }
+.note p, .warn p { margin: 0; }
+.note p + p, .warn p + p { margin-top: 0.6em; }
+
+/* --- tables ------------------------------------------------------------ */
+
+table { border-collapse: collapse; width: 100%; margin: 1.4em 0; font-size: 13px; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--ash); font-weight: 600; letter-spacing: 0.03em; }
+td code { white-space: nowrap; }
+
+/* --- status dots, reused from the app's meaning ------------------------ */
+
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; }
+.dot.on { background: var(--phosphor); }
+.dot.mid { background: var(--amber); }
+.dot.off { background: var(--ash); }
+.dot.relay { background: var(--violet); }
+
+footer {
+    margin-top: 6em;
+    padding-top: 2em;
+    border-top: 1px solid var(--line);
+    color: var(--ash);
+    font-size: 12px;
+}
+
+footer a { color: var(--ash); }
+
+/* Motion is decoration; anybody who has asked for less of it gets none. */
+@media (prefers-reduced-motion: reduce) {
+    #field { display: none; }
+    html { scroll-behavior: auto; }
+}

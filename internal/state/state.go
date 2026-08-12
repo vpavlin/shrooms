@@ -962,6 +962,15 @@ func WriteConfig(path string, c Config) error {
 			if len(m.Services) > 0 {
 				fmt.Fprintf(&b, "mesh.%s.services = %s\n", label, formatArray(m.Services))
 			}
+			// Written only when set, like every other per-mesh key: the
+			// default is off, and a config full of "false" reads as though
+			// somebody decided each one.
+			if m.AnnounceServices {
+				fmt.Fprintf(&b, "mesh.%s.announce_services = \"true\"\n", label)
+			}
+			if m.AnnounceBound {
+				fmt.Fprintf(&b, "mesh.%s.announce_bound = \"true\"\n", label)
+			}
 		}
 	}
 

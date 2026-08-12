@@ -738,8 +738,12 @@ D-Bus and an unlocked session — so a stolen powered-on laptop still yields the
 key — and does not exist on a headless machine. `--no-passphrase` is there for
 a file you keep on an encrypted volume.
 
-Not built yet: automatic renewal, so a credential is re-issued by hand every 30
-days — `shrooms invite` again is the shortest way to do it.
+Renewal is a sweep rather than a ceremony per device: `shrooms admin renew`
+asks a running node who is on the mesh, signs a fresh credential for everyone
+inside ten days of expiry, and hands them back to be delivered over the control
+plane. What is deliberately not built is renewal with nobody present, which
+would need a signing key that is online — a different posture from an admin key
+used a handful of times a year.
 
 ## More than one mesh
 
@@ -998,7 +1002,8 @@ yourself afterwards:
 
 ```console
 $ sudo bash install.sh prepare --name nas --relay
-# then edit the network_key line in /etc/shrooms/config.toml
+# then run `sudo shrooms set-key`, which reads it from a prompt so it never reaches
+shell history
 $ sudo systemctl start shrooms
 ```
 
@@ -1144,10 +1149,11 @@ short version:
 
 | | |
 |---|---|
+| [shrooms.vpavlin.xyz](https://shrooms.vpavlin.xyz) | the website: what it is, why, install, guides |
 | [DESIGN.md](DESIGN.md) | architecture and the research behind each decision |
 | [PROTOTYPE.md](PROTOTYPE.md) | build plan, milestones, what each proved |
 | [SECURITY.md](SECURITY.md) | what is protected, what leaks, what is deferred |
-| [docs/adr/](docs/adr/) | why each significant decision was made (13 records) |
+| [docs/adr/](docs/adr/) | why each significant decision was made (26 records) |
 
 ---
 
@@ -1177,16 +1183,15 @@ Done, and in daily use:
       relay and services ([ADR-015](docs/adr/015-multiple-meshes-one-daemon.md))
 - [x] A synthetic IPv4 address per peer, so browsers work on networks with no
       IPv6 ([ADR-021](docs/adr/021-synthetic-ipv4.md))
+- [x] Ask the router for a port mapping, so a node behind a home NAT is
+      reachable without `advertise` and a forwarding rule
+      ([ADR-024](docs/adr/024-ask-the-router.md))
+- [x] Announce what is bound to the mesh address, so binding a service to the
+      mesh is discoverable ([ADR-026](docs/adr/026-announce-what-is-bound.md))
 
 Next, roughly in order:
 
-- [ ] Ask the router for a port mapping (PCP, NAT-PMP, UPnP), so a node behind
-      a home NAT learns its own public address and opens its own port instead
-      of needing `advertise` and a forwarding rule
-- [x] Announce services, so the roster shows what the mesh offers rather than
-      what you remember ([ADR-023](docs/adr/023-announcing-services.md)), and
-      the ports bound to a mesh address alongside them
-      ([ADR-026](docs/adr/026-announce-what-is-bound.md))
+
 - [ ] An invite that carries a per-mesh identity, so a device joining a second
       mesh derives a fresh address rather than sharing a suffix
       ([ADR-017](docs/adr/017-invite-tokens.md))
