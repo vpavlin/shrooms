@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"os"
 	"sync"
+	"sync/atomic"
 
 	"golang.zx2c4.com/wireguard/tun"
 )
@@ -39,7 +40,13 @@ type Mux struct {
 	// unrouted counts packets whose destination belongs to no mesh. Usually
 	// zero; anything else means the interface holds an address or route that
 	// no mesh claims, which is worth being able to see.
-	unrouted uint64
+	//
+	// Atomic rather than guarded by mu: it is written on the dispatch path,
+	// which holds mu for *reading* so that several meshes can be matched at
+	// once, and incrementing under a read lock is a data race however
+	// harmless a lost count would be. The race detector was right and the
+	// counter was wrong.
+	unrouted atomic.Uint64
 }
 
 // Port is one mesh's view of the shared device. It satisfies tun.Device, so a
@@ -83,11 +90,7 @@ func (m *Mux) Port(prefixes ...netip.Prefix) *Port {
 }
 
 // Unrouted reports packets that belonged to no mesh.
-func (m *Mux) Unrouted() uint64 {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.unrouted
-}
+func (m *Mux) Unrouted() uint64 { return m.unrouted.Load() }
 
 // run reads the real device and dispatches by destination.
 func (m *Mux) run() {
@@ -139,7 +142,7 @@ func (m *Mux) dispatch(pkt []byte) {
 		}
 		return
 	}
-	m.unrouted++
+	m.unrouted.Add(1)
 }
 
 // destination reads a packet's destination address, for either family.

@@ -199,7 +199,8 @@ test-unit:
 	CGO_CFLAGS= CGO_LDFLAGS= $(GO) test -race ./internal/identity/... \
 		./internal/topic/... ./internal/control/... ./internal/wg/... \
 		./internal/disco/... ./internal/relay/... ./internal/state/... \
-		./internal/hosts/... ./internal/dns/... ./internal/service/... ./internal/cred/...
+		./internal/hosts/... ./internal/dns/... ./internal/service/... \
+		./internal/cred/... ./internal/invite/... ./internal/portmap/...
 
 ## --- android ---
 
@@ -273,8 +274,13 @@ build-all: check-lib
 vet-cgo: check-lib
 	$(GO) vet ./internal/mesh/... ./cmd/...
 
+## -race, because the failure this caught was invisible without it: a counter
+## incremented on the dispatch path while a read lock was held, which CI found
+## and a plain `make test` had been passing over for a day. The whole suite
+## takes about twenty seconds with it, which is not a reason to run a weaker
+## check than the one that gates a push.
 test: check-lib
-	$(GO) test ./...
+	$(GO) test -race ./...
 
 fmt:
 	gofmt -w ./cmd ./internal
