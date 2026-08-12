@@ -111,15 +111,17 @@ func (m *Mesh) publishServices(now time.Time) error {
 
 // handleServices records what a peer says it offers.
 //
-// Only from a device already on the roster. A roster entry is the outcome of a
-// verified announce — credential checked, replay guard passed — so this reuses
-// that decision rather than making a weaker one of its own. A device we have
-// not admitted can still put a message on the bus; it simply goes nowhere.
+// Kept for any device that could seal the message, and filtered when it is
+// read: Services returns only what a peer on the roster said, and a roster
+// entry is the outcome of a verified announce — credential checked, replay
+// guard passed. So the rule is the same one, applied a moment later.
+//
+// The moment matters. Refusing at arrival meant a list that came in before
+// that peer's first announce was dropped for good, and the next repeat is five
+// minutes away — which is a coin flip after every reconnect, and exactly what
+// "I enabled it and see nothing from that device" looked like.
 func (m *Mesh) handleServices(sv *control.Services, now time.Time) {
 	id := hex.EncodeToString(sv.DevicePub)
-	if !m.roster.Known(id) {
-		return
-	}
 	names := make([]string, 0, len(sv.Names))
 	for _, n := range sv.Names {
 		// Sanitised the same way a device name is, because these become DNS
@@ -134,9 +136,20 @@ func (m *Mesh) handleServices(sv *control.Services, now time.Time) {
 	if m.services == nil {
 		m.services = map[string]peerServices{}
 	}
+	// Bounded, because this now accepts from any holder of the network key
+	// rather than only from devices already admitted. A mesh has tens of
+	// devices; anything past this is somebody being tiresome, and dropping
+	// their claim costs nothing since it would never be displayed anyway.
+	if _, known := m.services[id]; !known && len(m.services) >= maxServiceClaims {
+		m.mu.Unlock()
+		return
+	}
 	m.services[id] = peerServices{names: names, seen: now}
 	m.mu.Unlock()
 }
+
+// maxServiceClaims caps how many devices' lists are held at once.
+const maxServiceClaims = 64
 
 // peerServices is one peer's claim, and when it made it.
 type peerServices struct {
@@ -150,12 +163,20 @@ type peerServices struct {
 // listening. Only the publishing node knows whether the port answers, so a
 // caller should present these as names to try rather than as a health display.
 func (m *Mesh) Services(now time.Time) map[string][]string {
+	// On the roster, which is where the membership check lives: a peer is
+	// there because an announce of its carried a credential this mesh's
+	// authority signed.
+	known := map[string]bool{}
+	for _, p := range m.roster.Peers() {
+		known[p.ID()] = true
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	out := make(map[string][]string, len(m.services))
 	for id, ps := range m.services {
-		if now.Sub(ps.seen) > ServicesStale {
+		if now.Sub(ps.seen) > ServicesStale || !known[id] {
 			continue
 		}
 		out[id] = append([]string(nil), ps.names...)

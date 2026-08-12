@@ -32,7 +32,8 @@ func TestServicesFromAKnownPeerAreKept(t *testing.T) {
 	}
 }
 
-// A device we have not admitted can put a message on the bus; it goes nowhere.
+// A device we have not admitted can put a message on the bus, and nothing of
+// it is ever shown.
 func TestServicesFromAStrangerAreIgnored(t *testing.T) {
 	nk, _ := identity.NewNetworkKey()
 	self, _ := identity.New()
@@ -46,7 +47,32 @@ func TestServicesFromAStrangerAreIgnored(t *testing.T) {
 	}, now)
 
 	if len(m.Services(now)) != 0 {
-		t.Error("kept a service list from a device that is not on the roster")
+		t.Error("showed a service list from a device that is not on the roster")
+	}
+}
+
+// A list that arrives before that peer's first announce must survive to be
+// shown once the announce lands. Dropping it meant waiting five minutes for
+// the next repeat, which after a reconnect is most of the time somebody spends
+// wondering why the feature does nothing.
+func TestServicesArrivingBeforeTheAnnounceAreKept(t *testing.T) {
+	nk, _ := identity.NewNetworkKey()
+	self, _ := identity.New()
+	peer, _ := identity.New()
+	now := time.Now()
+
+	m := &Mesh{roster: NewRoster(nk, self.DevicePub)}
+	m.handleServices(&control.Services{
+		Kind: control.KindServices, DevicePub: peer.DevicePub,
+		Names: []string{"immich"}, Timestamp: now.Unix(),
+	}, now)
+	if len(m.Services(now)) != 0 {
+		t.Fatal("shown before the peer was admitted")
+	}
+
+	m.roster.Apply(newAnnounce(t, peer, "nas", nil, 1), now)
+	if got := m.Services(now)[hex.EncodeToString(peer.DevicePub)]; len(got) != 1 {
+		t.Errorf("the list was lost while waiting for the announce: %v", got)
 	}
 }
 
