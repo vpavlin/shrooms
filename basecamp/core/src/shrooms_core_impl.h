@@ -93,6 +93,17 @@ public:
     std::string setServicesOn(const std::string& socketPath, const std::string& csv);
 
     /**
+     * @brief Tells this device's peers what it publishes, or stops telling them.
+     *
+     * The one setting here that changes what other people can see rather than
+     * what this device does. Off is the default and is the security property:
+     * a mesh shared with other people discloses nothing until somebody decides
+     * otherwise.
+     */
+    std::string setAnnounceServices(bool on);
+    std::string setAnnounceServicesOn(const std::string& socketPath, bool on);
+
+    /**
      * @brief Turns one joined mesh on or off without leaving it.
      *
      * Disabling keeps the credentials, so this is the reversible half of

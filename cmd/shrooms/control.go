@@ -74,6 +74,22 @@ func controlHandlers(mux *http.ServeMux, log *slog.Logger, cfgPath string, rl *r
 			return fmt.Sprintf("%d service(s) published", len(in.Services)), nil
 		}))
 
+	// Whether this device's peers are told what it publishes (ADR-023).
+	//
+	// A disclosure decision, and the one setting here that changes what other
+	// people can see rather than what this device does — so it is worth being
+	// reachable from a UI, where the wording can say what it actually changes:
+	// a member can already reach these services by connecting to the address,
+	// and this is about whether the names are listed for them.
+	mux.HandleFunc("/config/announce", writeSetting(log, cfgPath,
+		func(cfg *state.Config, in settingRequest) (string, error) {
+			cfg.AnnounceServices = in.Enabled
+			if in.Enabled {
+				return "peers will see the names of services published here", nil
+			}
+			return "peers will see nothing about what is published here", nil
+		}))
+
 	// Whether a mesh runs, without leaving it. Being a member and using it are
 	// different things (ADR-015).
 	mux.HandleFunc("/config/mesh", writeSetting(log, cfgPath,

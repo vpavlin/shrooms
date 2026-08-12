@@ -198,3 +198,26 @@ func TestResponsesAreJSON(t *testing.T) {
 		t.Errorf("no result in %s", body)
 	}
 }
+
+// Announcing services is off until asked, and the endpoint is the only way to
+// ask from a UI. Worth its own test because the default is the security
+// property: a mesh shared with other people discloses nothing until somebody
+// decides otherwise (ADR-023).
+func TestAnnounceServicesIsOffUntilAsked(t *testing.T) {
+	mux, path := controlFixture(t)
+	if reload(t, path).AnnounceServices {
+		t.Fatal("announcing was on before anybody asked")
+	}
+	if w := post(t, mux, "/config/announce", `{"enabled":true}`); w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	if !reload(t, path).AnnounceServices {
+		t.Error("announcing did not turn on")
+	}
+	if w := post(t, mux, "/config/announce", `{"enabled":false}`); w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	if reload(t, path).AnnounceServices {
+		t.Error("announcing did not turn off again")
+	}
+}

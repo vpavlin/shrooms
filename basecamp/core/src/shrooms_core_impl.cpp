@@ -438,6 +438,18 @@ std::string ShroomsCoreImpl::setMeshEnabledOn(const std::string& socketPath,
                             ",\"enabled\":" + (enabled ? "true" : "false") + "}");
 }
 
+std::string ShroomsCoreImpl::setAnnounceServices(bool on)
+{
+    return postToDaemon("/config/announce",
+                        std::string("{\"enabled\":") + (on ? "true" : "false") + "}");
+}
+
+std::string ShroomsCoreImpl::setAnnounceServicesOn(const std::string& socketPath, bool on)
+{
+    return postToSocket(socketPath, "/config/announce",
+                        std::string("{\"enabled\":") + (on ? "true" : "false") + "}");
+}
+
 std::string ShroomsCoreImpl::setMeshEnabled(const std::string& label, bool enabled)
 {
     return postToDaemon("/config/mesh",
