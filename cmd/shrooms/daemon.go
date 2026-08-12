@@ -997,10 +997,9 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 		json.NewEncoder(w).Encode(snapshot())
 	})
 
-	// Config changes that can be applied while running (services, today).
-	// requireRoot like every mutating endpoint: it re-reads a file only root
-	// can write, but it also rebinds ports, and the socket group is for
-	// reading status.
+	// Changing this device's own settings, and applying them (ADR-025). In the
+	// socket group's tier, because none of it decides who belongs to a mesh —
+	// that needs the admin key, which the daemon has never held.
 	if rl != nil {
 		// Re-reading the config is in the group's tier: it applies what a
 		// desktop app has just written, and it can do nothing the config does
