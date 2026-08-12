@@ -2,6 +2,7 @@ package xyz.vpavlin.shrooms
 
 import android.Manifest
 import android.content.Intent
+import android.net.Uri
 import android.content.pm.PackageManager
 import android.net.VpnService
 import android.os.Build
@@ -34,6 +35,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -765,6 +767,81 @@ private fun MeshScreen(
         // Joining is an action and stays here; everything that was a preference
         // moved behind the link next to it, because each one used to spend
         // vertical space on this screen arguing for itself.
+        // What the mesh offers, as a list rather than as something you find by
+        // tapping a peer and reading its details.
+        //
+        // A service name exists so you can go there, and a name you have to go
+        // looking for is one you keep asking somebody for instead. Every peer
+        // that announces (ADR-023) contributes its names here, with the device
+        // shown, because two devices may publish the same name and the device
+        // is what tells them apart.
+        val svcCtx = LocalContext.current
+        val offered = remember(snap.peers) {
+            snap.peers.flatMap { p ->
+                p.services.map { svc ->
+                    Triple(svc, p.name, "http://$svc.${p.dnsName.ifEmpty { p.name }}")
+                }
+            }.sortedWith(compareBy({ it.first }, { it.second }))
+        }
+        if (offered.isNotEmpty()) {
+            Spacer(Modifier.height(18.dp))
+            Box(Modifier.padding(horizontal = 24.dp)) { Label("SERVICES") }
+            Spacer(Modifier.height(6.dp))
+            offered.forEach { (name, device, url) ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            // Opening it is the whole point. A browser is the
+                            // right guess for a mesh service and the wrong one
+                            // for some, so a failure to resolve a handler is
+                            // ignored rather than reported: the address is
+                            // still on screen to copy.
+                            runCatching {
+                                svcCtx.startActivity(
+                                    Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                )
+                            }
+                        }
+                        .padding(horizontal = 24.dp, vertical = 5.dp),
+                ) {
+                    Text(
+                        name,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Palette.Phosphor,
+                        modifier = Modifier.width(96.dp),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        device,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Palette.Ash,
+                        modifier = Modifier.width(90.dp),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        url.removePrefix("http://"),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Palette.Bone,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            // Said once, under the list: this is what peers claim to publish,
+            // and only the publishing device knows whether the port answers.
+            Text(
+                "announced by their devices; not checked from here",
+                style = MaterialTheme.typography.labelSmall,
+                color = Palette.Ash,
+                modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 2.dp),
+            )
+        }
+
         Spacer(Modifier.height(18.dp))
         Row(
             verticalAlignment = Alignment.CenterVertically,
