@@ -74,6 +74,38 @@ func (h Health) OK(now time.Time) bool {
 	return !h.LastMessage.IsZero() && now.Sub(h.LastMessage) < RendezvousStale
 }
 
+// SilentAfter is how long the plane may carry other applications' traffic
+// without carrying one of ours before we call it deaf.
+//
+// Announces arrive every AnnounceInterval per peer, so twelve minutes is many
+// missed in a row rather than an unlucky gap.
+const SilentAfter = 12 * time.Minute
+
+// Silent reports a rendezvous plane that is up, busy, and carrying nothing of
+// ours.
+//
+// The failure this names is the one both other checks miss. OK counts *any*
+// message, deliberately — traffic we cannot decrypt still proves the
+// subscription is live — and on a busy shard that is thousands of other
+// applications' messages an hour, so OK stays true forever. Meanwhile our own
+// announces stop arriving, every peer ages out, and the roster empties. Nothing
+// in the log says so, because an undecryptable message is expected and logged
+// at debug.
+//
+// Requires that we heard one of ours at some point: a node that has never had a
+// peer is not deaf, it is alone, and restarting it would achieve nothing at all.
+func (h Health) Silent(now time.Time) bool {
+	if h.LastAnnounce.IsZero() || h.LastMessage.IsZero() {
+		return false
+	}
+	// Traffic still arriving is what distinguishes this from the plane simply
+	// being down, which OK already covers.
+	if now.Sub(h.LastMessage) >= RendezvousStale {
+		return false
+	}
+	return now.Sub(h.LastAnnounce) >= SilentAfter
+}
+
 // Problem states the condition, and only the condition. It returns "" when the
 // rendezvous plane is fine.
 //

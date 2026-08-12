@@ -691,6 +691,11 @@ const rendezvousStall = 10 * time.Minute
 // does not cost a restart.
 const deafConfirm = 2 * time.Minute
 
+// silentCooldown is how long to leave a silent plane alone after acting on it.
+// Long, because a small mesh whose every peer is genuinely off looks exactly
+// like this and must not be restarted in a loop.
+const silentCooldown = time.Hour
+
 // watchRendezvous restarts the daemon when the rendezvous plane stays down.
 //
 // When it stops, nothing looks broken. Established tunnels keep carrying
@@ -714,6 +719,9 @@ func watchRendezvous(ctx context.Context, log *slog.Logger, instances []*instanc
 	// When we first noticed a peer we can reach but cannot hear. Zero when
 	// there is no such peer.
 	var deafSince time.Time
+	// The same, for a plane carrying nothing of ours, and when we last acted
+	// on it.
+	var silentSince, lastSilentAct time.Time
 	tick := time.NewTicker(30 * time.Second)
 	defer tick.Stop()
 
@@ -733,9 +741,18 @@ func watchRendezvous(ctx context.Context, log *slog.Logger, instances []*instanc
 			// rekeying is a peer whose daemon is running, and a running daemon
 			// announces.
 			deafTo := ""
+			silent := false
 			for _, in := range instances {
-				if in.mesh.Health().OK(now) {
+				h := in.mesh.Health()
+				if h.OK(now) {
 					healthy = now
+				}
+				// A plane that is up and busy and carrying nothing of ours.
+				// OK cannot see it — it counts other applications' traffic on
+				// the shard, deliberately — and Deaf cannot either once the
+				// tunnels have gone with the roster.
+				if h.Silent(now) {
+					silent = true
 				}
 				// Half the peers we can reach, and never on the strength of a
 				// single one. One peer going quiet while its tunnel lives is
@@ -753,6 +770,12 @@ func watchRendezvous(ctx context.Context, log *slog.Logger, instances []*instanc
 			case deafSince.IsZero():
 				deafSince = now
 			}
+			switch {
+			case !silent:
+				silentSince = time.Time{}
+			case silentSince.IsZero():
+				silentSince = now
+			}
 
 			if now.Sub(started) < rendezvousGrace {
 				continue
@@ -763,6 +786,16 @@ func watchRendezvous(ctx context.Context, log *slog.Logger, instances []*instanc
 				problem = fmt.Sprintf("no rendezvous connection for %s (%s)",
 					now.Sub(healthy).Round(time.Second),
 					instances[0].mesh.Health().Problem(now))
+			case !silentSince.IsZero() && now.Sub(silentSince) >= deafConfirm &&
+				now.Sub(lastSilentAct) >= silentCooldown:
+				// An hour between attempts, because this is the one signal that
+				// can be produced by an entirely healthy node: every peer of a
+				// small mesh really can be switched off for a quarter of an
+				// hour. Restarting such a node costs five seconds and finds
+				// nothing, which is a fine price hourly and a silly one every
+				// twelve minutes.
+				lastSilentAct = now
+				problem = "the rendezvous plane is carrying other applications' traffic and none of ours"
 			case !deafSince.IsZero() && now.Sub(deafSince) >= deafConfirm:
 				// Traffic is arriving and theirs is not. Restarting is a blunt
 				// answer, and it is the one that has worked every time: the

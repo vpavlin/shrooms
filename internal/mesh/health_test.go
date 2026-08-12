@@ -211,3 +211,45 @@ func TestHealthIgnoresUnmatchedDisconnect(t *testing.T) {
 		t.Errorf("churn = %d from an unmatched disconnect, want 0", c)
 	}
 }
+
+// The failure both other checks miss: the plane is up, thousands of other
+// applications' messages are arriving on the shard, and not one of ours has
+// been opened in a quarter of an hour.
+func TestSilentPlaneIsNoticed(t *testing.T) {
+	now := time.Now()
+	h := Health{
+		Status:       "Connected",
+		LastMessage:  now.Add(-2 * time.Second),
+		LastAnnounce: now.Add(-30 * time.Minute),
+	}
+	if h.OK(now) != true {
+		t.Fatal("this test is about a plane OK calls healthy")
+	}
+	if !h.Silent(now) {
+		t.Error("a plane carrying nothing of ours was not noticed")
+	}
+}
+
+// A node that has never heard a peer is not deaf, it is alone. Restarting it
+// would achieve nothing, so it must not be mistaken for the case above.
+func TestALonelyNodeIsNotSilent(t *testing.T) {
+	now := time.Now()
+	h := Health{Status: "Connected", LastMessage: now.Add(-time.Second)}
+	if h.Silent(now) {
+		t.Error("a node that never had a peer was called deaf")
+	}
+}
+
+// And a plane that has genuinely stopped is the other check's business: this
+// one must not also fire, or the two would race to restart for the same fault.
+func TestADeadPlaneIsNotSilent(t *testing.T) {
+	now := time.Now()
+	h := Health{
+		Status:       "Disconnected",
+		LastMessage:  now.Add(-time.Hour),
+		LastAnnounce: now.Add(-time.Hour),
+	}
+	if h.Silent(now) {
+		t.Error("a dead plane was reported as merely silent")
+	}
+}
