@@ -26,7 +26,9 @@ if [ -z "${QML:-}" ]; then
         /usr/lib/qt6/bin/qml \
         $(ls -d /usr/lib/*/qt6/bin/qml 2>/dev/null | head -1) \
         $(ls -d /usr/lib/qt6/libexec/qml 2>/dev/null | head -1) \
-        $(ls -d /nix/store/*-qtdeclarative-*/bin/qml 2>/dev/null | sort -V | tail -1)
+        $(ls -d /nix/store/*-qtdeclarative-*/bin/qml 2>/dev/null | sort -V | tail -1) \
+        $(find /usr/lib /usr/lib64 /usr/libexec /usr/local/lib -maxdepth 4 \
+              -name qml -type f -perm -u+x 2>/dev/null | head -1)
     do
         [ -x "$candidate" ] || continue
         QML=$candidate
@@ -38,7 +40,12 @@ if [ -z "${QML:-}" ] || [ ! -x "$QML" ]; then
     # What was actually there, because "not found" on a machine that just
     # installed Qt is a packaging question and the answer is a directory
     # listing.
-    echo "looked in: PATH, /usr/lib/qt6/bin, /usr/lib/*/qt6/bin, /nix/store" >&2
+    # The last candidate is a bounded find over the usual prefixes, so
+    # reaching here means Qt's qml runtime is genuinely not installed rather
+    # than installed somewhere this script has not heard of — which is what
+    # every previous version of this message meant and did not say.
+    echo "looked in: PATH, /usr/lib/qt6/bin, /usr/lib/*/qt6/bin, /nix/store," >&2
+    echo "and a find under /usr/lib, /usr/lib64, /usr/libexec, /usr/local/lib" >&2
     ls -d /usr/lib/*/qt6/bin /usr/lib/qt6/* 2>/dev/null >&2 || true
     exit 1
 fi
