@@ -79,6 +79,16 @@ invite minted this way produces a device every peer refuses.
 with your mesh's metadata, which on a personal machine means your own login, and
 leave it unset on a shared one ([ADR-025](docs/adr/025-control-from-a-desktop-app.md)).
 
+**A service bound to the mesh address is reachable by every member, and by
+nobody else.** Worth stating as the positive case, because it is the one
+arrangement here where the network does the access control rather than the
+application: only members can route to the mesh prefix, so `sshd` on that
+address is off the LAN and off the internet entirely, with no firewall rule to
+get wrong. `announce_bound` lists such ports for members
+([ADR-026](docs/adr/026-announce-what-is-bound.md)); it discloses names, not
+access, and is off by default because those ports are discovered rather than
+declared.
+
 **A published service is reachable by every member.** `services` forwards a
 mesh connection to a loopback port, and a great many applications treat "bound
 to 127.0.0.1" as their access control — no password, on the reasoning that only

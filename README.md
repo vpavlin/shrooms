@@ -427,6 +427,78 @@ If something already holds that port on the overlay address — an application
 that binds `::` and is therefore reachable already — the daemon says so and
 stays out of the way rather than taking the port.
 
+### 6c. The other way round: bind the service to the mesh
+
+`services` forwards a mesh connection to a local port, which means the
+application still listens where it always did — usually on `127.0.0.1`, often
+with no authentication, on the reasoning that only a local user can reach it.
+Publishing it makes every mesh member a local user.
+
+There is a stronger arrangement, and it needs no forwarding at all: **bind the
+service to the mesh address**. Only members can route to that prefix, so the
+bind itself is the access control.
+
+`sshd`, for instance. Take the address from `shrooms status`:
+
+```console
+$ shrooms status | head -2
+network       fd3b:ffe9:f81::/48
+self          laptop  fd3b:ffe9:f81:81a7:18bc:69b1:9bb:7e69
+```
+
+and give it to sshd:
+
+```
+# /etc/ssh/sshd_config.d/mesh.conf
+ListenAddress fd3b:ffe9:f81:81a7:18bc:69b1:9bb:7e69
+```
+
+Now `ssh laptop.mesh` works from your phone on mobile data, and ssh is not
+listening on your LAN, on café wifi, or on the internet at all.
+
+**One wrinkle worth knowing before it bites you.** That address exists only
+while the daemon is running, and a service that binds an address which is not
+there yet fails to start. Either order it after the mesh:
+
+```
+# /etc/systemd/system/ssh.service.d/mesh.conf
+[Unit]
+After=shrooms.service
+```
+
+or let the kernel accept the bind regardless, which also survives the daemon
+restarting underneath it:
+
+```console
+$ echo 'net.ipv6.ip_nonlocal_bind=1' | sudo tee /etc/sysctl.d/99-shrooms.conf
+$ sudo sysctl --system
+```
+
+Peers cannot see any of this until you say so, because a bound port is
+*discovered* rather than declared — so `shrooms bound` shows exactly what would
+be announced before anything is:
+
+```console
+$ shrooms bound
+MESH     WOULD ANNOUNCE  REACHED AS
+default  ssh:22          laptop.mesh:22
+default  dev:3000        laptop.mesh:3000
+
+2 would be announced with announce_bound = "true".
+They are already reachable by every member; this is about being told.
+```
+
+```toml
+announce_bound = "true"     # list them in every member's roster
+```
+
+The daemon's own ports are never announced: the name router on 80 and 443 and
+the resolver on 53 are plumbing rather than something you offer.
+[ADR-026](docs/adr/026-announce-what-is-bound.md) has the reasoning, including
+why this is off by default and why only sockets on *exactly* the mesh address
+count — one on `::` is reachable from every network the machine is on, and
+listing it as mesh-only would be a lie.
+
 ### Reaching things that are not on the mesh
 
 The target does not have to be this machine. A service can point at anything
@@ -1048,6 +1120,10 @@ short version:
 
 - Control messages and discovery probes are both **encrypted**, fixed-size and
   fixed-rate, on a rotating topic, and not archived.
+- **Binding a service to the mesh address is the strongest access control here**
+  and costs nothing: only members can route to that prefix, so a service on it
+  is unreachable from the LAN or the internet without any firewall rule
+  ([ADR-026](docs/adr/026-announce-what-is-bound.md)).
 - Membership is an **admin-signed credential** on a mesh with `admin_keys` set:
   bound to one device's keys, valid for thirty days, revocable, and renewed by
   a sweep from the machine holding the admin key. Removing a device costs that
@@ -1107,8 +1183,10 @@ Next, roughly in order:
 - [ ] Ask the router for a port mapping (PCP, NAT-PMP, UPnP), so a node behind
       a home NAT learns its own public address and opens its own port instead
       of needing `advertise` and a forwarding rule
-- [ ] Announce services, so the roster shows what the mesh offers rather than
-      what you remember ([ADR-023](docs/adr/023-announcing-services.md))
+- [x] Announce services, so the roster shows what the mesh offers rather than
+      what you remember ([ADR-023](docs/adr/023-announcing-services.md)), and
+      the ports bound to a mesh address alongside them
+      ([ADR-026](docs/adr/026-announce-what-is-bound.md))
 - [ ] An invite that carries a per-mesh identity, so a device joining a second
       mesh derives a fresh address rather than sharing a suffix
       ([ADR-017](docs/adr/017-invite-tokens.md))
