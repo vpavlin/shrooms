@@ -442,6 +442,10 @@ type stateFile struct {
 	// membership until re-enrolled.
 	Credential string `json:"credential,omitempty"`
 
+	// Services is the single-mesh form of what peers offer, the same shape
+	// the per-mesh entries carry (ADR-023).
+	Services map[string]ServiceClaim `json:"services,omitempty"`
+
 	// Master is the secret every per-mesh identity derives from (ADR-015),
 	// base64. Absent in every file written so far, and generated the first time
 	// a second mesh is joined — never for a device that only ever has one, so
@@ -477,6 +481,11 @@ type State struct {
 	// Meshes is per-mesh state, keyed by network id. Empty on a single-mesh
 	// device, where the fields above are the whole story.
 	Meshes map[string]*MeshState
+
+	// Services is what peers said they publish, for the mesh this state
+	// belongs to (ADR-023). Written through to the mesh entry by Save, like
+	// the credential.
+	Services map[string]ServiceClaim
 
 	// owner and view are set on a View: the state this one is a window onto,
 	// and the entry it stands for. Saving a view writes through to the owner,
@@ -544,7 +553,7 @@ func LoadOrCreateState(dir string) (*State, error) {
 	}
 	id.WGPub = pub
 
-	st := &State{dir: dir, Identity: id, Seq: sf.Seq}
+	st := &State{dir: dir, Identity: id, Seq: sf.Seq, Services: sf.Services}
 	if sf.Master != "" {
 		raw, err := base64.StdEncoding.DecodeString(sf.Master)
 		if err != nil || len(raw) != identity.MasterLen {
@@ -578,6 +587,7 @@ func (s *State) Save() error {
 		s.owner.mu.Lock()
 		s.view.Seq = s.Seq
 		s.view.Credential = s.Credential
+		s.view.Services = s.Services
 		s.owner.mu.Unlock()
 		return s.owner.Save()
 	}
@@ -588,6 +598,7 @@ func (s *State) Save() error {
 		DevicePriv: base64.StdEncoding.EncodeToString(s.Identity.DevicePriv),
 		WGPriv:     base64.StdEncoding.EncodeToString(s.Identity.WGPriv[:]),
 		Seq:        s.Seq,
+		Services:   s.Services,
 		Meshes:     encodeMeshes(s.Meshes),
 	}
 	if len(s.Credential) > 0 {

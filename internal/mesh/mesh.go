@@ -421,6 +421,7 @@ func (m *Mesh) Run(ctx context.Context) error {
 	// node that has just started does not look serviceless for five minutes.
 	servicesTicker := time.NewTicker(ServicesInterval)
 	defer servicesTicker.Stop()
+	m.loadServices(time.Now())
 	if err := m.publishServices(time.Now()); err != nil {
 		m.log.Debug("could not announce services", "err", err)
 	}

@@ -2,6 +2,7 @@ package mesh
 
 import (
 	"encoding/hex"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -132,4 +133,72 @@ func TestNothingIsPublishedUnlessAsked(t *testing.T) {
 	}
 	// No node, so a publish that got as far as sending would have panicked;
 	// reaching here means it stopped at the switch.
+}
+
+// A restart must not mean rediscovery. The daemon restarts on upgrades and
+// whenever a watchdog decides the rendezvous plane is beyond repair, and each
+// time the list would otherwise be empty for minutes per peer.
+func TestServicesSurviveARestart(t *testing.T) {
+	nk, _ := identity.NewNetworkKey()
+	self, _ := identity.New()
+	peer, _ := identity.New()
+	now := time.Now()
+
+	dir := t.TempDir()
+	st, err := state.LoadOrCreateState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m := &Mesh{log: slog.New(slog.DiscardHandler), st: st,
+		roster: NewRoster(nk, self.DevicePub)}
+	m.roster.Apply(newAnnounce(t, peer, "nas", nil, 1), now)
+	m.handleServices(&control.Services{
+		Kind: control.KindServices, DevicePub: peer.DevicePub,
+		Names: []string{"immich", "jellyfin"}, Timestamp: now.Unix(),
+	}, now)
+
+	// A second daemon, reading the same state directory.
+	st2, err := state.LoadOrCreateState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m2 := &Mesh{log: slog.New(slog.DiscardHandler), st: st2,
+		roster: NewRoster(nk, self.DevicePub)}
+	m2.roster.Apply(newAnnounce(t, peer, "nas", nil, 1), now)
+	m2.loadServices(now)
+
+	got := m2.Services(now)[hex.EncodeToString(peer.DevicePub)]
+	if len(got) != 2 {
+		t.Fatalf("after a restart the list is %v, wanted what was learned before", got)
+	}
+}
+
+// But not forever: a claim that has not been repeated for hours is dropped on
+// load rather than shown as though it were current.
+func TestStaleServicesAreNotReloaded(t *testing.T) {
+	nk, _ := identity.NewNetworkKey()
+	self, _ := identity.New()
+	peer, _ := identity.New()
+	now := time.Now()
+
+	st, err := state.LoadOrCreateState(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Services = map[string]state.ServiceClaim{
+		hex.EncodeToString(peer.DevicePub): {
+			Names: []string{"immich"},
+			Seen:  now.Add(-2 * ServicesStale).Unix(),
+		},
+	}
+
+	m := &Mesh{log: slog.New(slog.DiscardHandler), st: st,
+		roster: NewRoster(nk, self.DevicePub)}
+	m.roster.Apply(newAnnounce(t, peer, "nas", nil, 1), now)
+	m.loadServices(now)
+
+	if len(m.Services(now)) != 0 {
+		t.Error("a claim nobody has repeated for hours came back from disk")
+	}
 }

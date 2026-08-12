@@ -30,6 +30,23 @@ type MeshState struct {
 	// because an authority is per mesh: being admitted to one says nothing
 	// about another, and a credential names the per-mesh device keys anyway.
 	Credential []byte
+
+	// Services is what peers on this mesh last said they publish (ADR-023),
+	// keyed by peer id, kept across restarts.
+	//
+	// Persisted because the alternative is rediscovery, and rediscovery is
+	// minutes: a node that restarts — including one our own watchdog
+	// restarted — comes back knowing nothing about what anybody offers and
+	// waits for each peer's next broadcast. The list is a claim rather than a
+	// fact, and a remembered claim is no less true than a freshly received
+	// one; what changes is only how old it is, which is recorded with it.
+	Services map[string]ServiceClaim
+}
+
+// ServiceClaim is one peer's list and when it was last heard.
+type ServiceClaim struct {
+	Names []string `json:"names"`
+	Seen  int64    `json:"seen"` // unix seconds
 }
 
 // MeshState returns this device's state within one mesh, creating it if this is
@@ -126,6 +143,8 @@ type meshStateFile struct {
 	WGPriv     string `json:"wg_priv"`
 	Seq        uint64 `json:"seq"`
 	Credential string `json:"credential,omitempty"`
+
+	Services map[string]ServiceClaim `json:"services,omitempty"`
 }
 
 func encodeMeshes(in map[string]*MeshState) map[string]meshStateFile {
@@ -142,6 +161,7 @@ func encodeMeshes(in map[string]*MeshState) map[string]meshStateFile {
 		if len(ms.Credential) > 0 {
 			f.Credential = base64.StdEncoding.EncodeToString(ms.Credential)
 		}
+		f.Services = ms.Services
 		out[id] = f
 	}
 	return out
@@ -172,7 +192,7 @@ func decodeMeshes(in map[string]meshStateFile) (map[string]*MeshState, error) {
 		}
 		idn.WGPub = pub
 
-		ms := &MeshState{Identity: idn, Seq: f.Seq}
+		ms := &MeshState{Identity: idn, Seq: f.Seq, Services: f.Services}
 		if f.Credential != "" {
 			// Not fatal if unreadable, for the same reason the single-mesh one
 			// is not: a device without a credential can still run, and losing
@@ -199,6 +219,7 @@ func (s *State) View(ms *MeshState) *State {
 		// Deliberately not the mesh set: a view is one mesh, and handing it the
 		// whole map would let one mesh's Save clobber another's.
 		Credential: ms.Credential,
+		Services:   ms.Services,
 		owner:      s,
 		view:       ms,
 	}

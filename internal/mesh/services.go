@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/vpavlin/shrooms/internal/control"
+	"github.com/vpavlin/shrooms/internal/state"
 	"github.com/vpavlin/shrooms/internal/topic"
 )
 
@@ -32,10 +33,17 @@ const ServicesInterval = 5 * time.Minute
 
 // ServicesStale is how long a peer's list is kept after its last repeat.
 //
-// Three intervals, so two may be lost. Deliberately not tied to the peer being
-// online: a list is a claim about what a device offers, and a device that is
-// asleep still offers them.
-const ServicesStale = 3 * ServicesInterval
+// Hours rather than the three intervals it started as. Deliberately not tied to
+// the peer being online: a list is a claim about what a device offers, and a
+// device that is asleep still offers them — so expiring it quickly bought
+// nothing except a wait. What it cost was the common case, since a node that
+// comes back has to be rediscovered service by service, several minutes at a
+// time, and every restart — including the ones our own watchdog performs —
+// started that clock again.
+//
+// A remembered claim is no less true than a freshly received one; it is only
+// older, and the roster already says whether the device can be reached.
+const ServicesStale = 2 * time.Hour
 
 // ServicesDebounce bounds how often the list is repeated outside its own
 // timer, so a burst of peers arriving cannot turn into a burst of messages.
@@ -144,8 +152,27 @@ func (m *Mesh) handleServices(sv *control.Services, now time.Time) {
 		m.mu.Unlock()
 		return
 	}
+	changed := !sameNames(m.services[id].names, names)
 	m.services[id] = peerServices{names: names, seen: now}
 	m.mu.Unlock()
+
+	if changed {
+		m.saveServices()
+	}
+}
+
+// sameNames reports whether two claims say the same thing, so an unchanged
+// repeat every few minutes does not rewrite the state file.
+func sameNames(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // maxServiceClaims caps how many devices' lists are held at once.
@@ -155,6 +182,61 @@ const maxServiceClaims = 64
 type peerServices struct {
 	names []string
 	seen  time.Time
+}
+
+// loadServices takes the cache back from disk at startup.
+//
+// The whole point of persisting it: a daemon that restarts — because it was
+// upgraded, or because a watchdog decided the rendezvous plane was beyond
+// repair — otherwise knows nothing about what anybody offers until each peer's
+// next broadcast, which is up to five minutes each and looks like the feature
+// having quietly stopped working.
+func (m *Mesh) loadServices(now time.Time) {
+	if m.st == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.services == nil {
+		m.services = map[string]peerServices{}
+	}
+	kept := 0
+	for id, c := range m.st.Services {
+		seen := time.Unix(c.Seen, 0)
+		if now.Sub(seen) > ServicesStale {
+			continue
+		}
+		m.services[id] = peerServices{names: c.Names, seen: seen}
+		kept++
+	}
+	if kept > 0 {
+		m.log.Info("remembered what peers offer", "devices", kept)
+	}
+}
+
+// saveServices writes the cache back, so the next start has it.
+//
+// Called after a change rather than on a timer, because the change is rare —
+// a list arrives every few minutes per peer and almost always says exactly
+// what the last one did.
+func (m *Mesh) saveServices() {
+	// A mesh with nowhere to write is not an error worth reporting: the claim
+	// is already held in memory, which is where it is read from, and only the
+	// surviving-a-restart part is lost.
+	if m.st == nil {
+		return
+	}
+	m.mu.Lock()
+	out := make(map[string]state.ServiceClaim, len(m.services))
+	for id, ps := range m.services {
+		out[id] = state.ServiceClaim{Names: ps.names, Seen: ps.seen.Unix()}
+	}
+	m.mu.Unlock()
+
+	m.st.Services = out
+	if err := m.st.Save(); err != nil {
+		m.log.Debug("could not persist what peers offer", "err", err)
+	}
 }
 
 // Services reports what each peer says it offers, keyed by peer id.
