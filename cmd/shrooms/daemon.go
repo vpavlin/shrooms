@@ -698,8 +698,14 @@ func watchRendezvous(ctx context.Context, log *slog.Logger, instances []*instanc
 				if in.mesh.Health().OK(now) {
 					healthy = now
 				}
-				if who, deaf := in.mesh.Deaf(now); deaf && deafTo == "" {
-					deafTo = who
+				// Half the peers we can reach, and never on the strength of a
+				// single one. One peer going quiet while its tunnel lives is
+				// most likely that peer's own rendezvous connection failing,
+				// which is its business; half of the few we can reach at once
+				// is the shape of this node being the deaf one.
+				deaf, reachable := in.mesh.Deaf(now)
+				if len(deaf) >= 2 && len(deaf)*2 >= reachable && deafTo == "" {
+					deafTo = strings.Join(deaf, ", ")
 				}
 			}
 			switch {
@@ -712,26 +718,53 @@ func watchRendezvous(ctx context.Context, log *slog.Logger, instances []*instanc
 			if now.Sub(started) < rendezvousGrace {
 				continue
 			}
+			var problem string
 			switch {
 			case now.Sub(healthy) >= rendezvousStall:
-				log.Error("rendezvous plane has been down too long, restarting",
-					"for", now.Sub(healthy).Round(time.Second),
-					"problem", instances[0].mesh.Health().Problem(now))
-				errs <- fmt.Errorf("no rendezvous connection for %s",
-					now.Sub(healthy).Round(time.Second))
-				return
+				problem = fmt.Sprintf("no rendezvous connection for %s (%s)",
+					now.Sub(healthy).Round(time.Second),
+					instances[0].mesh.Health().Problem(now))
 			case !deafSince.IsZero() && now.Sub(deafSince) >= deafConfirm:
-				// Traffic is arriving and this peer's is not. Restarting is a
-				// blunt answer, and it is the one that has worked every time:
-				// the subscription is intact as far as this process can tell,
-				// so there is nothing here to retry.
-				log.Error("no announces from a peer whose tunnel is live, restarting",
-					"peer", deafTo, "for", now.Sub(deafSince).Round(time.Second))
-				errs <- fmt.Errorf("deaf to %s, whose tunnel is live", deafTo)
-				return
+				// Traffic is arriving and theirs is not. Restarting is a blunt
+				// answer, and it is the one that has worked every time: the
+				// subscription is intact as far as this process can tell, so
+				// there is nothing here to retry.
+				problem = fmt.Sprintf("deaf to %s, whose tunnels are live", deafTo)
+			default:
+				continue
 			}
+
+			// Exiting is only a fix if something starts us again. Under
+			// systemd or as a container's main process it is a five-second
+			// gap; from a terminal it is a mesh that stays down until somebody
+			// notices, which is worse than the fault being repaired. So say
+			// what is wrong, keep running, and let the person decide.
+			if !restartable() {
+				log.Error("the rendezvous plane needs a restart and nothing would restart me",
+					"problem", problem,
+					"fix", "restart this daemon; under systemd or in a container it would have restarted itself")
+				healthy = now
+				deafSince = time.Time{}
+				continue
+			}
+			log.Error("restarting to rebuild the rendezvous connection", "problem", problem)
+			errs <- errors.New(problem)
+			return
 		}
 	}
+}
+
+// restartable reports whether something outside this process will start it
+// again if it exits.
+//
+// systemd sets INVOCATION_ID for every service it runs, and NOTIFY_SOCKET when
+// the unit asks to be notified; a container's main process is pid 1, and
+// whatever started the container decides what happens when it ends. A daemon
+// run by hand in a terminal has neither, and exiting there just ends the mesh.
+func restartable() bool {
+	return os.Getenv("INVOCATION_ID") != "" ||
+		os.Getenv("NOTIFY_SOCKET") != "" ||
+		os.Getpid() == 1
 }
 
 func serveControl(ctx context.Context, log *slog.Logger, path string, instances []*instance, cfg state.Config, rl *reloader) (*http.Server, error) {

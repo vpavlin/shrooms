@@ -256,8 +256,14 @@ func (m *Mesh) requestResync() {
 // PeerStats exposes the data-plane view of peers.
 func (m *Mesh) PeerStats() (map[string]wg.PeerStat, error) { return m.dev.PeerStats() }
 
-// Deaf reports a peer this node can plainly reach but has stopped hearing
-// announce.
+// Deaf reports which peers this node can plainly reach but has stopped hearing
+// announce from, and how many it can reach at all.
+//
+// Both numbers, because one deaf peer proves much less than several. A single
+// peer whose announces stop while its tunnel lives could be that peer having a
+// bad time on its own rendezvous connection — which is its problem to notice,
+// not ours. Several at once, out of the few we can reach, is the shape of this
+// node being the deaf one. The caller decides where the line is.
 //
 // The inference is what makes this worth having. WireGuard lives inside the
 // daemon, so a handshake completed in the last couple of minutes proves the
@@ -272,21 +278,22 @@ func (m *Mesh) PeerStats() (map[string]wg.PeerStat, error) { return m.dev.PeerSt
 // nothing else notices, and what breaks is discovery: a peer that moves is
 // never found again, and relaying stops, because a relay is only chosen among
 // peers believed to be online.
-func (m *Mesh) Deaf(now time.Time) (string, bool) {
+func (m *Mesh) Deaf(now time.Time) (deaf []string, reachable int) {
 	stats, err := m.PeerStats()
 	if err != nil {
-		return "", false
+		return nil, 0
 	}
 	for _, p := range m.roster.Peers() {
 		st, ok := stats[p.WGPub.String()]
 		if !ok || now.Sub(st.LastHandshake) > wg.LiveWindow {
 			continue // no tunnel, so nothing is proven either way
 		}
+		reachable++
 		if now.Sub(p.LastSeen) > DeafAfter {
-			return p.Name, true
+			deaf = append(deaf, p.Name)
 		}
 	}
-	return "", false
+	return deaf, reachable
 }
 
 // DeafAfter is how long an announce may be missing from a peer whose tunnel is
