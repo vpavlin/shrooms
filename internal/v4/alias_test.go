@@ -5,7 +5,6 @@ import (
 	"testing"
 )
 
-
 // Two meshes on one device must never route the same block. Deriving the block
 // from the network id alone collides about once in sixteen, which is rare
 // enough to be mistaken for something else and common enough to happen — it is
