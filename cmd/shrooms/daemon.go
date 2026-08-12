@@ -624,7 +624,16 @@ func listenControl(ctx context.Context, log *slog.Logger, path string, h http.Ha
 			log.Warn("socket group not applied; status will need root",
 				"group", cfg.SocketGroup, "err", err)
 		} else if err := os.Chown(path, -1, gid); err != nil {
-			log.Warn("could not set the group on the control socket", "err", err)
+			// Name the likely cause. Running as root is not enough: a systemd
+			// unit with a CapabilityBoundingSet that omits CAP_CHOWN makes
+			// this fail with EPERM for uid 0, and the message alone sends
+			// people to look at file modes instead.
+			hint := ""
+			if errors.Is(err, os.ErrPermission) {
+				hint = "the unit's CapabilityBoundingSet and AmbientCapabilities must include CAP_CHOWN"
+			}
+			log.Warn("could not set the group on the control socket; status will need root",
+				"err", err, "hint", hint)
 		} else {
 			// The directory too, or the group setting does nothing.
 			//

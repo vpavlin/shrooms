@@ -18,8 +18,15 @@ ExecReload=/bin/kill -HUP $MAINPID
 # enough: the bounding set removes every capability not listed, so without this
 # the bind fails with EACCES on a process that is otherwise privileged — which
 # reads as a permissions bug in the wrong place entirely.
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+# CAP_CHOWN is for socket_group and nothing else: the daemon gives the control
+# socket, and the runtime directory it sits in, to the group named in the
+# config so that `shrooms status` and a desktop app do not need sudo. Running
+# as root is not enough for that — a bounding set without CAP_CHOWN makes
+# chown fail with EPERM even for uid 0, which is exactly what happened here:
+# the setting appeared to work, the log said it had, and every attempt to read
+# status still failed with permission denied.
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_CHOWN
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_CHOWN
 
 StateDirectory=shrooms
 StateDirectoryMode=0700
