@@ -124,6 +124,7 @@ func startInstance(ctx context.Context, log *slog.Logger, cfg state.Config, st *
 	meshCfg.Relay = m.Relay
 	in.relay = m.Relay
 	meshCfg.Services = m.Services
+	meshCfg.AnnounceServices = m.AnnounceServices
 
 	in.mesh, err = mesh.New(log.With("mesh", m.Label), meshCfg, stateFor(st, ms), node, in.dev)
 	if err != nil {

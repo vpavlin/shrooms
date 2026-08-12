@@ -1,6 +1,6 @@
 # 023. Announcing services
 
-**Status:** proposed
+**Status:** accepted; built
 
 ## Context
 

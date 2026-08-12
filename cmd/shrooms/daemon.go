@@ -391,6 +391,11 @@ type peerStatus struct {
 	LastSeen  string   `json:"last_seen"`
 	Online    bool     `json:"online"`
 
+	// Services are the names this peer says it publishes (ADR-023), empty
+	// unless that peer has been told to announce them. A claim about what it
+	// offers, not a report that anything is listening.
+	Services []string `json:"services,omitempty"`
+
 	// Relay reports that this peer offers to forward for others. Worth
 	// surfacing: "which of my peers can relay" is otherwise invisible, and it
 	// is the first thing to check when a pair will not connect.
@@ -839,8 +844,10 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 			if len(instances) > 1 {
 				meshLabel = in.label
 			}
+			svc := m.Services(now)
 			for _, p := range m.Roster().Current(now) {
 				ps := peerStatus{
+					Services:  svc[p.ID()],
 					Mesh:      meshLabel,
 					Name:      p.Name,
 					Overlay:   p.Overlay.String(),

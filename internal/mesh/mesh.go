@@ -139,6 +139,9 @@ type Mesh struct {
 	// this "new to it" would be true every time it came back round.
 	grants map[[32]byte]time.Time
 
+	// services is what each peer says it offers (ADR-023), keyed by peer id.
+	services map[string]peerServices
+
 	// mapped is the external address the router gave us, if it was willing to
 	// give one (ADR-024). Zero when there is none.
 	mapped netip.AddrPort
@@ -335,6 +338,15 @@ func (m *Mesh) Run(ctx context.Context) error {
 	probeTicker := time.NewTicker(disco.ProbeInterval)
 	defer probeTicker.Stop()
 
+	// Service lists change when somebody edits a config, so this is slow on
+	// purpose (ADR-023). The first one goes out with the first announce, so a
+	// node that has just started does not look serviceless for five minutes.
+	servicesTicker := time.NewTicker(ServicesInterval)
+	defer servicesTicker.Stop()
+	if err := m.publishServices(time.Now()); err != nil {
+		m.log.Debug("could not announce services", "err", err)
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -353,6 +365,10 @@ func (m *Mesh) Run(ctx context.Context) error {
 			}
 			if err := m.announce(now); err != nil {
 				m.log.Warn("announce for new peer failed", "err", err)
+			}
+		case now := <-servicesTicker.C:
+			if err := m.publishServices(now); err != nil {
+				m.log.Debug("could not announce services", "err", err)
 			}
 		case now := <-probeTicker.C:
 			m.probeAll(now)
@@ -1077,6 +1093,11 @@ func (m *Mesh) handle(ev waku.Event) {
 			if g, gerr := control.OpenGrant(m.nk, ep, msg.Payload, now); gerr == nil {
 				m.health.announceOpened(now)
 				m.handleGrant(g.Payload, now)
+				return
+			}
+			if sv, serr := control.OpenServices(m.nk, ep, msg.Payload, now); serr == nil {
+				m.health.announceOpened(now)
+				m.handleServices(sv, now)
 				return
 			}
 		}

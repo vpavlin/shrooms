@@ -114,6 +114,16 @@ type Config struct {
 	// authenticates only as "the device holding key X calls itself this".
 	Name string
 
+	// AnnounceServices tells this mesh's peers which service names this device
+	// publishes, so their roster can show what the mesh offers (ADR-023).
+	//
+	// Off by default, and per mesh. A member can already find your services by
+	// connecting to your address on common ports, so this discloses
+	// discoverability rather than access — but the names carry intent that a
+	// port scan does not, and a mesh shared with other people is exactly where
+	// an inventory is worth something to somebody else.
+	AnnounceServices bool
+
 	// PortMapping asks the local router to open this node's port, so a machine
 	// behind a home NAT can be dialled without anyone editing a router page
 	// (ADR-024). On by default: it is best effort, a refusal costs one request
@@ -742,6 +752,8 @@ func parseConfig(text string) (Config, error) {
 				return c, fmt.Errorf("line %d: listen_port: %w", n+1, err)
 			}
 			c.ListenPort = p
+		case "announce_services":
+			c.AnnounceServices = unquote(val) == "true"
 		case "port_mapping":
 			c.PortMapping = unquote(val) == "true"
 		case "advertise":
@@ -849,6 +861,15 @@ func WriteConfig(path string, c Config) error {
 		b.WriteString("manage_hosts = \"true\"\n")
 	} else {
 		b.WriteString("# manage_hosts = \"true\"\n")
+	}
+	b.WriteString("\n# Let this mesh's peers see which service names this device publishes,\n")
+	b.WriteString("# so their roster can show what the mesh offers. Off by default: a member\n")
+	b.WriteString("# can already find them by scanning, but the names carry intent, and a\n")
+	b.WriteString("# mesh shared with other people is where that matters.\n")
+	if c.AnnounceServices {
+		b.WriteString("announce_services = \"true\"\n")
+	} else {
+		b.WriteString("# announce_services = \"true\"\n")
 	}
 	b.WriteString("\n# Ask the router (PCP, NAT-PMP) to open this node's port, so a machine\n")
 	b.WriteString("# behind a home NAT can be dialled without a forwarding rule. Best effort:\n")

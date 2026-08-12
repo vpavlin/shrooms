@@ -173,6 +173,19 @@ func (r *Roster) Current(now time.Time) []PeerInfo {
 	return out
 }
 
+// Known reports whether this peer id is on the roster.
+//
+// The question anything arriving outside an announce has to ask: a roster entry
+// is the outcome of a verified announce — credential checked, replay guard
+// passed — so reusing it is stronger than any check a later message could make
+// for itself.
+func (r *Roster) Known(id string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	_, ok := r.peers[id]
+	return ok
+}
+
 // Len reports how many peers are known.
 func (r *Roster) Len() int {
 	r.mu.RLock()

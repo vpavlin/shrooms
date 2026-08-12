@@ -46,6 +46,11 @@ type Mesh struct {
 	// Services published on this mesh, in the form ParseSpec reads.
 	Services []string
 
+	// AnnounceServices lets this mesh's peers see the names (ADR-023). Per
+	// mesh, because telling your own machines what you run and telling
+	// somebody else's are different decisions.
+	AnnounceServices bool
+
 	// Disabled keeps a mesh in the config without running it. Written as
 	// enabled = "false".
 	//
@@ -112,11 +117,12 @@ func (c Config) Meshes() []Mesh {
 	out := make([]Mesh, 0, len(c.MeshSet)+1)
 	if c.NetworkKey != "" && c.NetworkKey != KeyPlaceholder {
 		out = append(out, Mesh{
-			Label:      DefaultLabel,
-			NetworkKey: c.NetworkKey,
-			AdminKeys:  c.AdminKeys,
-			Relay:      c.Relay,
-			Services:   c.Services,
+			Label:            DefaultLabel,
+			NetworkKey:       c.NetworkKey,
+			AdminKeys:        c.AdminKeys,
+			Relay:            c.Relay,
+			Services:         c.Services,
+			AnnounceServices: c.AnnounceServices,
 		})
 	}
 	for label, m := range c.MeshSet {

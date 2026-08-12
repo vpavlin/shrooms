@@ -248,7 +248,43 @@ func cmdStatus(args []string) error {
 	}
 
 	printServices(os.Stdout, st.Services, st.NameRouter)
+	printPeerServices(os.Stdout, st.Peers)
 	return nil
+}
+
+// printPeerServices lists what other devices say they offer (ADR-023).
+//
+// Separate from the section above, and worded differently, because they are
+// different kinds of statement. What this device publishes is checked — the
+// forwarder knows whether the port answers. What a peer publishes is a claim
+// repeated every few minutes, so these are names worth trying rather than
+// services known to be up.
+func printPeerServices(out io.Writer, peers []peerStatus) {
+	any := false
+	for _, p := range peers {
+		if len(p.Services) > 0 {
+			any = true
+			break
+		}
+	}
+	if !any {
+		return
+	}
+	fmt.Fprintf(out, "\nservices offered by peers\n")
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "MESH\tNAME\tTRY")
+	for _, p := range peers {
+		for _, svc := range p.Services {
+			// The daemon already worked out the peer's DNS name; re-deriving
+			// it here is how a front-end drifts from what actually resolves.
+			host := p.DNSName
+			if host == "" {
+				host = p.Name
+			}
+			fmt.Fprintf(w, "%s\t%s\thttp://%s.%s\n", p.Mesh, svc, svc, host)
+		}
+	}
+	w.Flush()
 }
 
 // printServices lists what this device publishes, and only this device: nothing

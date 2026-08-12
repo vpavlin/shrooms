@@ -66,6 +66,7 @@ const (
 	KindRelay    Kind = "relay"
 	KindRevoke   Kind = "revoke"
 	KindGrant    Kind = "grant"
+	KindServices Kind = "services"
 )
 
 // Announce is a device advertising itself and its reachable endpoints.
@@ -369,6 +370,59 @@ func OpenGrant(nk identity.NetworkKey, epoch int64, raw []byte, now time.Time) (
 		return nil, fmt.Errorf("timestamp skew %s exceeds %s", skew.Round(time.Second), MaxClockSkew)
 	}
 	return &g, nil
+}
+
+// Services is what a device offers, by name (ADR-023).
+//
+// Its own message rather than a field on the announce, for the same reason a
+// revocation is: an announce is padded to a fixed size and already carries a
+// credential, so a service list would compete for that space and be trimmed
+// exactly when there is most to say. A separate message lets the list be
+// trimmed on its own and keeps the announce small.
+//
+// Names only. What port a service is on is the publishing node's business —
+// the name router and the address are what a peer uses — and a list of open
+// ports is the part of this that would actually be worth having if you were
+// nosy.
+type Services struct {
+	Kind      Kind     `json:"kind"`
+	DevicePub []byte   `json:"device_pub"`
+	Names     []string `json:"names"`
+	Timestamp int64    `json:"ts"`
+}
+
+// OpenServices reads a service list.
+//
+// The signature proves which member sent it, and that is the whole check
+// available here: a service name is self-asserted, exactly like a device name
+// (ADR-008). The caller is expected to ignore lists from devices it has not
+// already admitted, because this package does not know who those are.
+func OpenServices(nk identity.NetworkKey, epoch int64, raw []byte, now time.Time) (*Services, error) {
+	plain, err := open(nk, epoch, raw)
+	if err != nil {
+		return nil, err
+	}
+	var env envelope
+	if err := json.Unmarshal(plain, &env); err != nil {
+		return nil, fmt.Errorf("unmarshal envelope: %w", err)
+	}
+	var sv Services
+	if err := json.Unmarshal(env.Body, &sv); err != nil {
+		return nil, fmt.Errorf("unmarshal services: %w", err)
+	}
+	if sv.Kind != KindServices {
+		return nil, fmt.Errorf("unexpected kind %q", sv.Kind)
+	}
+	if len(sv.DevicePub) != ed25519.PublicKeySize {
+		return nil, errors.New("bad device public key length")
+	}
+	if !ed25519.Verify(ed25519.PublicKey(sv.DevicePub), env.Body, env.Sig) {
+		return nil, errors.New("signature verification failed")
+	}
+	if skew := now.Sub(time.Unix(sv.Timestamp, 0)); skew > MaxClockSkew || skew < -MaxClockSkew {
+		return nil, fmt.Errorf("timestamp skew %s exceeds %s", skew.Round(time.Second), MaxClockSkew)
+	}
+	return &sv, nil
 }
 
 // OpenAnnounceWindow tries each epoch in the acceptance window. Peers whose

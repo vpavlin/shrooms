@@ -32,5 +32,5 @@ number appears, its source is named.
 | [020](020-membership-is-a-seam.md) | Membership is a seam | accepted |
 | [021](021-synthetic-ipv4.md) | A synthetic IPv4 address per peer | accepted; translator built |
 | [022](022-keycard-for-the-admin-key.md) | A Keycard for the admin key | proposed; notes only |
-| [023](023-announcing-services.md) | Announcing services | proposed |
+| [023](023-announcing-services.md) | Announcing services | accepted; built |
 | [024](024-ask-the-router.md) | Ask the router for a way in | accepted; `internal/portmap` built |
