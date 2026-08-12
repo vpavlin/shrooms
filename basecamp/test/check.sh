@@ -11,9 +11,29 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 FIXTURE=${FIXTURE:-basecamp/test/status.json}
-QML=${QML:-$(ls -d /nix/store/*-qtdeclarative-*/bin/qml 2>/dev/null | sort -V | tail -1)}
+# Where the qml runtime lives depends on how Qt was installed, and this script
+# runs in two places that answer differently: a nix shell here, and a
+# distribution package in CI. Looking only in the nix store made the check pass
+# locally and fail in CI with a message nobody reads as "Qt is somewhere else".
+if [ -z "${QML:-}" ]; then
+    for candidate in \
+        $(command -v qml6 2>/dev/null) \
+        $(command -v qml 2>/dev/null) \
+        /usr/lib/qt6/bin/qml \
+        $(ls -d /nix/store/*-qtdeclarative-*/bin/qml 2>/dev/null | sort -V | tail -1)
+    do
+        [ -x "$candidate" ] || continue
+        QML=$candidate
+        break
+    done
+fi
 [ -n "${QML:-}" ] && [ -x "$QML" ] || { echo "no qml runtime found; set QML=/path/to/qml"; exit 1; }
+
+# The module path sits beside the binary, but the layout differs between a nix
+# store path and a distribution one, so take whichever exists.
 QMLDIR=$(dirname "$(dirname "$QML")")/lib/qt-6/qml
+[ -d "$QMLDIR" ] || QMLDIR=/usr/lib/x86_64-linux-gnu/qt6/qml
+[ -d "$QMLDIR" ] || QMLDIR=$(dirname "$(dirname "$QML")")/lib/qt6/qml
 
 # The fake endpoint is torn down by the same trap as the workdir, not on the
 # success path. It used to be killed after the last assertion, so any earlier
