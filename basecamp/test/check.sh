@@ -16,10 +16,16 @@ FIXTURE=${FIXTURE:-basecamp/test/status.json}
 # distribution package in CI. Looking only in the nix store made the check pass
 # locally and fail in CI with a message nobody reads as "Qt is somewhere else".
 if [ -z "${QML:-}" ]; then
+    # Every layout this has actually been run under. Debian and Ubuntu put the
+    # binary under a multiarch directory rather than /usr/lib/qt6, which is why
+    # the first attempt at this still failed in CI with "no qml runtime found"
+    # on a machine that had just installed one.
     for candidate in \
         $(command -v qml6 2>/dev/null) \
         $(command -v qml 2>/dev/null) \
         /usr/lib/qt6/bin/qml \
+        $(ls -d /usr/lib/*/qt6/bin/qml 2>/dev/null | head -1) \
+        $(ls -d /usr/lib/qt6/libexec/qml 2>/dev/null | head -1) \
         $(ls -d /nix/store/*-qtdeclarative-*/bin/qml 2>/dev/null | sort -V | tail -1)
     do
         [ -x "$candidate" ] || continue
@@ -27,13 +33,24 @@ if [ -z "${QML:-}" ]; then
         break
     done
 fi
-[ -n "${QML:-}" ] && [ -x "$QML" ] || { echo "no qml runtime found; set QML=/path/to/qml"; exit 1; }
+if [ -z "${QML:-}" ] || [ ! -x "$QML" ]; then
+    echo "no qml runtime found; set QML=/path/to/qml" >&2
+    # What was actually there, because "not found" on a machine that just
+    # installed Qt is a packaging question and the answer is a directory
+    # listing.
+    echo "looked in: PATH, /usr/lib/qt6/bin, /usr/lib/*/qt6/bin, /nix/store" >&2
+    ls -d /usr/lib/*/qt6/bin /usr/lib/qt6/* 2>/dev/null >&2 || true
+    exit 1
+fi
+echo "==> qml runtime: $QML"
 
 # The module path sits beside the binary, but the layout differs between a nix
 # store path and a distribution one, so take whichever exists.
 QMLDIR=$(dirname "$(dirname "$QML")")/lib/qt-6/qml
-[ -d "$QMLDIR" ] || QMLDIR=/usr/lib/x86_64-linux-gnu/qt6/qml
+[ -d "$QMLDIR" ] || QMLDIR=$(dirname "$(dirname "$QML")")/qml
+[ -d "$QMLDIR" ] || QMLDIR=$(ls -d /usr/lib/*/qt6/qml 2>/dev/null | head -1)
 [ -d "$QMLDIR" ] || QMLDIR=$(dirname "$(dirname "$QML")")/lib/qt6/qml
+echo "==> qml modules: $QMLDIR"
 
 # The fake endpoint is torn down by the same trap as the workdir, not on the
 # success path. It used to be killed after the last assertion, so any earlier
