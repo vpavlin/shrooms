@@ -22,6 +22,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import mobile.Mobile
 
 /**
@@ -32,6 +34,25 @@ import mobile.Mobile
 class MeshVpnService : VpnService() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * One session transition at a time.
+     *
+     * Every path in here — a connect, a reconnect, the watchdog, Android
+     * restarting a sticky service, a BOOT_COMPLETED and a MY_PACKAGE_REPLACED
+     * arriving together — ends in the same three steps, and they must not
+     * interleave. The check that used to guard them was `Mobile.running()`
+     * read *before* launching the coroutine, so two intents a moment apart both
+     * saw "not running" and both proceeded.
+     *
+     * That was not merely a duplicate: establish() replaces the VPN interface
+     * and revokes the previous descriptor, and it runs before Mobile.start().
+     * So the second attempt tore down a working tunnel, then failed with
+     * "already running", leaving the live session writing to a descriptor
+     * Android had already revoked — which looks exactly like the delivery node
+     * failing to start.
+     */
+    private val sessionLock = Mutex()
     private var tunnel: android.os.ParcelFileDescriptor? = null
 
     // Watches the underlying (non-VPN) network so the DNS forwarder can be told
@@ -82,8 +103,6 @@ class MeshVpnService : VpnService() {
     }
 
     private fun start() {
-        if (Mobile.running()) return
-
         val dir = filesDir.absolutePath
         if (!Mobile.configured(dir)) {
             MeshState.fail("not configured yet")
@@ -91,9 +110,23 @@ class MeshVpnService : VpnService() {
             return
         }
 
+        // Called before taking the lock, and unconditionally: Android requires
+        // a foreground notification within seconds of the service starting,
+        // whether or not this particular call turns out to have work to do.
         startForeground(NOTIFICATION_ID, notification("Connecting…"))
 
-        scope.launch { startInline() }
+        scope.launch {
+            sessionLock.withLock {
+                // Re-checked here, inside the lock, which is the only place the
+                // answer stays true long enough to act on.
+                if (Mobile.running()) {
+                    Log.i(TAG, "already connected; ignoring a second connect")
+                    MeshState.update(Mobile.statusJSON())
+                    return@withLock
+                }
+                startInline()
+            }
+        }
     }
 
     /** The body of start(), so a restart can run it in its own sequence. */
@@ -378,12 +411,14 @@ class MeshVpnService : VpnService() {
      */
     private fun restart() {
         scope.launch {
-            runCatching { Mobile.stopForRestart() }
-                .onFailure { Log.e(TAG, "stop for restart", it) }
-            runCatching { tunnel?.close() }
-            tunnel = null
-            MeshState.disconnected()
-            startInline()
+            sessionLock.withLock {
+                runCatching { Mobile.stopForRestart() }
+                    .onFailure { Log.e(TAG, "stop for restart", it) }
+                runCatching { tunnel?.close() }
+                tunnel = null
+                MeshState.disconnected()
+                startInline()
+            }
         }
     }
 
@@ -407,12 +442,14 @@ class MeshVpnService : VpnService() {
 
     private fun stop() {
         scope.launch {
-            runCatching { Mobile.stop() }.onFailure { Log.e(TAG, "stop", it) }
-            runCatching { tunnel?.close() }
-            tunnel = null
-            MeshState.disconnected()
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
+            sessionLock.withLock {
+                runCatching { Mobile.stop() }.onFailure { Log.e(TAG, "stop", it) }
+                runCatching { tunnel?.close() }
+                tunnel = null
+                MeshState.disconnected()
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
         }
     }
 

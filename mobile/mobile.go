@@ -666,6 +666,10 @@ func SetAnnounceServices(configDir string, on bool) error {
 	return state.WriteConfig(cfgPath, cfg)
 }
 
+// lifecycle serialises starting and stopping a session, end to end. See Start
+// for what interleaving them did.
+var lifecycle sync.Mutex
+
 // fwd is the live DNS forwarder, so its upstream list can be replaced without
 // restarting the tunnel.
 var fwd atomic.Pointer[forwarder]
@@ -695,6 +699,19 @@ func SetDNSServers(servers string) bool {
 // The descriptor is dup'd, because Go's os.File takes ownership and would close
 // the caller's copy — leaving Android holding a closed interface.
 func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger) error {
+	// A whole transition at a time, and not with mu, which Running and
+	// StatusJSON take on every poll and which must stay cheap.
+	//
+	// stopSession clears `running` first and then spends up to five seconds
+	// tearing the old session down. In that window Running reports false, so a
+	// start that arrived alongside a stop would build a new session while the
+	// old one was still closing — and since the delivery node is a package
+	// global, the old teardown's node.Stop() would then stop the node the new
+	// session had just brought up. That is the "delivery sometimes does not
+	// start" that no amount of looking at the delivery code explains.
+	lifecycle.Lock()
+	defer lifecycle.Unlock()
+
 	mu.Lock()
 	defer mu.Unlock()
 	if running != nil {
@@ -984,6 +1001,9 @@ func Stop() error { return stopSession(true) }
 func StopForRestart() error { return stopSession(false) }
 
 func stopSession(stopNode bool) error {
+	lifecycle.Lock()
+	defer lifecycle.Unlock()
+
 	mu.Lock()
 	s := running
 	running = nil
