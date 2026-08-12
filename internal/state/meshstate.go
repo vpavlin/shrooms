@@ -46,6 +46,9 @@ type MeshState struct {
 // ServiceClaim is one peer's list and when it was last heard.
 type ServiceClaim struct {
 	Names []string `json:"names"`
+	// Bound is what was listening on that peer's mesh address, "name:port"
+	// (ADR-026).
+	Bound []string `json:"bound,omitempty"`
 	Seen  int64    `json:"seen"` // unix seconds
 }
 

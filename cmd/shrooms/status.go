@@ -273,7 +273,7 @@ func cmdStatus(args []string) error {
 func printPeerServices(out io.Writer, peers []peerStatus) {
 	any := false
 	for _, p := range peers {
-		if len(p.Services) > 0 {
+		if len(p.Services) > 0 || len(p.Bound) > 0 {
 			any = true
 			break
 		}
@@ -293,14 +293,17 @@ func printPeerServices(out io.Writer, peers []peerStatus) {
 		if !p.Live {
 			note = "  (unreachable now)"
 		}
-		for _, svc := range p.Services {
-			// The daemon already worked out the peer's DNS name; re-deriving
-			// it here is how a front-end drifts from what actually resolves.
-			host := p.DNSName
-			if host == "" {
-				host = p.Name
+		// Ports bound to the peer's own mesh address first, because they need
+		// no forwarder and no name router — they are simply there.
+		for _, b := range p.Bound {
+			name, port, ok := strings.Cut(b, ":")
+			if !ok {
+				continue
 			}
-			fmt.Fprintf(w, "%s\t%s\thttp://%s.%s%s\n", p.Mesh, svc, svc, host, note)
+			fmt.Fprintf(w, "%s\t%s\t%s:%s%s\n", p.Mesh, name, hostOf(p), port, note)
+		}
+		for _, svc := range p.Services {
+			fmt.Fprintf(w, "%s\t%s\thttp://%s.%s%s\n", p.Mesh, svc, svc, hostOf(p), note)
 		}
 	}
 	w.Flush()
@@ -460,4 +463,13 @@ func relayNote(m meshStatus) string {
 		return ""
 	}
 	return "  no relay"
+}
+
+// hostOf is the name to print for a peer. The daemon already worked out its DNS
+// name; re-deriving it here is how a front-end drifts from what resolves.
+func hostOf(p peerStatus) string {
+	if p.DNSName != "" {
+		return p.DNSName
+	}
+	return p.Name
 }

@@ -2,9 +2,14 @@ package mesh
 
 import (
 	"encoding/hex"
+	"net/netip"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/vpavlin/shrooms/internal/control"
+	"github.com/vpavlin/shrooms/internal/listeners"
+	"github.com/vpavlin/shrooms/internal/service"
 	"github.com/vpavlin/shrooms/internal/state"
 	"github.com/vpavlin/shrooms/internal/topic"
 )
@@ -80,14 +85,21 @@ func (m *Mesh) offerServices(now time.Time) {
 // reported at startup, and repeating the complaint every five minutes would
 // not help anyone.
 func (m *Mesh) publishServices(now time.Time) error {
-	if !m.cfg.AnnounceServices || m.node == nil {
+	if m.node == nil || (!m.cfg.AnnounceServices && !m.cfg.AnnounceBound) {
 		return nil
 	}
 	m.mu.Lock()
 	m.lastServices = now
 	m.mu.Unlock()
-	specs, err := m.cfg.ServiceSpecs()
-	if err != nil || len(specs) == 0 {
+	var specs []service.Spec
+	if m.cfg.AnnounceServices {
+		var err error
+		if specs, err = m.cfg.ServiceSpecs(); err != nil {
+			specs = nil
+		}
+	}
+	bound := m.boundPorts()
+	if len(specs) == 0 && len(bound) == 0 {
 		return nil
 	}
 	names := make([]string, 0, len(specs))
@@ -99,6 +111,7 @@ func (m *Mesh) publishServices(now time.Time) error {
 		Kind:      control.KindServices,
 		DevicePub: m.st.Identity.DevicePub,
 		Names:     names,
+		Bound:     bound,
 		Timestamp: now.Unix(),
 	}
 	// Trim rather than fail. This message is padded like every other one, and a
@@ -117,6 +130,36 @@ func (m *Mesh) publishServices(now time.Time) error {
 	}
 }
 
+// boundPorts is what is listening on this device's address on this mesh
+// (ADR-026), as "name:port".
+//
+// Only this mesh's address, which is the whole safety property: a socket on ::
+// is reachable from every network this device is on, and listing it here would
+// claim otherwise.
+func (m *Mesh) boundPorts() []string {
+	if !m.cfg.AnnounceBound {
+		return nil
+	}
+	found, err := listeners.On([]netip.Addr{m.self})
+	if err != nil {
+		m.log.Debug("could not read what is bound to the mesh address", "err", err)
+		return nil
+	}
+	out := make([]string, 0, len(found))
+	for _, l := range found {
+		// This daemon's own ports are not services anybody offers. The name
+		// router on 80 and 443 is how <service>.<device>.mesh works at all,
+		// and the resolver on 53 is what makes .mesh resolve here — announcing
+		// either would send a peer to our plumbing rather than to anything of
+		// ours, and every peer has its own.
+		if l.Port == 80 || l.Port == 443 || l.Port == 53 {
+			continue
+		}
+		out = append(out, l.Spec())
+	}
+	return out
+}
+
 // handleServices records what a peer says it offers.
 //
 // Kept for any device that could seal the message, and filtered when it is
@@ -130,6 +173,21 @@ func (m *Mesh) publishServices(now time.Time) error {
 // "I enabled it and see nothing from that device" looked like.
 func (m *Mesh) handleServices(sv *control.Services, now time.Time) {
 	id := hex.EncodeToString(sv.DevicePub)
+	// Bound ports are carried through as they arrived: they are "name:port",
+	// and the port is the part that matters, so sanitising them like a DNS
+	// label would destroy them.
+	bound := make([]string, 0, len(sv.Bound))
+	for _, b := range sv.Bound {
+		name, port, ok := strings.Cut(b, ":")
+		if !ok || sanitiseName(name) == "" {
+			continue
+		}
+		if p, err := strconv.Atoi(port); err != nil || p < 1 || p > 65535 {
+			continue
+		}
+		bound = append(bound, sanitiseName(name)+":"+port)
+	}
+
 	names := make([]string, 0, len(sv.Names))
 	for _, n := range sv.Names {
 		// Sanitised the same way a device name is, because these become DNS
@@ -152,8 +210,9 @@ func (m *Mesh) handleServices(sv *control.Services, now time.Time) {
 		m.mu.Unlock()
 		return
 	}
-	changed := !sameNames(m.services[id].names, names)
-	m.services[id] = peerServices{names: names, seen: now}
+	changed := !sameNames(m.services[id].names, names) ||
+		!sameNames(m.services[id].bound, bound)
+	m.services[id] = peerServices{names: names, bound: bound, seen: now}
 	m.mu.Unlock()
 
 	if changed {
@@ -181,6 +240,7 @@ const maxServiceClaims = 64
 // peerServices is one peer's claim, and when it made it.
 type peerServices struct {
 	names []string
+	bound []string
 	seen  time.Time
 }
 
@@ -206,7 +266,7 @@ func (m *Mesh) loadServices(now time.Time) {
 		if now.Sub(seen) > ServicesStale {
 			continue
 		}
-		m.services[id] = peerServices{names: c.Names, seen: seen}
+		m.services[id] = peerServices{names: c.Names, bound: c.Bound, seen: seen}
 		kept++
 	}
 	if kept > 0 {
@@ -229,7 +289,7 @@ func (m *Mesh) saveServices() {
 	m.mu.Lock()
 	out := make(map[string]state.ServiceClaim, len(m.services))
 	for id, ps := range m.services {
-		out[id] = state.ServiceClaim{Names: ps.names, Seen: ps.seen.Unix()}
+		out[id] = state.ServiceClaim{Names: ps.names, Bound: ps.bound, Seen: ps.seen.Unix()}
 	}
 	m.mu.Unlock()
 
@@ -262,6 +322,27 @@ func (m *Mesh) Services(now time.Time) map[string][]string {
 			continue
 		}
 		out[id] = append([]string(nil), ps.names...)
+	}
+	return out
+}
+
+// Bound reports which ports each peer says are listening on its own mesh
+// address (ADR-026), as "name:port", under the same rules as Services.
+func (m *Mesh) Bound(now time.Time) map[string][]string {
+	known := map[string]bool{}
+	for _, p := range m.roster.Peers() {
+		known[p.ID()] = true
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	out := make(map[string][]string, len(m.services))
+	for id, ps := range m.services {
+		if now.Sub(ps.seen) > ServicesStale || !known[id] || len(ps.bound) == 0 {
+			continue
+		}
+		out[id] = append([]string(nil), ps.bound...)
 	}
 	return out
 }

@@ -39,6 +39,8 @@ func main() {
 		err = cmdStatus(os.Args[2:])
 	case "reload":
 		err = cmdReload(os.Args[2:])
+	case "bound":
+		err = cmdBound(os.Args[2:])
 	case "paths":
 		err = cmdPaths(os.Args[2:])
 	case "hosts":
@@ -100,6 +102,7 @@ Usage:
   shrooms daemon                     run the mesh node
   shrooms status [--json]            show the roster and tunnel state
   shrooms reload                     re-read the config; applies services
+  shrooms bound                      what announce_bound would tell peers
   shrooms paths [NAME]               show probed candidates and which won
   shrooms hosts [--write]            /etc/hosts entries, so you can use names
   shrooms key show                   print the network key

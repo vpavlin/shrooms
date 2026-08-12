@@ -413,6 +413,11 @@ type peerStatus struct {
 	// offers, not a report that anything is listening.
 	Services []string `json:"services,omitempty"`
 
+	// Bound is what this peer says is listening on its own mesh address, as
+	// "name:port" (ADR-026). Reached as <device>.mesh:<port> — no forwarder
+	// and no name of its own, which is why it is not in Services.
+	Bound []string `json:"bound,omitempty"`
+
 	// Relay reports that this peer offers to forward for others. Worth
 	// surfacing: "which of my peers can relay" is otherwise invisible, and it
 	// is the first thing to check when a pair will not connect.
@@ -951,10 +956,11 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 			if len(instances) > 1 {
 				meshLabel = in.label
 			}
-			svc := m.Services(now)
+			svc, bnd := m.Services(now), m.Bound(now)
 			for _, p := range m.Roster().Current(now) {
 				ps := peerStatus{
 					Services:  svc[p.ID()],
+					Bound:     bnd[p.ID()],
 					Mesh:      meshLabel,
 					Name:      p.Name,
 					Overlay:   p.Overlay.String(),

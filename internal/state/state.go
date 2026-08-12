@@ -124,6 +124,17 @@ type Config struct {
 	// an inventory is worth something to somebody else.
 	AnnounceServices bool
 
+	// AnnounceBound tells this mesh's peers which ports are listening on this
+	// device's mesh address (ADR-026).
+	//
+	// Separate from AnnounceServices and off by default for a reason of its
+	// own: those are declared, one line at a time, by somebody who meant it,
+	// while these are discovered — so this announces whatever happens to be
+	// bound, including the thing you started for ten minutes and forgot. The
+	// ports are already reachable by every member either way; what this
+	// changes is whether they are listed.
+	AnnounceBound bool
+
 	// PortMapping asks the local router to open this node's port, so a machine
 	// behind a home NAT can be dialled without anyone editing a router page
 	// (ADR-024). On by default: it is best effort, a refusal costs one request
@@ -765,6 +776,8 @@ func parseConfig(text string) (Config, error) {
 			c.ListenPort = p
 		case "announce_services":
 			c.AnnounceServices = unquote(val) == "true"
+		case "announce_bound":
+			c.AnnounceBound = unquote(val) == "true"
 		case "port_mapping":
 			c.PortMapping = unquote(val) == "true"
 		case "advertise":
@@ -881,6 +894,16 @@ func WriteConfig(path string, c Config) error {
 		b.WriteString("announce_services = \"true\"\n")
 	} else {
 		b.WriteString("# announce_services = \"true\"\n")
+	}
+	b.WriteString("\n# Also tell them which ports are listening on this device's mesh address.\n")
+	b.WriteString("# Those are reachable by members and by nobody else — binding a service to\n")
+	b.WriteString("# the mesh address is what makes it mesh-only — so this lists what is\n")
+	b.WriteString("# already there. Discovered rather than declared, so it announces whatever\n")
+	b.WriteString("# happens to be bound.\n")
+	if c.AnnounceBound {
+		b.WriteString("announce_bound = \"true\"\n")
+	} else {
+		b.WriteString("# announce_bound = \"true\"\n")
 	}
 	b.WriteString("\n# Ask the router (PCP, NAT-PMP) to open this node's port, so a machine\n")
 	b.WriteString("# behind a home NAT can be dialled without a forwarding rule. Best effort:\n")

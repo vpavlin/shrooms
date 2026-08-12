@@ -388,7 +388,16 @@ type Services struct {
 	Kind      Kind     `json:"kind"`
 	DevicePub []byte   `json:"device_pub"`
 	Names     []string `json:"names"`
-	Timestamp int64    `json:"ts"`
+
+	// Bound is what is listening on this device's mesh address, as
+	// "name:port" (ADR-026). Separate from Names because they are different
+	// claims: a name in Names is forwarded by this device and reached as
+	// <name>.<device>.mesh, while one here is a port on the device's own
+	// address, reached as <device>.mesh:<port>. Rendering either as the other
+	// prints an address that does not work.
+	Bound []string `json:"bound,omitempty"`
+
+	Timestamp int64 `json:"ts"`
 }
 
 // OpenServices reads a service list.

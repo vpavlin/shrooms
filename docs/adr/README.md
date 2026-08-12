@@ -35,3 +35,4 @@ number appears, its source is named.
 | [023](023-announcing-services.md) | Announcing services | accepted; built |
 | [024](024-ask-the-router.md) | Ask the router for a way in | accepted; built and proven |
 | [025](025-control-from-a-desktop-app.md) | Control from a desktop app | accepted; settings built, admission deliberately not |
+| [026](026-announce-what-is-bound.md) | Announce what is bound to the mesh address | accepted; built, off by default |

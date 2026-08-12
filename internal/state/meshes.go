@@ -51,6 +51,10 @@ type Mesh struct {
 	// somebody else's are different decisions.
 	AnnounceServices bool
 
+	// AnnounceBound lists the ports bound to this device's address on this
+	// mesh (ADR-026), for the same reason and with the same default.
+	AnnounceBound bool
+
 	// Disabled keeps a mesh in the config without running it. Written as
 	// enabled = "false".
 	//
@@ -123,6 +127,7 @@ func (c Config) Meshes() []Mesh {
 			Relay:            c.Relay,
 			Services:         c.Services,
 			AnnounceServices: c.AnnounceServices,
+			AnnounceBound:    c.AnnounceBound,
 		})
 	}
 	for label, m := range c.MeshSet {
