@@ -25,6 +25,7 @@ import (
 	"github.com/vpavlin/shrooms/internal/invite"
 	"github.com/vpavlin/shrooms/internal/mesh"
 	"github.com/vpavlin/shrooms/internal/state"
+	"github.com/vpavlin/shrooms/internal/v4"
 	"github.com/vpavlin/shrooms/internal/waku"
 	"github.com/vpavlin/shrooms/internal/wg"
 )
@@ -123,14 +124,30 @@ func cmdDaemon(args []string) error {
 		}
 	}()
 
+	// One block per mesh, assigned across the set so two meshes cannot route
+	// the same synthetic range (ADR-021).
+	ids := make([]string, 0, len(meshes))
+	for _, mc := range meshes {
+		id, err := mc.NetworkID()
+		if err != nil {
+			return err
+		}
+		ids = append(ids, id)
+	}
+	blocks := v4.Blocks(ids)
+
 	for i, mc := range meshes {
 		iface, port := ifaceAndPort(cfg, i)
+		id, err := mc.NetworkID()
+		if err != nil {
+			return err
+		}
 		// Legacy by identity, not by position: the mesh written as network_key
 		// is the one this device already belonged to, and keeps its keys —
 		// re-deriving them would change its address and make it a stranger to
 		// every peer. A mesh labelled "aaa" sorts first and is not it.
 		in, err := startInstance(ctx, log, cfg, st, node, mc, iface, port,
-			isLegacyMesh(cfg, mc), *verbose)
+			blocks[id], isLegacyMesh(cfg, mc), *verbose)
 		if in != nil {
 			instances = append(instances, in)
 		}

@@ -530,6 +530,7 @@ func MeshesJSON(configDir string) string {
 		V4Block  string `json:"v4_block"`
 	}
 	var out []entry
+	blocks := meshBlocks(cfg.Meshes())
 	for _, m := range cfg.Meshes() {
 		nk, err := m.Key()
 		if err != nil {
@@ -541,7 +542,8 @@ func MeshesJSON(configDir string) string {
 			continue
 		}
 		self := identity.OverlayAddr(nk, ms.Identity.DevicePub)
-		aliases := v4.NewTable(networkID, v4.Entry{Overlay: self, DevicePub: ms.Identity.DevicePub}, nil)
+		aliases := v4.NewTableIn(blocks[networkID],
+			v4.Entry{Overlay: self, DevicePub: ms.Identity.DevicePub}, nil)
 		// Reported for a mesh that is switched off as well as one that is on.
 		// The identity and the address exist either way — they are derived, not
 		// allocated — and hiding them made a mesh look half-forgotten rather
@@ -634,6 +636,25 @@ func SetMode(configDir, mode string) error {
 	cfg.Mode = mode
 	cfgPath, _ := paths(configDir)
 	return state.WriteConfig(cfgPath, cfg)
+}
+
+// meshBlocks assigns each configured mesh its slice of the synthetic IPv4
+// range, across the whole set.
+//
+// Per mesh and not per network id, because two ids land on the same block about
+// once in sixteen and both meshes would then route the same /19 — one route,
+// one translator, and every packet for the other mesh dropped by a table that
+// has never heard of it (ADR-021).
+func meshBlocks(meshes []state.Mesh) map[string]netip.Prefix {
+	ids := make([]string, 0, len(meshes))
+	for _, m := range meshes {
+		nk, err := m.Key()
+		if err != nil {
+			continue
+		}
+		ids = append(ids, state.NetworkID(nk))
+	}
+	return v4.Blocks(ids)
 }
 
 // AnnounceServices reports whether this device tells its peers which service
@@ -796,6 +817,7 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 		mux.Close()
 	}
 
+	blocks := meshBlocks(meshes)
 	for i, mc := range meshes {
 		nk, err := mc.Key()
 		if err != nil {
@@ -811,7 +833,8 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 			return fmt.Errorf("mesh %q: %w", mc.Label, err)
 		}
 		self := identity.OverlayAddr(nk, ms.Identity.DevicePub)
-		aliases := v4.NewTable(networkID, v4.Entry{Overlay: self, DevicePub: ms.Identity.DevicePub}, nil)
+		aliases := v4.NewTableIn(blocks[networkID],
+			v4.Entry{Overlay: self, DevicePub: ms.Identity.DevicePub}, nil)
 
 		// This mesh's slice of the tun: its own /48 and its own block of the
 		// synthetic IPv4 range. Exact, so a packet belongs to one mesh or none.

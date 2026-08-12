@@ -67,7 +67,8 @@ func (in *instance) Close() {
 // startInstance builds the data plane for one mesh and joins it to the shared
 // rendezvous node.
 func startInstance(ctx context.Context, log *slog.Logger, cfg state.Config, st *state.State,
-	node *waku.Node, m state.Mesh, iface string, port uint16, legacy, verbose bool) (*instance, error) {
+	node *waku.Node, m state.Mesh, iface string, port uint16, block netip.Prefix,
+	legacy, verbose bool) (*instance, error) {
 
 	nk, err := m.Key()
 	if err != nil {
@@ -95,7 +96,11 @@ func startInstance(ctx context.Context, log *slog.Logger, cfg state.Config, st *
 	// Synthetic IPv4 (ADR-021), per mesh: with per-mesh identities the aliases
 	// cannot collide by construction, but the table must still be per mesh or
 	// one mesh's peer would answer another's name.
-	in.aliases = v4.NewTable(networkID, v4.Entry{Overlay: self, DevicePub: ms.Identity.DevicePub}, nil)
+	//
+	// The block is chosen across every mesh this device has rather than from
+	// this one's network id, because two ids land on the same block about once
+	// in sixteen and both meshes would then route the same /19.
+	in.aliases = v4.NewTableIn(block, v4.Entry{Overlay: self, DevicePub: ms.Identity.DevicePub}, nil)
 
 	// The mesh's own slice of the range, routed at its own interface. One
 	// route for the whole range would send another mesh's traffic here.

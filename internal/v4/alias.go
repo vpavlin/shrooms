@@ -20,6 +20,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"net/netip"
+	"sort"
 	"sync"
 )
 
@@ -53,10 +54,55 @@ const (
 // Derived from the network id, so two nodes on the same mesh agree — not that
 // they have to, since aliases never leave the machine, but a mesh whose
 // addresses look the same everywhere is easier to reason about.
-func Block(networkID string) netip.Prefix {
-	sum := sha256.Sum256([]byte("mesh/v1/v4block" + networkID))
-	tag := uint32(sum[0]) & ((1 << MeshBits) - 1)
+// Only correct for a device with one mesh. With more than one, use Blocks,
+// which resolves the collisions this cannot see.
+func Block(networkID string) netip.Prefix { return blockOf(blockTag(networkID)) }
 
+// Blocks assigns a block to each of this device's meshes, avoiding collisions
+// between them.
+//
+// Block hashes into 4 bits, so two meshes land on the same one about once in
+// sixteen — and when they do, both route the same /19, the kernel installs one
+// route, and packets for the second mesh enter the first mesh's translator,
+// which has never heard of them. That is the failure the comment on MeshBits
+// describes, and deriving the block from the network id alone does not prevent
+// it; it only makes it rare enough to look like something else.
+//
+// Resolved the way an address collision already is: locally, by whoever
+// noticed. A block is a routing decision on one machine and never leaves it,
+// so a device is free to move a mesh to the next free block without telling
+// anybody. Assignment walks the meshes in a fixed order and probes forward
+// from each one's preferred block, so the same set of meshes always produces
+// the same answer.
+func Blocks(networkIDs []string) map[string]netip.Prefix {
+	ids := append([]string(nil), networkIDs...)
+	sort.Strings(ids)
+
+	taken := make(map[uint32]bool, len(ids))
+	out := make(map[string]netip.Prefix, len(ids))
+	for _, id := range ids {
+		if _, done := out[id]; done {
+			continue // the same mesh named twice
+		}
+		want := blockTag(id)
+		tag := want
+		for n := 0; taken[tag] && n < 1<<MeshBits; n++ {
+			tag = (tag + 1) % (1 << MeshBits)
+		}
+		taken[tag] = true
+		out[id] = blockOf(tag)
+	}
+	return out
+}
+
+// blockTag is the block a network id prefers.
+func blockTag(networkID string) uint32 {
+	sum := sha256.Sum256([]byte("mesh/v1/v4block" + networkID))
+	return uint32(sum[0]) & ((1 << MeshBits) - 1)
+}
+
+// blockOf turns a block number into the prefix to route.
+func blockOf(tag uint32) netip.Prefix {
 	base := Prefix.Addr().As4()
 	addr := binary.BigEndian.Uint32(base[:]) | (tag << DeviceBits)
 	var out [4]byte
@@ -115,8 +161,15 @@ type Entry struct {
 // NewTable builds a mapping for this device and its peers, within the block
 // belonging to networkID.
 func NewTable(networkID string, self Entry, peers []Entry) *Table {
+	return NewTableIn(Block(networkID), self, peers)
+}
+
+// NewTableIn builds the same mapping in a block the caller has chosen, which is
+// what a device with several meshes needs: the block is assigned across the set
+// (see Blocks), not derived one mesh at a time.
+func NewTableIn(block netip.Prefix, self Entry, peers []Entry) *Table {
 	t := &Table{
-		block: Block(networkID),
+		block: block,
 		to4:   make(map[netip.Addr]netip.Addr, len(peers)+1),
 		to6:   make(map[netip.Addr]netip.Addr, len(peers)+1),
 		self6: self.Overlay,
