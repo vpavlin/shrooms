@@ -1066,6 +1066,45 @@ Item {
                         }
                     }
 
+                    // Whether peers are told what this device publishes.
+                    //
+                    // The one setting here that changes what other people can
+                    // see rather than what this device does, so the words say
+                    // what it actually changes: a member can already reach
+                    // these services by connecting to the address, and this is
+                    // about whether the names are listed for them (ADR-023).
+                    RowLayout {
+                        spacing: 8
+                        Layout.fillWidth: true
+                        Text {
+                            text: "announce"
+                            color: cAsh
+                            font.family: "monospace"; font.pixelSize: 11
+                            Layout.preferredWidth: 70
+                        }
+                        Text {
+                            text: "list the names for peers"
+                            color: cPhosphor
+                            font.family: "monospace"; font.pixelSize: 11
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.callWrite("setAnnounceServices", [true])
+                            }
+                        }
+                        Text {
+                            text: "keep them to myself"
+                            color: cAsh
+                            font.family: "monospace"; font.pixelSize: 11
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.callWrite("setAnnounceServices", [false])
+                            }
+                        }
+                        Item { Layout.fillWidth: true }
+                    }
+
                     // Light or relay node. Two words rather than a switch,
                     // because what it costs is the part worth reading.
                     RowLayout {
