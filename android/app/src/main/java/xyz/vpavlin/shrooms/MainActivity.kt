@@ -2,12 +2,12 @@ package xyz.vpavlin.shrooms
 
 import android.Manifest
 import android.content.Intent
-import android.provider.Settings
 import android.content.pm.PackageManager
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -34,7 +34,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -91,6 +90,12 @@ class MainActivity : ComponentActivity() {
                 val dir = filesDir.absolutePath
                 var configured by remember { mutableStateOf(Mobile.configured(dir)) }
                 var addingMesh by remember { mutableStateOf(false) }
+                var inSettings by remember { mutableStateOf(false) }
+                // Which picture the graph draws. It is set in settings and read
+                // by the mesh screen, so it belongs to neither of them — and it
+                // is saveable because a rotation that quietly reverts a setting
+                // looks like the setting did not take.
+                var wholeMesh by rememberSaveable { mutableStateOf(false) }
 
                 // Connect on launch, once. A mesh VPN that has to be switched
                 // on by hand every time is a mesh that is off when you need it
@@ -131,16 +136,31 @@ class MainActivity : ComponentActivity() {
                             },
                             onCancel = { addingMesh = false },
                         )
+                    } else if (inSettings) {
+                        // System back leaves settings rather than the app: this
+                        // is a screen swapped in by state, not an Activity, so
+                        // without this the back gesture closes shrooms from
+                        // what looks like a sub-screen.
+                        BackHandler { inSettings = false }
+                        SettingsScreen(
+                            dir = dir,
+                            connected = snap.connected,
+                            wholeMesh = wholeMesh,
+                            onWholeMesh = { wholeMesh = it },
+                            onClose = { inSettings = false },
+                        )
                     } else {
                         MeshScreen(
                             snap = snap,
                             dir = dir,
+                            wholeMesh = wholeMesh,
                             onConnect = ::requestConnect,
                             onDisconnect = {
                                 startService(Intent(this, MeshVpnService::class.java)
                                     .setAction(MeshVpnService.ACTION_DISCONNECT))
                             },
                             onAddMesh = { addingMesh = true },
+                            onSettings = { inSettings = true },
                             onLeftMesh = {
                                 // The tunnel is built from the config at
                                 // connect time, so a mesh added, removed or
@@ -416,9 +436,11 @@ private fun AddMeshScreen(
 private fun MeshScreen(
     snap: Snapshot,
     dir: String,
+    wholeMesh: Boolean,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
     onAddMesh: () -> Unit = {},
+    onSettings: () -> Unit = {},
     onLeftMesh: () -> Unit = {},
 ) {
     // Leaving edits the config; the running session still holds the mesh it
@@ -428,11 +450,7 @@ private fun MeshScreen(
     // Which mesh has been tapped once. Leaving means re-enrolling to come
     // back, which is too much to hang on a single tap next to a toggle.
     var confirmLeave by remember { mutableStateOf("") }
-    // Whether to draw the links between other peers. They are guesses, so this
-    // is off by default: the honest picture first, the pretty one on request.
-    var wholeMesh by rememberSaveable { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current
-    val ctx = LocalContext.current
 
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.padding(start = 24.dp, end = 24.dp, top = 32.dp, bottom = 20.dp)) {
@@ -690,20 +708,21 @@ private fun MeshScreen(
 
                 asGraph -> {
                     MeshGraph(snap, onSelect = { selected = it }, inferred = wholeMesh)
-                    // What the picture is, and a way to change it. The honest
-                    // version shows only this device's tunnels; the other adds
-                    // the links between peers, which are assumed rather than
-                    // known.
-                    Text(
-                        if (wholeMesh) "whole mesh · faint links are assumed"
-                        else "your links · tap for the whole mesh",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (wholeMesh) Palette.Amber else Palette.Ash,
-                        modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .padding(top = 6.dp)
-                            .clickable { wholeMesh = !wholeMesh },
-                    )
+                    // Only the whole-mesh picture is labelled, and only to
+                    // disown the extra links: they are inferred from what peers
+                    // report, so an unmarked drawing of them would pass off a
+                    // guess as a measurement. The default picture is all
+                    // measured and needs nothing said about it.
+                    if (wholeMesh) {
+                        Text(
+                            "whole mesh · faint links are assumed",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Palette.Amber,
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .padding(top = 6.dp),
+                        )
+                    }
                     selected?.let { peer ->
                         // The detail for a tapped node, over the graph rather
                         // than replacing it: the shape is the context.
@@ -743,122 +762,41 @@ private fun MeshScreen(
             }
         }
 
-        ModeSetting(dir, connected = snap.connected)
-
+        // Joining is an action and stays here; everything that was a preference
+        // moved behind the link next to it, because each one used to spend
+        // vertical space on this screen arguing for itself.
         Spacer(Modifier.height(18.dp))
-        Text(
-            "join another mesh",
-            style = MaterialTheme.typography.bodySmall,
-            color = Palette.Phosphor,
-            modifier = Modifier
-                .padding(horizontal = 24.dp)
-                .clickable { onAddMesh() },
-        )
-
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 4.dp),
+            modifier = Modifier.padding(horizontal = 24.dp),
         ) {
-            Text(buildLabel(), style = MaterialTheme.typography.bodySmall, color = Palette.Ash)
-            Spacer(Modifier.width(12.dp))
-            // The app reconnects itself on boot and after an update, but only
-            // Android can bring it back when the app is killed, and only
-            // Android can hold traffic until the tunnel is there. That switch
-            // lives in system settings and cannot be set from here, so point
-            // at it rather than pretend otherwise.
             Text(
-                "start on boot",
+                "join another mesh",
                 style = MaterialTheme.typography.bodySmall,
                 color = Palette.Phosphor,
-                modifier = Modifier.clickable {
-                    runCatching {
-                        ctx.startActivity(
-                            Intent(Settings.ACTION_VPN_SETTINGS)
-                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        )
-                    }
-                },
+                modifier = Modifier.clickable { onAddMesh() },
+            )
+            Spacer(Modifier.width(16.dp))
+            Text(
+                "settings",
+                style = MaterialTheme.typography.bodySmall,
+                color = Palette.Phosphor,
+                modifier = Modifier.clickable { onSettings() },
             )
         }
+
+        Text(
+            buildLabel(),
+            style = MaterialTheme.typography.bodySmall,
+            color = Palette.Ash,
+            modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 4.dp),
+        )
         Box(Modifier.padding(start = 24.dp, end = 24.dp, top = 4.dp, bottom = 24.dp)) {
             Action(
                 if (snap.connected) "DISCONNECT" else "CONNECT",
                 enabled = true,
                 danger = snap.connected,
             ) { if (snap.connected) onDisconnect() else onConnect() }
-        }
-    }
-}
-
-/** How much of the network this device carries.
- *
- * On a phone this is the setting that costs money, so it is on the main screen
- * rather than behind a menu — and it states the measured numbers, because
- * "Core" and "Edge" tell nobody anything. Core is still the default: someone
- * has to relay, and quietly opting a user out of contributing is as wrong as
- * quietly spending their data.
- *
- * Changing it while connected would mean tearing the tunnel down to alter a
- * preference, so it applies on the next connect and says so.
- */
-@Composable
-private fun ModeSetting(dir: String, connected: Boolean) {
-    var mode by remember { mutableStateOf(runCatching { Mobile.mode(dir) }.getOrDefault("")) }
-    var pending by remember { mutableStateOf(false) }
-    if (mode.isEmpty()) return
-
-    val edge = mode == "Edge"
-    var open by remember { mutableStateOf(false) }
-    Column(Modifier.padding(start = 24.dp, end = 24.dp, top = 12.dp)) {
-        // Collapsed by default. Relaying for the network is a real option and
-        // stays here, but it costs seven times the data and nobody chooses it
-        // on a phone — so it should not be the most prominent control on the
-        // screen, which is what a Material switch always is.
-        if (!open) {
-            Text(
-                if (edge) "light node  ·  ~3 MB/h" else "relay node  ·  ~20 MB/h",
-                style = MaterialTheme.typography.labelSmall,
-                color = if (edge) Palette.Ash else Palette.Amber,
-                modifier = Modifier.clickable { open = true },
-            )
-        }
-        if (open) Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    if (edge) "Light node" else "Relay node",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Palette.Bone,
-                )
-                Text(
-                    if (edge) "subscribes only  ~3 MB/h" else "relays for the network  ~20 MB/h",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (edge) Palette.Ash else Palette.Amber,
-                )
-            }
-            Switch(
-                checked = edge,
-                onCheckedChange = { wantEdge ->
-                    val next = if (wantEdge) "Edge" else "Core"
-                    runCatching { Mobile.setMode(dir, next) }
-                        .onSuccess {
-                            mode = next
-                            pending = connected
-                        }
-                },
-                colors = SwitchDefaults.colors(
-                    checkedThumbColor = Palette.Bone,
-                    checkedTrackColor = Palette.Violet,
-                    uncheckedThumbColor = Palette.Ash,
-                    uncheckedTrackColor = Palette.Line,
-                ),
-            )
-        }
-        if (pending) {
-            Text(
-                "applies on the next connect",
-                style = MaterialTheme.typography.labelSmall,
-                color = Palette.Ash,
-            )
         }
     }
 }
@@ -924,6 +862,13 @@ private fun PeerDetails(p: Peer) {
         if (p.handshakeAgeS > 0) Detail("handshake", "${shortDuration(p.handshakeAgeS)} ago")
         if (p.tunnelAfterS > 0) Detail("connected in", "%.1fs".format(p.tunnelAfterS))
         Detail("traffic", "${humanBytes(p.rxBytes)} in · ${humanBytes(p.txBytes)} out")
+        // What this peer says it offers (ADR-023). Copyable, because the whole
+        // point of a service name is that you paste it into a browser — and
+        // worded as a claim, because it is one: this peer repeats the list
+        // every few minutes, and only it knows whether the port answers.
+        for (svc in p.services) {
+            CopyableDetail("offers", "http://$svc.${p.dnsName.ifEmpty { p.name }}")
+        }
         Spacer(Modifier.height(8.dp))
         CopyableDetail("ping", "ping6 -c3 " + p.dnsName.ifEmpty { p.overlay })
     }
@@ -935,12 +880,16 @@ private fun PeerDetails(p: Peer) {
  * Shown because "did you install the fixed one?" came up on every single
  * iteration, and neither of us could answer it from the screen.
  */
-private fun buildLabel(): String =
+internal fun buildLabel(): String =
     "v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"
 
 // --- small pieces ----------------------------------------------------------
+//
+// Internal rather than private to this file: the settings screen draws the same
+// section headings and the same text field, and a second copy of them is how
+// two screens in one app end up looking like two apps.
 
-@Composable private fun Label(text: String) =
+@Composable internal fun Label(text: String) =
     Text(text, style = MaterialTheme.typography.labelSmall, color = Palette.Ash)
 
 /**
@@ -1001,7 +950,7 @@ private fun Banner(text: String, colour: Color) {
 }
 
 @Composable
-private fun KeyField(value: String, singleLine: Boolean = false, onChange: (String) -> Unit) {
+internal fun KeyField(value: String, singleLine: Boolean = false, onChange: (String) -> Unit) {
     BasicTextField(
         value = value,
         onValueChange = onChange,

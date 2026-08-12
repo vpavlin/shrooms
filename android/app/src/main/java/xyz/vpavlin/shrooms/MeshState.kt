@@ -28,6 +28,12 @@ data class Peer(
     val tunnelAfterS: Double,
     /** Which mesh this peer is on; empty on a single-mesh device (ADR-015). */
     val mesh: String = "",
+    /**
+     * What this peer says it publishes (ADR-023), empty unless it has been told
+     * to announce. A claim about what it offers, not a report that anything is
+     * listening — only the publishing device knows whether the port answers.
+     */
+    val services: List<String> = emptyList(),
 ) {
     /**
      * Three states, not two. A peer can be announcing yet unreachable, which is
@@ -166,7 +172,12 @@ object MeshState {
         o.optJSONArray("peers")?.let { arr ->
             for (i in 0 until arr.length()) {
                 val p = arr.getJSONObject(i)
+                val svc = mutableListOf<String>()
+                p.optJSONArray("services")?.let { a ->
+                    for (j in 0 until a.length()) svc += a.optString(j)
+                }
                 peers += Peer(
+                    services = svc,
                     mesh = p.optString("mesh"),
                     name = p.optString("name"),
                     dnsName = p.optString("dns_name"),

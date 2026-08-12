@@ -636,6 +636,36 @@ func SetMode(configDir, mode string) error {
 	return state.WriteConfig(cfgPath, cfg)
 }
 
+// AnnounceServices reports whether this device tells its peers which service
+// names it publishes (ADR-023).
+func AnnounceServices(configDir string) bool {
+	cfg, _, err := load(configDir)
+	if err != nil {
+		return false
+	}
+	return cfg.AnnounceServices
+}
+
+// SetAnnounceServices turns that on or off.
+//
+// Reachable from the phone because it is a disclosure decision, and the person
+// making it is holding the phone rather than editing a config file. It applies
+// on the next connect, like the node mode: the list goes out on a timer the
+// running session owns.
+//
+// A phone rarely publishes services itself, so this mostly matters as the
+// setting people find while wondering why a peer's services are visible and
+// theirs are not.
+func SetAnnounceServices(configDir string, on bool) error {
+	cfg, _, err := load(configDir)
+	if err != nil {
+		return err
+	}
+	cfg.AnnounceServices = on
+	cfgPath, _ := paths(configDir)
+	return state.WriteConfig(cfgPath, cfg)
+}
+
 // fwd is the live DNS forwarder, so its upstream list can be replaced without
 // restarting the tunnel.
 var fwd atomic.Pointer[forwarder]

@@ -274,16 +274,18 @@ func issueFor(admin *cred.Admin, auth *cred.Authority, devPub, wgPub []byte,
 	if serial == 0 {
 		serial = uint64(now.Unix())
 	}
-	c, err := admin.Issue(devPub, wgPub, name, serial, now, life)
+	// Through the Signer seam (ADR-022) rather than signing here: the admin key
+	// is the one secret in this system whose usage pattern suits a smartcard —
+	// a handful of signatures a year, each a deliberate act by someone present
+	// — and everything above this line already works in terms of a digest.
+	c, err := cred.IssueWith(admin, devPub, wgPub, name, serial,
+		// A minute of slack, because clocks differ and a credential that is not
+		// yet valid on the machine it was just issued to is a confusing
+		// failure.
+		now.Add(-time.Minute).Unix(), now.Add(life).Unix(), auth.ID())
 	if err != nil {
 		return nil, err
 	}
-	c.MeshID = auth.ID()
-	d, err := c.Digest()
-	if err != nil {
-		return nil, err
-	}
-	c.Sig = ed25519.Sign(admin.Priv, d[:])
 	return c.MarshalBinary()
 }
 
@@ -517,11 +519,9 @@ func cmdAdminRevoke(args []string) error {
 		return err
 	}
 	r.MeshID = auth.ID()
-	d, err := r.Digest()
-	if err != nil {
+	if err := cred.SignRevocationWith(admin, r); err != nil {
 		return err
 	}
-	r.Sig = ed25519.Sign(admin.Priv, d[:])
 	raw, err := r.MarshalBinary()
 	if err != nil {
 		return err
