@@ -458,8 +458,15 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 3em 0; }
    is already pointing at. */
 a.card {
     display: block;
-    text-decoration: none;
     color: inherit;
+}
+
+/* No underline anywhere inside a card. `text-decoration: none` on the anchor
+   is not enough: the property inherits into the children, so the heading and
+   the paragraph carried the line as well and the whole box read as one long
+   link. */
+a.card, a.card * {
+    text-decoration: none;
 }
 
 a.card h3 {
