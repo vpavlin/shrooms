@@ -199,7 +199,19 @@ Item {
     // Anchored so that the screen it was designed on is unchanged — a window
     // around 1400 logical pixels scales by one — and a window twice that wide,
     // which is what a 4K panel without DPI scaling looks like, scales by two.
-    readonly property real uiScale: Math.max(1.0, Math.min(2.0, root.width / 1400))
+    // Gentler than the first attempt, which mapped a wide window straight to
+    // 2x and made a good screen unreadable in the other direction. A dense
+    // panel needs the text bigger, not doubled.
+    readonly property real autoScale: Math.max(1.0, Math.min(1.45, root.width / 2000))
+
+    // And an adjustment on top, because no formula knows how far away the
+    // screen is. Nudged from the panel, applied everywhere at once.
+    //
+    // Not persisted: there is nowhere to put it that survives a restart
+    // without inventing settings storage for one number. It resets to the
+    // automatic value, which should be close enough that nobody has to.
+    property real uiNudge: 0
+    readonly property real uiScale: Math.max(0.8, Math.min(2.2, autoScale + uiNudge))
 
     /** A font size, scaled. */
     function fs(n) { return Math.round(n * root.uiScale) }
@@ -426,7 +438,10 @@ Item {
         }
     }
 
-    Component.onCompleted: reload()
+    Component.onCompleted: {
+        reload()
+        rebuildRows()
+    }
     Timer {
         interval: root.everLoaded ? 2000 : 700
         running: true; repeat: true
@@ -569,7 +584,41 @@ Item {
     // rather than a ListView section, because the model here is a plain JS
     // array and sections want roles; a header entry is the same thing and works
     // against whatever the daemon sent.
-    readonly property var rows: {
+    /**
+     * The roster's shape: who is listed, in what order, with which headings.
+     *
+     * Not their state — not whether a peer is up, its throughput, its
+     * handshake age. Those change every two seconds and must not, on their
+     * own, cause the model below to be rebuilt.
+     */
+    readonly property string rosterShape: {
+        var ps = root.sortedPeers, out = []
+        for (var i = 0; i < ps.length; i++) {
+            out.push((ps[i].mesh || "") + "/" + (ps[i].name || ""))
+        }
+        return (root.multiMesh ? "m:" : "s:") + out.join(",")
+    }
+
+    /**
+     * The roster as rows, with a heading before each mesh.
+     *
+     * Rebuilt only when rosterShape changes, which is the whole point.
+     * Assigning a new array to a ListView's model resets the view, and the
+     * status poll runs every two seconds — so the list scrolled itself back to
+     * the top three times before anybody could read the row they had scrolled
+     * down to find.
+     *
+     * The rows therefore carry identity, not data: a mesh and a name. Each
+     * delegate looks the peer up live, so throughput and reachability stay
+     * current while the model underneath them sits still.
+     *
+     * One flat model rather than a ListView section, because the model here is
+     * a plain JS array and sections want roles; a header entry is the same
+     * thing and works against whatever the daemon sent.
+     */
+    property var rows: []
+
+    function rebuildRows() {
         var out = [], ps = root.sortedPeers, last = null
         for (var i = 0; i < ps.length; i++) {
             var m = ps[i].mesh || ""
@@ -577,9 +626,25 @@ Item {
                 out.push({ header: true, mesh: m })
                 last = m
             }
-            out.push({ header: false, peer: ps[i] })
+            out.push({ header: false, mesh: m, name: ps[i].name || "" })
         }
-        return out
+        root.rows = out
+    }
+    onRosterShapeChanged: rebuildRows()
+
+    /**
+     * A peer by the identity a row carries, or an empty object.
+     *
+     * Never undefined: a delegate binding that dereferences it on a peer that
+     * has just left throws, and one thrown TypeError per delegate is a roster
+     * that renders half a list.
+     */
+    function peerFor(mesh, name) {
+        for (var i = 0; i < root.peers.length; i++) {
+            var p = root.peers[i]
+            if ((p.mesh || "") === mesh && (p.name || "") === name) return p
+        }
+        return ({})
     }
 
     /** How many peers a mesh has, counted here when the daemon did not count. */
@@ -734,9 +799,14 @@ Item {
         // in a roster that scrolls itself; the right column is one flickable
         // panel. Neither can grow past the window, so nothing ends up below the
         // fold with no way down — which is what a single tall page did.
-        RowLayout {
+        ColumnLayout {
             anchors.fill: parent
             anchors.margins: root.sz(20)
+            spacing: root.sz(12)
+
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
             spacing: root.sz(18)
 
             // --- the mesh itself ------------------------------------------
@@ -787,7 +857,8 @@ Item {
                             font.family: "monospace"; font.pixelSize: root.fs(11)
                         }
                     }
-// This device's address, one click from the clipboard. The
+
+                    // This device's address, one click from the clipboard. The
                     // first thing anybody wants out of this window, and the one
                     // thing they previously had to read off the screen and retype
                     // — which for a 39-character IPv6 address is not a realistic
@@ -1235,11 +1306,16 @@ Item {
                                         ? heading.implicitHeight + 12
                                         : card.implicitHeight
 
-                        // A peer row's facts, or nothing at all on a heading row.
-                        // Never undefined: a binding that dereferences it on the
-                        // wrong kind of row throws, and one thrown TypeError per
-                        // delegate is a roster that renders half a list.
-                        readonly property var p: modelData.peer || ({})
+                        // Looked up live rather than carried in the model. The
+                        // model holds identity only, so it can sit still while
+                        // these values change — see rosterShape. A row whose
+                        // peer has just left resolves to an empty object, never
+                        // undefined: one thrown TypeError per delegate is a
+                        // roster that renders half a list.
+                        readonly property var p: modelData.header === true
+                                                 ? ({})
+                                                 : root.peerFor(modelData.mesh || "",
+                                                                modelData.name || "")
 
 
 
@@ -1443,6 +1519,69 @@ Layout.preferredWidth: 0
                         width: panel.width - root.sz(14)
                         spacing: root.sz(12)
 
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: root.sz(8)
+                            Text {
+                                text: "text size"
+                                color: cAsh
+                                font.family: "monospace"; font.pixelSize: root.fs(10)
+                            }
+                            Text {
+                                text: "A−"
+                                color: cPhosphor
+                                font.family: "monospace"; font.pixelSize: root.fs(12)
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.uiNudge -= 0.1
+                                }
+                            }
+                            Text {
+                                text: "A+"
+                                color: cPhosphor
+                                font.family: "monospace"; font.pixelSize: root.fs(12)
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.uiNudge += 0.1
+                                }
+                            }
+                            Text {
+                                visible: root.uiNudge !== 0
+                                text: "reset"
+                                color: cAsh
+                                font.family: "monospace"; font.pixelSize: root.fs(10)
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.uiNudge = 0
+                                }
+                            }
+                            Item { Layout.fillWidth: true }
+                        }
+
+                        // What the last write said, at the top of the panel
+                        // rather than tucked under the "settings" heading —
+                        // it is the answer to whatever was just clicked, and
+                        // an answer below the question it answers is one
+                        // nobody reads.
+                        //
+                        // It holds until the next write instead of fading:
+                        // several of these sentences say when a change takes
+                        // effect, which is the part worth still being on
+                        // screen a minute later.
+                        Text {
+                            visible: root.said !== ""
+                            text: root.said
+                            color: root.saidBad ? cRust : cPhosphor
+                            font.family: "monospace"; font.pixelSize: root.fs(10)
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: 0
+                            Layout.bottomMargin: root.sz(6)
+                        }
+
                     // --- settings -------------------------------------------------
                     //
                     // Collapsed by default. This view's job is to show a mesh, and a
@@ -1476,16 +1615,6 @@ Layout.preferredWidth: 0
 
 
 
-
-                        Text {
-                            visible: root.said !== ""
-                            text: root.said
-                            color: root.saidBad ? cRust : cPhosphor
-                            font.family: "monospace"; font.pixelSize: root.fs(10)
-                            wrapMode: Text.WordWrap
-                            Layout.fillWidth: true
-                            Layout.preferredWidth: 0
-                        }
 
                         // Said once, up front, rather than discovered one button at a
                         // time. The daemon and this view ship separately and update
@@ -2405,106 +2534,108 @@ Layout.preferredWidth: 0
                         }
                     }
 
-                    // --- log --------------------------------------------------------
-                    //
-                    // The same pane the phone has. Last, because it is the thing you
-                    // open when everything above has failed to explain itself.
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: 6
-                        visible: root.haveCore
+                }
+            }
+        }
+    }
+
+            // --- log --------------------------------------------------------
+            //
+            // The same pane the phone has. Last, because it is the thing you
+            // open when everything above has failed to explain itself.
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 6
+                visible: root.haveCore
 
 
 
 
 
-                        Text {
-                            text: root.logsOpen ? "log ▾" : "log ▸"
-                            color: cPhosphor
-                            font.family: "monospace"; font.pixelSize: root.fs(11)
-                            MouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    root.logsOpen = !root.logsOpen
-                                    // Fetched immediately on opening rather than at the
-                                    // next tick: two seconds of an empty box reads as
-                                    // "there is no log".
-                                    if (root.logsOpen) root.pumpLogs()
-                                }
-                            }
+                Text {
+                    text: root.logsOpen ? "log ▾" : "log ▸"
+                    color: cPhosphor
+                    font.family: "monospace"; font.pixelSize: root.fs(11)
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            root.logsOpen = !root.logsOpen
+                            // Fetched immediately on opening rather than at the
+                            // next tick: two seconds of an empty box reads as
+                            // "there is no log".
+                            if (root.logsOpen) root.pumpLogs()
                         }
+                    }
+                }
 
-                        Rectangle {
-                            visible: root.logsOpen
-                            Layout.fillWidth: true
-                            Layout.preferredWidth: 0
-                            Layout.preferredHeight: root.sz(220)
-                            color: cPanel
-                            radius: 8
+                Rectangle {
+                    visible: root.logsOpen
+                    Layout.fillWidth: true
+                    Layout.preferredWidth: 0
+                    Layout.preferredHeight: root.sz(220)
+                    color: cPanel
+                    radius: 8
 
-                            ListView {
-                                id: logView
-                                anchors.fill: parent
-                                anchors.margins: 8
-                                clip: true
-                                spacing: 2
-                                model: root.logLines
+                    ListView {
+                        id: logView
+                        anchors.fill: parent
+                        anchors.margins: 8
+                        clip: true
+                        spacing: 2
+                        model: root.logLines
 
-                                // Follow the tail, but only while the reader is already
-                                // at the bottom: yanking the view down under somebody
-                                // who has scrolled up to read something is the single
-                                // most annoying thing a log pane can do.
-                                property bool atEnd: true
-                                onContentYChanged: atEnd = (contentY + height >= contentHeight - 24)
-                                onCountChanged: if (atEnd) positionViewAtEnd()
+                        // Follow the tail, but only while the reader is already
+                        // at the bottom: yanking the view down under somebody
+                        // who has scrolled up to read something is the single
+                        // most annoying thing a log pane can do.
+                        property bool atEnd: true
+                        onContentYChanged: atEnd = (contentY + height >= contentHeight - 24)
+                        onCountChanged: if (atEnd) positionViewAtEnd()
 
-                                delegate: RowLayout {
-                                    width: ListView.view.width
-                                    spacing: 8
-                                    Text {
-                                        text: root.ago(modelData.t)
-                                        color: cAsh
-                                        font.family: "monospace"; font.pixelSize: root.fs(9)
-                                        Layout.preferredWidth: root.sz(34)
-                                        horizontalAlignment: Text.AlignRight
-                                    }
-                                    Text {
-                                        text: modelData.msg || ""
-                                        color: root.levelColour(modelData.level)
-                                        font.family: "monospace"; font.pixelSize: root.fs(10)
-                                        Layout.preferredWidth: root.sz(200)
-                                        elide: Text.ElideRight
-                                    }
-                                    Text {
-                                        text: modelData.attrs || ""
-                                        color: cAsh
-                                        font.family: "monospace"; font.pixelSize: root.fs(10)
-                                        elide: Text.ElideRight
-                                        Layout.fillWidth: true
-                                        Layout.preferredWidth: 0
-                                    }
-                                }
-                            }
-
-
-
-
-
+                        delegate: RowLayout {
+                            width: ListView.view.width
+                            spacing: 8
                             Text {
-                                visible: root.logLines.length === 0
-                                anchors.fill: parent
-                                anchors.margins: 16
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                                wrapMode: Text.WordWrap
-                                text: root.logProblem !== "" ? root.logProblem
-                                                             : "nothing logged since this pane was opened"
-                                color: root.logProblem !== "" ? cAmber : cAsh
+                                text: root.ago(modelData.t)
+                                color: cAsh
+                                font.family: "monospace"; font.pixelSize: root.fs(9)
+                                Layout.preferredWidth: root.sz(34)
+                                horizontalAlignment: Text.AlignRight
+                            }
+                            Text {
+                                text: modelData.msg || ""
+                                color: root.levelColour(modelData.level)
                                 font.family: "monospace"; font.pixelSize: root.fs(10)
+                                Layout.preferredWidth: root.sz(200)
+                                elide: Text.ElideRight
+                            }
+                            Text {
+                                text: modelData.attrs || ""
+                                color: cAsh
+                                font.family: "monospace"; font.pixelSize: root.fs(10)
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 0
                             }
                         }
                     }
+
+
+
+
+
+                    Text {
+                        visible: root.logLines.length === 0
+                        anchors.fill: parent
+                        anchors.margins: 16
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                        wrapMode: Text.WordWrap
+                        text: root.logProblem !== "" ? root.logProblem
+                                                     : "nothing logged since this pane was opened"
+                        color: root.logProblem !== "" ? cAmber : cAsh
+                        font.family: "monospace"; font.pixelSize: root.fs(10)
                     }
                 }
             }
