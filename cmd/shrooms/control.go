@@ -164,6 +164,48 @@ func controlHandlers(mux *http.ServeMux, log *slog.Logger, cfgPath string, rl *r
 			return fmt.Sprintf("%d service(s) published", len(in.Services)), nil
 		}))
 
+	// Whether this device forwards traffic for peers of a mesh that cannot
+	// reach each other (ADR-013).
+	//
+	// Missing until now, which was a gap rather than a decision: it is per
+	// mesh, carrying traffic for your own machines and for somebody else's
+	// being different choices, and the only way to set it was a text editor
+	// and a restart. A mesh with no relay is invisible until somebody on
+	// mobile data cannot reach anybody.
+	mux.HandleFunc("/config/relay", writeSetting(log, cfgPath,
+		func(cfg *state.Config, in settingRequest) (string, error) {
+			if err := setMeshBool(cfg, in.Label,
+				&cfg.Relay, func(m *state.Mesh) *bool { return &m.Relay },
+				in.Enabled); err != nil {
+				return "", err
+			}
+			where := in.Label
+			if where == "" {
+				where = state.DefaultLabel
+			}
+			if in.Enabled {
+				return "this device will forward for peers of " + where +
+					" that cannot reach each other; it starts on the next restart", nil
+			}
+			return "this device will stop forwarding for " + where +
+				" on the next restart", nil
+		}))
+
+	// Whether the router is asked to open this node's port (ADR-024).
+	//
+	// Global rather than per mesh: it is one UDP port, and the request is made
+	// once for it. On by default, and worth being able to switch off from a UI
+	// because it does ask to be reachable from the internet — which is a
+	// decision somebody may want to take back without finding a config file.
+	mux.HandleFunc("/config/portmap", writeSetting(log, cfgPath,
+		func(cfg *state.Config, in settingRequest) (string, error) {
+			cfg.PortMapping = in.Enabled
+			if in.Enabled {
+				return "the router will be asked for a way in; it takes effect on the next restart", nil
+			}
+			return "the router will not be asked; a mapping already granted lapses on its own", nil
+		}))
+
 	// Whether this device's peers are told what it publishes (ADR-023).
 	//
 	// A disclosure decision, and the one setting here that changes what other
@@ -173,11 +215,40 @@ func controlHandlers(mux *http.ServeMux, log *slog.Logger, cfgPath string, rl *r
 	// and this is about whether the names are listed for them.
 	mux.HandleFunc("/config/announce", writeSetting(log, cfgPath,
 		func(cfg *state.Config, in settingRequest) (string, error) {
-			cfg.AnnounceServices = in.Enabled
+			// Per mesh, because telling your own machines what you run and
+			// telling somebody else's are different decisions — which the
+			// config has always modelled and this endpoint did not, setting
+			// the first mesh's flag whatever it was asked about.
+			if err := setMeshBool(cfg, in.Label,
+				&cfg.AnnounceServices,
+				func(m *state.Mesh) *bool { return &m.AnnounceServices },
+				in.Enabled); err != nil {
+				return "", err
+			}
 			if in.Enabled {
 				return "peers will see the names of services published here", nil
 			}
 			return "peers will see nothing about what is published here", nil
+		}))
+
+	// And the ports that happen to be listening on the mesh address (ADR-026).
+	//
+	// Its own switch rather than a mode of the one above, because the two
+	// disclose different things: services are declared one line at a time by
+	// somebody who meant it, while these are discovered — whatever is bound,
+	// including the thing you started for ten minutes and forgot.
+	mux.HandleFunc("/config/announce-bound", writeSetting(log, cfgPath,
+		func(cfg *state.Config, in settingRequest) (string, error) {
+			if err := setMeshBool(cfg, in.Label,
+				&cfg.AnnounceBound,
+				func(m *state.Mesh) *bool { return &m.AnnounceBound },
+				in.Enabled); err != nil {
+				return "", err
+			}
+			if in.Enabled {
+				return "peers will see which ports are listening on this device's mesh address", nil
+			}
+			return "peers will see nothing about what is bound here", nil
 		}))
 
 	// Whether a mesh runs, without leaving it. Being a member and using it are
@@ -229,6 +300,28 @@ func leaveHandler(log *slog.Logger, cfgPath string) http.HandlerFunc {
 		delete(cfg.MeshSet, in.Label)
 		return "left " + in.Label + "; it stops on the next restart", nil
 	})
+}
+
+// setMeshBool writes one per-mesh flag, wherever the config keeps it.
+//
+// The first mesh's settings live at the top level — that is what the
+// single-mesh config form means — and the rest live under [mesh.<label>]. A UI
+// should not have to know which, and every caller that did know got it wrong
+// for the first mesh at least once.
+func setMeshBool(cfg *state.Config, label string, top *bool,
+	pick func(*state.Mesh) *bool, v bool) error {
+
+	if label == "" || (label == state.DefaultLabel && cfg.NetworkKey != "") {
+		*top = v
+		return nil
+	}
+	m, ok := cfg.MeshSet[label]
+	if !ok {
+		return fmt.Errorf("no mesh called %q", label)
+	}
+	*pick(&m) = v
+	cfg.MeshSet[label] = m
+	return nil
 }
 
 // settingRequest is every field any of the setting endpoints reads. One shape

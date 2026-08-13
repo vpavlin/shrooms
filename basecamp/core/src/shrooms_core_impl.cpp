@@ -3,9 +3,14 @@
 #include <cctype>
 #include <cerrno>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <map>
 #include <string>
 #include <vector>
+
+#include <sys/stat.h>
 
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -393,6 +398,62 @@ std::string logsPath(const std::string& sinceMs)
     return "/logs?since=" + sinceMs;
 }
 
+/**
+ * Where view preferences live.
+ *
+ * Under XDG config rather than beside the daemon's own state: these belong to
+ * the person looking at the window, not to the node, and a desktop preference
+ * in /etc is a file nobody will ever find again.
+ */
+std::string prefPath()
+{
+    const char* xdg = std::getenv("XDG_CONFIG_HOME");
+    std::string base;
+    if (xdg && *xdg) {
+        base = xdg;
+    } else {
+        const char* home = std::getenv("HOME");
+        if (!home || !*home) return "";
+        base = std::string(home) + "/.config";
+    }
+    base += "/shrooms";
+    // Best effort, and the failure is handled by the write failing after it:
+    // a preference that cannot be saved is not worth an error path of its own.
+    ::mkdir(base.c_str(), 0700);
+    return base + "/view.conf";
+}
+
+/** Keys are written by this view, so anything unexpected is a bug, not input. */
+bool validKey(const std::string& k)
+{
+    if (k.empty() || k.size() > 64) return false;
+    for (char c : k) {
+        if (!std::isalnum(static_cast<unsigned char>(c)) &&
+            c != '_' && c != '.' && c != '-') {
+            return false;
+        }
+    }
+    return true;
+}
+
+/** Every stored preference, as a map. Missing file is an empty map. */
+std::map<std::string, std::string> readPrefs()
+{
+    std::map<std::string, std::string> out;
+    const std::string path = prefPath();
+    if (path.empty()) return out;
+    std::ifstream f(path);
+    std::string line;
+    while (std::getline(f, line)) {
+        const auto eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        const std::string k = line.substr(0, eq);
+        if (!validKey(k)) continue;
+        out[k] = line.substr(eq + 1);
+    }
+    return out;
+}
+
 } // namespace
 
 std::string ShroomsCoreImpl::statusFrom(const std::string& socketPath)
@@ -452,6 +513,49 @@ std::string ShroomsCoreImpl::setServices(const std::string& csv)
     return postToDaemon("/config/services", "{\"services\":" + servicesArray(csv) + "}");
 }
 
+namespace {
+/** The body every per-mesh flag sends: which mesh, and on or off. */
+std::string flagBody(const std::string& label, bool on)
+{
+    return "{\"label\":" + jsonString(label) +
+           ",\"enabled\":" + (on ? "true" : "false") + "}";
+}
+} // namespace
+
+std::string ShroomsCoreImpl::setRelay(const std::string& label, bool on)
+{
+    return postToDaemon("/config/relay", flagBody(label, on));
+}
+
+std::string ShroomsCoreImpl::setRelayOn(const std::string& socketPath,
+                                        const std::string& label, bool on)
+{
+    return postToSocket(socketPath, "/config/relay", flagBody(label, on));
+}
+
+std::string ShroomsCoreImpl::setPortMapping(bool on)
+{
+    return postToDaemon("/config/portmap",
+                        std::string("{\"enabled\":") + (on ? "true" : "false") + "}");
+}
+
+std::string ShroomsCoreImpl::setPortMappingOn(const std::string& socketPath, bool on)
+{
+    return postToSocket(socketPath, "/config/portmap",
+                        std::string("{\"enabled\":") + (on ? "true" : "false") + "}");
+}
+
+std::string ShroomsCoreImpl::setAnnounceBound(const std::string& label, bool on)
+{
+    return postToDaemon("/config/announce-bound", flagBody(label, on));
+}
+
+std::string ShroomsCoreImpl::setAnnounceBoundOn(const std::string& socketPath,
+                                                const std::string& label, bool on)
+{
+    return postToSocket(socketPath, "/config/announce-bound", flagBody(label, on));
+}
+
 std::string ShroomsCoreImpl::setMeshEnabledOn(const std::string& socketPath,
                                               const std::string& label, bool enabled)
 {
@@ -460,16 +564,15 @@ std::string ShroomsCoreImpl::setMeshEnabledOn(const std::string& socketPath,
                             ",\"enabled\":" + (enabled ? "true" : "false") + "}");
 }
 
-std::string ShroomsCoreImpl::setAnnounceServices(bool on)
+std::string ShroomsCoreImpl::setAnnounceServices(const std::string& label, bool on)
 {
-    return postToDaemon("/config/announce",
-                        std::string("{\"enabled\":") + (on ? "true" : "false") + "}");
+    return postToDaemon("/config/announce", flagBody(label, on));
 }
 
-std::string ShroomsCoreImpl::setAnnounceServicesOn(const std::string& socketPath, bool on)
+std::string ShroomsCoreImpl::setAnnounceServicesOn(const std::string& socketPath,
+                                                   const std::string& label, bool on)
 {
-    return postToSocket(socketPath, "/config/announce",
-                        std::string("{\"enabled\":") + (on ? "true" : "false") + "}");
+    return postToSocket(socketPath, "/config/announce", flagBody(label, on));
 }
 
 std::string ShroomsCoreImpl::setMeshEnabled(const std::string& label, bool enabled)
@@ -508,6 +611,57 @@ std::string ShroomsCoreImpl::leaveMesh(const std::string& label)
 
 // The log tail is a read, so it retries the second socket path the way status()
 // does rather than stopping at the first failure: reading twice costs nothing.
+std::string ShroomsCoreImpl::getPref(const std::string& key)
+{
+    if (!validKey(key)) return "";
+    const auto prefs = readPrefs();
+    const auto it = prefs.find(key);
+    return it == prefs.end() ? std::string() : it->second;
+}
+
+std::string ShroomsCoreImpl::setPref(const std::string& key, const std::string& value)
+{
+    if (!validKey(key)) {
+        return errorJson("that is not a preference key", key);
+    }
+    // A newline in a value would write a line this cannot read back, so it is
+    // refused rather than mangled — no preference here is meant to contain one.
+    if (value.find('\n') != std::string::npos || value.find('\r') != std::string::npos) {
+        return errorJson("a preference cannot contain a line break", key);
+    }
+
+    auto prefs = readPrefs();
+    if (value.empty()) {
+        prefs.erase(key);
+    } else {
+        prefs[key] = value;
+    }
+
+    const std::string path = prefPath();
+    if (path.empty()) {
+        return errorJson("no writable config directory", "neither XDG_CONFIG_HOME nor HOME is set");
+    }
+    // Written whole and renamed into place: a half-written file would be read
+    // back as a set of preferences somebody never chose.
+    const std::string tmp = path + ".tmp";
+    {
+        std::ofstream f(tmp, std::ios::trunc);
+        if (!f) {
+            return errorJson("cannot write preferences", tmp);
+        }
+        for (const auto& kv : prefs) {
+            f << kv.first << "=" << kv.second << "\n";
+        }
+        if (!f) {
+            return errorJson("cannot write preferences", tmp);
+        }
+    }
+    if (std::rename(tmp.c_str(), path.c_str()) != 0) {
+        return errorJson("cannot save preferences", std::strerror(errno));
+    }
+    return "{\"result\":\"saved\"}";
+}
+
 std::string ShroomsCoreImpl::logsFrom(const std::string& socketPath, const std::string& sinceMs)
 {
     std::string body, err;

@@ -100,8 +100,39 @@ public:
      * a mesh shared with other people discloses nothing until somebody decides
      * otherwise.
      */
-    std::string setAnnounceServices(bool on);
-    std::string setAnnounceServicesOn(const std::string& socketPath, bool on);
+    std::string setAnnounceServices(const std::string& label, bool on);
+    std::string setAnnounceServicesOn(const std::string& socketPath,
+                                      const std::string& label, bool on);
+
+    /**
+     * @brief Whether this device forwards for peers of one mesh (ADR-013).
+     *
+     * @param label The mesh, as it appears in status(). Empty means the first
+     * one, whose settings live at the top level of the config.
+     *
+     * Per mesh, because carrying traffic for your own machines and for
+     * somebody else's are different decisions.
+     */
+    std::string setRelay(const std::string& label, bool on);
+    std::string setRelayOn(const std::string& socketPath, const std::string& label, bool on);
+
+    /**
+     * @brief Whether the router is asked to open this node's port (ADR-024).
+     *
+     * Global rather than per mesh: it is one UDP port and one request.
+     */
+    std::string setPortMapping(bool on);
+    std::string setPortMappingOn(const std::string& socketPath, bool on);
+
+    /**
+     * @brief Whether peers are told which ports are bound here (ADR-026).
+     *
+     * Separate from setAnnounceServices() and separately off by default: those
+     * are declared by somebody who meant it, these are whatever is listening.
+     */
+    std::string setAnnounceBound(const std::string& label, bool on);
+    std::string setAnnounceBoundOn(const std::string& socketPath,
+                                   const std::string& label, bool on);
 
     /**
      * @brief Turns one joined mesh on or off without leaving it.
@@ -167,6 +198,29 @@ public:
 
     /** @brief As leaveMesh(), against a specific control socket. */
     std::string leaveMeshOn(const std::string& socketPath, const std::string& label);
+
+    /**
+     * @brief Reads a small view preference, or "" when it has never been set.
+     *
+     * The view has no storage of its own. A QML app in Basecamp's sandbox
+     * cannot write a file, and the daemon's config is the wrong place for
+     * "should the graph draw inferred links" — that is a property of this
+     * window, not of the mesh, and putting it there would mean every node's
+     * config carrying somebody's display choices.
+     *
+     * This module is not sandboxed, so it keeps them: one small file of
+     * key=value lines beside the module's own data. Nothing here is secret and
+     * nothing here affects the mesh; the worst a corrupt file can do is show a
+     * toggle in the wrong position.
+     *
+     * @param key A short identifier. Anything outside [A-Za-z0-9_.-] is
+     * rejected rather than escaped, because these are written by this view and
+     * a key that needs escaping is a bug rather than a user's input.
+     */
+    std::string getPref(const std::string& key);
+
+    /** @brief Writes a view preference. An empty value removes it. */
+    std::string setPref(const std::string& key, const std::string& value);
 
     /**
      * @brief The daemon's recent log, as `{"lines":[{"t":…,"level":…,"msg":…}]}`.

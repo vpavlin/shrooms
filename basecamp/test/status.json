@@ -338,7 +338,8 @@
       "peers": 3,
       "relays": 1,
       "announce_services": true,
-      "relay": true
+      "relay": true,
+      "announce_bound": false
     },
     {
       "label": "test",
@@ -359,5 +360,6 @@
       "peers": 0,
       "left": true
     }
-  ]
+  ],
+  "port_mapping": true
 }

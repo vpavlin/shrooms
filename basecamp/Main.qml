@@ -211,6 +211,31 @@ Item {
     // without inventing settings storage for one number. It resets to the
     // automatic value, which should be close enough that nobody has to.
     property real uiNudge: 0
+
+    // --- preferences --------------------------------------------------------
+    //
+    // Kept by the core module, which is not sandboxed and can write a file.
+    // Only view state lives here — whether the graph draws inferred links, how
+    // big the text is — never anything about the mesh, which belongs to the
+    // daemon's config and to every node that reads it.
+    //
+    // Loaded once, on the first status that proves the module is there. Saving
+    // is fire and forget: a preference that fails to save is worth no error
+    // path, it just starts where it started next time.
+    property bool prefsLoaded: false
+
+    function loadPrefs() {
+        if (prefsLoaded || !haveCore) return
+        prefsLoaded = true
+        var w = String(callCore("getPref", ["whole_mesh"]) || "").trim()
+        if (w === "1" || w === "0") root.wholeMesh = (w === "1")
+        var n = parseFloat(String(callCore("getPref", ["ui_nudge"]) || ""))
+        if (!isNaN(n)) root.uiNudge = Math.max(-0.4, Math.min(1.0, n))
+    }
+    function savePref(key, value) {
+        if (!haveCore) return
+        callCore("setPref", [key, String(value)])
+    }
     readonly property real uiScale: Math.max(0.8, Math.min(2.2, autoScale + uiNudge))
 
     /** A font size, scaled. */
@@ -441,6 +466,7 @@ Item {
     Component.onCompleted: {
         reload()
         rebuildRows()
+        loadPrefs()
     }
     Timer {
         interval: root.everLoaded ? 2000 : 700
@@ -777,6 +803,8 @@ Item {
      * the same way it draws a tunnel is lying.
      */
     property bool wholeMesh: false
+    onWholeMeshChanged: if (prefsLoaded) savePref("whole_mesh", wholeMesh ? "1" : "0")
+    onUiNudgeChanged: if (prefsLoaded) savePref("ui_nudge", uiNudge.toFixed(2))
 
     // A 32-bit string hash, the same one Java's String.hashCode computes, so a
     // node wanders the same way here as it does on the phone.
@@ -1762,41 +1790,90 @@ Layout.preferredWidth: 0
                                     Layout.preferredWidth: root.sz(70)
                                 }
                                 Text {
-                                    text: "list the names for peers"
+                                    text: "services"
                                     color: root.pick(root.primaryMesh.announce_services === true)
                                     font.family: "monospace"; font.pixelSize: root.fs(11)
                                     MouseArea {
                                         anchors.fill: parent
                                         cursorShape: Qt.PointingHandCursor
-                                        onClicked: root.callWrite("setAnnounceServices", [true])
+                                        onClicked: root.callWrite("setAnnounceServices",
+                                                                  ["", root.primaryMesh.announce_services !== true])
                                     }
                                 }
                                 Text {
-                                    text: "keep them to myself"
-                                    color: root.pick(root.primaryMesh.announce_services !== true)
+                                    // The other half of what a peer can be told
+                                    // (ADR-026), and a separate disclosure:
+                                    // services are declared one line at a time
+                                    // by somebody who meant it, bound ports are
+                                    // whatever happens to be listening —
+                                    // including the thing you started for ten
+                                    // minutes and forgot.
+                                    text: "bound ports"
+                                    color: root.pick(root.primaryMesh.announce_bound === true)
                                     font.family: "monospace"; font.pixelSize: root.fs(11)
                                     MouseArea {
                                         anchors.fill: parent
                                         cursorShape: Qt.PointingHandCursor
-                                        onClicked: root.callWrite("setAnnounceServices", [false])
+                                        onClicked: root.callWrite("setAnnounceBound",
+                                                                  ["", root.primaryMesh.announce_bound !== true])
                                     }
                                 }
                                 Item { Layout.fillWidth: true }
                             }
 
-                            // Light or relay node. Two words rather than a switch,
-                            // because what it costs is the part worth reading.
+                            // Whether the router is asked for a way in (ADR-024).
+                            //
+                            // On by default and worth being able to switch off
+                            // from here, because it does ask to be reachable
+                            // from the internet — a decision somebody may want
+                            // to take back without finding a config file.
                             RowLayout {
-                                spacing: 8
+                                spacing: root.sz(8)
                                 Layout.fillWidth: true
+                                visible: root.st.port_mapping !== undefined
                                 Text {
-                                    text: "node"
+                                    text: "router"
                                     color: cAsh
                                     font.family: "monospace"; font.pixelSize: root.fs(11)
                                     Layout.preferredWidth: root.sz(70)
                                 }
                                 Text {
-                                    text: "light  ~3 MB/h"
+                                    text: "ask for a way in"
+                                    color: root.pick(root.st.port_mapping === true)
+                                    font.family: "monospace"; font.pixelSize: root.fs(11)
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: root.callWrite("setPortMapping",
+                                                                  [root.st.port_mapping !== true])
+                                    }
+                                }
+                                Item { Layout.fillWidth: true }
+                            }
+
+                            // Which mode this device runs the *rendezvous* plane
+                            // in — Core or Edge, the config's own words.
+                            //
+                            // It said "light" and "relay", and "relay" already
+                            // means something else here and something more
+                            // important: a device that forwards WireGuard
+                            // traffic for peers that cannot reach each other.
+                            // Two unrelated settings under one word, one of
+                            // which is per mesh and sits four rows below.
+                            //
+                            // The bandwidth stays, because what it costs is the
+                            // part worth reading.
+                            RowLayout {
+                                spacing: 8
+                                Layout.fillWidth: true
+                                Text {
+                                    text: "delivery"
+                                    color: cAsh
+                                    font.family: "monospace"; font.pixelSize: root.fs(11)
+                                    Layout.preferredWidth: root.sz(70)
+                                }
+                                Text {
+                                    text: "edge  ~3 MB/h"
                                     color: root.pick(root.st.mode === "Edge")
                                     font.family: "monospace"; font.pixelSize: root.fs(11)
                                     MouseArea {
@@ -1806,7 +1883,7 @@ Layout.preferredWidth: 0
                                     }
                                 }
                                 Text {
-                                    text: "relay  ~20 MB/h"
+                                    text: "core  ~20 MB/h"
                                     color: root.st.mode === "Core" ? cAmber : cAsh
                                     font.family: "monospace"; font.pixelSize: root.fs(11)
                                     MouseArea {
@@ -1936,6 +2013,26 @@ Layout.preferredWidth: 0
                                                 cursorShape: Qt.PointingHandCursor
                                                 onClicked: root.callWrite("setMeshEnabled",
                                                                           [modelData.label, false])
+                                            }
+                                        }
+                                        Text {
+                                            // Whether this device forwards for peers of *this*
+                                            // mesh that cannot reach each other. Per mesh, because
+                                            // carrying traffic for your own machines and for
+                                            // somebody else's are different choices.
+                                            //
+                                            // Nothing in this window could set it, and a mesh with
+                                            // no relay is invisible until somebody on mobile data
+                                            // reaches nobody.
+                                            text: "relay"
+                                            color: root.pick(modelData.relay === true)
+                                            font.family: "monospace"; font.pixelSize: root.fs(11)
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: root.callWrite("setRelay",
+                                                                          [modelData.label,
+                                                                           modelData.relay !== true])
                                             }
                                         }
                                         Text {
@@ -2522,14 +2619,25 @@ Layout.preferredWidth: 0
                                 text: "inviting somebody, and revoking them, needs the admin key, which "
                                       + "this daemon deliberately does not hold:"
                             }
-                            TextEdit {
+                            // One click, like every other address here. A
+                            // command you have to retype is a command you
+                            // mistype, and this one ends in a name somebody is
+                            // going to edit anyway.
+                            Text {
                                 Layout.fillWidth: true
                                 Layout.preferredWidth: 0
-                                readOnly: true
-                                selectByMouse: true
-                                color: cBone
-                                font.family: "monospace"; font.pixelSize: root.fs(10)
                                 text: "shrooms invite --name their-laptop"
+                                color: inviteCopy.containsMouse ? cPhosphor : cBone
+                                font.family: "monospace"; font.pixelSize: root.fs(10)
+                                font.underline: inviteCopy.containsMouse
+                                elide: Text.ElideRight
+                                MouseArea {
+                                    id: inviteCopy
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.copyText(parent.text)
+                                }
                             }
                         }
                     }

@@ -70,7 +70,10 @@ Item {
                     + " state=[" + view.meshState(mm) + "]")
             }
             console.error("MODE=" + view.st.mode + " RUNNING=" + view.st.mode_running
-                + " ANNOUNCE=" + (view.primaryMesh.announce_services === true))
+                + " ANNOUNCE=" + (view.primaryMesh.announce_services === true)
+                + " BOUND=" + (view.primaryMesh.announce_bound === true)
+                + " RELAY=" + (view.primaryMesh.relay === true)
+                + " PORTMAP=" + (view.st.port_mapping === true))
 
             Qt.quit()
         }

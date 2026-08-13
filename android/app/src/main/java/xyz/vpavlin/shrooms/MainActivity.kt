@@ -97,7 +97,19 @@ class MainActivity : ComponentActivity() {
                 // by the mesh screen, so it belongs to neither of them — and it
                 // is saveable because a rotation that quietly reverts a setting
                 // looks like the setting did not take.
-                var wholeMesh by rememberSaveable { mutableStateOf(false) }
+                // Kept across launches, not just across rotations. It was
+                // rememberSaveable, which survives a rotation and dies with
+                // the process — so a setting chosen deliberately was gone by
+                // the next time the app was opened, which reads as the setting
+                // not having worked rather than as its scope.
+                //
+                // SharedPreferences rather than the daemon's config: this is a
+                // property of this screen, not of the mesh, and a display
+                // choice does not belong in a file every node reads.
+                val prefs = remember { getSharedPreferences("view", MODE_PRIVATE) }
+                var wholeMesh by remember {
+                    mutableStateOf(prefs.getBoolean("whole_mesh", false))
+                }
 
                 // Connect on launch, once. A mesh VPN that has to be switched
                 // on by hand every time is a mesh that is off when you need it
@@ -148,7 +160,10 @@ class MainActivity : ComponentActivity() {
                             dir = dir,
                             connected = snap.connected,
                             wholeMesh = wholeMesh,
-                            onWholeMesh = { wholeMesh = it },
+                            onWholeMesh = {
+                                wholeMesh = it
+                                prefs.edit().putBoolean("whole_mesh", it).apply()
+                            },
                             onClose = { inSettings = false },
                         )
                     } else {

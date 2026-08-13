@@ -413,6 +413,12 @@ type statusPayload struct {
 	Mode        string `json:"mode,omitempty"`
 	ModeRunning string `json:"mode_running,omitempty"`
 
+	// PortMapping is whether the router is asked for a way in (ADR-024).
+	// A pointer so "off" and "an older daemon that never said" stay distinct:
+	// it defaults to on, so a missing field rendered as off would show every
+	// old daemon as having a setting it does not have.
+	PortMapping *bool `json:"port_mapping,omitempty"`
+
 	// Version is this daemon's build, so a UI can say what it is talking to.
 	// The Android app has always shown its own; the desktop showed the
 	// module's, which is a different thing and the wrong one — "is the daemon
@@ -1102,6 +1108,8 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 		if rl != nil {
 			if onDisk, err := state.LoadConfigUnvalidated(rl.cfgPath); err == nil {
 				out.Mode = onDisk.Mode
+				pm := onDisk.PortMapping
+				out.PortMapping = &pm
 
 				at := map[string]int{}
 				for i, ms := range out.Meshes {

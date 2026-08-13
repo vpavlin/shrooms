@@ -390,3 +390,52 @@ func TestJoinAnotherNeedsATransport(t *testing.T) {
 		t.Error("a failed join left a mesh in the config")
 	}
 }
+
+// --- the settings that had no UI ----------------------------------------
+
+// Per-mesh flags live in two different places: the first mesh's at the top
+// level (the single-mesh config form), the rest under [mesh.<label>]. Every
+// caller that knew this got it wrong for the first mesh at least once, which
+// is why the endpoints take a label and decide for themselves.
+func TestPerMeshFlagsLandInTheRightPlace(t *testing.T) {
+	mux, path := controlFixture(t)
+
+	for _, tc := range []struct {
+		name, url, body string
+		check           func(state.Config) bool
+	}{
+		{"relay on the first mesh", "/config/relay", `{"enabled":true}`,
+			func(c state.Config) bool { return c.Relay && !c.MeshSet["test"].Relay }},
+		{"relay on a named mesh", "/config/relay", `{"label":"test","enabled":true}`,
+			func(c state.Config) bool { return c.MeshSet["test"].Relay }},
+		{"announce on the first mesh", "/config/announce", `{"enabled":true}`,
+			func(c state.Config) bool { return c.AnnounceServices }},
+		{"announce on a named mesh", "/config/announce", `{"label":"test","enabled":true}`,
+			func(c state.Config) bool { return c.MeshSet["test"].AnnounceServices }},
+		{"bound on a named mesh", "/config/announce-bound", `{"label":"test","enabled":true}`,
+			func(c state.Config) bool { return c.MeshSet["test"].AnnounceBound }},
+		{"port mapping off", "/config/portmap", `{"enabled":false}`,
+			func(c state.Config) bool { return !c.PortMapping }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if w := post(t, mux, tc.url, tc.body); w.Code != http.StatusOK {
+				t.Fatalf("returned %d: %s", w.Code, w.Body.String())
+			}
+			if !tc.check(reload(t, path)) {
+				t.Error("the setting did not land where it belongs")
+			}
+		})
+	}
+}
+
+// A label nobody has joined is a typo, not a request to create a mesh.
+func TestPerMeshFlagRejectsUnknownLabel(t *testing.T) {
+	mux, _ := controlFixture(t)
+	w := post(t, mux, "/config/relay", `{"label":"nowhere","enabled":true}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("returned %d, want 400: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "nowhere") {
+		t.Errorf("the refusal does not name the mesh: %q", w.Body.String())
+	}
+}

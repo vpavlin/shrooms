@@ -118,7 +118,7 @@ echo "$out" | grep -q "mesh default on=true lit=#35f0a0 primary=true" \
     || { echo "FAIL: the primary mesh is not lit, or was not recognised as primary"; exit 1; }
 # The config and the running process disagree between a change and the restart
 # that applies it; both have to reach the view or the click looks like a no-op.
-echo "$out" | grep -q "MODE=Edge RUNNING=Core ANNOUNCE=true" \
+echo "$out" | grep -q "MODE=Edge RUNNING=Core ANNOUNCE=true BOUND=false RELAY=true PORTMAP=true" \
     || { echo "FAIL: did not read the configured settings alongside the running ones"; exit 1; }
 # The two states between a click and the restart that applies it. Each of these
 # belonged to neither list once, and each time the section emptied or doubled.
