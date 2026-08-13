@@ -247,6 +247,10 @@ basecamp-lgx:
 ## 192.168.0.x is not. This also matches how the other Basecamp modules on
 ## apps.vpavlin.xyz are distributed.
 ##
+## Both places, every time: the GitHub release anybody can fetch, and the LAN
+## repository Basecamp on this network actually installs from. They drift the
+## moment they are separate commands.
+##
 ## Named the way the other modules on apps.vpavlin.xyz are — <name>-v<version>
 ## for the tag, <name>-<version>.lgx for the asset — so that adding shrooms to
 ## that repository's index later is a URL and nothing else. Two assets: the
@@ -267,9 +271,12 @@ basecamp-publish: basecamp-lgx
 	       --title "$$name $$ver" \
 	       --notes "The shrooms Basecamp module: reads a running daemon over its control socket, and changes what the daemon can change on its own (ADR-025). Install through Basecamp." ; \
 	rm -rf "$$tmp"; \
-	echo "    https://github.com/vpavlin/shrooms/releases/download/$$tag/$$name-$$ver.lgx"; \
-	python3 scripts/index-entry.py; \
-	echo "    basecamp/index-entry.json is what a repository index needs to list it"
+	echo "    https://github.com/vpavlin/shrooms/releases/download/$$tag/$$name-$$ver.lgx"
+	@# The LAN repository too, always. Publishing to one and not the other is
+	@# how Basecamp ended up offering a version that was three days old while
+	@# the release was current — and the machine doing the publishing is the
+	@# one that installs from it.
+	@./scripts/publish-lan.sh
 
 ## Build the .aar for the Android app. Container-based: gomobile needs a JDK
 ## and Go >= 1.25, which the core deliberately does not.
