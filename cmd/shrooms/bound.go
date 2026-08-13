@@ -65,10 +65,24 @@ func cmdBound(args []string) error {
 			if l.Port == 80 || l.Port == 443 || l.Port == 53 {
 				continue
 			}
-			// The name a peer would type. Built from what the daemon
-			// reports rather than from the config, so it is the same name
-			// that actually resolves.
+			// The name a peer would type — which on a node with more than
+			// one mesh has to carry the label.
+			//
+			// It did not, and the short form is answered by the primary mesh
+			// alone: every row for a second mesh named an address on the
+			// first one, where nothing is listening. A column headed "reached
+			// as" that cannot be reached is worse than no column, and it took
+			// binding something to a second mesh to see it.
+			// Each part sanitised on its own and then joined: sanitising
+			// "laptop.test" as one string turns the separator into a hyphen
+			// and yields laptop-test.mesh, which is a different name and
+			// resolves to nothing at all.
 			name := mesh.DNSName(st.Name, "")
+			if len(mine) > 1 && m.label != "" {
+				if host, label := mesh.SanitiseName(st.Name), mesh.SanitiseName(m.label); host != "" && label != "" {
+					name = host + "." + label + ".mesh"
+				}
+			}
 			fmt.Fprintf(w, "%s\t%s\t%s:%d\n", m.label, l.Spec(), name, l.Port)
 			found++
 		}

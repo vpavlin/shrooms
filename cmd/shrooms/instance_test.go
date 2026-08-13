@@ -4,6 +4,7 @@ import (
 	"net/netip"
 	"testing"
 
+	"github.com/vpavlin/shrooms/internal/mesh"
 	"github.com/vpavlin/shrooms/internal/state"
 )
 
@@ -107,5 +108,35 @@ func TestFirstMeshKeepsTheConfiguredInterface(t *testing.T) {
 	}
 	if iface, port := ifaceAndPort(cfg, 1); iface != "shrooms01" || port != 51821 {
 		t.Errorf("second mesh got %s:%d", iface, port)
+	}
+}
+
+// A bound port on a second mesh has to be advertised under a name that resolves
+// to *that* mesh's address. The short form is answered by the primary mesh
+// alone, so `shrooms bound` printed a name pointing at an address where nothing
+// was listening — found by binding something to a second mesh and trying the
+// name it told us to use.
+func TestBoundNameCarriesTheMeshLabel(t *testing.T) {
+	for _, tc := range []struct {
+		name, host, label string
+		several           bool
+		want              string
+	}{
+		{"one mesh keeps the short name", "laptop", "default", false, "laptop.mesh"},
+		{"several meshes qualify", "laptop", "test", true, "laptop.test.mesh"},
+		{"the primary qualifies too", "laptop", "default", true, "laptop.default.mesh"},
+		{"a name needing sanitising", "Living Room NAS", "home", true, "living-room-nas.home.mesh"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mesh.DNSName(tc.host, "")
+			if tc.several && tc.label != "" {
+				if h, l := mesh.SanitiseName(tc.host), mesh.SanitiseName(tc.label); h != "" && l != "" {
+					got = h + "." + l + ".mesh"
+				}
+			}
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

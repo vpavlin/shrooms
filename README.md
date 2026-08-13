@@ -481,12 +481,21 @@ be announced before anything is:
 ```console
 $ shrooms bound
 MESH     WOULD ANNOUNCE  REACHED AS
-default  ssh:22          laptop.mesh:22
-default  dev:3000        laptop.mesh:3000
+default  ssh:22          laptop.default.mesh:22
+default  dev:3000        laptop.default.mesh:3000
+test     http-alt:8080   laptop.test.mesh:8080
 
-2 would be announced with announce_bound = "true".
+3 would be announced with announce_bound = "true".
 They are already reachable by every member; this is about being told.
 ```
+
+On a node with more than one mesh the name carries the label, because it has
+to: the short form is answered by the first mesh alone, so `laptop.mesh:8080`
+would reach an address on the wrong network where nothing is listening. A node
+with one mesh sees `laptop.mesh:22` and no label, as before.
+
+Announcing is per mesh too — `mesh.<label>.announce_bound` — since telling your
+own machines what you run and telling somebody else's are different decisions.
 
 ```toml
 announce_bound = "true"     # list them in every member's roster
