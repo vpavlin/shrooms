@@ -82,10 +82,28 @@ run() {
 
 echo "==> reads a status file sitting beside the view (the Basecamp case)"
 out=$(QML_XHR_ALLOW_FILE_READ=1 run "$QML" -I "$work" "$work/Harness.qml" "$work/status.json")
-echo "$out" | grep -E "^qml: (PEERS|  )" || true
+echo "$out" | grep -E "^qml: (PEERS|VERSION|SERVICES|  )" || true
 peers=$(echo "$out" | sed -n 's/.*PEERS=\([0-9]*\).*/\1/p' | head -1)
 [ "${peers:-0}" -gt 0 ] || { echo "FAIL: the view loaded but read no peers"; echo "$out" | head -20; exit 1; }
 echo "$out" | grep -q "TypeError\|ReferenceError\|is not a" && { echo "FAIL: script errors"; echo "$out"; exit 1; }
+
+# The sections that are not the roster. A Repeater over an empty model renders
+# perfectly, so without these the check would pass on a view that understood
+# none of the payload the daemon has gained since.
+svcs=$(echo "$out" | sed -n 's/.*SERVICES=\([0-9]*\).*/\1/p' | head -1)
+[ "${svcs:-0}" -gt 0 ] || { echo "FAIL: read no services from a fixture that has three"; exit 1; }
+echo "$out" | grep -q "ssh jimmy-crib.mesh:22 bound" \
+    || { echo "FAIL: a bound port did not render as host:port (ADR-026)"; exit 1; }
+echo "$out" | grep -q "http://immich.jimmy-crib.mesh" \
+    || { echo "FAIL: an announced service did not render as a URL (ADR-023)"; exit 1; }
+echo "$out" | grep -q "DNS=resolving" \
+    || { echo "FAIL: did not read the daemon's name-resolution state"; exit 1; }
+echo "$out" | grep -q "VERSION=v0.9.1-test" \
+    || { echo "FAIL: did not read the daemon's version"; exit 1; }
+# A credential that has run out and one that never arrived are different
+# things, and rendering them alike sends somebody chasing a renewal.
+echo "$out" | grep -q "membership nothing ended" \
+    || { echo "FAIL: an expired credential did not read as ended"; exit 1; }
 
 # Inside Basecamp only the sibling file resolves; the two below are for running
 # outside it, where there is no sandbox. Removing the sibling is what forces

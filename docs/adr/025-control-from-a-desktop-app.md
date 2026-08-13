@@ -45,9 +45,10 @@ behaviour. Which is serious, and is not the power to decide who belongs.
 
 **Two tiers, drawn at what the daemon can do alone.**
 
-**The socket group** may do everything the daemon holds by itself: read status,
-change this device's name, mode and services, switch a mesh on or off, leave
-one, and reload. Access is decided by the file mode — the socket is 0660 with a
+**The socket group** may do everything the daemon holds by itself: read status
+and the recent log, change this device's name, mode and services, switch a mesh
+on or off, join one with an invite token, leave one, reload, and restart the
+daemon. Access is decided by the file mode — the socket is 0660 with a
 configured group — so a caller who can connect is already authorised, and no
 further check is needed or offered.
 
@@ -87,14 +88,52 @@ to `living-room-nas.mesh`. Storing what was typed gives a device whose name
 works in the roster and not in a browser, which is a bug report nobody enjoys
 writing.
 
-## What is deliberately still manual
+### The log tail, because there is no journal to read
 
-**Joining another mesh over the socket.** The daemon has what it needs — a
-rendezvous connection to redeem the invite, and the config to write — but a new
-mesh is a new WireGuard device and only runs after a restart. Worth building;
-not worth half-building, because a join that appears to work and does nothing
-until the next reboot is exactly the kind of thing people remember about a
-tool.
+A `ui_qml` app cannot read a file, cannot run `journalctl`, and cannot open a
+socket. So on the desktop the answer to "why has nothing connected" was a
+terminal, while the Android app has had a log pane since its first build — and
+that pane is how nearly every failure in this project was actually diagnosed.
+
+The daemon therefore keeps its last two hundred lines in memory and serves them
+over the socket (`internal/logtail`). A tail, not a log: it is bounded, it is
+gone when the process ends, and the journal remains the record. It carries what
+stderr carries — peer names, addresses, why a tunnel failed — every bit of which
+`/status` already discloses to the same caller, and no secret, because the
+daemon logs none. That is why it sits in the group's tier rather than root's.
+
+### Restarting, because half the settings need one
+
+The mode, a mesh switched on or off, a mesh just joined: each writes the config
+and then says "on the next restart". Before, applying that meant `systemctl
+restart shrooms` in a terminal — the terminal these controls exist to remove. A
+setting you can change from a UI and cannot apply from a UI is half a feature,
+and the half that is missing is the half that does anything.
+
+So `/restart` ends the process through the same path the rendezvous watchdog
+uses, and the service manager starts a fresh one. It **refuses when nothing
+would restart the daemon** — run from a shell rather than under systemd or as a
+container's main process — because a button that silently means "stop" leaves a
+mesh down until somebody notices. That is the rule the watchdog learned the hard
+way, applied to the one other place that can end this process.
+
+### Joining another mesh, now that a restart is one click away
+
+This was on the deferred list, with the reasoning that a new mesh is a new
+WireGuard device and only runs after a restart, so "a join that appears to work
+and does nothing until the next reboot is exactly the kind of thing people
+remember about a tool". The objection was about the missing second half, not
+about the join — and the restart button is that second half. So `/join` redeems
+an invite into an additional mesh, writes it to the config, and says plainly
+that it starts on the next restart, with the button to do it directly below.
+
+It is the most consequential thing in the group's tier and worth naming as
+such: joining a mesh gives that mesh's members a tunnel to this device. It is
+bounded by needing a live invite token from somebody already inside, and by the
+fact that a caller who can reach this socket can already leave meshes and read
+every peer's endpoints.
+
+## What is deliberately still manual
 
 **Issuing a credential.** An invite is two halves (ADR-017): the daemon holds
 the exchange and the admin key signs. The socket can do the first and must not
@@ -108,10 +147,14 @@ that prompt becomes a Keycard tap ([ADR-022](022-keycard-for-the-admin-key.md)).
 ## Consequences
 
 - A desktop app can drive everything except admission, without sudo and without
-  a terminal.
+  a terminal — including seeing what the daemon is saying, and restarting it to
+  apply what needs it.
 - `socket_group` becomes a documented, deliberate grant instead of a way to
   avoid typing sudo before `status`.
 - The one operation a UI most wants — an invite as a QR code — still needs a
   passphrase prompt, which is the correct place for the friction to live.
 - One more surface that can misconfigure a node, so the endpoints validate the
   whole config rather than their own field, and say what they changed.
+- The socket group can now end the daemon's process. Under a service manager
+  that is a few seconds of downtime; without one the endpoint refuses, so the
+  worst case is a restart nobody asked for rather than a mesh that stays down.

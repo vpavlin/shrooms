@@ -18,12 +18,15 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	dnssrv "github.com/vpavlin/shrooms/internal/dns"
 	"github.com/vpavlin/shrooms/internal/invite"
+	"github.com/vpavlin/shrooms/internal/logtail"
 	"github.com/vpavlin/shrooms/internal/mesh"
+	"github.com/vpavlin/shrooms/internal/rendezvous"
 	"github.com/vpavlin/shrooms/internal/state"
 	"github.com/vpavlin/shrooms/internal/v4"
 	"github.com/vpavlin/shrooms/internal/waku"
@@ -38,6 +41,13 @@ const DefaultSocket = "/run/shrooms/shrooms.sock"
 // back to it so a running pre-rename daemon stays reachable from a new binary.
 const LegacySocket = "/run/logos-vpn/logos-vpn.sock"
 
+// errRestartRequested ends the daemon because somebody asked it to, over the
+// control socket. Distinct from a fault so the exit line says which it was —
+// "restarted on request" and "restarted because the rendezvous plane was deaf"
+// look identical in a journal otherwise, and they are the two things anybody
+// reading that journal is trying to tell apart.
+var errRestartRequested = errors.New("restart requested over the control socket")
+
 func cmdDaemon(args []string) error {
 	fs := flag.NewFlagSet("daemon", flag.ExitOnError)
 	cfgPath, stateDir := commonFlags(fs)
@@ -51,7 +61,13 @@ func cmdDaemon(args []string) error {
 	if *verbose {
 		level = slog.LevelDebug
 	}
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+	// Everything logged to stderr is also kept in a short in-memory tail, so a
+	// UI on the other end of the control socket can show it. Basecamp cannot
+	// read the journal — it cannot read a file at all — and "what is it doing"
+	// is the first question anybody asks a mesh that has not come up.
+	tail := logtail.NewRing(200)
+	log := slog.New(logtail.New(
+		slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}), tail))
 
 	ctx0, cancel0 := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel0()
@@ -165,8 +181,18 @@ func cmdDaemon(args []string) error {
 	log.Info("data plane up", "meshes", len(instances),
 		"self", self, "ipv4", primary.aliases.Self())
 
+	// How anything inside this process asks for a restart: the rendezvous
+	// watchdog below, and the control socket. One channel, one exit path — the
+	// alternative is two ways to end a daemon that behave differently on the
+	// day one of them is wrong. Buffered for every mesh plus the socket, so a
+	// send never blocks a caller that is holding a lock.
+	errs := make(chan error, len(instances)+1)
+	rt := &runtimeBits{
+		tail: tail, restart: errs, dns: &atomic.Pointer[dnsStatus]{},
+		invites: rendezvous.InviteTransport(node), st: st, cfgPath: *cfgPath,
+	}
 	rl := &reloader{cfgPath: *cfgPath, log: log, instances: instances, baseline: cfg}
-	srv, err := serveControl(ctx, log, *sock, instances, cfg, rl)
+	srv, err := serveControl(ctx, log, *sock, instances, cfg, rl, rt)
 	if err != nil {
 		return err
 	}
@@ -175,9 +201,12 @@ func cmdDaemon(args []string) error {
 	// Names, on the primary mesh's address. Port 53 needs CAP_NET_BIND_SERVICE;
 	// a failure here is logged and not fatal, because losing name resolution is
 	// a much smaller thing than losing the tunnel.
+	dns := dnsStatus{Suffix: cfg.HostsSuffix, Address: self.String()}
 	if pc, err := dnssrv.Listen(self); err != nil {
 		log.Warn("name resolution unavailable", "err", err,
 			"hint", "port 53 needs CAP_NET_BIND_SERVICE")
+		dns.Err = err.Error()
+		rt.dns.Store(&dns)
 	} else {
 		resolver := &dnssrv.Server{
 			Suffix: cfg.HostsSuffix,
@@ -191,11 +220,15 @@ func cmdDaemon(args []string) error {
 			}
 		}()
 		log.Info("name resolution up", "address", self, "suffix", cfg.HostsSuffix)
+		dns.Serving = true
+		rt.dns.Store(&dns)
 
 		// Serving DNS and being asked are different things; the daemon used to
 		// do only the first and report success. Scoped to the suffix, so the
 		// system's own resolvers keep everything else.
 		if err := dnssrv.Register(ctx, cfg.Interface, self, cfg.HostsSuffix); err != nil {
+			dns.Err = err.Error()
+			rt.dns.Store(&dns)
 			log.Warn("could not register the resolver with the host; "+
 				"mesh names will not resolve system-wide",
 				"err", err,
@@ -204,6 +237,8 @@ func cmdDaemon(args []string) error {
 		} else {
 			log.Info("resolver registered with the host",
 				"interface", cfg.Interface, "domain", "~"+cfg.HostsSuffix)
+			dns.Registered = true
+			rt.dns.Store(&dns)
 			defer dnssrv.Unregister(cfg.Interface)
 		}
 	}
@@ -239,7 +274,6 @@ func cmdDaemon(args []string) error {
 
 	// Every mesh runs; the first one to stop stops the daemon, because a node
 	// that is half up is worse than one that restarts.
-	errs := make(chan error, len(instances))
 	for _, in := range instances {
 		go func(in *instance) { errs <- in.mesh.Run(ctx) }(in)
 	}
@@ -278,6 +312,13 @@ func cmdDaemon(args []string) error {
 
 	log.Info("running", "socket", *sock)
 	if err := <-errs; err != nil && !errors.Is(err, context.Canceled) {
+		// A requested restart is not a fault. It still exits non-zero, because
+		// under `Restart=always` that is what brings the daemon back and the
+		// unit is the only thing that can restart it — but the log says which
+		// of the two happened.
+		if errors.Is(err, errRestartRequested) {
+			log.Info("stopping so the service manager starts a fresh daemon")
+		}
 		return err
 	}
 	log.Info("shutting down")
@@ -327,6 +368,19 @@ type statusPayload struct {
 	Prefix  string       `json:"prefix"`
 	Peers   []peerStatus `json:"peers"`
 
+	// Version is this daemon's build, so a UI can say what it is talking to.
+	// The Android app has always shown its own; the desktop showed the
+	// module's, which is a different thing and the wrong one — "is the daemon
+	// new enough for this?" is the question actually being asked.
+	Version string `json:"version,omitempty"`
+
+	// DNS is whether mesh names resolve on this device, and where. Reported
+	// because it fails on its own and quietly: port 53 needs a capability, the
+	// system resolver needs to be told about the suffix, and either can be
+	// missing while everything else is perfect. Then `ssh laptop.mesh` does
+	// not work and nothing on the page hints at why.
+	DNS dnsStatus `json:"dns"`
+
 	// Rendezvous is the health of the Waku side. Reported separately from
 	// peers because the two planes fail independently: the fleet can be
 	// unreachable while every tunnel keeps working, and without this that
@@ -347,6 +401,18 @@ type statusPayload struct {
 	// without a port at all. Reported separately because it can fail on its
 	// own — port 80 needs a capability the services' own ports do not.
 	NameRouter []routerStatus `json:"name_router,omitempty"`
+}
+
+// dnsStatus is the state of name resolution on this device.
+type dnsStatus struct {
+	// Serving means this daemon answers queries on the mesh address.
+	Serving bool `json:"serving"`
+	// Registered means the host's resolver was told to send the suffix here,
+	// which is what makes `ssh laptop.mesh` work rather than only `dig @…`.
+	Registered bool   `json:"registered"`
+	Suffix     string `json:"suffix,omitempty"`
+	Address    string `json:"address,omitempty"`
+	Err        string `json:"err,omitempty"`
 }
 
 // routerStatus is one shared port of the name router.
@@ -421,6 +487,12 @@ type peerStatus struct {
 	// "name:port" (ADR-026). Reached as <device>.mesh:<port> — no forwarder
 	// and no name of its own, which is why it is not in Services.
 	Bound []string `json:"bound,omitempty"`
+
+	// Expires is when this peer's credential runs out, learned from what it
+	// announces. Zero means this node has not seen one — which is not the same
+	// as expired, and a viewer that renders the two alike sends somebody
+	// chasing a renewal nobody needs.
+	Expires int64 `json:"expires,omitempty"`
 
 	// Relay reports that this peer offers to forward for others. Worth
 	// surfacing: "which of my peers can relay" is otherwise invisible, and it
@@ -888,7 +960,31 @@ func restartable() bool {
 		os.Getpid() == 1
 }
 
-func serveControl(ctx context.Context, log *slog.Logger, path string, instances []*instance, cfg state.Config, rl *reloader) (*http.Server, error) {
+// runtimeBits is what the control socket needs that is not a mesh: the log
+// tail it serves, the channel it ends the process through, and where name
+// resolution got to. One struct rather than three more parameters, because
+// serveControl already takes everything a daemon has.
+type runtimeBits struct {
+	tail    *logtail.Ring
+	restart chan<- error
+	dns     *atomic.Pointer[dnsStatus]
+
+	// What an invite is redeemed through, and the state it is redeemed into.
+	// The daemon's own rendezvous connection: starting a second node for two
+	// messages is what `shrooms invite` used to do and what the endpoints
+	// exist to stop.
+	invites invite.Transport
+	st      *state.State
+	cfgPath string
+}
+
+func serveControl(ctx context.Context, log *slog.Logger, path string, instances []*instance,
+	cfg state.Config, rl *reloader, rt *runtimeBits) (*http.Server, error) {
+	var tail *logtail.Ring
+	var restart chan<- error
+	if rt != nil {
+		tail, restart = rt.tail, rt.restart
+	}
 	// The first mesh is what the top-level fields describe, so a reader that
 	// knows nothing about several meshes — the Android app, Basecamp, an older
 	// CLI — sees exactly what it always saw. The rest are added alongside.
@@ -906,6 +1002,12 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 			Name:    cfg.Name,
 			Overlay: self.String(),
 			Prefix:  nk.Prefix().String(),
+			Version: version,
+		}
+		if rt != nil {
+			if d := rt.dns.Load(); d != nil {
+				out.DNS = *d
+			}
 		}
 		if v4self, ok := m.LookupV4(self); ok {
 			out.OverlayV4 = v4self.String()
@@ -979,6 +1081,9 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 				if best, ok := m.BestPath(p.ID(), now); ok {
 					ps.RTTMs = best.RTT.Milliseconds()
 				}
+				if e := m.PeerExpiry(p.ID()); !e.IsZero() {
+					ps.Expires = e.Unix()
+				}
 				if r := m.Rate(p.ID()); r.RxBps > 0 || r.TxBps > 0 || len(r.RxHistory) > 0 {
 					ps.RxBps, ps.TxBps = r.RxBps, r.TxBps
 					ps.RxHistory, ps.TxHistory = r.RxHistory, r.TxHistory
@@ -1047,6 +1152,10 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 		json.NewEncoder(w).Encode(snapshot())
 	})
 
+	// The log tail and the restart button, both of which exist because a UI
+	// cannot reach the journal or a terminal (ADR-025).
+	runtimeHandlers(mux, log, tail, restart)
+
 	// Changing this device's own settings, and applying them (ADR-025). In the
 	// socket group's tier, because none of it decides who belongs to a mesh —
 	// that needs the admin key, which the daemon has never held.
@@ -1064,9 +1173,13 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 			fmt.Fprintln(w, msg)
 		}))
 
-		// Settings a desktop app may change, and leaving a mesh (ADR-025).
+		// Settings a desktop app may change, and joining or leaving a mesh
+		// (ADR-025).
 		controlHandlers(mux, log, rl.cfgPath, rl)
 		mux.HandleFunc("/leave", leaveHandler(log, rl.cfgPath))
+		if rt != nil && rt.st != nil {
+			mux.HandleFunc("/join", joinHandler(log, rt.invites, rl.cfgPath, rt.st))
+		}
 	}
 
 	// Which mesh an admin request is about. Empty means the primary one, which

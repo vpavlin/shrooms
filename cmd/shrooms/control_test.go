@@ -1,17 +1,22 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vpavlin/shrooms/internal/identity"
+	"github.com/vpavlin/shrooms/internal/logtail"
 	"github.com/vpavlin/shrooms/internal/state"
 )
 
@@ -219,5 +224,169 @@ func TestAnnounceServicesIsOffUntilAsked(t *testing.T) {
 	}
 	if reload(t, path).AnnounceServices {
 		t.Error("announcing did not turn off again")
+	}
+}
+
+// --- the log tail and the restart button --------------------------------
+
+func TestLogsEndpointServesTheTail(t *testing.T) {
+	ring := logtail.NewRing(10)
+	mux := http.NewServeMux()
+	runtimeHandlers(mux, slog.New(slog.DiscardHandler), ring, nil)
+
+	// A text handler to nowhere rather than slog.DiscardHandler: that one
+	// reports Enabled=false for every level, so a tee in front of it records
+	// nothing and this test would pass on an empty tail.
+	log := slog.New(logtail.New(slog.NewTextHandler(io.Discard, nil), ring))
+	log.Info("tunnel up", "peer", "k11")
+	log.Warn("deaf", "mesh", "home")
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/logs", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /logs returned %d: %s", w.Code, w.Body.String())
+	}
+	var got struct {
+		Lines []logtail.Line `json:"lines"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Lines) != 2 {
+		t.Fatalf("got %d lines, want 2: %s", len(got.Lines), w.Body.String())
+	}
+	if got.Lines[0].Msg != "tunnel up" || got.Lines[1].Attrs != "mesh=home" {
+		t.Errorf("lines came back as %+v", got.Lines)
+	}
+
+	// A poller asks for what it has not seen. Everything it already has must
+	// stay out, or the pane duplicates every line every two seconds.
+	last := got.Lines[0].Time
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet,
+		"/logs?since="+strconv.FormatInt(last, 10), nil))
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range got.Lines {
+		if l.Time <= last {
+			t.Errorf("since=%d returned a line stamped %d", last, l.Time)
+		}
+	}
+}
+
+// An empty tail must answer with an empty list rather than a JSON null: a
+// viewer that does `for (i = 0; i < d.lines.length; i++)` throws on null, and
+// the pane that shows the problem is the pane that fails to render.
+func TestLogsEndpointEmptyIsAList(t *testing.T) {
+	mux := http.NewServeMux()
+	runtimeHandlers(mux, slog.New(slog.DiscardHandler), logtail.NewRing(4), nil)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/logs", nil))
+	if !strings.Contains(w.Body.String(), `"lines":[]`) {
+		t.Errorf("empty tail served %q", strings.TrimSpace(w.Body.String()))
+	}
+}
+
+func TestRestartRefusesWhenNothingWouldStartUsAgain(t *testing.T) {
+	// Neither systemd variable set, and the test process is not pid 1.
+	t.Setenv("INVOCATION_ID", "")
+	t.Setenv("NOTIFY_SOCKET", "")
+
+	ch := make(chan error, 1)
+	mux := http.NewServeMux()
+	runtimeHandlers(mux, slog.New(slog.DiscardHandler), nil, ch)
+
+	w := post(t, mux, "/restart", "")
+	if w.Code != http.StatusConflict {
+		t.Fatalf("returned %d, want 409: %s", w.Code, w.Body.String())
+	}
+	// And crucially it did not exit anyway. A button that reports a refusal
+	// and stops the daemon regardless is the worst of both.
+	select {
+	case err := <-ch:
+		t.Fatalf("the daemon was told to stop anyway: %v", err)
+	default:
+	}
+}
+
+func TestRestartExitsWhenSomethingWouldStartUsAgain(t *testing.T) {
+	t.Setenv("INVOCATION_ID", "pretend-systemd-ran-us")
+
+	ch := make(chan error, 1)
+	mux := http.NewServeMux()
+	runtimeHandlers(mux, slog.New(slog.DiscardHandler), nil, ch)
+
+	w := post(t, mux, "/restart", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("returned %d, want 200: %s", w.Code, w.Body.String())
+	}
+	// The response comes first and the exit follows, deliberately, so the
+	// caller sees a result instead of a closed connection.
+	select {
+	case err := <-ch:
+		if !errors.Is(err, errRestartRequested) {
+			t.Errorf("ended with %v, want the restart sentinel", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("nothing was sent on the exit channel")
+	}
+}
+
+func TestRestartRefusesGet(t *testing.T) {
+	mux := http.NewServeMux()
+	runtimeHandlers(mux, slog.New(slog.DiscardHandler), nil, make(chan error, 1))
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/restart", nil))
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("GET /restart returned %d, want 405", w.Code)
+	}
+}
+
+// --- joining another mesh ------------------------------------------------
+
+// The label checks, which are the whole of what this endpoint decides before
+// it goes near the network. Each of these would otherwise fail minutes later,
+// after a redemption that cannot be undone.
+func TestJoinAnotherRefusesBadLabels(t *testing.T) {
+	_, path := controlFixture(t)
+	st := &state.State{}
+	log := slog.New(slog.DiscardHandler)
+
+	for _, tc := range []struct {
+		name, label, want string
+	}{
+		{"empty", "", "needs a label"},
+		{"default", state.DefaultLabel, "label of its own"},
+		{"already joined", "test", "already in a mesh labelled"},
+		{"sanitises to nothing", "///", "needs a label"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := joinAnother(context.Background(), log, nil, path, st,
+				"tok", "laptop", tc.label, false)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("got %v, want an error mentioning %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// A label nothing else has taken gets past the config checks and stops at the
+// transport, which is where it should stop when there is no rendezvous
+// connection — not by starting a second node of its own.
+func TestJoinAnotherNeedsATransport(t *testing.T) {
+	_, path := controlFixture(t)
+	_, err := joinAnother(context.Background(), slog.New(slog.DiscardHandler), nil, path,
+		&state.State{}, "tok", "laptop", "work", false)
+	if err == nil || !strings.Contains(err.Error(), "rendezvous plane is not available") {
+		t.Fatalf("got %v, want the missing-transport error", err)
+	}
+	// And nothing was written on the way to that error: a config that gained a
+	// keyless mesh entry is a daemon that will not start.
+	cfg := reload(t, path)
+	if _, ok := cfg.MeshSet["work"]; ok {
+		t.Error("a failed join left a mesh in the config")
 	}
 }

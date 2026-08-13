@@ -648,6 +648,23 @@ func (m *Mesh) SelfExpiry() time.Time {
 	return time.Unix(c.NotAfter, 0)
 }
 
+// PeerExpiry is when a peer's credential runs out, or the zero time when this
+// node has not seen one for it.
+//
+// A gap that is not a fault: credentials are learned from the announcements a
+// peer makes, so a peer that has been quiet since this node started is simply
+// unknown here. A viewer must show "unknown" rather than "expired" for it —
+// the two look the same in a struct and mean opposite things to whoever is
+// deciding whether to go and reissue.
+func (m *Mesh) PeerExpiry(id string) time.Time {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if t, ok := m.expiry[id]; ok {
+		return time.Unix(t, 0)
+	}
+	return time.Time{}
+}
+
 // publishRevocation puts a withdrawal on the bus.
 //
 // Re-published by every node that learns one, not only by the admin: an admin

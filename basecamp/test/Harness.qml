@@ -36,6 +36,26 @@ Item {
                     + " colour=" + view.colourOf(p)
                     + " rate=" + view.rate(p.rx_bps))
             }
+
+            // The sections that are not the roster, exercised through the same
+            // derivations the delegates bind to. A Repeater over an empty model
+            // renders without complaint, so "it loaded" says nothing at all
+            // about whether these read the payload correctly.
+            console.error("VERSION=" + (view.st.version || "?")
+                + " DNS=" + (view.st.dns ? (view.st.dns.registered ? "resolving" : "partial")
+                                         : "absent"))
+            console.error("SERVICES=" + view.allServices.length
+                + " ROWS=" + view.serviceRows.length)
+            for (var j = 0; j < view.allServices.length; j++) {
+                var s = view.allServices[j]
+                console.error("  " + s.device + " " + s.label
+                    + " " + s.addr + (s.bound ? " bound" : ""))
+            }
+            for (var k = 0; k < view.peers.length; k++) {
+                console.error("  membership " + view.peers[k].name + " "
+                    + view.membershipText(view.peers[k].expires)
+                    + " " + view.membershipColour(view.peers[k].expires))
+            }
             Qt.quit()
         }
     }

@@ -892,10 +892,32 @@ than a default that quietly picks a side.
 
 ## Desktop monitoring and control
 
-A Basecamp view — the same graph and list as the phone. It reads the mesh, and
-it can change this device's own settings: name, light or relay node, published
-services, which meshes run, and leaving one
+A Basecamp view — the same graph and list as the phone, and the same things you
+can do from it. It reads the mesh, and it can change this device's own settings:
+name, light or relay node, published services and whether they are announced,
+which meshes run, joining a mesh with an invite token and leaving one
 ([ADR-025](docs/adr/025-control-from-a-desktop-app.md)).
+
+Three things it gained so the two front-ends read as one product:
+
+- **A services list**, grouped by mesh: everything every peer offers, as the
+  address you would actually type. Announced services (ADR-023) come out as
+  `http://immich.jimmy-crib.mesh`; bound ports (ADR-026) as
+  `jimmy-crib.mesh:22`, marked as such, because one is a URL and the other is a
+  host and a port.
+- **A log pane**, the same tail the phone has always had. The daemon keeps its
+  last two hundred lines in memory and serves them over the socket — Basecamp
+  cannot read the journal, and "what is it doing" is the first question anybody
+  asks a mesh that has not come up.
+- **A restart button**, which is the other half of every setting whose result
+  says "on the next restart". It refuses when nothing would start the daemon
+  again, so it can never be a stop button by accident.
+
+**Membership is shown, not managed.** Each mesh and each peer carries when its
+credential runs out, which is the one failure here that happens on a schedule —
+a known day, a device silently off the mesh, and nothing else on the page
+hinting at it. A credential this node has never seen reads as "unknown" rather
+than as expired, because those have opposite fixes.
 
 **What it cannot do is admit anybody**, and that is the line the design draws.
 On a mesh with `admin_keys`, membership is a credential signed by a key the

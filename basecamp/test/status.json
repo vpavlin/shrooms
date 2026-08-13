@@ -99,7 +99,15 @@
       "last_handshake": "2026-08-08T18:31:33Z",
       "endpoint": "203.0.113.9:51820",
       "rx_bytes": 156,
-      "tx_bytes": 308
+      "tx_bytes": 308,
+      "services": [
+        "immich",
+        "jellyfin"
+      ],
+      "bound": [
+        "ssh:22"
+      ],
+      "expires": 1790062365
     },
     {
       "name": "laptop",
@@ -197,7 +205,8 @@
       "last_handshake": "2026-08-08T18:31:33Z",
       "endpoint": "203.0.113.9:51820",
       "rx_bytes": 156,
-      "tx_bytes": 308
+      "tx_bytes": 308,
+      "expires": 1786951965
     },
     {
       "name": "nothing",
@@ -295,7 +304,8 @@
       "last_handshake": "2026-08-08T18:31:33Z",
       "endpoint": "203.0.113.9:51820",
       "rx_bytes": 188,
-      "tx_bytes": 308
+      "tx_bytes": 308,
+      "expires": 1786519965
     }
   ],
   "rendezvous": {
@@ -308,5 +318,12 @@
   },
   "reflexive": [
     "128.140.55.128:51820"
-  ]
+  ],
+  "version": "v0.9.1-test",
+  "dns": {
+    "serving": true,
+    "registered": true,
+    "suffix": "mesh",
+    "address": "fd3b:ffe9:f81:6f18:41e:c574:c529:5bbf"
+  }
 }

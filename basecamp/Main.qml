@@ -103,7 +103,63 @@ Item {
     // "name set" would be worse than the operation.
     property string said: ""
     property bool saidBad: false
+
+    // Which sections are unrolled. All shut by default: this view's job is to
+    // show a mesh, and four open forms above the roster is a control panel
+    // that happens to draw a graph.
     property bool settingsOpen: false
+    property bool servicesOpen: false
+    property bool membersOpen: false
+    property bool logsOpen: false
+    property bool dnsOpen: false
+
+    // --- the log tail -------------------------------------------------------
+    //
+    // The same pane the Android app has had from the beginning, for the reason
+    // it has had it: when a mesh does not come up, the log is the only thing
+    // that says why, and on the desktop the alternative is journalctl in a
+    // terminal — which is the terminal these controls exist to avoid.
+    //
+    // Polled incrementally. `since` is the stamp of the newest line already
+    // held, so each poll carries what happened in the last two seconds rather
+    // than re-sending two hundred lines and re-rendering the pane.
+    property var logLines: []
+    property string logSince: "0"
+    readonly property int logKeep: 200
+
+    function pumpLogs() {
+        if (!logsOpen || !haveCore) return
+        var t = String(callCore("logs", [root.logSince]) || "").trim()
+        for (var i = 0; i < 2 && t.charAt(0) === '"'; i++) {
+            try { t = String(JSON.parse(t)).trim() } catch (e) { break }
+        }
+        var d = null
+        try { d = JSON.parse(t) } catch (e) { return }
+        if (!d || !d.lines || !d.lines.length) return
+
+        var out = root.logLines.concat(d.lines)
+        // Bounded here as well as in the daemon: the daemon caps what it
+        // holds, this caps what has been streamed across since the pane was
+        // opened, which is a different and unbounded quantity.
+        if (out.length > root.logKeep) out = out.slice(out.length - root.logKeep)
+        root.logLines = out
+        root.logSince = String(d.lines[d.lines.length - 1].t)
+    }
+
+    function levelColour(l) {
+        if (l === "ERROR") return cRust
+        if (l === "WARN") return cAmber
+        if (l === "DEBUG") return cAsh
+        return cBone
+    }
+
+    /** A log line's stamp as "12s ago", which is what the pane is read for. */
+    function ago(ms) {
+        var s = Math.max(0, (Date.now() - ms) / 1000)
+        if (s < 60) return Math.round(s) + "s"
+        if (s < 3600) return Math.round(s / 60) + "m"
+        return Math.round(s / 3600) + "h"
+    }
 
     // A write, and then a refresh, because every one of these changes
     // something the status page shows. Reporting the daemon's own sentence is
@@ -212,7 +268,10 @@ Item {
     Timer {
         interval: root.everLoaded ? 2000 : 700
         running: true; repeat: true
-        onTriggered: root.reload()
+        onTriggered: {
+            root.reload()
+            root.pumpLogs()
+        }
     }
 
     function reachOf(p) {
@@ -341,6 +400,92 @@ Item {
     }
 
     /**
+     * Everything reachable on any mesh, as one list.
+     *
+     * Grouped by mesh rather than by the device offering it, which is a
+     * deliberate difference from the roster above: a service is a thing you
+     * want to open, and the question in front of it is "which of my networks
+     * is this on" far more often than "which box is it running on". The device
+     * is still shown, because it is in the address either way.
+     *
+     * Two kinds in one list. An announced service (ADR-023) has a name of its
+     * own and is reached at <service>.<device>; a bound port (ADR-026) has no
+     * name and is reached at <device>:<port> — no forwarder involved, the
+     * process is simply listening on the mesh address. Marked as such, because
+     * one of them is a URL you can click and the other is a host and a port.
+     */
+    readonly property var allServices: {
+        var out = []
+        for (var i = 0; i < root.sortedPeers.length; i++) {
+            var p = root.sortedPeers[i]
+            var host = p.dns_name || p.name || ""
+            var s = p.services || []
+            for (var j = 0; j < s.length; j++) {
+                out.push({ mesh: p.mesh || "", device: p.name || "?", live: p.live === true,
+                           label: s[j], addr: "http://" + s[j] + "." + host, bound: false })
+            }
+            var b = p.bound || []
+            for (var k = 0; k < b.length; k++) {
+                // "ssh:22" — the name is advisory and the port is the fact, so
+                // the port is what goes in the address.
+                var parts = String(b[k]).split(":")
+                var port = parts.length > 1 ? parts[parts.length - 1] : ""
+                out.push({ mesh: p.mesh || "", device: p.name || "?", live: p.live === true,
+                           label: parts[0], addr: host + (port ? ":" + port : ""), bound: true })
+            }
+        }
+        return out
+    }
+
+    /** Rows for the services list: a heading per mesh, then its services. */
+    readonly property var serviceRows: {
+        var out = [], last = null
+        var ss = root.allServices.slice()
+        ss.sort(function(a, b) {
+            if (a.mesh !== b.mesh) return a.mesh < b.mesh ? -1 : 1
+            if (a.device !== b.device) return a.device < b.device ? -1 : 1
+            return a.label < b.label ? -1 : (a.label > b.label ? 1 : 0)
+        })
+        for (var i = 0; i < ss.length; i++) {
+            if (root.multiMesh && ss[i].mesh !== last) {
+                out.push({ header: true, mesh: ss[i].mesh })
+                last = ss[i].mesh
+            }
+            out.push({ header: false, svc: ss[i] })
+        }
+        return out
+    }
+
+    /** Days until a unix-seconds stamp, or 999 when there is none. */
+    function daysTo(unix) {
+        if (!unix) return 999
+        return Math.floor((unix - Date.now() / 1000) / 86400)
+    }
+
+    /**
+     * How a credential's remaining life reads.
+     *
+     * "unknown" is a real answer and not a bad one: expiry is learned from
+     * what a peer announces, so a peer that has been quiet since this daemon
+     * started simply has not said. Rendering that as "expired" would send
+     * somebody chasing a renewal nobody needs.
+     */
+    function membershipText(unix) {
+        if (!unix) return "unknown"
+        var d = root.daysTo(unix)
+        if (d < 0) return "ended"
+        if (d === 0) return "ends today"
+        return d + "d left"
+    }
+    function membershipColour(unix) {
+        if (!unix) return cAsh
+        var d = root.daysTo(unix)
+        if (d < 0) return cRust
+        if (d <= 10) return cAmber
+        return cPhosphor
+    }
+
+    /**
      * Draw the links between other peers as well as this device's own.
      *
      * Off by default because those links are inferred, not measured: no node
@@ -382,6 +527,15 @@ Item {
                         text: root.st.name ? root.st.name : "logos-vpn"
                         color: cBone
                         font.family: "monospace"; font.pixelSize: 17
+                    }
+                    Text {
+                        // The daemon's build, not this module's. They are
+                        // different things and the daemon's is the one that
+                        // decides whether a control here exists at all.
+                        visible: text !== ""
+                        text: root.st.version ? root.st.version : ""
+                        color: cAsh
+                        font.family: "monospace"; font.pixelSize: 10
                     }
                     Item { Layout.fillWidth: true }
                     Text {
@@ -1213,8 +1367,75 @@ Item {
                         }
                     }
 
+                    // Whether names resolve on this machine, and where.
+                    //
+                    // Folded away like the log, because the answer is almost
+                    // always "yes" and the details matter only when it is not.
+                    // Worth having at all because this fails on its own and
+                    // silently: port 53 needs a capability and the system
+                    // resolver needs telling about the suffix, and either can
+                    // be missing while every tunnel is perfect. Then
+                    // `ssh laptop.mesh` does not work and nothing else on this
+                    // page hints at why.
+                    ColumnLayout {
+                        id: dnsBlock
+                        Layout.fillWidth: true
+                        spacing: 4
+                        readonly property var d: root.st.dns || ({})
+
+                        // Hidden entirely against a daemon that does not report
+                        // this. A missing field is "it did not say", and
+                        // rendering that as "not resolving" would put a red
+                        // line on a machine whose names work perfectly.
+                        visible: root.st.dns !== undefined
+
+                        RowLayout {
+                            spacing: 8
+                            Layout.fillWidth: true
+                            Text {
+                                text: "names"
+                                color: cAsh
+                                font.family: "monospace"; font.pixelSize: 11
+                                Layout.preferredWidth: 70
+                            }
+                            Text {
+                                text: dnsBlock.d.registered ? "resolving \u25b8"
+                                    : (dnsBlock.d.serving ? "serving, not registered \u25b8"
+                                                          : "not resolving \u25b8")
+                                color: dnsBlock.d.registered ? cPhosphor
+                                     : (dnsBlock.d.serving ? cAmber : cRust)
+                                font.family: "monospace"; font.pixelSize: 11
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.dnsOpen = !root.dnsOpen
+                                }
+                            }
+                            Item { Layout.fillWidth: true }
+                        }
+                        Text {
+                            visible: root.dnsOpen
+                            Layout.fillWidth: true
+                            Layout.leftMargin: 78
+                            wrapMode: Text.WordWrap
+                            color: cAsh
+                            font.family: "monospace"; font.pixelSize: 10
+                            text: {
+                                var d = dnsBlock.d, out = []
+                                if (d.address) out.push("served on " + d.address)
+                                if (d.suffix) out.push("suffix ." + d.suffix)
+                                out.push(d.registered
+                                         ? "the host sends " + (d.suffix ? "." + d.suffix : "mesh names") + " here"
+                                         : "the host has not been told to send names here, so only "
+                                           + "a direct query to the address resolves")
+                                if (d.err) out.push(d.err)
+                                return out.join("\n")
+                            }
+                        }
+                    }
+
                     RowLayout {
-                        spacing: 8
+                        spacing: 12
                         Layout.fillWidth: true
                         Text {
                             text: "apply"
@@ -1226,7 +1447,7 @@ Item {
                             // Says what it does and what it cannot: services
                             // change under a running daemon, a mesh coming or
                             // going does not.
-                            text: "reload  ·  applies services; a mesh needs a restart"
+                            text: "reload  ·  services only"
                             color: cPhosphor
                             font.family: "monospace"; font.pixelSize: 11
                             MouseArea {
@@ -1235,15 +1456,435 @@ Item {
                                 onClicked: root.callWrite("reload", [])
                             }
                         }
+                        Text {
+                            // The other half of every "on the next restart"
+                            // above. Armed with a second click because it
+                            // drops every tunnel for a few seconds, which is
+                            // not much and is not nothing if somebody is
+                            // copying a file over one.
+                            property bool armed: false
+                            text: armed ? "sure? every tunnel drops for a few seconds"
+                                        : "restart  ·  applies the rest"
+                            color: armed ? cAmber : cPhosphor
+                            font.family: "monospace"; font.pixelSize: 11
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    if (!parent.armed) { parent.armed = true; return }
+                                    parent.armed = false
+                                    root.callWrite("restart", [])
+                                }
+                            }
+                        }
                         Item { Layout.fillWidth: true }
+                    }
+                }
+            }
+
+            // --- services ---------------------------------------------------
+            //
+            // What everything on every mesh offers, which the roster shows one
+            // peer at a time and this shows as a list you can read down. Both
+            // are worth having: the roster answers "is that box reachable",
+            // this answers "where do I find Immich".
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                Text {
+                    text: (root.servicesOpen ? "services ▾  " : "services ▸  ")
+                          + root.allServices.length
+                    color: cPhosphor
+                    font.family: "monospace"; font.pixelSize: 11
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.servicesOpen = !root.servicesOpen
+                    }
+                }
+
+                ColumnLayout {
+                    visible: root.servicesOpen
+                    Layout.fillWidth: true
+                    spacing: 6
+
+                    Text {
+                        visible: root.allServices.length === 0
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        color: cAsh
+                        font.family: "monospace"; font.pixelSize: 10
+                        // Says which of the two reasons it is, because they
+                        // have opposite fixes and look identical from here.
+                        text: "nothing announced. A peer publishes services and lists them "
+                              + "separately — a device that has not been told to announce "
+                              + "offers exactly what it always did, silently."
+                    }
+
+                    Repeater {
+                        model: root.serviceRows
+                        delegate: Item {
+                            id: svcItem
+                            Layout.fillWidth: true
+                            implicitHeight: modelData.header === true
+                                            ? svcHead.implicitHeight + 8
+                                            : svcRow.implicitHeight + 4
+
+                            // Named rather than reached through parent.parent:
+                            // a delegate that walks its own tree breaks the
+                            // day anything is wrapped in a layout, and it
+                            // breaks as a binding loop rather than as an
+                            // error.
+                            readonly property var s: modelData.svc || ({})
+
+                            Text {
+                                id: svcHead
+                                visible: modelData.header === true
+                                anchors.left: parent.left
+                                anchors.bottom: parent.bottom
+                                text: modelData.mesh ? modelData.mesh : "no mesh label"
+                                color: root.meshTint(modelData.mesh)
+                                font.family: "monospace"; font.pixelSize: 11
+                            }
+
+                            RowLayout {
+                                id: svcRow
+                                visible: modelData.header !== true
+                                width: parent.width
+                                spacing: 10
+
+                                Rectangle {
+                                    width: 6; height: 6; radius: 3
+                                    color: svcItem.s.live ? cPhosphor : cAsh
+                                }
+                                Text {
+                                    text: svcItem.s.label || ""
+                                    color: cBone
+                                    font.family: "monospace"; font.pixelSize: 11
+                                    Layout.preferredWidth: 110
+                                    elide: Text.ElideRight
+                                }
+                                TextEdit {
+                                    // Selectable, because the whole point is to
+                                    // get this address into something else.
+                                    text: svcItem.s.addr || ""
+                                    readOnly: true
+                                    selectByMouse: true
+                                    color: svcItem.s.live ? cPhosphor : cAsh
+                                    font.family: "monospace"; font.pixelSize: 10
+                                    Layout.fillWidth: true
+                                }
+                                Text {
+                                    // A bound port is not a forwarded service:
+                                    // the process is listening on the mesh
+                                    // address itself, so it is a host and a
+                                    // port rather than a URL (ADR-026).
+                                    visible: svcItem.s.bound === true
+                                    text: "bound"
+                                    color: cViolet
+                                    font.family: "monospace"; font.pixelSize: 9
+                                }
+                                Text {
+                                    text: svcItem.s.device || ""
+                                    color: cAsh
+                                    font.family: "monospace"; font.pixelSize: 10
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // --- membership -------------------------------------------------
+            //
+            // Who is in, until when, and how somebody else gets in.
+            //
+            // Worth its own section because credentials expiring is the one
+            // failure in this system that is scheduled: it happens on a known
+            // day, it takes a device off the mesh, and nothing else here hints
+            // at it until the device is gone.
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                visible: root.haveCore
+
+                Text {
+                    text: root.membersOpen ? "membership ▾" : "membership ▸"
+                    color: cPhosphor
+                    font.family: "monospace"; font.pixelSize: 11
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.membersOpen = !root.membersOpen
+                    }
+                }
+
+                ColumnLayout {
+                    visible: root.membersOpen
+                    Layout.fillWidth: true
+                    spacing: 8
+
+                    // This device, per mesh, first: it is the one whose expiry
+                    // nobody else will warn you about.
+                    Repeater {
+                        model: root.st.meshes || []
+                        delegate: RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 10
+                            Text {
+                                text: "this device"
+                                color: cAsh
+                                font.family: "monospace"; font.pixelSize: 11
+                                Layout.preferredWidth: 90
+                            }
+                            Text {
+                                text: modelData.label || "?"
+                                color: root.meshTint(modelData.label)
+                                font.family: "monospace"; font.pixelSize: 11
+                                Layout.preferredWidth: 90
+                            }
+                            Text {
+                                text: root.membershipText(modelData.expires)
+                                color: root.membershipColour(modelData.expires)
+                                font.family: "monospace"; font.pixelSize: 11
+                            }
+                            Item { Layout.fillWidth: true }
+                        }
+                    }
+
+                    Repeater {
+                        model: root.sortedPeers
+                        delegate: RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 10
+                            Text {
+                                text: modelData.name || "?"
+                                color: cBone
+                                font.family: "monospace"; font.pixelSize: 11
+                                Layout.preferredWidth: 90
+                                elide: Text.ElideRight
+                            }
+                            Text {
+                                visible: root.multiMesh
+                                text: modelData.mesh || ""
+                                color: root.meshTint(modelData.mesh || "")
+                                font.family: "monospace"; font.pixelSize: 11
+                                Layout.preferredWidth: 90
+                            }
+                            Text {
+                                text: root.membershipText(modelData.expires)
+                                color: root.membershipColour(modelData.expires)
+                                font.family: "monospace"; font.pixelSize: 11
+                            }
+                            Item { Layout.fillWidth: true }
+                        }
+                    }
+
+                    // Joining another mesh. The token comes from whoever is
+                    // running `shrooms invite` at the far end, right now — the
+                    // exchange is live, so this waits for them and can take a
+                    // couple of minutes.
+                    RowLayout {
+                        spacing: 8
+                        Layout.fillWidth: true
+                        Text {
+                            text: "join"
+                            color: cAsh
+                            font.family: "monospace"; font.pixelSize: 11
+                            Layout.preferredWidth: 70
+                        }
+                        Rectangle {
+                            Layout.fillWidth: true
+                            height: 26
+                            color: cPanel
+                            border.color: cLine
+                            TextInput {
+                                id: tokenField
+                                anchors.fill: parent
+                                anchors.leftMargin: 6
+                                verticalAlignment: TextInput.AlignVCenter
+                                color: cBone
+                                font.family: "monospace"; font.pixelSize: 11
+                                selectByMouse: true
+                            }
+                            // A label rather than a placeholder property,
+                            // which TextInput does not have. Shown only while
+                            // the field is empty.
+                            //
+                            // Not echoed as dots: a token admits one device
+                            // once and is useless afterwards, and hiding it
+                            // would only stop somebody checking they pasted
+                            // the whole thing.
+                            Text {
+                                visible: tokenField.text === ""
+                                anchors.left: parent.left
+                                anchors.leftMargin: 6
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "invite token"
+                                color: cAsh
+                                font.family: "monospace"; font.pixelSize: 11
+                            }
+                        }
+                        Rectangle {
+                            Layout.preferredWidth: 110
+                            height: 26
+                            color: cPanel
+                            border.color: cLine
+                            TextInput {
+                                id: labelField
+                                anchors.fill: parent
+                                anchors.leftMargin: 6
+                                verticalAlignment: TextInput.AlignVCenter
+                                color: cBone
+                                font.family: "monospace"; font.pixelSize: 11
+                                selectByMouse: true
+                            }
+                            Text {
+                                visible: labelField.text === ""
+                                anchors.left: parent.left
+                                anchors.leftMargin: 6
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "label"
+                                color: cAsh
+                                font.family: "monospace"; font.pixelSize: 11
+                            }
+                        }
+                        Text {
+                            text: "join"
+                            color: cPhosphor
+                            font.family: "monospace"; font.pixelSize: 11
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    root.said = "redeeming — the far side has to be "
+                                              + "running `shrooms invite` right now"
+                                    root.saidBad = false
+                                    root.callWrite("joinWithInvite",
+                                                   [tokenField.text, root.st.name || "",
+                                                    labelField.text])
+                                }
+                            }
+                        }
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 78
+                        wrapMode: Text.WordWrap
+                        color: cAsh
+                        font.family: "monospace"; font.pixelSize: 10
+                        text: "the second box is the local label — what this device will call "
+                              + "that mesh, as in laptop.<label>.mesh. A joined mesh starts on "
+                              + "the next restart."
+                    }
+
+                    // The honest limit, stated where somebody would look for
+                    // the button. Issuing an invite means signing a credential
+                    // with the admin key, and the daemon has never held it —
+                    // that separation is what keeps handing out this socket a
+                    // bounded grant rather than a way to admit anybody.
+                    Text {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        color: cAsh
+                        font.family: "monospace"; font.pixelSize: 10
+                        text: "inviting somebody, and revoking them, needs the admin key, which "
+                              + "this daemon deliberately does not hold:"
+                    }
+                    TextEdit {
+                        Layout.fillWidth: true
+                        readOnly: true
+                        selectByMouse: true
+                        color: cBone
+                        font.family: "monospace"; font.pixelSize: 10
+                        text: "shrooms invite --name their-laptop"
+                    }
+                }
+            }
+
+            // --- log --------------------------------------------------------
+            //
+            // The same pane the phone has. Last, because it is the thing you
+            // open when everything above has failed to explain itself.
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 6
+                visible: root.haveCore
+
+                Text {
+                    text: root.logsOpen ? "log ▾" : "log ▸"
+                    color: cPhosphor
+                    font.family: "monospace"; font.pixelSize: 11
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            root.logsOpen = !root.logsOpen
+                            // Fetched immediately on opening rather than at the
+                            // next tick: two seconds of an empty box reads as
+                            // "there is no log".
+                            if (root.logsOpen) root.pumpLogs()
+                        }
+                    }
+                }
+
+                Rectangle {
+                    visible: root.logsOpen
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 220
+                    color: cPanel
+                    radius: 8
+
+                    ListView {
+                        id: logView
+                        anchors.fill: parent
+                        anchors.margins: 8
+                        clip: true
+                        spacing: 2
+                        model: root.logLines
+
+                        // Follow the tail, but only while the reader is already
+                        // at the bottom: yanking the view down under somebody
+                        // who has scrolled up to read something is the single
+                        // most annoying thing a log pane can do.
+                        property bool atEnd: true
+                        onContentYChanged: atEnd = (contentY + height >= contentHeight - 24)
+                        onCountChanged: if (atEnd) positionViewAtEnd()
+
+                        delegate: RowLayout {
+                            width: ListView.view.width
+                            spacing: 8
+                            Text {
+                                text: root.ago(modelData.t)
+                                color: cAsh
+                                font.family: "monospace"; font.pixelSize: 9
+                                Layout.preferredWidth: 34
+                                horizontalAlignment: Text.AlignRight
+                            }
+                            Text {
+                                text: modelData.msg || ""
+                                color: root.levelColour(modelData.level)
+                                font.family: "monospace"; font.pixelSize: 10
+                                Layout.preferredWidth: 200
+                                elide: Text.ElideRight
+                            }
+                            Text {
+                                text: modelData.attrs || ""
+                                color: cAsh
+                                font.family: "monospace"; font.pixelSize: 10
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                            }
+                        }
                     }
 
                     Text {
-                        text: "adding or removing a device needs the admin key, so it stays in `shrooms invite`"
+                        visible: root.logLines.length === 0
+                        anchors.centerIn: parent
+                        text: "nothing logged since this pane was opened"
                         color: cAsh
                         font.family: "monospace"; font.pixelSize: 10
-                        wrapMode: Text.WordWrap
-                        Layout.fillWidth: true
                     }
                 }
             }

@@ -118,18 +118,23 @@ public:
     std::string setMeshEnabledOn(const std::string& socketPath,
                                  const std::string& label, bool enabled);
 
-    /**
-     * @brief Mints an invite for someone else to join a mesh this node is in.
+    /*
+     * Minting an invite is deliberately absent, and this is where somebody
+     * will come looking for it.
      *
-     * @param name A name for the invitee, recorded with the invite.
-     * @return The daemon's `{"token":"...","expires":"..."}` on success. The
-     * token is the secret that admits a new node, so the view must treat this
-     * body as sensitive: it is returned, not logged.
+     * An invite is two halves (ADR-017): the daemon holds the exchange open,
+     * and the admin key signs the credential that comes out of it. The daemon
+     * has never held that key — it is a passphrase-protected file in a user's
+     * session — and that separation is exactly what makes handing this socket
+     * to a group a bounded grant rather than a way to admit anybody to the
+     * mesh. Teaching this module to sign would remove the property the tier is
+     * built on.
+     *
+     * There was a startInvite() here that posted to /invite/new. No daemon has
+     * ever served that path, so every call returned an error; it is gone
+     * rather than left to look like a feature. A view that wants to offer this
+     * should print the command instead.
      */
-    std::string startInvite(const std::string& name);
-
-    /** @brief As startInvite(), against a specific control socket. */
-    std::string startInviteOn(const std::string& socketPath, const std::string& name);
 
     /**
      * @brief Joins a mesh using a token minted by startInvite() elsewhere.
@@ -162,6 +167,47 @@ public:
 
     /** @brief As leaveMesh(), against a specific control socket. */
     std::string leaveMeshOn(const std::string& socketPath, const std::string& label);
+
+    /**
+     * @brief The daemon's recent log, as `{"lines":[{"t":…,"level":…,"msg":…}]}`.
+     *
+     * The desktop equivalent of the app's log pane. Basecamp cannot read the
+     * journal — it cannot read a file at all — so without this the answer to
+     * "why is nothing connecting" is a terminal.
+     *
+     * @param sinceMs Return only lines newer than this stamp, as taken from
+     * the `t` of the newest line already shown. Empty or "0" returns
+     * everything held. A poller that always asks for everything re-renders two
+     * hundred lines every couple of seconds, which is visible.
+     *
+     * A string, not an integer, and that is not fussiness: the stamp is unix
+     * milliseconds, which passed 2^31 in 2001. A bridge that marshals numbers
+     * as 32-bit ints would truncate it into a value from some other decade,
+     * and the failure would be a log pane that silently shows everything or
+     * nothing. Digits in a string cross any bridge intact.
+     */
+    std::string logs(const std::string& sinceMs);
+
+    /** @brief As logs(), against a specific control socket. */
+    std::string logsFrom(const std::string& socketPath, const std::string& sinceMs);
+
+    /**
+     * @brief Restarts the daemon, applying the settings that need one.
+     *
+     * The other half of every setting whose result says "on the next restart":
+     * the mode, a mesh being switched on or off, a mesh just joined. Without
+     * it those settings are written and then need a terminal, which is the
+     * terminal these controls exist to avoid.
+     *
+     * The daemon refuses when nothing would start it again — run from a shell
+     * rather than under a service manager — because exiting there is a mesh
+     * that stays down. Its refusal is returned as-is: it explains itself
+     * better than a caller could.
+     */
+    std::string restart();
+
+    /** @brief As restart(), against a specific control socket. */
+    std::string restartOn(const std::string& socketPath);
 
     /**
      * @brief Makes the daemon re-read its configuration and reconcile.

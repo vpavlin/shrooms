@@ -200,7 +200,8 @@ test-unit:
 		./internal/topic/... ./internal/control/... ./internal/wg/... \
 		./internal/disco/... ./internal/relay/... ./internal/state/... \
 		./internal/hosts/... ./internal/dns/... ./internal/service/... \
-		./internal/cred/... ./internal/invite/... ./internal/portmap/...
+		./internal/cred/... ./internal/invite/... ./internal/portmap/... \
+		./internal/v4/... ./internal/listeners/... ./internal/logtail/...
 
 ## --- android ---
 

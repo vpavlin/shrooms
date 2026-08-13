@@ -371,6 +371,28 @@ std::string servicesArray(const std::string& csv)
     return out;
 }
 
+/**
+ * The /logs path, with a `since` when there is one worth sending.
+ *
+ * Built here rather than at the call sites so the two of them cannot disagree
+ * about whether zero means "everything" or "everything since the epoch" —
+ * which are the same set today and would stop being on the day the daemon
+ * learns to keep a longer tail.
+ */
+std::string logsPath(const std::string& sinceMs)
+{
+    // Digits only, and a bounded number of them. This value lands in a URL
+    // query, so anything else in it would be an injection into the request
+    // line; the daemon ignores a `since` it cannot parse, which makes
+    // dropping a malformed one the same as asking for everything.
+    if (sinceMs.empty() || sinceMs.size() > 19) return "/logs";
+    for (char c : sinceMs) {
+        if (!std::isdigit(static_cast<unsigned char>(c))) return "/logs";
+    }
+    if (sinceMs.find_first_not_of('0') == std::string::npos) return "/logs";
+    return "/logs?since=" + sinceMs;
+}
+
 } // namespace
 
 std::string ShroomsCoreImpl::statusFrom(const std::string& socketPath)
@@ -457,16 +479,6 @@ std::string ShroomsCoreImpl::setMeshEnabled(const std::string& label, bool enabl
                             ",\"enabled\":" + (enabled ? "true" : "false") + "}");
 }
 
-std::string ShroomsCoreImpl::startInviteOn(const std::string& socketPath, const std::string& name)
-{
-    return postToSocket(socketPath, "/invite/new", "{\"name\":" + jsonString(name) + "}");
-}
-
-std::string ShroomsCoreImpl::startInvite(const std::string& name)
-{
-    return postToDaemon("/invite/new", "{\"name\":" + jsonString(name) + "}");
-}
-
 std::string ShroomsCoreImpl::joinWithInviteOn(const std::string& socketPath,
                                               const std::string& token, const std::string& name,
                                               const std::string& label)
@@ -492,6 +504,44 @@ std::string ShroomsCoreImpl::leaveMeshOn(const std::string& socketPath, const st
 std::string ShroomsCoreImpl::leaveMesh(const std::string& label)
 {
     return postToDaemon("/leave", "{\"label\":" + jsonString(label) + "}");
+}
+
+// The log tail is a read, so it retries the second socket path the way status()
+// does rather than stopping at the first failure: reading twice costs nothing.
+std::string ShroomsCoreImpl::logsFrom(const std::string& socketPath, const std::string& sinceMs)
+{
+    std::string body, err;
+    if (httpGetUnix(socketPath, logsPath(sinceMs), body, err) == RequestOutcome::Ok) {
+        return body;
+    }
+    return errorJson("cannot read the Shrooms daemon", err);
+}
+
+std::string ShroomsCoreImpl::logs(const std::string& sinceMs)
+{
+    std::string body, err, firstErr;
+    const std::string path = logsPath(sinceMs);
+    for (const char* sock : {kSocket, kLegacySocket}) {
+        if (httpGetUnix(sock, path, body, err) == RequestOutcome::Ok) {
+            return body;
+        }
+        if (firstErr.empty()) firstErr = err;
+    }
+    return errorJson("cannot read the Shrooms daemon", withPermissionHint(firstErr));
+}
+
+// Unlike the reads, this does not fall back to the second socket path. The
+// daemon answers and then exits, so a response that never arrives does not mean
+// nothing happened — and asking the other path would be a second restart of a
+// daemon that is already on its way down.
+std::string ShroomsCoreImpl::restartOn(const std::string& socketPath)
+{
+    return postToSocket(socketPath, "/restart", "");
+}
+
+std::string ShroomsCoreImpl::restart()
+{
+    return postToDaemon("/restart", "");
 }
 
 std::string ShroomsCoreImpl::reloadOn(const std::string& socketPath)

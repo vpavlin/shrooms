@@ -6,7 +6,10 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
+	"time"
 
+	"github.com/vpavlin/shrooms/internal/logtail"
 	"github.com/vpavlin/shrooms/internal/mesh"
 	"github.com/vpavlin/shrooms/internal/state"
 )
@@ -25,6 +28,88 @@ import (
 // The config is what a restart reads, so anything applied only to the running
 // process is a setting that quietly reverts, and that is a worse failure than
 // one that needs a reload — it looks like it worked.
+
+// runtimeHandlers registers the two endpoints that are about the daemon itself
+// rather than about a mesh: what it has been saying, and starting it again.
+//
+// Both in the socket group's tier. The log carries what stderr carries — peer
+// names, addresses, why a tunnel failed — every bit of which /status already
+// names, and no secret, because the daemon logs none. The restart is the other
+// half of the settings that say "on the next restart": a caller who may switch
+// a mesh off may apply it.
+func runtimeHandlers(mux *http.ServeMux, log *slog.Logger, tail *logtail.Ring, restart chan<- error) {
+	// The recent log, for a UI that cannot reach the journal (ADR-025).
+	//
+	// Same tier as /status and for the same reason: it carries what stderr
+	// carries — peer names, addresses, why a tunnel failed — all of which the
+	// status payload already names, and no secret, because the daemon logs
+	// none. `?since=<unix ms>` returns only what is newer, so a pane that polls
+	// every couple of seconds sends back what it has rather than everything.
+	if tail != nil {
+		mux.HandleFunc("/logs", func(w http.ResponseWriter, r *http.Request) {
+			lines := tail.Lines()
+			if s := r.URL.Query().Get("since"); s != "" {
+				if ms, err := strconv.ParseInt(s, 10, 64); err == nil {
+					lines = tail.Since(ms)
+				}
+			}
+			if lines == nil {
+				lines = []logtail.Line{}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"lines": lines})
+		})
+	}
+
+	// Restarting the daemon, which is the other half of every setting that
+	// says "on the next restart" (ADR-025).
+	//
+	// Half a feature otherwise: switching a mesh off writes the config and
+	// then needs a terminal, which is exactly the terminal the desktop
+	// controls existed to avoid. So the same tier as those settings — a
+	// caller who may switch a mesh off may apply it.
+	//
+	// It refuses when nothing would start this process again. Exiting under
+	// systemd is a five-second gap; exiting a daemon somebody ran in a
+	// terminal is a mesh that stays down until they notice, and a button that
+	// silently means "stop" is worse than no button. Same rule the rendezvous
+	// watchdog learned the hard way.
+	if restart != nil {
+		mux.HandleFunc("/restart", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				http.Error(w, "POST to restart", http.StatusMethodNotAllowed)
+				return
+			}
+			if !restartable() {
+				http.Error(w, "nothing would start this daemon again, so exiting "+
+					"would leave the mesh down; restart it yourself "+
+					"(systemctl restart shrooms)", http.StatusConflict)
+				return
+			}
+			log.Info("restarting on request from the control socket")
+			// Answered before exiting, so the caller sees a result rather than
+			// a closed connection it has to interpret. The exit follows the
+			// ordinary path: the same channel the watchdog uses, so shutdown
+			// tears down tunnels and DNS registration exactly as it always
+			// does.
+			writeJSON(w, map[string]string{
+				"result": "restarting; settings that needed one are applied when it comes back",
+			})
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			go func() {
+				// A moment for the response to reach a caller that is
+				// notoriously bad at reading one — the QML bridge does a
+				// blocking read and a connection closed under it reports as a
+				// failure, on the one operation whose whole point is that it
+				// worked.
+				time.Sleep(250 * time.Millisecond)
+				restart <- errRestartRequested
+			}()
+		})
+	}
+}
 
 // controlHandlers registers the write endpoints.
 func controlHandlers(mux *http.ServeMux, log *slog.Logger, cfgPath string, rl *reloader) {
