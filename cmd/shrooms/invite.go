@@ -45,6 +45,8 @@ func cmdInvite(args []string) error {
 	fs := flag.NewFlagSet("invite", flag.ExitOnError)
 	cfgPath, _ := commonFlags(fs)
 	dir := fs.String("admin-dir", defaultAdminDir(), "where the admin key is kept")
+	signWith := fs.String("sign-with", "", "a command that signs a digest, instead of the admin key file")
+	external := fs.Bool("external-signer", false, "print the digest and read the signature back (ADR-022)")
 	sock := fs.String("socket", DefaultSocket, "control socket of the local daemon")
 	name := fs.String("name", "", "the joining device's name (it may choose its own)")
 	ttl := fs.Duration("ttl", invite.DefaultTTL, "how long the invite stays open")
@@ -90,10 +92,10 @@ func cmdInvite(args []string) error {
 	// The admin key only if this mesh has an authority. A mesh minted with
 	// --no-admin has none, and an invite there is still worth having: it moves
 	// the network key without putting it on a screen.
-	var admin *cred.Admin
+	var admin cred.Signer
 	var auth *cred.Authority
 	if len(target.AdminKeys) > 0 {
-		admin, auth, err = loadAdminFor(*dir, target.Label)
+		admin, auth, err = signerFor(*dir, target.Label, *signWith, *external)
 		if err != nil {
 			return fmt.Errorf("%w\n\nThe invite has to issue a credential, which needs the admin key. "+
 				"Run this on the machine that holds it.", err)

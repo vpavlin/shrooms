@@ -47,6 +47,8 @@ type memberJSON struct {
 func cmdAdminRenew(args []string) error {
 	fs := flag.NewFlagSet("admin renew", flag.ExitOnError)
 	dir := fs.String("dir", defaultAdminDir(), "where the admin key is kept")
+	signWith := fs.String("sign-with", "", "a command that signs a digest, instead of the admin key file")
+	external := fs.Bool("external-signer", false, "print the digest and read the signature back (ADR-022)")
 	label := fs.String("mesh", "", "which mesh, when this node is on several")
 	sock := fs.String("socket", DefaultSocket, "control socket of the local daemon")
 	within := fs.Duration("within", renewWindow, "renew credentials expiring within this")
@@ -57,7 +59,7 @@ func cmdAdminRenew(args []string) error {
 		return err
 	}
 
-	admin, auth, err := loadAdminFor(*dir, *label)
+	admin, auth, err := signerFor(*dir, *label, *signWith, *external)
 	if err != nil {
 		return err
 	}

@@ -73,3 +73,12 @@ func verifySecp256k1(pub, digest, sig []byte) bool {
 	}
 	return ecdsa.NewSignature(&r, &s).Verify(digest, p)
 }
+
+// VerifyDigest checks one signature against one admin key, whichever type it
+// is. Exported for the detached signer, which has to check what it was handed
+// before it uses it: a signature pasted from another program, another machine
+// or another card is exactly the case where a silent mismatch would be written
+// into a credential and only fail on somebody else's device days later.
+func VerifyDigest(pub ed25519.PublicKey, digest [32]byte, sig []byte) bool {
+	return verifyKey(pub, digest[:], sig)
+}

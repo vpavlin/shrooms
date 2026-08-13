@@ -261,7 +261,7 @@ func addAdminKeys(cfgPath string, keys []string) error {
 // mesh it admits you to, and this admin is one key among that mesh's set. Admin
 // .Issue cannot know that — it only has its own key — so every caller has to
 // restamp and re-sign, and doing that in three places was two too many.
-func issueFor(admin *cred.Admin, auth *cred.Authority, devPub, wgPub []byte,
+func issueFor(admin cred.Signer, auth *cred.Authority, devPub, wgPub []byte,
 	name string, serial uint64, now time.Time, life time.Duration) ([]byte, error) {
 
 	// A serial of zero means "now", in unix seconds.
@@ -317,6 +317,47 @@ func issueLocal(admin *cred.Admin, auth *cred.Authority, stateDir, name, network
 
 func loadAdmin(dir string) (*cred.Admin, *cred.Authority, error) {
 	return loadAdminFor(dir, "")
+}
+
+// signerFor returns what will sign, which is either the key in the admin file
+// or something outside this process entirely (ADR-022).
+//
+// The authority comes from the same file either way: it is public, it is what
+// every node checks against, and reading it needs no passphrase and no card.
+// So a detached signer can verify what it is handed without holding anything
+// secret at all.
+func signerFor(dir, label, signWith string, external bool) (cred.Signer, *cred.Authority, error) {
+	if !external && signWith == "" {
+		return loadAdminFor(dir, label)
+	}
+	auth, err := authorityFor(dir, label)
+	if err != nil {
+		return nil, nil, err
+	}
+	return &externalSigner{auth: auth, command: signWith}, auth, nil
+}
+
+// authorityFor reads the public half of an admin file: the keys this mesh
+// trusts, and nothing that needs unlocking.
+func authorityFor(dir, label string) (*cred.Authority, error) {
+	path := adminPathFor(dir, label)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("no admin file at %s: %w", path, err)
+	}
+	var af adminFile
+	if err := json.Unmarshal(raw, &af); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	keys := make([]ed25519.PublicKey, 0, len(af.Keys))
+	for _, k := range af.Keys {
+		b, err := b32.DecodeString(strings.ToUpper(k))
+		if err != nil {
+			return nil, fmt.Errorf("admin key %q: %w", k, err)
+		}
+		keys = append(keys, ed25519.PublicKey(b))
+	}
+	return cred.NewAuthority(keys...)
 }
 
 // loadAdminFor opens one mesh's admin key.
@@ -389,6 +430,8 @@ func cmdAdminIssue(args []string) error {
 	label := fs.String("mesh", "", "which mesh to enrol this device on (ADR-015)")
 	name := fs.String("name", "", "the device's name")
 	life := fs.Duration("life", cred.DefaultLife, "how long the credential is valid")
+	signWith := fs.String("sign-with", "", "a command that signs a digest, instead of the admin key file")
+	external := fs.Bool("external-signer", false, "print the digest and read the signature back (ADR-022)")
 	serial := fs.Uint64("serial", 0, "credential serial; must increase per device (default: now)")
 	devHex := fs.String("device", "", "the device's public key, hex (for a remote device)")
 	wgHex := fs.String("wg", "", "the device's tunnel key, hex (for a remote device)")
@@ -401,7 +444,7 @@ func cmdAdminIssue(args []string) error {
 		return errors.New("--device and --wg go together: both name the same machine")
 	}
 
-	admin, auth, err := loadAdminFor(*dir, *label)
+	admin, auth, err := signerFor(*dir, *label, *signWith, *external)
 	if err != nil {
 		return err
 	}
@@ -489,6 +532,8 @@ func cmdAdminRevoke(args []string) error {
 	fs := flag.NewFlagSet("admin revoke", flag.ExitOnError)
 	dir := fs.String("dir", defaultAdminDir(), "where the admin key is kept")
 	devHex := fs.String("device", "", "the device's public key, hex")
+	signWith := fs.String("sign-with", "", "a command that signs a digest, instead of the admin key file")
+	external := fs.Bool("external-signer", false, "print the digest and read the signature back (ADR-022)")
 	// Zero means "everything issued up to now", which is what revoking a device
 	// means. Serials are unix seconds by default (see issueFor), so a
 	// timestamp covers every credential that device has and none it cannot yet
@@ -502,7 +547,7 @@ func cmdAdminRevoke(args []string) error {
 	if *serial == 0 {
 		*serial = uint64(time.Now().Unix())
 	}
-	admin, auth, err := loadAdmin(*dir)
+	admin, auth, err := signerFor(*dir, "", *signWith, *external)
 	if err != nil {
 		return err
 	}
@@ -514,10 +559,15 @@ func cmdAdminRevoke(args []string) error {
 		return fmt.Errorf("--device must be a %d-byte hex key", ed25519.PublicKeySize)
 	}
 
-	r, err := admin.Revoke(dev, *serial, time.Now())
-	if err != nil {
-		return err
+	// Built here and signed through the interface, rather than by a method on
+	// the in-memory key: the signer may be a card on the other side of a
+	// terminal, and revocation is exactly the operation you want to be able to
+	// perform from one.
+	serialOf := *serial
+	if serialOf == 0 {
+		serialOf = uint64(time.Now().Unix())
 	}
+	r := &cred.Revocation{DevicePub: append([]byte(nil), dev...), Serial: serialOf}
 	r.MeshID = auth.ID()
 	if err := cred.SignRevocationWith(admin, r); err != nil {
 		return err
