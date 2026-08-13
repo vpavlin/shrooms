@@ -344,6 +344,20 @@
       "label": "test",
       "prefix": "fd7b:15fb:5ec1::/48",
       "disabled": true
+    },
+    {
+      "label": "pending",
+      "prefix": "fd9a:1111:2222::/48",
+      "not_running": true
+    },
+    {
+      "label": "leaving",
+      "prefix": "fdaa:3333:4444::/48",
+      "overlay": "fdaa:3333:4444::1",
+      "interface": "shrooms2",
+      "port": 51822,
+      "peers": 0,
+      "left": true
     }
   ]
 }

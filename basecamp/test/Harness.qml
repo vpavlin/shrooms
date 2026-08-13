@@ -66,7 +66,8 @@ Item {
                 console.error("  mesh " + mm.label
                     + " on=" + (mm.disabled !== true)
                     + " lit=" + view.pick(mm.disabled !== true)
-                    + " primary=" + view.isPrimary(mm))
+                    + " primary=" + view.isPrimary(mm)
+                    + " state=[" + view.meshState(mm) + "]")
             }
             console.error("MODE=" + view.st.mode + " RUNNING=" + view.st.mode_running
                 + " ANNOUNCE=" + (view.primaryMesh.announce_services === true))

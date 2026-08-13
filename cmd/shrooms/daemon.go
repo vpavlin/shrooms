@@ -356,6 +356,20 @@ type meshStatus struct {
 	AnnounceServices bool `json:"announce_services,omitempty"`
 	AnnounceBound    bool `json:"announce_bound,omitempty"`
 
+	// NotRunning means the config has this mesh and this process does not.
+	// Switching one on writes the config and takes effect at the next restart,
+	// so between those two moments it belongs to neither list — which made the
+	// whole settings section vanish the first time somebody switched one back
+	// on. Absent on an older daemon, which only ever listed running meshes, so
+	// absent must keep meaning "running".
+	NotRunning bool `json:"not_running,omitempty"`
+
+	// Left means the opposite: this process is running a mesh the config no
+	// longer has. Leaving does not tear down a tunnel, so it keeps running
+	// until a restart, and saying nothing would make a completed `leave` look
+	// like it failed.
+	Left bool `json:"left,omitempty"`
+
 	// Disabled means this device is a member of the mesh and is not running
 	// it. Reported because the alternative is what happened: switching a mesh
 	// off removed it from the only list any front-end had, so the reversible
@@ -1074,44 +1088,52 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 		// these controls write the config, so the config is what a click
 		// changed and what a restart will apply.
 		//
+		// Merged by label rather than appended, because the two lists overlap
+		// in both directions and every unmerged combination is a visible bug.
+		// A mesh switched off is in the config and still running, and appending
+		// gave it two rows; a mesh switched on is in the config with nothing
+		// running, and appending only the disabled ones gave it none — which
+		// emptied the section that could have switched it off again.
+		//
 		// Read from disk on every snapshot rather than from the copy loaded at
-		// startup. The startup copy would report a mesh as running after it was
-		// switched off, and a mode as unchanged after it was changed — which is
-		// the click looking like it did nothing.
+		// startup: the startup copy reports a mesh as running after it was
+		// switched off, and a mode as unchanged after it was changed.
 		out.ModeRunning = cfg.Mode
 		if rl != nil {
 			if onDisk, err := state.LoadConfigUnvalidated(rl.cfgPath); err == nil {
 				out.Mode = onDisk.Mode
-				byLabel := map[string]state.Mesh{}
-				for _, mc := range onDisk.Meshes() {
-					byLabel[mc.Label] = mc
+
+				at := map[string]int{}
+				for i, ms := range out.Meshes {
+					at[ms.Label] = i
 				}
-				// The running ones, annotated with what the config says.
-				for i := range out.Meshes {
-					if mc, ok := byLabel[out.Meshes[i].Label]; ok {
-						out.Meshes[i].Relay = mc.Relay
-						out.Meshes[i].AnnounceServices = mc.AnnounceServices
-						out.Meshes[i].AnnounceBound = mc.AnnounceBound
-					}
-				}
-				// And the ones that are not running, which have no instance to
-				// be built from and would otherwise appear nowhere at all.
 				for _, mc := range onDisk.Meshes() {
-					if !mc.Disabled {
-						continue
+					i, running := at[mc.Label]
+					if !running {
+						// In the config, not in this process: either just
+						// switched on, or switched off and never started.
+						entry := meshStatus{Label: mc.Label, NotRunning: true}
+						if k, err := mc.Key(); err == nil {
+							entry.Prefix = k.Prefix().String()
+						}
+						out.Meshes = append(out.Meshes, entry)
+						i = len(out.Meshes) - 1
 					}
-					off := meshStatus{
-						Label: mc.Label, Disabled: true, Relay: mc.Relay,
-						AnnounceServices: mc.AnnounceServices,
-						AnnounceBound:    mc.AnnounceBound,
-					}
-					if k, err := mc.Key(); err == nil {
-						off.Prefix = k.Prefix().String()
-					}
-					out.Meshes = append(out.Meshes, off)
+					out.Meshes[i].Disabled = mc.Disabled
+					out.Meshes[i].Relay = mc.Relay
+					out.Meshes[i].AnnounceServices = mc.AnnounceServices
+					out.Meshes[i].AnnounceBound = mc.AnnounceBound
+					delete(at, mc.Label)
+				}
+				// Whatever is left is running and no longer in the config,
+				// which is a mesh that has been left and not yet restarted out
+				// of. It is still carrying traffic, so it is still listed.
+				for _, i := range at {
+					out.Meshes[i].Left = true
 				}
 			}
 		}
+
 		h := m.Health()
 		out.Rendezvous = rendezvousStatus{
 			Status:  h.Status,

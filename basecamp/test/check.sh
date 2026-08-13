@@ -108,7 +108,7 @@ echo "$out" | grep -q "membership nothing ended" \
 # The settings section. A mesh switched off has no instance behind it, so it is
 # absent from everything derived from the running meshes — and the list with the
 # switch on it must not be one of those. That is how a mesh went missing.
-echo "$out" | grep -q "SWITCHABLE=2 RUNNING=1" \
+echo "$out" | grep -q "SWITCHABLE=4 RUNNING=2" \
     || { echo "FAIL: a switched-off mesh is missing from the list that can switch it on"; exit 1; }
 # Lit for the option in force, dim for the other. Fixed colours are why "on"
 # appeared highlighted next to a mesh that was off.
@@ -120,6 +120,12 @@ echo "$out" | grep -q "mesh default on=true lit=#35f0a0 primary=true" \
 # that applies it; both have to reach the view or the click looks like a no-op.
 echo "$out" | grep -q "MODE=Edge RUNNING=Core ANNOUNCE=true" \
     || { echo "FAIL: did not read the configured settings alongside the running ones"; exit 1; }
+# The two states between a click and the restart that applies it. Each of these
+# belonged to neither list once, and each time the section emptied or doubled.
+echo "$out" | grep -q "mesh pending on=true .*state=\[on · starts on the next restart\]" \
+    || { echo "FAIL: a mesh switched on but not yet started is not shown as pending"; exit 1; }
+echo "$out" | grep -q "mesh leaving .*state=\[left · stops on the next restart\]" \
+    || { echo "FAIL: a mesh left but still running is not shown as leaving"; exit 1; }
 
 # Inside Basecamp only the sibling file resolves; the two below are for running
 # outside it, where there is no sandbox. Removing the sibling is what forces

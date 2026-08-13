@@ -409,11 +409,12 @@ Item {
         var out = []
         var ms = (root.st && root.st.meshes) ? root.st.meshes : []
         for (var i = 0; i < ms.length; i++) {
-            // A mesh that is switched off has no peers, no address and no
+            // A mesh with no instance behind it — switched off, or switched
+            // on and not yet started — has no peers, no address and no
             // tunnels, so a colour and a legend entry for it would decorate
             // nothing. It appears in the settings list below, which is where
-            // it can be switched back on.
-            if (ms[i] && ms[i].disabled === true) continue
+            // its state is and where it can be changed.
+            if (ms[i] && (ms[i].disabled === true || ms[i].not_running === true)) continue
             var l = ms[i] ? ms[i].label : undefined
             if (l && out.indexOf(l) < 0) out.push(l)
         }
@@ -425,11 +426,19 @@ Item {
     }
     readonly property bool multiMesh: meshOrder.length > 1
 
-    /** The meshes actually running, which is what the graph and rosters show. */
+    /**
+     * The meshes actually carrying traffic, which is what the graph, the
+     * legend and the summary rows describe.
+     *
+     * A mesh that has been left is still here: leaving does not tear down a
+     * tunnel, so it keeps working until a restart and dropping it from the
+     * picture would hide traffic that is really flowing. A mesh switched on
+     * and not yet started is not, for the mirror-image reason.
+     */
     readonly property var runningMeshes: {
         var out = [], ms = (root.st && root.st.meshes) ? root.st.meshes : []
         for (var i = 0; i < ms.length; i++) {
-            if (ms[i] && ms[i].disabled !== true) out.push(ms[i])
+            if (ms[i] && ms[i].disabled !== true && ms[i].not_running !== true) out.push(ms[i])
         }
         return out
     }
@@ -437,23 +446,29 @@ Item {
     /**
      * Every mesh this device belongs to, running or not.
      *
-     * The settings list binds to this rather than to the running ones, because
-     * a mesh that is switched off is invisible in every other view by
-     * definition — and a switch you cannot see is a switch you cannot flip
-     * back. That is how a mesh went missing: off, and then absent from the one
-     * list that could have turned it on.
+     * Everything the daemon reported, with no rule about when to show it. Two
+     * bugs came out of having such a rule, in opposite directions and on
+     * consecutive days: a mesh switched off vanished from the only list that
+     * could switch it on, and then a mesh switched *on* vanished the same way
+     * — it had left the disabled list and not yet joined the running one, so
+     * the whole section emptied itself mid-click.
      *
-     * Shown from one entry rather than two. A device with a single running
-     * mesh and one switched off needs both rows, and the "only when there is
-     * more than one" rule that governs the summary above would hide exactly
-     * the row that matters.
+     * A settings list that hides rows by counting them will always have a
+     * third case waiting. So it hides nothing: one mesh gets one row, which
+     * costs a line and cannot disappear.
      */
     readonly property var switchableMeshes: {
-        var ms = (root.st && root.st.meshes) ? root.st.meshes : []
-        if (ms.length === 0) return []
-        var anyOff = false
-        for (var i = 0; i < ms.length; i++) if (ms[i] && ms[i].disabled === true) anyOff = true
-        return (ms.length > 1 || anyOff) ? ms : []
+        return (root.st && root.st.meshes) ? root.st.meshes : []
+    }
+
+    /** What a mesh row's state reads as, in the daemon's own terms. */
+    function meshState(m) {
+        if (!m) return ""
+        if (m.left === true) return "left · stops on the next restart"
+        if (m.disabled === true && m.not_running !== true) return "off · stops on the next restart"
+        if (m.disabled === true) return "off"
+        if (m.not_running === true) return "on · starts on the next restart"
+        return ""
     }
 
     function meshTint(label) {
@@ -1504,12 +1519,25 @@ Item {
                                 Layout.fillWidth: true
                                 Layout.leftMargin: 12
 
+                                // On means the config says on, not that a
+                                // tunnel exists. The two differ for exactly as
+                                // long as it takes to restart, and binding the
+                                // switch to the tunnel is what made a click
+                                // look like it had failed.
                                 readonly property bool isOn: modelData.disabled !== true
+                                readonly property bool pending: modelData.not_running === true
+                                                                || modelData.left === true
                                 readonly property bool primary: root.isPrimary(modelData)
 
                                 Rectangle {
                                     width: 7; height: 7; radius: 4
-                                    color: parent.isOn ? root.meshTint(modelData.label) : cLine
+                                    // Hollow while the config and the process
+                                    // disagree, so a pending mesh is visibly
+                                    // neither of the two settled states.
+                                    color: parent.pending ? "transparent"
+                                         : (parent.isOn ? root.meshTint(modelData.label) : cLine)
+                                    border.color: parent.isOn ? root.meshTint(modelData.label) : cAsh
+                                    border.width: parent.pending ? 1 : 0
                                 }
                                 Text {
                                     // Defensive because this view runs against
@@ -1571,9 +1599,19 @@ Item {
                                     }
                                 }
                                 Text {
-                                    visible: parent.primary
+                                    visible: parent.primary && text !== ""
                                     text: "· this device's first mesh"
                                     color: cAsh
+                                    font.family: "monospace"; font.pixelSize: 10
+                                }
+                                Text {
+                                    // The pending state, said on the row it
+                                    // belongs to. Without this a click writes
+                                    // the config, changes nothing visible, and
+                                    // reads as a failure.
+                                    text: root.meshState(modelData)
+                                    visible: text !== ""
+                                    color: cAmber
                                     font.family: "monospace"; font.pixelSize: 10
                                 }
                                 Item { Layout.fillWidth: true }
