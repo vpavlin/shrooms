@@ -127,3 +127,23 @@ func TestLookupResolvesServiceOnPeer(t *testing.T) {
 		}
 	}
 }
+
+// The name a peer is told to use has to reach the mesh the thing is on. The
+// short form is answered by the primary mesh alone, so on a multi-mesh node it
+// names an address on another network — which is what `shrooms bound`, the
+// desktop panel and the phone all showed before this existed.
+func TestQualifiedDNSName(t *testing.T) {
+	for _, tc := range []struct{ name, label, suffix, want string }{
+		{"laptop", "", "mesh", "laptop.mesh"},
+		{"laptop", "test", "mesh", "laptop.test.mesh"},
+		{"laptop", "home", "", "laptop.home.mesh"},
+		{"Living Room NAS", "shared", "mesh", "living-room-nas.shared.mesh"},
+		{"laptop", "test", ".lan.", "laptop.test.lan"},
+		{"", "test", "mesh", ""},
+	} {
+		if got := QualifiedDNSName(tc.name, tc.label, tc.suffix); got != tc.want {
+			t.Errorf("QualifiedDNSName(%q,%q,%q) = %q, want %q",
+				tc.name, tc.label, tc.suffix, got, tc.want)
+		}
+	}
+}

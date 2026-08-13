@@ -99,6 +99,38 @@ func DNSName(name, suffix string) string {
 	return h + "." + strings.Trim(suffix, ".")
 }
 
+// QualifiedDNSName is the name that resolves to *this* mesh's address for a
+// device, on a node that has more than one.
+//
+// The short form is answered by the primary mesh alone, so a name built from
+// the device alone points at an address on whichever mesh happens to be first
+// — a different machine's network, where the thing being named is not
+// listening. That has now been the same bug in three places: `shrooms bound`
+// printed it, the desktop panel built service URLs from it, and the phone
+// showed a bound ssh port as laptop.mesh:22 when the port was on another mesh
+// entirely.
+//
+// Each component is sanitised on its own and then joined. Sanitising
+// "laptop.test" as one string turns the separator into a hyphen and yields
+// laptop-test.mesh, which resolves to nothing at all.
+//
+// An empty label gives the short form, which is what a single-mesh node wants
+// and what every older payload meant.
+func QualifiedDNSName(name, label, suffix string) string {
+	host := sanitiseName(name)
+	if host == "" {
+		return ""
+	}
+	if suffix == "" {
+		suffix = "mesh"
+	}
+	suffix = strings.Trim(suffix, ".")
+	if l := sanitiseName(label); l != "" {
+		return host + "." + l + "." + suffix
+	}
+	return host + "." + suffix
+}
+
 // Lookup is the resolver handed to the DNS server: this device first, then
 // peers.
 //

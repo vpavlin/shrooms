@@ -199,14 +199,15 @@ type statusPayload struct {
 // top-level fields, so an app build that knows nothing about several meshes
 // shows exactly what it always did.
 func snapshotAll(instances []*meshInstance, suffix string) statusPayload {
-	out := snapshot(instances[0].mesh, suffix)
+	// One mesh: no label, so names stay short.
+	out := snapshot(instances[0].mesh, suffix, "")
 	if len(instances) == 1 {
 		return out
 	}
 	now := time.Now()
 	out.Peers = nil
 	for _, in := range instances {
-		part := snapshot(in.mesh, suffix)
+		part := snapshot(in.mesh, suffix, in.label)
 		for i := range part.Peers {
 			// Which mesh a peer is on, since two meshes may hold devices with
 			// the same name and the address is the only thing that differs.
@@ -224,7 +225,9 @@ func snapshotAll(instances []*meshInstance, suffix string) statusPayload {
 	return out
 }
 
-func snapshot(m *mesh.Mesh, suffix string) statusPayload {
+// label names the mesh for the names built here, and is empty on a device with
+// one mesh — where the short form is correct and is what every reader expects.
+func snapshot(m *mesh.Mesh, suffix, label string) statusPayload {
 	now := time.Now()
 	var out statusPayload
 
@@ -241,7 +244,11 @@ func snapshot(m *mesh.Mesh, suffix string) statusPayload {
 			Services: svc[p.ID()],
 			Bound:    bnd[p.ID()],
 			Name:     p.Name,
-			DNSName:  mesh.DNSName(p.Name, suffix),
+			// Qualified by the mesh label when this device has more than one,
+			// or a peer on the second mesh is named at an address on the
+			// first. The phone showed a bound ssh port as laptop.mesh:22 when
+			// the port was on another mesh entirely.
+			DNSName:  mesh.QualifiedDNSName(p.Name, label, suffix),
 			Overlay:  p.Overlay.String(),
 			Online:   p.Online(now),
 			Relay:    p.Relay,

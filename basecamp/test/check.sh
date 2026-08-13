@@ -92,9 +92,14 @@ echo "$out" | grep -q "TypeError\|ReferenceError\|is not a" && { echo "FAIL: scr
 # none of the payload the daemon has gained since.
 svcs=$(echo "$out" | sed -n 's/.*SERVICES=\([0-9]*\).*/\1/p' | head -1)
 [ "${svcs:-0}" -gt 0 ] || { echo "FAIL: read no services from a fixture that has three"; exit 1; }
-echo "$out" | grep -q "ssh jimmy-crib.mesh:22 bound" \
+echo "$out" | grep -q "ssh jimmy-crib.test.mesh:22 bound" \
     || { echo "FAIL: a bound port did not render as host:port (ADR-026)"; exit 1; }
-echo "$out" | grep -q "http://immich.jimmy-crib.mesh" \
+# The name has to reach the mesh the port is on. The short form is answered by
+# the first mesh alone, so an unqualified name for a peer on any other mesh
+# points at an address on a network it is not on — the same bug three times.
+echo "$out" | grep -q "jimmy-crib.mesh:22" && { echo "FAIL: an unqualified name for a peer on a second mesh"; exit 1; }
+true
+echo "$out" | grep -q "http://immich.jimmy-crib.test.mesh" \
     || { echo "FAIL: an announced service did not render as a URL (ADR-023)"; exit 1; }
 echo "$out" | grep -q "DNS=resolving" \
     || { echo "FAIL: did not read the daemon's name-resolution state"; exit 1; }

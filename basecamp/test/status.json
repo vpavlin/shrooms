@@ -5,7 +5,7 @@
   "peers": [
     {
       "name": "jimmy-crib",
-      "dns_name": "jimmy-crib.mesh",
+      "dns_name": "jimmy-crib.test.mesh",
       "relayed": false,
       "rtt_ms": 20,
       "overlay": "fd3b:ffe9:f81:891a:a679:295c:4688:8993",
@@ -107,7 +107,8 @@
       "bound": [
         "ssh:22"
       ],
-      "expires": 1790062365
+      "expires": 1790062365,
+      "mesh": "test"
     },
     {
       "name": "laptop",
