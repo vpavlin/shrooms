@@ -23,3 +23,9 @@ android/.kotlin/
 # files that go stale the moment somebody edits an ADR without running the
 # renderer.
 site/adr/
+
+# nix build outputs: symlinks into /nix/store, valid on exactly one machine.
+# They were committed by accident and are pure churn — every rebuild changes
+# them, and the target does not exist for anybody who clones this.
+/result
+/result-core
