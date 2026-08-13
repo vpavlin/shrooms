@@ -31,70 +31,80 @@
 <header class="hero">
     <h1>Install it once,<br>then admit<br>the next device.</h1>
     <p class="lede">
-        Three ways in: a container on a Linux box, an app on a phone, a module
-        in the Basecamp desktop. Creating a mesh is one command and adding a
-        device is two — but which machine you run them on matters, and this page
-        says why.
-    </p>
-    <p class="sub">
-        Every command here exists in the repository. Where a step is fiddly, it
-        says so rather than pretending otherwise.
+        Pick the machine you are standing in front of. Each section is its
+        prerequisites, the commands, and what you should see — then the
+        reasoning, underneath, for when you want it.
     </p>
     <div class="cta">
-        <a class="primary" href="#ways">Three ways in</a>
+        <a class="primary" href="#where">Where are you installing?</a>
         <a href="#first">Create a mesh</a>
         <a href="#trouble">When it does not work</a>
     </div>
 </header>
 
-<h2 id="ways">Three ways in</h2>
+<h2 id="where">Where are you installing?</h2>
 
 <div class="grid">
     <div class="card t1">
-        <h3>A Linux node</h3>
-        <p><code>scripts/install.sh</code> pulls a container image, writes a
-        config, installs a systemd unit and starts the daemon. Nothing is built
-        on the machine.</p>
+        <h3><a href="#linux">A Linux machine →</a></h3>
+        <p>A laptop, a NAS, a home server. One script, a container, a systemd
+        unit.</p>
     </div>
     <div class="card t2">
-        <h3>An Android phone</h3>
-        <p>The same Go core in a <code>VpnService</code>. Built with
-        <code>make apk</code>, or installed from a self-hosted F-Droid
-        repository. It is not on Google Play.</p>
+        <h3><a href="#android">An Android phone →</a></h3>
+        <p>A full participant, not a client. From a self-hosted F-Droid
+        repository, or built here.</p>
     </div>
     <div class="card t3">
-        <h3>A Basecamp module</h3>
-        <p>An <code>.lgx</code> package that reads the local daemon and changes
-        this device's own settings. It cannot admit anybody, by design.</p>
+        <h3><a href="#desktop">A desktop, in Basecamp →</a></h3>
+        <p>A view onto the daemon already running on this machine, installed as
+        an <code>.lgx</code> package.</p>
+    </div>
+    <div class="card t4">
+        <h3><a href="#cloud">A cloud server →</a></h3>
+        <p>The reachable member that anchors NAT traversal and relays for peers
+        that cannot connect directly.</p>
     </div>
 </div>
 
-<h3>What a node needs</h3>
+<h2 id="linux">A Linux machine</h2>
 
-<table>
-<tr><th>Requirement</th><th>Why, and what to watch for</th></tr>
-<tr><td>Linux, x86-64</td><td>Android is a full participant; iOS is out of scope</td></tr>
-<tr><td><code>docker</code> or <code>podman</code></td><td>the installer ships an image, so no Go toolchain and no checkout on the box</td></tr>
-<tr><td><code>/dev/net/tun</code></td><td>verify this on a cheap VPS — OpenVZ and LXC hosts often disable it. Insist on KVM</td></tr>
-<tr><td>systemd</td><td>the installer writes a unit. Without it, run the container yourself from <code>docker/compose-node.yml</code></td></tr>
-<tr><td>one UDP port</td><td>51820 by default, inbound only on the nodes you want reachable</td></tr>
-<tr><td>glibc ≥ 2.38</td><td>only if you build and run a bare binary. Debian 12 has 2.36 and will not do; irrelevant when you run the container</td></tr>
-</table>
+<p><strong>Prerequisites</strong></p>
 
-<p>
-    Resource use is negligible: a measured node acting as a relay sits at about
-    20 MiB RSS and one to two per cent of one core. What matters on a VPS is
-    bandwidth allowance and latency, since relayed traffic takes a detour
-    through the node.
-</p>
-
-<h3>A Linux node, from the container</h3>
+<ul>
+    <li><code>docker</code> or <code>podman</code>, and systemd</li>
+    <li><code>/dev/net/tun</code> present</li>
+    <li>root on the machine</li>
+</ul>
 
 <pre><code>$ curl -fsSLO https://raw.githubusercontent.com/vpavlin/shrooms/master/scripts/install.sh
-$ sudo bash install.sh prepare --name nas          <span class="c"># then redeem an invite</span></code></pre>
+$ sudo bash install.sh prepare --name nas    <span class="c"># install, start, wait for a mesh</span></code></pre>
+
+<p><strong>What you should see</strong></p>
+
+<pre><code>==&gt; checking this machine
+==&gt; fetching ghcr.io/vpavlin/shrooms:latest
+==&gt; generating config (prepare)
+==&gt; installing the service
+
+<span class="p">Installed and running, waiting for a mesh.</span>
+
+On a machine already on one:
+  shrooms invite
+
+and back here:
+  sudo shrooms join --invite &lt;TOKEN&gt; --name nas</code></pre>
 
 <p>
-    Three verbs: <code>init</code> creates a mesh, <code>join &lt;NETWORK-KEY&gt;</code>
+    The machine is now a running daemon with no mesh. <a href="#first">Create
+    one</a> if this is your first device, or <a href="#second">redeem an
+    invite</a> if it is not.
+</p>
+
+<h3>What the installer does</h3>
+
+<p>
+    Three verbs. <code>init</code> creates a mesh, <code>join &lt;NETWORK-KEY&gt;</code>
     joins one you have the key for, and <code>prepare</code> installs and starts
     the daemon with no mesh at all. <code>prepare</code> is the one to pair with
     invites — a daemon without a mesh still holds its control socket and waits
@@ -110,41 +120,46 @@ $ sudo bash install.sh prepare --name nas          <span class="c"># then redeem
 </p>
 
 <p>
+    Nothing is built on the box. The container carries the binary and
+    liblogosdelivery, which needs glibc 2.38 and exists only where Logos
+    Basecamp is installed, so shipping an image rather than a tarball is what
+    makes a Debian 12 machine work at all. It runs with host networking on
+    purpose: behind docker's bridge the address peers observe would be the
+    gateway's and the source port would be rewritten, so traversal would be
+    fighting a layer of NAT that does not exist in reality.
+</p>
+
+<p>
     It touches <code>/etc/shrooms/</code> (config), <code>/var/lib/shrooms/</code>
     (device identity), <code>/run/shrooms/</code> (control socket), a
     <code>shrooms</code> systemd unit and container, and
     <code>/usr/local/bin/shrooms</code> — a wrapper so <code>shrooms status</code>
-    works on the host without anyone remembering the docker incantation.
+    works on the host without anyone remembering the docker incantation. The
+    wrapper runs <code>docker exec -i</code>, so the commands that prompt —
+    <code>invite</code>, <code>set-key</code>, <code>key rotate</code> — work
+    through it.
+</p>
+
+<p>
     Re-running is safe: an existing config and identity are left alone unless
     you pass <code>--force</code>. Losing the identity would mean a new overlay
     address and looking like a different device to every peer, so it is never
-    destroyed by accident.
+    destroyed by accident. On a SELinux host the bind mounts are relabelled
+    shared, without which the daemon cannot bind its control socket and systemd
+    restarts it forever.
 </p>
-
-<div class="warn">
-    <p>
-        <strong>That wrapper does not attach stdin.</strong> It runs
-        <code>docker exec</code> without <code>-i</code>, so any command that
-        prompts — <code>invite</code>, <code>set-key</code>,
-        <code>key rotate</code> — reads end-of-file and exits with
-        <code>error: EOF</code>. Everything that does not prompt
-        (<code>status</code>, <code>paths</code>, <code>join --invite</code>) is
-        fine. When you do need to type something:
-        <code>sudo docker exec -i shrooms shrooms set-key</code>.
-    </p>
-</div>
 
 <p>
     Read <a href="https://github.com/vpavlin/shrooms/blob/master/scripts/install.sh">the script</a>
     before running it as root, as you should with anything fetched this way.
 </p>
 
-<h3>A Linux node, from source</h3>
+<h3>Building from source instead</h3>
 
 <p>
-    Worth it on the machine that will <em>create</em> the mesh, because minting
-    the authority wants a terminal and a home directory that survives — see
-    below.
+    Worth it when you want the binary on the host rather than in a container —
+    and it is what <code>scripts/deploy.sh</code> needs on the machine you drive
+    a remote install from.
 </p>
 
 <pre><code>$ git clone https://github.com/vpavlin/shrooms &amp;&amp; cd shrooms
@@ -156,18 +171,66 @@ $ sudo make install       <span class="c"># binary, libraries, systemd unit, bas
     <code>make install</code> relinks the binary with an rpath pointing at
     <code>/usr/local/lib/shrooms</code>, so it keeps working after you delete
     the checkout. It needs Go 1.23+ with cgo and a C toolchain to build, and
-    glibc 2.38 or newer to run. <code>make deps</code> builds the library from
-    source and currently fails on an upstream compile error; <code>make
-    deps-release</code> downloads a repackaged copy instead, which is the one
-    you want.
+    glibc 2.38 or newer to run — Debian 12 has 2.36 and will not do, which is
+    the case the container exists for. <code>make deps</code> builds the library
+    from source and currently fails on an upstream compile error;
+    <code>make deps-release</code> downloads a repackaged copy instead, which is
+    the one you want.
 </p>
 
-<h3>An Android phone</h3>
+<h2 id="android">An Android phone</h2>
+
+<p><strong>Prerequisites</strong></p>
+
+<ul>
+    <li>an Android 8 or newer phone, arm64</li>
+    <li>an F-Droid client installed</li>
+    <li>an invite from a machine already on the mesh, or its network key</li>
+</ul>
+
+<pre><code><span class="c"># F-Droid, Settings, Repositories, add:</span>
+http://apps.vpavlin.xyz/fdroid/repo
+
+<span class="c"># then install "Shrooms" from the repository's app list</span></code></pre>
+
+<p><strong>What you should see</strong></p>
 
 <p>
-    There is no Play Store listing. Two routes, and both are the author's rather
-    than a distribution channel:
+    The app on the launcher, opening on a single join screen with one field. Put
+    an invite token or a network key into it — it takes either and tells them
+    apart itself — or scan the QR that <code>shrooms invite</code> prints. After
+    joining, the roster fills with the same peers the daemon reports, and
+    Android's VPN key appears in the status bar.
 </p>
+
+<h3>Where it comes from, and why not the Play Store</h3>
+
+<p>
+    That F-Droid repository is <strong>self-hosted</strong>. There is no Google
+    Play listing and there is not going to be one — the repository is the
+    author's own, published alongside the other Logos modules on the same host,
+    and adding it is a decision you are making about who you take software from.
+</p>
+
+<p>
+    <strong>arm64 only.</strong> There is no x86_64 build of the delivery
+    library, so an emulator has no node and the app is a phone-shaped thing to
+    test on a phone.
+</p>
+
+<p>
+    The app is a Compose UI and a <code>VpnService</code> around the same Go core
+    as the daemon — nothing in <code>internal/</code> is reimplemented. It joins
+    several meshes at once and roams between wifi and mobile data without you
+    touching it: direct on wifi, relayed on a carrier's CGNAT, and the transition
+    survives in both directions.
+    <a href="https://github.com/vpavlin/shrooms/blob/master/ANDROID.md">ANDROID.md</a>
+    is the build in detail, and
+    <a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/016-android-reuses-the-go-core.md">ADR-016</a>
+    is why it reuses the core rather than reimplementing it.
+</p>
+
+<h3>Building the APK yourself</h3>
 
 <pre><code>$ make apk                       <span class="c"># android/shrooms.apk, debug-signed</span>
 $ adb install -r android/shrooms.apk
@@ -175,34 +238,81 @@ $ adb install -r android/shrooms.apk
 $ make fdroid                    <span class="c"># build unsigned, sign on the repo host, publish</span></code></pre>
 
 <p>
-    <code>make fdroid</code> publishes to a <strong>self-hosted F-Droid
-    repository</strong> — a personal one, on a machine named by
-    <code>FDROID_HOST</code>, not a public index anybody can add. The signing
-    key lives on that host and never leaves it, so the APK is built here
-    unsigned and signed there. If you have not set such a repository up, there
-    is nothing to point F-Droid at, and <code>make apk</code> is your install.
+    <code>make apk</code> needs the Android SDK and an NDK; it builds the
+    <code>.aar</code> in a container first, because gomobile wants a JDK and a
+    newer Go than the core deliberately does. <code>make fdroid</code> is the
+    publishing half and only useful if you run a repository of your own: the
+    signing key lives on that host and never leaves it, so the APK is built here
+    unsigned and signed there.
+</p>
+
+<h2 id="desktop">A desktop, in Logos Basecamp</h2>
+
+<p><strong>Prerequisites</strong></p>
+
+<ul>
+    <li>Logos Basecamp installed</li>
+    <li>a shrooms daemon already running on this same machine</li>
+    <li><code>socket_group</code> set in <code>/etc/shrooms/config.toml</code> to
+    a group you are in</li>
+</ul>
+
+<pre><code>$ curl -fsSLO https://github.com/vpavlin/shrooms/releases/download/shrooms-v0.3.0/shrooms-0.3.0.lgx
+<span class="c"># and the core module it depends on</span>
+$ curl -LO https://github.com/vpavlin/shrooms/releases/download/shrooms_core-v0.2.0/shrooms_core-0.2.0.lgx
+
+<span class="c"># then in Basecamp: Package Manager, Install from file, pick the .lgx</span></code></pre>
+
+<p><strong>What you should see</strong></p>
+
+<p>
+    Shrooms in Basecamp's app list, and opening it shows the same roster
+    <code>shrooms status</code> prints in a terminal: peers, whether each is
+    direct or relayed, throughput, and how long each took to connect. If the
+    socket group is not set it says so, rather than showing an empty mesh.
+</p>
+
+<h3>Why it needs a companion module</h3>
+                <p>
+                    Two packages, versioned separately:
+                    <code>shrooms</code> is the view and <code>shrooms_core</code>
+                    is the part that talks to the daemon. The view declares the
+                    dependency, so a repository installs both — but if you are
+                    fetching <code>.lgx</code> files by hand, fetch both, or you
+                    get an interface whose buttons do nothing.
+                </p>
+
+<p>
+    The view reads the daemon through <code>shrooms_core</code>, a companion
+    module installed alongside it. That indirection is not ceremony. A
+    <code>ui_qml</code> app runs inside a sandbox where a deny-all network
+    manager blocks every outgoing request and <code>XMLHttpRequest</code> refuses
+    local files, so neither a status file nor a port is reachable from the view,
+    whatever their permissions. A Logos module runs in its own process and is not
+    sandboxed, which is the route Basecamp prescribes: it does one request over
+    the daemon's control socket and hands back the JSON.
 </p>
 
 <p>
-    arm64 only: there is no x86_64 build of the delivery library, so an emulator
-    has no node. The app runs the same Go core as the daemon — nothing in
-    <code>internal/</code> is reimplemented — and joins by scanning the QR that
-    <code>shrooms invite</code> prints.
-    <a href="https://github.com/vpavlin/shrooms/blob/master/ANDROID.md">ANDROID.md</a>
-    is the build in detail.
+    <strong>The socket group is a real grant, like <code>docker</code>'s.</strong>
+    Anyone in it can read your mesh's control plane and change this device's
+    behaviour. Name a group you would trust with that — on a personal machine,
+    your own login — and leave it unset on a shared one. The socket is
+    <code>0660</code> and the daemon runs as root for <code>CAP_NET_ADMIN</code>,
+    which is what makes the group half of that mean anything.
 </p>
 
-<h3>The Basecamp module</h3>
-
-<pre><code>$ make basecamp-check     <span class="c"># load the real view offscreen against a fixture</span>
-$ make basecamp-lgx       <span class="c"># build the installable package</span>
-$ make basecamp-publish   <span class="c"># and put it where a device can install it</span></code></pre>
-
 <p>
-    <code>basecamp-lgx</code> builds the portable variant through nix; CI builds
-    it on every push and uploads it as an artifact. <code>basecamp-publish</code>
-    copies the package next to the F-Droid repo on the same machine, under a
-    stable name and a versioned one.
+    It can change what this device decides for itself: its name, relay or light
+    node, published services, which meshes run, and leaving one. What it
+    <strong>cannot do is admit anybody</strong>, and that is the line the design
+    draws. Membership is a credential signed by an admin key the daemon has
+    never held — a passphrase-protected file in your home directory — so nothing
+    reachable through that socket can make a device a member or remove one.
+    Admission stays with <code>shrooms invite</code> and a passphrase prompt,
+    which is where the friction belongs.
+    <a href="adr/025-control-from-a-desktop-app.html">ADR-025</a> is the whole
+    argument.
 </p>
 
 <div class="note">
@@ -214,24 +324,123 @@ $ make basecamp-publish   <span class="c"># and put it where a device can instal
     </p>
 </div>
 
+<h3>Building the package yourself</h3>
+
+<pre><code>$ make basecamp-check     <span class="c"># load the real view offscreen against a fixture</span>
+$ make basecamp-lgx       <span class="c"># build the installable package</span>
+$ make basecamp-publish   <span class="c"># cut a GitHub release carrying it</span></code></pre>
+
 <p>
-    The view reads the daemon through <code>shrooms_core</code>, a companion
-    module installed alongside it, because a QML app runs in a sandbox that
-    blocks both network requests and local file reads. It can change this
-    device's own settings — name, relay or light node, published services, which
-    meshes run — and it <strong>cannot admit anybody</strong>. Membership is a
-    credential signed by a key the daemon has never held, so nothing reachable
-    through that socket can make a device a member. It also needs
-    <code>socket_group</code> set, or it says so rather than showing an empty
-    mesh.
+    <code>basecamp-lgx</code> builds the portable variant through nix, because
+    the plain one can reference paths in the nix store of the machine that built
+    it — fine for a dev loop and useless as a download. CI builds it on every
+    push and uploads it as an artifact. <code>basecamp-publish</code> uploads two
+    assets to a release: a versioned name so an install can be pinned, and the
+    stable one linked above.
+</p>
+
+<h2 id="cloud">A cloud server</h2>
+
+<p><strong>Prerequisites</strong></p>
+
+<ul>
+    <li>a KVM VPS — OpenVZ and LXC hosts often have no <code>/dev/net/tun</code>,
+    and it is worth checking before you pay</li>
+    <li><code>docker</code> or <code>podman</code>, and root</li>
+    <li>one inbound UDP port, 51820 by default</li>
+</ul>
+
+<pre><code>$ ssh root@VPS_IP
+$ curl -fsSLO https://raw.githubusercontent.com/vpavlin/shrooms/master/scripts/install.sh
+$ sudo bash install.sh prepare --name vps --relay
+$ ufw allow 51820/udp                        <span class="c"># or your firewall's equivalent</span></code></pre>
+
+<p><strong>What you should see</strong></p>
+
+<pre><code><span class="p">Installed and running, waiting for a mesh.</span>
+
+This node relays. Open its UDP port if a firewall is in the way:
+  ufw allow 51820/udp    # or the equivalent</code></pre>
+
+<p>
+    Then <a href="#second">redeem an invite</a> from a machine already on the
+    mesh. Resource use is negligible — a measured node acting as a relay sits at
+    about 20 MiB RSS and one to two per cent of one core — so what matters on a
+    VPS is bandwidth allowance and latency, since relayed traffic takes a detour
+    through it.
+</p>
+
+<h3>Why a reachable member matters</h3>
+
+<p>
+    A node behind NAT learns its own public address by <em>reflection</em>: a
+    peer's reply echoes the address that peer observed. That needs a peer
+    outside your NAT. On a mesh whose members are all behind one router, no node
+    can learn its public address at all, every candidate it announces is a LAN
+    address, and the mesh works from the sofa and not from the street. One
+    reachable member is the anchor that fixes this — and, being reachable, it is
+    also what can relay for two peers that cannot reach each other directly.
+</p>
+
+<p>
+    <strong>You probably do not need a VPS.</strong> Any node with a reachable
+    address can relay: set <code>relay = "true"</code> in its config and restart
+    it. Nothing else needs configuring — the relay advertises itself in its
+    ordinary announce and every other node picks it up, so there are no relay
+    addresses to distribute and its IP can change freely. An office box with a
+    port forward or a home server on a static address covers every pair that
+    cannot connect directly.
+</p>
+
+<p>
+    A node will also <strong>ask the router for a way in</strong> — PCP first,
+    then NAT-PMP, both on the gateway's UDP 5351. That is on by default
+    (<code>port_mapping</code>), and a laptop behind a domestic NAT has been
+    granted a mapping, announced it, and been dialled directly by a phone on
+    mobile data, on a mesh with no publicly reachable member at all. Whether
+    your router answers is between you and your router; when it does not,
+    nothing is worse than before.
+</p>
+
+<p>
+    Two things it does not fix. Carrier-grade NAT can be neither punched nor
+    mapped, so a phone on mobile data needs a relay somewhere in the mesh. And
+    punching between two NATed peers is still unproven — a reachable member is
+    what makes the awkward cases work today.
+    <a href="adr/012-relay-hosting.html">ADR-012</a> covers who should host one.
+</p>
+
+<h3>Driving the install from your own machine</h3>
+
+<p>
+    <code>scripts/deploy.sh</code> is the alternative when you have the
+    repository checked out and would rather not type on the remote at all. It
+    wants docker on the far side rather than podman, and a built
+    <code>./bin/shrooms</code> here.
+</p>
+
+<pre><code>$ ./scripts/deploy.sh root@VPS_IP --relay --name vps --key &lt;NETWORK-KEY&gt;
+$ ./scripts/deploy.sh root@VPS_IP --init --relay --name vps   <span class="c"># or create the mesh</span></code></pre>
+
+<p>
+    With <code>--init</code> the config is generated <em>locally</em>, by your
+    own binary, and only then copied over — which is why the passphrase prompt
+    works and why the admin key stays on your machine rather than on the VPS.
+    The config travels over ssh stdin and lands with <code>install -m600</code>,
+    so the network key is never readable at a predictable path in the remote's
+    <code>/tmp</code>. The remote generates its own device identity, so no
+    private key crosses the wire. It refuses to overwrite an existing config
+    without <code>--force</code>, pulls the published image on the remote by
+    default, and builds from your working tree when you set
+    <code>BUILD_IMAGE=1</code>.
 </p>
 
 <h2 id="first">The first mesh</h2>
 
 <p>
-    One command. It mints the network key, a pair of admin keys, and this
-    device's own credential, then asks twice for a passphrase to encrypt the
-    admin key at rest:
+    One command, on the machine that will hold the admin key. It mints the
+    network key, a pair of admin keys, and this device's own credential, then
+    asks twice for a passphrase to encrypt the admin key at rest:
 </p>
 
 <pre><code>$ sudo shrooms init --name laptop
@@ -260,7 +469,7 @@ Store it away from this machine. A password manager, a Keycard, paper.</code></p
     Two admin keys, always, because the set is fixed at mint: the mesh id
     commits to it and the address prefix derives from the id, so adding a key
     later would re-address every node. One stays here, encrypted with the
-    passphrase you just typed. The other is the recovery key, printed once and
+    passphrase you typed a moment ago. The other is the recovery key, printed once and
     <strong>never written anywhere</strong> — if you skip past it and later lose
     <code>~/.config/shrooms/admin.json</code>, you cannot enrol another device
     into this mesh again.
@@ -274,23 +483,16 @@ Store it away from this machine. A password manager, a Keycard, paper.</code></p
 
 <pre><code>$ sudo systemctl enable --now shrooms</code></pre>
 
-<div class="warn">
-    <p>
-        <strong>Do not create the mesh through the container installer.</strong>
-        <code>install.sh init</code> runs <code>shrooms init</code> inside a
-        throwaway container with stdin closed, so the passphrase prompt reads
-        end-of-file and it stops at <code>error: EOF</code> — and even fed a
-        passphrase, the admin key would be written inside that container and
-        vanish with it.
-    </p>
-    <p>
-        On a box where that is the only option,
-        <code>sudo bash install.sh init --no-admin</code> works: the flags after
-        the verb reach <code>shrooms</code> unchanged. That mesh has no
-        authority, so membership is the network key alone and nothing can be
-        revoked short of rotating it for everybody.
-    </p>
-</div>
+<p>
+    The container installer takes the same verb —
+    <code>sudo bash install.sh init --name laptop</code> — and works the same
+    way: the setup container is given a stdin so the passphrase prompt has
+    somewhere to read from, and your own <code>~/.config/shrooms</code> is
+    mounted into it so the admin key survives the container it was minted in.
+    <code>--no-admin</code> creates a mesh with no authority at all, where
+    membership is the network key alone and nothing can be revoked short of
+    rotating it for everybody.
+</p>
 
 <h2 id="second">The second device</h2>
 
@@ -400,70 +602,6 @@ The daemon was waiting for this and is bringing the mesh up now.</code></pre>
     </p>
 </div>
 
-<h2 id="vps">A reachable member, and whether you need a VPS</h2>
-
-<p>
-    A node behind NAT learns its own public address by <em>reflection</em>: a
-    peer's reply echoes the address that peer observed. That needs a peer
-    outside your NAT. On a mesh whose members are all behind one router, no node
-    can learn its public address at all, every candidate it announces is a LAN
-    address, and the mesh works from the sofa and not from the street. One
-    reachable member is the anchor that fixes this — and, being reachable, it is
-    also what can relay for two peers that cannot reach each other directly.
-</p>
-
-<pre><code>$ ./scripts/deploy.sh root@VPS_IP --init --relay --name vps
-$ ssh root@VPS_IP 'ufw allow 51820/udp'    <span class="c"># or your firewall's equivalent</span></code></pre>
-
-<p>
-    <code>deploy.sh</code> ships a <strong>container image, not a binary</strong>,
-    because the delivery library needs glibc 2.38 and a tarball would fail on
-    anything older. It uses host networking on purpose: behind docker's bridge
-    the address peers observe would be the gateway's and the source port would
-    be rewritten, so traversal would be fighting a layer of NAT that does not
-    exist in reality. It refuses to overwrite an existing config without
-    <code>--force</code>, and the remote generates its own device identity, so
-    no private key crosses the wire.
-</p>
-
-<p>
-    With <code>--init</code> the config is generated <em>locally</em>, by your
-    own <code>./bin/shrooms</code>, and only then copied over — which is why the
-    passphrase prompt works and why the admin key stays on your machine rather
-    than on the VPS. It pulls the published image on the remote host by default;
-    set <code>BUILD_IMAGE=1</code> to build from your working tree instead,
-    which is what you want when testing an unpushed change.
-</p>
-
-<p>
-    <strong>You probably do not need a VPS.</strong> Any node with a reachable
-    address can relay: set <code>relay = "true"</code> in its config and restart
-    it. Nothing else needs configuring — the relay advertises itself in its
-    ordinary announce and every other node picks it up, so there are no relay
-    addresses to distribute and its IP can change freely. An office box with a
-    port forward or a home server on a static address covers every pair that
-    cannot connect directly.
-</p>
-
-<p>
-    A node will also <strong>ask the router for a way in</strong> — PCP first,
-    then NAT-PMP, both on the gateway's UDP 5351. That is on by default
-    (<code>port_mapping</code>), and on 2026-08-12 a laptop behind a domestic
-    NAT was granted a mapping, announced it, and was dialled directly by a phone
-    on mobile data, on a mesh with no publicly reachable member at all. Whether
-    your router answers is between you and your router; when it does not,
-    nothing is worse than before.
-</p>
-
-<p>
-    Two things it does not fix. Carrier-grade NAT can be neither punched nor
-    mapped, so a phone on mobile data needs a relay somewhere in the mesh. And
-    punching between two NATed peers is still unproven — a reachable member is
-    what makes the awkward cases work today.
-    <a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/012-relay-hosting.md">ADR-012</a>
-    covers who should host one.
-</p>
-
 <h2 id="check">Check it worked</h2>
 
 <p>
@@ -537,7 +675,7 @@ reflexive addresses (as peers observe us):
 
 <tr>
     <td>peer <code>online</code> but <code>no handshake</code></td>
-    <td>traversal, not discovery: it is announced, you just cannot reach it</td>
+    <td>traversal, not discovery: it is announced, you cannot reach it</td>
     <td><code>shrooms paths</code>; open the UDP port on whichever side should be reachable; make one member reachable if neither is</td>
 </tr>
 
@@ -562,7 +700,7 @@ reflexive addresses (as peers observe us):
 <tr>
     <td><code>error: EOF</code> from a prompt</td>
     <td>the command wanted a passphrase or a key and stdin was closed</td>
-    <td>run it in a terminal. Through the container wrapper, use <code>sudo docker exec -i shrooms shrooms …</code></td>
+    <td>run it in a terminal rather than from a script, a unit or a pipe. <code>set-key</code> is the exception: it reads stdin deliberately when there is no terminal</td>
 </tr>
 
 <tr>
@@ -575,6 +713,12 @@ reflexive addresses (as peers observe us):
     <td><code>missing liblogosdelivery.h</code> when building</td>
     <td>the library is not where the build expects it</td>
     <td><code>make deps-release</code>, or <code>make deps-basecamp HDR=…</code> to reuse a local Basecamp install</td>
+</tr>
+
+<tr>
+    <td>the Basecamp view shows nothing</td>
+    <td>it cannot reach the daemon's control socket, or the daemon is not running here</td>
+    <td>the view says which; set <code>socket_group</code> to a group you are in and restart the daemon. The module also needs <code>shrooms_core</code> installed beside it</td>
 </tr>
 </table>
 

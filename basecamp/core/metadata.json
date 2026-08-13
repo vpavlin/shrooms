@@ -1,11 +1,11 @@
 {
   "name": "shrooms_core",
   "display_name": "Shrooms Core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "core",
   "interface": "universal",
   "category": "network",
-  "description": "Reads a Shrooms daemon's status and changes its settings, over the daemon's unix control socket. Exists because a ui_qml app is sandboxed and may not open a socket or read outside its own directory; this runs in its own process and can. What it may change is bounded by the socket's group and by the daemon itself: settings, meshes on and off, leaving \u2014 never who is admitted, which needs an admin key the daemon has never held (ADR-025).",
+  "description": "Talks to a Shrooms daemon over its unix control socket: reads status, and changes what the daemon can change on its own \u2014 name, node mode, published services, announcing them, meshes on and off, leaving one. Never who is admitted, which needs an admin key the daemon has never held (ADR-025). Exists because a ui_qml app is sandboxed and may not open a socket; this runs in its own process and can.",
   "main": "shrooms_core_plugin",
   "dependencies": [],
   "nix": {

@@ -239,44 +239,48 @@ basecamp-lgx:
 	nix build ./basecamp#lgx-portable --print-build-logs
 	@find -L result -name '*.lgx' -exec ls -lL {} \;
 
-## Build the Basecamp module and publish it where a device can install it.
+## Build the core module — the part that talks to the daemon.
 ##
-## A GitHub release, not a file on a LAN host. An .lgx is a package rather than
-## a repository and has no update mechanism of its own, so "published" means a
-## stable URL somebody can fetch from anywhere — which a machine at
-## 192.168.0.x is not. This also matches how the other Basecamp modules on
-## apps.vpavlin.xyz are distributed.
+## Its own flake, because it is a different kind of package: a native plugin
+## rather than a QML view. The view declares a dependency on it and is useless
+## without it, which is the reason they are always published together below.
+basecamp-core-lgx:
+	nix build ./basecamp/core#lgx-portable --print-build-logs --out-link result-core
+	@find -L result-core -name '*.lgx' -exec ls -lL {} \;
+
+## Publish both Basecamp packages, everywhere, every time.
 ##
-## Both places, every time: the GitHub release anybody can fetch, and the LAN
-## repository Basecamp on this network actually installs from. They drift the
-## moment they are separate commands.
+## Both packages: the view and the core it depends on. Publishing the view
+## alone leaves Basecamp running a new interface against an old plugin, which
+## fails as buttons that do nothing rather than as an error anybody can read.
+##
+## Both places: the GitHub release anybody can fetch, and the LAN repository
+## Basecamp on this network installs from. Basecamp installs from an index, so
+## a file copied next to one is not published — that mistake left a three-day-
+## old module on the desktop while the release was current.
 ##
 ## Named the way the other modules on apps.vpavlin.xyz are — <name>-v<version>
-## for the tag, <name>-<version>.lgx for the asset — so that adding shrooms to
-## that repository's index later is a URL and nothing else. Two assets: the
-## versioned one an index would point at, and an unversioned one to hand
-## somebody directly.
-basecamp-publish: basecamp-lgx
-	@lgx=$$(readlink -f result/*.lgx); \
-	ver=$$(tar xzOf "$$lgx" manifest.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])'); \
-	name=$$(tar xzOf "$$lgx" manifest.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])'); \
-	tag=$$name-v$$ver; \
-	tmp=$$(mktemp -d); \
-	cp "$$lgx" "$$tmp/$$name-$$ver.lgx"; \
-	cp "$$lgx" "$$tmp/$$name.lgx"; \
-	echo "==> publishing $$tag"; \
-	gh release view "$$tag" >/dev/null 2>&1 \
-	  && gh release upload "$$tag" "$$tmp"/*.lgx --clobber \
-	  || gh release create "$$tag" "$$tmp"/*.lgx \
-	       --title "$$name $$ver" \
-	       --notes "The shrooms Basecamp module: reads a running daemon over its control socket, and changes what the daemon can change on its own (ADR-025). Install through Basecamp." ; \
-	rm -rf "$$tmp"; \
-	echo "    https://github.com/vpavlin/shrooms/releases/download/$$tag/$$name-$$ver.lgx"
-	@# The LAN repository too, always. Publishing to one and not the other is
-	@# how Basecamp ended up offering a version that was three days old while
-	@# the release was current — and the machine doing the publishing is the
-	@# one that installs from it.
-	@./scripts/publish-lan.sh
+## for the tag, <name>-<version>.lgx for the asset — so adding these to that
+## repository's index later is a URL and nothing else.
+basecamp-publish: basecamp-lgx basecamp-core-lgx
+	@set -e; \
+	for lgx in $$(readlink -f result/*.lgx) $$(readlink -f result-core/*.lgx); do \
+	  name=$$(tar xzOf "$$lgx" manifest.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])'); \
+	  ver=$$(tar xzOf "$$lgx" manifest.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])'); \
+	  tag=$$name-v$$ver; \
+	  tmp=$$(mktemp -d); \
+	  cp "$$lgx" "$$tmp/$$name-$$ver.lgx"; \
+	  cp "$$lgx" "$$tmp/$$name.lgx"; \
+	  echo "==> publishing $$tag"; \
+	  gh release view "$$tag" >/dev/null 2>&1 \
+	    && gh release upload "$$tag" "$$tmp"/*.lgx --clobber \
+	    || gh release create "$$tag" "$$tmp"/*.lgx \
+	         --title "$$name $$ver" \
+	         --notes "A Basecamp package for shrooms. Install through Basecamp; the view and the core module are versioned separately and the view needs the core." ; \
+	  rm -rf "$$tmp"; \
+	  echo "    https://github.com/vpavlin/shrooms/releases/download/$$tag/$$name-$$ver.lgx"; \
+	  ./scripts/publish-lan.sh "$$lgx"; \
+	done
 
 ## Build the .aar for the Android app. Container-based: gomobile needs a JDK
 ## and Go >= 1.25, which the core deliberately does not.

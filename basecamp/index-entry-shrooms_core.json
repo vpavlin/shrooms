@@ -1,0 +1,32 @@
+{
+  "name": "shrooms_core",
+  "versions": [
+    {
+      "publisherRef": "shrooms_core-v0.2.0",
+      "url": "https://github.com/vpavlin/shrooms/releases/download/shrooms_core-v0.2.0/shrooms_core-0.2.0.lgx",
+      "size": 4048778,
+      "sha256": "e313bd84b5b45daa459fa82e40478a0a12fe57d4b64c19a094a33eeb6cf0e03a",
+      "rootHash": "fddabe809c7f9e93d8a3a92ed3133469b99ccef798b0966d3e4e2ef970497bf0",
+      "manifest": {
+        "author": "",
+        "category": "network",
+        "dependencies": [],
+        "description": "Talks to a Shrooms daemon over its unix control socket: reads status, and changes what the daemon can change on its own \u2014 name, node mode, published services, announcing them, meshes on and off, leaving one. Never who is admitted, which needs an admin key the daemon has never held (ADR-025). Exists because a ui_qml app is sandboxed and may not open a socket; this runs in its own process and can.",
+        "display_name": "Shrooms Core",
+        "hashes": {
+          "root": "fddabe809c7f9e93d8a3a92ed3133469b99ccef798b0966d3e4e2ef970497bf0",
+          "variants": "6e0935016548531901b45dcf7ee5f91dac905a124d33e852575f798cad6ce7b2",
+          "variants/linux-amd64": "3b296cb23c69134e72611cd43c8cea2eef7cef7d30e4410a0b366696982511a6"
+        },
+        "icon": "",
+        "main": {
+          "linux-amd64": "shrooms_core_plugin.so"
+        },
+        "manifestVersion": "0.4.0",
+        "name": "shrooms_core",
+        "type": "core",
+        "version": "0.2.0"
+      }
+    }
+  ]
+}

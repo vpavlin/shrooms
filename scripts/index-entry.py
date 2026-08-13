@@ -22,11 +22,17 @@ import sys
 
 def main():
     root = pathlib.Path(__file__).resolve().parent.parent
-    found = sorted((root / "result").glob("*.lgx"))
-    if not found:
-        sys.exit("no .lgx in result/ — run `make basecamp-lgx` first")
 
-    lgx = pathlib.Path(found[0].resolve())
+    # A path may be given, because there are two packages — the view and the
+    # core module it depends on — and "whatever is in result/" is whichever was
+    # built last.
+    if len(sys.argv) > 1:
+        lgx = pathlib.Path(sys.argv[1]).resolve()
+    else:
+        found = sorted((root / "result").glob("*.lgx"))
+        if not found:
+            sys.exit("no .lgx in result/ — run `make basecamp-lgx` first")
+        lgx = pathlib.Path(found[0].resolve())
     raw = lgx.read_bytes()
     manifest = json.loads(subprocess.run(
         ["tar", "xzOf", str(lgx), "manifest.json"],
@@ -46,7 +52,7 @@ def main():
         }],
     }
 
-    out = root / "basecamp/index-entry.json"
+    out = root / f"basecamp/index-entry-{name}.json"
     out.write_text(json.dumps(entry, indent=2) + "\n")
     print(f"wrote {out.relative_to(root)} for {name} {version}")
 

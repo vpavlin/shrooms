@@ -22,8 +22,12 @@ DIR=${LAN_DIR:-/home/vpavlin/perun/dist/lan}
 # What Basecamp fetches from, which is not the path we write to.
 BASE=${LAN_BASE:-https://192.168.0.152:8443}
 
-LGX=$(readlink -f result/*.lgx 2>/dev/null || true)
-[ -n "$LGX" ] || { echo "no .lgx in result/ — run 'make basecamp-lgx' first" >&2; exit 1; }
+# A package may be named, because there are two: the view, and the core module
+# it depends on. Publishing one without the other is how a view ends up talking
+# to a core that does not have the methods it calls.
+LGX=${1:-$(readlink -f result/*.lgx 2>/dev/null || true)}
+[ -n "$LGX" ] || { echo "no .lgx given and none in result/" >&2; exit 1; }
+LGX=$(readlink -f "$LGX")
 
 read -r NAME VERSION <<<"$(tar xzOf "$LGX" manifest.json |
     python3 -c 'import json,sys; m=json.load(sys.stdin); print(m["name"], m["version"])')"
@@ -40,10 +44,10 @@ scp -q "$LGX" "$HOST:$DIR/$NAME.lgx"
 ssh "$HOST" "chmod 644 '$DIR/$NAME-$VERSION.lgx' '$DIR/$NAME.lgx'"
 
 # Computed here, from the file that was just built, and applied there.
-python3 scripts/index-entry.py >/dev/null
-ENTRY=$(python3 -c "
-import json
-e = json.load(open('basecamp/index-entry.json'))
+python3 scripts/index-entry.py "$LGX" >/dev/null
+ENTRY=$(NAME="$NAME" python3 -c "
+import json, os
+e = json.load(open('basecamp/index-entry-' + os.environ['NAME'] + '.json'))
 e['versions'][0]['url'] = '$BASE/$NAME-$VERSION.lgx'
 print(json.dumps(e))
 ")
