@@ -122,9 +122,9 @@ echo "$out" | grep -q "MODE=Edge RUNNING=Core ANNOUNCE=true" \
     || { echo "FAIL: did not read the configured settings alongside the running ones"; exit 1; }
 # The two states between a click and the restart that applies it. Each of these
 # belonged to neither list once, and each time the section emptied or doubled.
-echo "$out" | grep -q "mesh pending on=true .*state=\[on · starts on the next restart\]" \
+echo "$out" | grep -q "mesh pending on=true .*state=\[starts at restart\]" \
     || { echo "FAIL: a mesh switched on but not yet started is not shown as pending"; exit 1; }
-echo "$out" | grep -q "mesh leaving .*state=\[left · stops on the next restart\]" \
+echo "$out" | grep -q "mesh leaving .*state=\[left · stops at restart\]" \
     || { echo "FAIL: a mesh left but still running is not shown as leaving"; exit 1; }
 
 # Inside Basecamp only the sibling file resolves; the two below are for running
