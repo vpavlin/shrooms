@@ -1,7 +1,7 @@
 {
   "name": "shrooms",
   "display_name": "Shrooms",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "type": "ui_qml",
   "category": "network",
   "description": "Watch and run a Shrooms mesh: which peers are reachable, direct or relayed, throughput, what every device offers, when each credential expires, and the daemon's own log. Changes what the daemon can change by itself \u2014 name, node mode, services, meshes on and off, joining and leaving one \u2014 and restarts it to apply them. Never who is admitted: that needs an admin key the daemon has never held.",
