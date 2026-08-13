@@ -79,6 +79,30 @@
     animation: drift-a 73s ease-in-out infinite reverse;
 }
 
+/* A lattice, very faint, breathing.
+   Of the four shapes people reliably report on psilocybin — Klüver called them
+   form constants: lattices and honeycombs, tunnels, spirals, cobwebs — the
+   honeycomb is the one that belongs here anyway, because it is also what a
+   mesh looks like drawn flat. So this is not a costume: it is the same figure
+   the graph draws, at one twentieth of the contrast, slowly breathing. */
+.lattice {
+    position: fixed;
+    inset: -10vh -10vw;
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0.055;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='104' viewBox='0 0 120 104'%3E%3Cg fill='none' stroke='%2335F0A0' stroke-width='1.2'%3E%3Cpath d='M30 0 L0 17 L0 52 L30 69 L60 52 L60 17 Z'/%3E%3Cpath d='M90 0 L60 17 L60 52 L90 69 L120 52 L120 17 Z'/%3E%3Cpath d='M30 69 L0 86 L0 121 L30 138 L60 121 L60 86 Z'/%3E%3Cpath d='M90 69 L60 86 L60 121 L90 138 L120 121 L120 86 Z'/%3E%3C/g%3E%3C/svg%3E");
+    animation: swell 27s ease-in-out infinite;
+}
+
+/* Surfaces that breathe rather than sit still is the other thing people
+   describe — walls and floors undulating gently. A one-per-cent scale is
+   enough to suggest it and small enough that nobody trying to read has to
+   fight it. */
+@keyframes swell {
+    50% { transform: scale(1.035) translateY(-8px); opacity: 0.085; }
+}
+
 /* Grain, so the gradients have a surface instead of banding across a wide
    screen. An SVG turbulence rather than an image: no request, no asset. */
 .grain {
@@ -93,6 +117,15 @@
 
 html { scroll-behavior: smooth; }
 
+/* The type is the app's, not a web designer's idea of it (Theme.kt):
+   monospace throughout, because addresses and keys are read character by
+   character and a proportional font makes fd3b and fd8b look alike; a large
+   title in Light with negative tracking; and section labels that are small,
+   uppercase and widely tracked rather than big and bold. The app looks the way
+   it does because of that contrast — one quiet large thing, one quiet small
+   thing — and the first version of this site threw it away for ordinary web
+   headings. */
+
 body {
     margin: 0;
     /* A wash under the aurora, so the dark is never flat black. */
@@ -103,8 +136,8 @@ body {
         var(--void);
     color: var(--bone);
     font-family: var(--mono);
-    font-size: 15px;
-    line-height: 1.65;
+    font-size: 14px;
+    line-height: 1.7;
     -webkit-font-smoothing: antialiased;
 }
 
@@ -129,6 +162,8 @@ body {
 /* --- masthead ---------------------------------------------------------- */
 
 nav {
+    letter-spacing: 0.08em;
+    text-transform: lowercase;
     backdrop-filter: blur(10px);
     position: sticky;
     top: 0;
@@ -197,12 +232,14 @@ nav .spacer { flex: 1 1 auto; }
 
 /* --- type -------------------------------------------------------------- */
 
-h1, h2, h3 { line-height: 1.25; font-weight: 600; }
+h1, h2, h3 { line-height: 1.25; }
 
 h1 {
-    font-size: clamp(2.3rem, 6.5vw, 3.8rem);
-    margin: 0.6em 0 0.2em;
-    letter-spacing: -0.02em;
+    font-size: clamp(2.1rem, 6vw, 3.4rem);
+    margin: 0.5em 0 0.25em;
+    /* displaySmall: Light, and tracked in rather than out. */
+    font-weight: 300;
+    letter-spacing: -0.03em;
     /* The one place the colour is allowed to be the point. */
     background: linear-gradient(100deg,
         var(--phosphor), var(--chartreuse), var(--blossom),
@@ -215,9 +252,11 @@ h1 {
 }
 
 h2 {
-    font-size: 1.35rem;
-    margin: 3.2em 0 0.6em;
+    font-size: 1.15rem;
+    font-weight: 500;
+    margin: 3.4em 0 0.7em;
     color: var(--bone);
+    letter-spacing: -0.01em;
     display: flex;
     align-items: baseline;
     gap: 10px;
@@ -235,12 +274,24 @@ h2::before {
     animation: breathe 6s ease-in-out infinite;
 }
 
-h3 { font-size: 1.05rem; margin: 2.2em 0 0.4em; color: var(--bone); }
+/* labelSmall, exactly: 10sp, tracked 1.2, medium. It is what every section
+   heading in the app is, and the reason its screens read as calm. */
+h3 {
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    margin: 2.4em 0 0.5em;
+    color: var(--ash);
+}
+
+.card h3 { color: var(--bone); }
 
 p, li { max-width: var(--measure); color: #b9c2ca; }
 
 .lede {
-    font-size: 1.15rem;
+    font-size: 1.05rem;
+    line-height: 1.6;
     color: var(--bone);
     max-width: var(--measure);
 }
@@ -391,7 +442,7 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 3em 0; }
     box-shadow: 0 10px 40px rgba(154, 123, 255, 0.16);
 }
 
-.card h3 { margin: 0 0 0.3em; font-size: 0.98rem; }
+.card h3 { margin: 0 0 0.4em; font-size: 0.72rem; }
 .card p { margin: 0; font-size: 0.9rem; color: var(--ash); max-width: none; }
 .card a { text-decoration: none; }
 
@@ -422,7 +473,13 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 3em 0; }
 
 table { border-collapse: collapse; width: 100%; margin: 1.4em 0; font-size: 13px; }
 th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
-th { color: var(--ash); font-weight: 600; letter-spacing: 0.03em; }
+th {
+    color: var(--ash);
+    font-weight: 500;
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+}
 td code { white-space: nowrap; }
 
 /* --- status dots, reused from the app's meaning ------------------------ */
@@ -449,7 +506,7 @@ footer a { color: var(--ash); }
 @media (prefers-reduced-motion: reduce) {
     #field { display: none; }
     html { scroll-behavior: auto; }
-    .aurora i, h1, h2::before, .shroom, .shroom * { animation: none; }
+    .aurora i, h1, h2::before, .shroom, .shroom *, .lattice { animation: none; }
     .aurora { opacity: 0.35; }
 }
 
