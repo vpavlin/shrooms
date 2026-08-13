@@ -952,6 +952,15 @@ nothing reachable through this socket can make a device a member or remove one.
 Admission still runs through `shrooms invite` and a passphrase prompt, which is
 where the friction belongs.
 
+> **Updating the core module needs Basecamp restarted; updating the view does
+> not.** `shrooms` is a QML view and reloads when Basecamp installs a new one.
+> `shrooms_core` is a native plugin, mapped into Basecamp's own process at
+> startup — installing a new `.so` replaces the file and changes nothing that is
+> running. Every method added to it therefore reports **"Invalid response"**
+> until Basecamp is restarted, which reads as a broken feature rather than as a
+> stale plugin. If a new control says that, restart Basecamp before looking
+> anywhere else.
+
 **The socket group is a real grant, like `docker`'s.** Anyone in it can read
 your mesh's control plane and change this device's behaviour. Set it to a group
 you would trust with that — on a personal machine, your own login — and leave it

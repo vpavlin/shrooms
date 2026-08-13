@@ -9,6 +9,13 @@
 # cannot read its socket, name completion simply yields nothing rather than
 # printing an error into the middle of the command line.
 
+# Mesh labels, including switched-off ones, which need root to read. Silent
+# when it cannot: a completion that prints a permission error over the prompt
+# is worse than one that offers nothing.
+_shrooms_mesh_labels() {
+    shrooms mesh list 2>/dev/null | awk 'NR>1 && NF {print $1}'
+}
+
 _shrooms_peers() {
     local out
     # --json rather than parsing the table: the table is for people and is
@@ -46,7 +53,7 @@ _shrooms() {
         cword=$COMP_CWORD
     fi
 
-    local commands="init join invite prepare set-key daemon status paths hosts key keys credential admin version help"
+    local commands="init join invite prepare set-key daemon status mesh reload bound paths hosts key keys credential admin version help"
     local common="--config --state"
 
     # A path-valued flag completes as a path, whichever command it belongs to.
@@ -82,6 +89,18 @@ _shrooms() {
             ;;
         status)
             COMPREPLY=($(compgen -W "--json --socket" -- "$cur"))
+            ;;
+        mesh|meshes)
+            # The labels come from the config rather than from status, because
+            # the whole point of this command is the mesh status cannot see.
+            # Second word is the verb, third is a label.
+            if [ "$cword" -eq 2 ]; then
+                COMPREPLY=($(compgen -W "list enable disable" -- "$cur"))
+            elif [[ $cur == -* ]]; then
+                COMPREPLY=($(compgen -W "$common" -- "$cur"))
+            else
+                COMPREPLY=($(compgen -W "$(_shrooms_mesh_labels)" -- "$cur"))
+            fi
             ;;
         paths)
             # Takes an optional peer name. Offer names first, flags after a dash,

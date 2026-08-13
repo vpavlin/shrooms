@@ -340,6 +340,13 @@ type meshStatus struct {
 	// is invisible until a peer on mobile data cannot reach anything.
 	Relays int `json:"relays"`
 
+	// Disabled means this device is a member of the mesh and is not running
+	// it. Reported because the alternative is what happened: switching a mesh
+	// off removed it from the only list any front-end had, so the reversible
+	// half of leaving became the irreversible-looking one. There is no
+	// instance behind these entries, so everything below is absent.
+	Disabled bool `json:"disabled,omitempty"`
+
 	// Expires is when this device's credential on this mesh runs out. Reported
 	// because a credential expiring is the one failure in this system that is
 	// scheduled: it happens on a known day, it takes the device off the mesh,
@@ -1036,6 +1043,26 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 				ms.OverlayV4 = a.String()
 			}
 			out.Meshes = append(out.Meshes, ms)
+		}
+
+		// The meshes this device belongs to but is not running. Read from the
+		// config on disk rather than from the copy loaded at startup, because
+		// switching one off writes the file and the running daemon keeps its
+		// instance until a restart — so the startup copy is exactly the wrong
+		// answer for the case this is here to cover.
+		if rl != nil {
+			if onDisk, err := state.LoadConfigUnvalidated(rl.cfgPath); err == nil {
+				for _, mc := range onDisk.Meshes() {
+					if !mc.Disabled {
+						continue
+					}
+					off := meshStatus{Label: mc.Label, Disabled: true}
+					if k, err := mc.Key(); err == nil {
+						off.Prefix = k.Prefix().String()
+					}
+					out.Meshes = append(out.Meshes, off)
+				}
+			}
 		}
 		h := m.Health()
 		out.Rendezvous = rendezvousStatus{

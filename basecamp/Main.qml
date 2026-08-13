@@ -374,6 +374,11 @@ Item {
         var out = []
         var ms = (root.st && root.st.meshes) ? root.st.meshes : []
         for (var i = 0; i < ms.length; i++) {
+            // A mesh that is switched off has no peers, no address and no
+            // tunnels, so a colour and a legend entry for it would decorate
+            // nothing. It appears in the settings list below, which is where
+            // it can be switched back on.
+            if (ms[i] && ms[i].disabled === true) continue
             var l = ms[i] ? ms[i].label : undefined
             if (l && out.indexOf(l) < 0) out.push(l)
         }
@@ -384,6 +389,37 @@ Item {
         return out
     }
     readonly property bool multiMesh: meshOrder.length > 1
+
+    /** The meshes actually running, which is what the graph and rosters show. */
+    readonly property var runningMeshes: {
+        var out = [], ms = (root.st && root.st.meshes) ? root.st.meshes : []
+        for (var i = 0; i < ms.length; i++) {
+            if (ms[i] && ms[i].disabled !== true) out.push(ms[i])
+        }
+        return out
+    }
+
+    /**
+     * Every mesh this device belongs to, running or not.
+     *
+     * The settings list binds to this rather than to the running ones, because
+     * a mesh that is switched off is invisible in every other view by
+     * definition — and a switch you cannot see is a switch you cannot flip
+     * back. That is how a mesh went missing: off, and then absent from the one
+     * list that could have turned it on.
+     *
+     * Shown from one entry rather than two. A device with a single running
+     * mesh and one switched off needs both rows, and the "only when there is
+     * more than one" rule that governs the summary above would hide exactly
+     * the row that matters.
+     */
+    readonly property var switchableMeshes: {
+        var ms = (root.st && root.st.meshes) ? root.st.meshes : []
+        if (ms.length === 0) return []
+        var anyOff = false
+        for (var i = 0; i < ms.length; i++) if (ms[i] && ms[i].disabled === true) anyOff = true
+        return (ms.length > 1 || anyOff) ? ms : []
+    }
 
     function meshTint(label) {
         var i = meshOrder.indexOf(label)
@@ -966,7 +1002,7 @@ Item {
             // more than one: on a single-mesh device every line here repeats
             // the header.
             Repeater {
-                model: (root.st.meshes && root.st.meshes.length > 1) ? root.st.meshes : []
+                model: root.runningMeshes.length > 1 ? root.runningMeshes : []
                 delegate: RowLayout {
                     Layout.fillWidth: true
                     spacing: 10
@@ -1393,12 +1429,20 @@ Item {
                     // a mesh off is not leaving it, and both are here because
                     // both otherwise mean a terminal.
                     Repeater {
-                        model: (root.st.meshes && root.st.meshes.length > 1) ? root.st.meshes : []
+                        // Every mesh, switched off ones included — this list is
+                        // the only way back for one that is off, and driving it
+                        // from the running meshes is precisely how a mesh
+                        // became unreachable from every screen at once.
+                        //
+                        // Shown from one rather than two: a device with a
+                        // single running mesh and one switched off has two
+                        // entries here and needs both.
+                        model: root.switchableMeshes
                         delegate: RowLayout {
                             spacing: 8
                             Layout.fillWidth: true
                             Text {
-                                text: "mesh"
+                                text: modelData.disabled === true ? "mesh · off" : "mesh"
                                 color: cAsh
                                 font.family: "monospace"; font.pixelSize: 11
                                 Layout.preferredWidth: 70

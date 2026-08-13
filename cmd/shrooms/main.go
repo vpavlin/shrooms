@@ -37,6 +37,11 @@ func main() {
 		err = cmdDaemon(os.Args[2:])
 	case "status":
 		err = cmdStatus(os.Args[2:])
+	case "mesh", "meshes":
+		// Which meshes this device is in, running or not. Deliberately not part
+		// of `status`: status reports what the daemon is doing, and a mesh that
+		// is switched off is precisely the thing status cannot see.
+		err = cmdMesh(os.Args[2:])
 	case "reload":
 		err = cmdReload(os.Args[2:])
 	case "bound":

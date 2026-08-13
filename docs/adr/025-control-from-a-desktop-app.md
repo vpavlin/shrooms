@@ -144,6 +144,22 @@ the socket to sign. The shape that fits: the UI collects the passphrase and runs
 `shrooms invite`, keeping every line of signing code in one place, and later
 that prompt becomes a Keycard tap ([ADR-022](022-keycard-for-the-admin-key.md)).
 
+### The two halves update separately, and one of them needs a restart
+
+The view and the core module are two packages with two version numbers, and
+Basecamp treats them differently: a QML view is re-read when it is installed, a
+native plugin is mapped into Basecamp's process at startup and stays there. So
+installing a new `shrooms_core` changes nothing until Basecamp is restarted, and
+every method the new view calls that the old plugin lacks fails with the host's
+own wording — "Invalid response" — which reads as a broken feature rather than
+as a stale library.
+
+Three versions can therefore disagree at once: daemon, view, plugin. The view
+now names the first of those explicitly (it shows a banner when the daemon
+reports no version) and names the second in the message when a call returns
+nothing readable. The third is documented rather than detected, because a
+plugin that lacks a method also lacks any way to be asked what it has.
+
 ## Consequences
 
 - A desktop app can drive everything except admission, without sudo and without
