@@ -80,15 +80,27 @@ cp basecamp/Main.qml basecamp/test/Harness.qml "$work/"
 cp "$FIXTURE" "$work/status.json"
 
 run() {
+    # `|| true`, because a non-zero exit here is information rather than the
+    # end of the run: the whole point of the assertions below is to say what
+    # the view did or did not do, and set -e would abort before any of them
+    # printed. A missing QML module reported itself as "make: Error 2" and not
+    # one word more.
     QT_QPA_PLATFORM=offscreen QT_ASSUME_STDERR_HAS_CONSOLE=1 \
-    QML_IMPORT_PATH="$QMLDIR" QML2_IMPORT_PATH="$QMLDIR" "$@" 2>&1
+    QML_IMPORT_PATH="$QMLDIR" QML2_IMPORT_PATH="$QMLDIR" "$@" 2>&1 || true
 }
 
 echo "==> reads a status file sitting beside the view (the Basecamp case)"
 out=$(QML_XHR_ALLOW_FILE_READ=1 run "$QML" -I "$work" "$work/Harness.qml" "$work/status.json")
 echo "$out" | grep -E "^qml: (PEERS|VERSION|SERVICES|SWITCHABLE|MODE|BOUNDHERE|  )" || true
 peers=$(echo "$out" | sed -n 's/.*PEERS=\([0-9]*\).*/\1/p' | head -1)
-[ "${peers:-0}" -gt 0 ] || { echo "FAIL: the view loaded but read no peers"; echo "$out" | head -20; exit 1; }
+[ "${peers:-0}" -gt 0 ] || {
+    echo "FAIL: the view loaded but read no peers"
+    echo "--- what qml said ---"
+    echo "${out:-(nothing at all — the runtime produced no output)}" | head -30
+    echo "--- qml modules present ---"
+    ls "$QMLDIR" 2>/dev/null | head -20
+    exit 1
+}
 echo "$out" | grep -q "TypeError\|ReferenceError\|is not a" && { echo "FAIL: script errors"; echo "$out"; exit 1; }
 
 # The sections that are not the roster. A Repeater over an empty model renders
