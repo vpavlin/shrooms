@@ -490,9 +490,16 @@ They are already reachable by every member; this is about being told.
 ```
 
 On a node with more than one mesh the name carries the label, because it has
-to: the short form is answered by the first mesh alone, so `laptop.mesh:8080`
+to: the short form is answered by the first mesh alone, so `laptop.mesh:22`
 would reach an address on the wrong network where nothing is listening. A node
 with one mesh sees `laptop.mesh:22` and no label, as before.
+
+**The label is the one asking, not the one answering.** Bind sshd to a second
+mesh's address and the same port is `laptop.test.mesh:22` from this machine and
+`laptop.home.mesh:22` from a device that filed the same mesh under `home` —
+because labels are local and deliberately never announced ([ADR-015](docs/adr/015-multiple-meshes-one-daemon.md)).
+Both resolve to the same address. It looks like a bug the first time and is the
+reason no member can rename a mesh for everybody else.
 
 Announcing is per mesh too — `mesh.<label>.announce_bound` — since telling your
 own machines what you run and telling somebody else's are different decisions.
