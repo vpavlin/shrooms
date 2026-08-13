@@ -78,6 +78,83 @@
     resize();
     window.addEventListener("resize", resize, { passive: true });
 
+    // --- the fractal ---------------------------------------------------
+    //
+    // Triangles inside triangles, which is the shape people describe most
+    // often after the honeycomb, and the one that is genuinely ours as well:
+    // a Sierpinski gasket is a mesh subdividing. Every vertex is a node and
+    // every edge a link, so what is drawn here is the same figure the graph
+    // draws, taken to the depth a graph never goes.
+    //
+    // Depth breathes rather than sits: the innermost level fades in and out on
+    // its own whole cycle, so the thing looks like it keeps subdividing
+    // forever without ever costing more than five levels of drawing.
+    // Five levels is 243 triangles a frame, which a laptop does not notice and
+    // a phone does. Four is 81 and looks the same at that size.
+    const DEPTH = small ? 4 : 5;
+
+    // A continuous walk through the palette rather than a step from one colour
+    // to the next. Stepping was visible as an abrupt change every few seconds,
+    // which reads as a repaint rather than as colour moving.
+    function walk(offset, t) {
+        const x = offset + (t / (Math.PI * 2)) * HUES.length;
+        const i = Math.floor(x) % HUES.length;
+        const j = (i + 1) % HUES.length;
+        const f = x - Math.floor(x);
+        return [
+            HUES[i][0] + (HUES[j][0] - HUES[i][0]) * f,
+            HUES[i][1] + (HUES[j][1] - HUES[i][1]) * f,
+            HUES[i][2] + (HUES[j][2] - HUES[i][2]) * f,
+        ];
+    }
+
+    function gasket(ax, ay, bx, by, cx, cy, depth, t, rot) {
+        if (depth === 0) return;
+
+        // Each level sits one step further along the palette, and the whole
+        // thing walks continuously, so the figure is vivid without any one hue
+        // owning it and without a visible step when it changes.
+        const rgb = walk(DEPTH - depth, t);
+
+        // The deepest level breathes; the rest hold, or the whole figure would
+        // pulse in unison and look like a heartbeat rather than a fractal.
+        let alpha = 0.06 + 0.04 * (depth / DEPTH);
+        if (depth === 1) alpha *= 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(2 * t));
+
+        ctx.strokeStyle = `rgba(${rgb[0] | 0}, ${rgb[1] | 0}, ${rgb[2] | 0}, ${alpha})`;
+        ctx.lineWidth = 0.4 + depth * 0.22;
+        ctx.beginPath();
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(bx, by);
+        ctx.lineTo(cx, cy);
+        ctx.closePath();
+        ctx.stroke();
+
+        // The three midpoints are where a mesh would put its next nodes.
+        const abx = (ax + bx) / 2, aby = (ay + by) / 2;
+        const bcx = (bx + cx) / 2, bcy = (by + cy) / 2;
+        const cax = (cx + ax) / 2, cay = (cy + ay) / 2;
+
+        gasket(ax, ay, abx, aby, cax, cay, depth - 1, t, rot);
+        gasket(abx, aby, bx, by, bcx, bcy, depth - 1, t, rot);
+        gasket(cax, cay, bcx, bcy, cx, cy, depth - 1, t, rot);
+    }
+
+    function fractal(t) {
+        const r = Math.min(w, h) * (small ? 0.42 : 0.34);
+        const cx = w * 0.5, cy = h * 0.46;
+        // One rotation per cycle: a whole number, like everything else here,
+        // so the wrap is invisible.
+        const rot = t;
+
+        const v = [];
+        for (let i = 0; i < 3; i++) {
+            const a = rot + (i * 2 * Math.PI) / 3 - Math.PI / 2;
+            v.push(cx + r * Math.cos(a), cy + r * Math.sin(a));
+        }
+        gasket(v[0], v[1], v[2], v[3], v[4], v[5], DEPTH, t, rot);
+    }
+
     const PERIOD = 23000;               // one full cycle of everything
     const pts = spores.map(() => ({ x: 0, y: 0 }));
 
@@ -109,6 +186,9 @@
         // does. This is the single thing that makes it look alive rather than
         // drawn.
         ctx.globalCompositeOperation = "lighter";
+
+        // The fractal underneath everything, turning slowly.
+        fractal(t);
 
         const near = Math.min(w, h) * (small ? 0.34 : 0.28);
         for (let i = 0; i < pts.length; i++) {
