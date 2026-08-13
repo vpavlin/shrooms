@@ -62,6 +62,15 @@ class MeshVpnService : VpnService() {
     // when its resolvers change. See watchNetworks.
     private var netCallback: ConnectivityManager.NetworkCallback? = null
 
+    /**
+     * Whether this process has already rebuilt the tunnel to recover names.
+     *
+     * Once only. A rebuild that does not restore them — a config with no
+     * usable key, say — would otherwise repeat on every network event, which
+     * is a tunnel that drops every time you walk past a wifi access point.
+     */
+    private var rebuiltForNames = false
+
     companion object {
         const val ACTION_CONNECT = "xyz.vpavlin.shrooms.CONNECT"
         const val ACTION_DISCONNECT = "xyz.vpavlin.shrooms.DISCONNECT"
@@ -536,6 +545,33 @@ class MeshVpnService : VpnService() {
                 }
                 val applied = runCatching { Mobile.setDNSServers(servers) }.getOrDefault(false)
                 Log.i(TAG, "network $why, resolvers now $servers (applied=$applied)")
+
+                // A session established while the device had no network has no
+                // DNS server at all, and cannot grow one: addDnsServer is a
+                // property of the tunnel, fixed by establish(). Everything
+                // above only changes where queries are *forwarded*, so without
+                // this the phone loses mesh names for the life of the session
+                // — which is what happens after both radios are switched off
+                // for long enough that the watchdog restarts the tunnel.
+                //
+                // Rebuilding is disruptive, so it happens only in the case it
+                // repairs: names were never installed, and there is now
+                // something to install them with.
+                //
+                // Both conditions establish() checks, not just the one that
+                // changed: if the config cannot yield a resolver address then
+                // rebuilding fixes nothing, and every future network event
+                // would try again. And once per session, because a rebuild
+                // that does not restore names must not become a loop.
+                if (MeshState.snapshot.value.names.isEmpty() &&
+                    !rebuiltForNames &&
+                    Mobile.dnsAddress(filesDir.absolutePath).isNotEmpty()
+                ) {
+                    rebuiltForNames = true
+                    Log.i(TAG, "names were unavailable and a resolver is reachable again; rebuilding")
+                    MeshState.log("INFO", "network is back — rebuilding the tunnel to restore mesh names")
+                    restart()
+                }
             }
         }
 
