@@ -1,0 +1,33 @@
+{
+  "name": "shrooms",
+  "versions": [
+    {
+      "publisherRef": "shrooms-v0.3.0",
+      "url": "https://github.com/vpavlin/shrooms/releases/download/shrooms-v0.3.0/shrooms-0.3.0.lgx",
+      "size": 44801,
+      "sha256": "b2f00e04b4e3e99f58223d8d50abae38f2110732c1ca897e4cf3a2f50f71cc68",
+      "rootHash": "e1d8566d4a626eb6bf460627d7202c4daf125475d514831853095b46b4ceec4c",
+      "manifest": {
+        "author": "",
+        "category": "network",
+        "dependencies": [
+          "shrooms_core"
+        ],
+        "description": "Watch a Shrooms mesh: which peers are reachable, whether each is direct or relayed, throughput, and how long each took to connect. Read-only \u2014 the daemon does the work, this watches it.",
+        "display_name": "Shrooms",
+        "hashes": {
+          "root": "e1d8566d4a626eb6bf460627d7202c4daf125475d514831853095b46b4ceec4c",
+          "variants": "f5c42fa04b83fa6acf570c7660f311f5f7a8e353d33e935d1efde333d8673383",
+          "variants/linux-amd64": "60398cb2dc45de8150577b4d76c74f4fca1de50691062d2b888158f724e8ad98"
+        },
+        "icon": "icon.png",
+        "main": {},
+        "manifestVersion": "0.3.0",
+        "name": "shrooms",
+        "type": "ui_qml",
+        "version": "0.3.0",
+        "view": "Main.qml"
+      }
+    }
+  ]
+}

@@ -239,26 +239,37 @@ basecamp-lgx:
 	nix build ./basecamp#lgx-portable --print-build-logs
 	@find -L result -name '*.lgx' -exec ls -lL {} \;
 
-## Build the Basecamp module and put it where a device can install it.
+## Build the Basecamp module and publish it where a device can install it.
 ##
-## The .lgx is a package rather than a repository, so there is no update
-## mechanism: publishing means putting the file somewhere and saying where.
-## That somewhere is the machine already serving the F-Droid repo, next to it,
-## because a second host to remember is a host nobody remembers.
+## A GitHub release, not a file on a LAN host. An .lgx is a package rather than
+## a repository and has no update mechanism of its own, so "published" means a
+## stable URL somebody can fetch from anywhere — which a machine at
+## 192.168.0.x is not. This also matches how the other Basecamp modules on
+## apps.vpavlin.xyz are distributed.
 ##
-## Two names are written: a stable one to point people at, and a versioned one
-## so an install can be pinned or an old one kept.
+## Named the way the other modules on apps.vpavlin.xyz are — <name>-v<version>
+## for the tag, <name>-<version>.lgx for the asset — so that adding shrooms to
+## that repository's index later is a URL and nothing else. Two assets: the
+## versioned one an index would point at, and an unversioned one to hand
+## somebody directly.
 basecamp-publish: basecamp-lgx
 	@lgx=$$(readlink -f result/*.lgx); \
 	ver=$$(tar xzOf "$$lgx" manifest.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])'); \
-	host=$${FDROID_HOST:-192.168.0.152}; \
-	dir=$${LGX_DIR:-/home/vpavlin/perun/dist/lan}; \
-	echo "==> publishing $$(basename $$lgx) $$ver to $$host:$$dir"; \
-	scp -q "$$lgx" "$$host:$$dir/logos-shrooms-module.lgx"; \
-	scp -q "$$lgx" "$$host:$$dir/logos-shrooms-module-$$ver.lgx"; \
-	ssh "$$host" "chmod 644 $$dir/logos-shrooms-module*.lgx"; \
-	echo "    http://$$host:8090/logos-shrooms-module.lgx"; \
-	echo "    http://$$host:8090/logos-shrooms-module-$$ver.lgx"
+	name=$$(tar xzOf "$$lgx" manifest.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])'); \
+	tag=$$name-v$$ver; \
+	tmp=$$(mktemp -d); \
+	cp "$$lgx" "$$tmp/$$name-$$ver.lgx"; \
+	cp "$$lgx" "$$tmp/$$name.lgx"; \
+	echo "==> publishing $$tag"; \
+	gh release view "$$tag" >/dev/null 2>&1 \
+	  && gh release upload "$$tag" "$$tmp"/*.lgx --clobber \
+	  || gh release create "$$tag" "$$tmp"/*.lgx \
+	       --title "$$name $$ver" \
+	       --notes "The shrooms Basecamp module: reads a running daemon over its control socket, and changes what the daemon can change on its own (ADR-025). Install through Basecamp." ; \
+	rm -rf "$$tmp"; \
+	echo "    https://github.com/vpavlin/shrooms/releases/download/$$tag/$$name-$$ver.lgx"; \
+	python3 scripts/index-entry.py; \
+	echo "    basecamp/index-entry.json is what a repository index needs to list it"
 
 ## Build the .aar for the Android app. Container-based: gomobile needs a JDK
 ## and Go >= 1.25, which the core deliberately does not.
