@@ -396,13 +396,23 @@ func (t tapTransport) Messages() <-chan invite.Message { return t.msgs }
 // order. See resolveAcross in the daemon: refusing an ambiguous short name
 // took the short name away from precisely the devices on both of your meshes,
 // which are the ones you reach most.
-func resolveAll(instances []*meshInstance) dnssrv.Lookup {
+func resolveAll(instances []*meshInstance, configDir string) dnssrv.Lookup {
 	return func(host string) (netip.Addr, bool) {
 		if dev, rest, ok := strings.Cut(host, "."); ok {
 			for _, in := range instances {
 				if in.label == rest {
 					return in.mesh.Lookup(dev)
 				}
+			}
+			// Not a label this session was built with. It may still be a mesh
+			// this device is on: a label is local and can change while the
+			// tunnel runs — accepting an invite to a mesh you are already on
+			// renames it — and until now that meant the new name resolved only
+			// after a reconnect, while the app already displayed it.
+			//
+			// Only on a miss, so the ordinary path never reads a file.
+			if in, ok := byCurrentLabel(instances, configDir, rest); ok {
+				return in.mesh.Lookup(dev)
 			}
 		}
 		for _, in := range instances {
@@ -412,6 +422,32 @@ func resolveAll(instances []*meshInstance) dnssrv.Lookup {
 		}
 		return netip.Addr{}, false
 	}
+}
+
+// byCurrentLabel finds the instance a label names *now*, according to the
+// config rather than according to what this session was started with.
+func byCurrentLabel(instances []*meshInstance, configDir, label string) (*meshInstance, bool) {
+	cfgPath, _ := paths(configDir)
+	cfg, err := state.LoadConfigUnvalidated(cfgPath)
+	if err != nil {
+		return nil, false
+	}
+	for _, m := range cfg.Meshes() {
+		if m.Label != label {
+			continue
+		}
+		nk, err := m.Key()
+		if err != nil {
+			return nil, false
+		}
+		id := state.NetworkID(nk)
+		for _, in := range instances {
+			if in.networkID == id {
+				return in, true
+			}
+		}
+	}
+	return nil, false
 }
 
 // aliasAll maps an overlay address to its synthetic IPv4, whichever mesh owns

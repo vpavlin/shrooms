@@ -117,7 +117,13 @@ var tap eventTap
 // meshInstance is one mesh running on the phone: its own WireGuard device and
 // identity, on a virtual TUN carved out of the single descriptor Android gives.
 type meshInstance struct {
-	label   string
+	label string
+	// networkID identifies the mesh itself, as opposed to what this device
+	// currently calls it. A label is local and can be changed — by editing the
+	// config, or by accepting an invite to a mesh this device is already on
+	// under a different name — and when it is, the session is still running
+	// with the old one. See resolveAll.
+	networkID string
 	mesh    *mesh.Mesh
 	dev     *wg.Device
 	aliases *v4.Table
@@ -869,7 +875,8 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 		}
 
 		instances = append(instances, &meshInstance{
-			label: mc.Label, dev: dev, aliases: aliases, self: self, prefix: nk.Prefix(),
+			label: mc.Label, networkID: networkID, dev: dev, aliases: aliases,
+			self: self, prefix: nk.Prefix(),
 		})
 		log.Info("data plane up", "mesh", mc.Label, "port", listen,
 			"overlay", self, "protected_sockets", len(fds))
@@ -997,7 +1004,7 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 		// lookups span every mesh, so one resolver address serves them all.
 		srv := &dnssrv.Server{
 			Suffix:   cfg.HostsSuffix,
-			Lookup:   resolveAll(instances),
+			Lookup:   resolveAll(instances, configDir),
 			Alias:    aliasAll(instances),
 			Upstream: forward,
 		}

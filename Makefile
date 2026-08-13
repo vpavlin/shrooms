@@ -254,10 +254,12 @@ basecamp-core-lgx:
 ## alone leaves Basecamp running a new interface against an old plugin, which
 ## fails as buttons that do nothing rather than as an error anybody can read.
 ##
-## Both places: the GitHub release anybody can fetch, and the LAN repository
-## Basecamp on this network installs from. Basecamp installs from an index, so
-## a file copied next to one is not published — that mistake left a three-day-
-## old module on the desktop while the release was current.
+## Both places: the GitHub release anybody can fetch, and the self-hosted
+## repository Basecamp on this network installs from. The second half goes
+## through that host's own publisher (the logos-publish-artifacts skill), which
+## regenerates the index by rescanning the directory — writing an index from
+## here meant a second implementation of somebody else's format, aimed at a
+## repository nothing read.
 ##
 ## Named the way the other modules on apps.vpavlin.xyz are — <name>-v<version>
 ## for the tag, <name>-<version>.lgx for the asset — so adding these to that
@@ -279,8 +281,10 @@ basecamp-publish: basecamp-lgx basecamp-core-lgx
 	         --notes "A Basecamp package for shrooms. Install through Basecamp; the view and the core module are versioned separately and the view needs the core." ; \
 	  rm -rf "$$tmp"; \
 	  echo "    https://github.com/vpavlin/shrooms/releases/download/$$tag/$$name-$$ver.lgx"; \
-	  ./scripts/publish-lan.sh "$$lgx"; \
 	done
+	@# Both packages in one call, and through the repository host's own
+	@# publisher rather than an index written here. See scripts/publish-lan.sh.
+	@./scripts/publish-lan.sh $$(readlink -f result/*.lgx) $$(readlink -f result-core/*.lgx)
 
 ## Build the .aar for the Android app. Container-based: gomobile needs a JDK
 ## and Go >= 1.25, which the core deliberately does not.

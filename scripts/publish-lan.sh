@@ -1,88 +1,65 @@
 #!/usr/bin/env bash
-# Add this build of the Basecamp module to the LAN repository.
+# Hand the built Basecamp packages to the repository host's own publisher.
 #
-# Basecamp installs and updates modules from a repository — a logos-repo.json
-# pointing at an index that lists each package with its URL, size and hashes —
-# and there is one of those on the machine that also serves the F-Droid repo.
-# Copying an .lgx next to it is not the same thing, which is the mistake that
-# left an old version showing in Basecamp for a day: it will not offer a file
-# it was never told about.
+# It does not write an index. The host has one — the logos-publish-artifacts
+# skill's publish.sh — and that script regenerates the index by rescanning every
+# .lgx in the repository directory, so every module stays listed and updating
+# one is "drop the new file, rescan". Writing entries from here meant
+# maintaining a second implementation of somebody else's format, which went
+# exactly as well as that usually goes.
 #
-#   ./scripts/publish-lan.sh
-#   LAN_HOST=user@host LAN_DIR=/srv/lan LAN_BASE=https://host:8443 ./scripts/publish-lan.sh
+#   ./scripts/publish-lan.sh view.lgx core.lgx
+#   LAN_HOST=user@host ./scripts/publish-lan.sh view.lgx
 #
-# Idempotent: publishing the same version twice replaces the entry rather than
-# adding a second one.
+# Three traps this avoids, each of which makes a publish look successful while
+# shipping nothing:
+#
+#   Publishing to a repository nothing reads. There is more than one repo
+#   directory on that host, and the version of this script that wrote its own
+#   index published to the wrong one — every publish "succeeded" and Basecamp
+#   kept offering a module from three days earlier.
+#
+#   More than one file per module. The index lists one entry per .lgx found, so
+#   a version-in-the-filename scheme accumulates files and shows the same module
+#   several times. The host's publisher installs each as
+#   logos-<name>-module.lgx and overwrites it.
+#
+#   Publishing a -dev build, which Basecamp shows as NOT AVAILABLE. `make
+#   basecamp-lgx` builds the portable variant for this reason.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-HOST=${LAN_HOST:-192.168.0.152}
-DIR=${LAN_DIR:-/home/vpavlin/perun/dist/lan}
-# What Basecamp fetches from, which is not the path we write to.
-BASE=${LAN_BASE:-https://192.168.0.152:8443}
+# The mesh name, so this works from anywhere the mesh reaches rather than only
+# from the LAN. Falls back to the address, for a machine whose tunnel is down —
+# publishing should not be the thing that needs the VPN to be working.
+HOST=${LAN_HOST:-jimmy-crib.mesh}
+FALLBACK=${LAN_HOST_FALLBACK:-192.168.0.152}
+PUBLISH=${LAN_PUBLISH:-.claude/skills/logos-publish-artifacts/publish.sh}
+STAGE=${LAN_STAGE:-.cache/shrooms-publish}
 
-# A package may be named, because there are two: the view, and the core module
-# it depends on. Publishing one without the other is how a view ends up talking
-# to a core that does not have the methods it calls.
-LGX=${1:-$(readlink -f result/*.lgx 2>/dev/null || true)}
-[ -n "$LGX" ] || { echo "no .lgx given and none in result/" >&2; exit 1; }
-LGX=$(readlink -f "$LGX")
+[ "$#" -gt 0 ] || { echo "usage: $0 <module.lgx>..." >&2; exit 2; }
 
-read -r NAME VERSION <<<"$(tar xzOf "$LGX" manifest.json |
-    python3 -c 'import json,sys; m=json.load(sys.stdin); print(m["name"], m["version"])')"
+if ! ssh -o BatchMode=yes -o ConnectTimeout=6 "$HOST" true 2>/dev/null; then
+    echo "==> $HOST did not answer, using $FALLBACK"
+    HOST=$FALLBACK
+fi
 
-echo "==> $NAME $VERSION -> $HOST:$DIR"
+ssh "$HOST" "mkdir -p '$STAGE'"
 
-# The source is in the nix store and therefore mode 444, and scp carries that
-# across — so the second publish of a version cannot overwrite the first, even
-# as its owner, because write permission is checked for the owner too. Make
-# room first, and leave the copies writable so this never happens again.
-ssh "$HOST" "chmod -f u+w '$DIR/$NAME-$VERSION.lgx' '$DIR/$NAME.lgx' 2>/dev/null || true"
-scp -q "$LGX" "$HOST:$DIR/$NAME-$VERSION.lgx"
-scp -q "$LGX" "$HOST:$DIR/$NAME.lgx"
-ssh "$HOST" "chmod 644 '$DIR/$NAME-$VERSION.lgx' '$DIR/$NAME.lgx'"
+args=()
+for lgx in "$@"; do
+    lgx=$(readlink -f "$lgx")
+    name=$(basename "$lgx")
+    scp -q "$lgx" "$HOST:$STAGE/$name"
+    # Writable on arrival: these come out of the nix store at mode 444 and scp
+    # carries that across, so the next publish could not overwrite them.
+    ssh "$HOST" "chmod 644 '$STAGE/$name'"
+    args+=("\$HOME/$STAGE/$name")
+done
 
-# Computed here, from the file that was just built, and applied there.
-python3 scripts/index-entry.py "$LGX" >/dev/null
-ENTRY=$(NAME="$NAME" python3 -c "
-import json, os
-e = json.load(open('basecamp/index-entry-' + os.environ['NAME'] + '.json'))
-e['versions'][0]['url'] = '$BASE/$NAME-$VERSION.lgx'
-print(json.dumps(e))
-")
-
-# One ssh, with the entry passed as an environment variable and the program on
-# stdin. Quoted with printf %q rather than interpolated: the entry is JSON full
-# of quotes and braces, and a remote shell would otherwise eat them.
-ssh "$HOST" "ENTRY=$(printf %q "$ENTRY") DIR=$(printf %q "$DIR") python3 -" <<'PY'
-import datetime
-import json
-import os
-import tempfile
-
-entry = json.loads(os.environ["ENTRY"])
-path = os.path.join(os.environ["DIR"], "index.json")
-with open(path) as f:
-    idx = json.load(f)
-
-# Replace this package wholesale rather than appending a version: a LAN
-# repository exists to hold the current build, and a list of every one ever
-# published is a different thing that nobody asked for here.
-idx["packages"] = [p for p in idx["packages"] if p["name"] != entry["name"]]
-idx["packages"].append(entry)
-idx["generatedAt"] = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-# Written to a temporary file and moved into place, so an interruption leaves
-# the index valid rather than half-written. Basecamp reading a truncated index
-# is a worse failure than it reading an old one.
-fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path))
-with os.fdopen(fd, "w") as f:
-    json.dump(idx, f, indent=2)
-    f.write("\n")
-os.replace(tmp, path)
-print("    index now lists:", ", ".join(sorted(p["name"] for p in idx["packages"])))
-PY
-
-echo "    $BASE/$NAME-$VERSION.lgx"
-echo "    repository: $BASE/logos-repo.json"
+echo "==> publishing on $HOST"
+# --no-fdroid-update: the APK is published by `make fdroid`, which signs the
+# index with the repo keystore. Asking for it here would regenerate that index
+# with nothing new in it.
+ssh "$HOST" "\$HOME/$PUBLISH --no-fdroid-update $(printf -- '--lgx %s ' "${args[@]}")"
