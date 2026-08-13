@@ -25,7 +25,7 @@ GO ?= go
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 .PHONY: all deps deps-basecamp check-lib shrooms wakuspike s3topics m0demo \
-        s1 s3 probe m0 m1 m2 m2-edm m3 m3-remote dist image push-image deps-release install uninstall build-all vet-cgo test test-unit android-deps android-core aar apk fdroid basecamp-check basecamp-lgx fmt clean
+        s1 s3 probe m0 m1 m2 m2-edm m3 m3-remote dist image push-image deps-release install uninstall build-all vet-cgo test test-unit android-deps android-core aar apk fdroid basecamp-check basecamp-lgx site-adrs fmt clean
 
 all: shrooms
 
@@ -302,6 +302,21 @@ vet-cgo: check-lib
 ## check than the one that gates a push.
 test: check-lib
 	$(GO) test -race ./...
+
+## --- site ---
+
+## Render docs/adr/*.md into site/adr/*.html, so the decision record reads in
+## the site's own type instead of sending people to GitHub.
+##
+## Generated rather than committed, and .gitignored: the markdown is the source
+## — it is what the repository shows, what a pull request edits, and what the
+## in-tree cross-links point at — so a checked-in copy would be a second copy
+## of twenty-six files to regenerate and forget. The Pages workflow runs this
+## before every deploy, which makes the published pages a function of the
+## markdown rather than of whoever last remembered. Stdlib Python only, so this
+## needs nothing installed.
+site-adrs:
+	python3 scripts/render-adrs.py
 
 fmt:
 	gofmt -w ./cmd ./internal

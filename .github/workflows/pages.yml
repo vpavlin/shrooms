@@ -4,6 +4,12 @@
 # no generator — so this workflow only has to hand the directory to Pages. That
 # is deliberate: a site about a project whose whole claim is "no infrastructure
 # you have to run" should not need a toolchain to change a paragraph.
+#
+# The one exception is the decision record, which is rendered here from
+# docs/adr/*.md by a stdlib-only script. The markdown stays the source of truth
+# — it is what a reader of the repository sees and what a pull request edits —
+# so the alternative was committing a second copy of every ADR and remembering
+# to regenerate it, which is exactly the kind of thing nobody remembers.
 name: pages
 
 on:
@@ -11,6 +17,11 @@ on:
     branches: [master]
     paths:
       - 'site/**'
+      # The ADRs are part of the site now, so a change to one has to republish
+      # it. Without this an edited record would sit unpublished until somebody
+      # happened to touch a page.
+      - 'docs/adr/**'
+      - 'scripts/render-adrs.py'
       - '.github/workflows/pages.yml'
   # So the site can be republished without a commit, after a Pages setting
   # changes or a failed deploy.
@@ -36,6 +47,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Before the check below, so the generated pages are checked like every
+      # other one. A renderer that quietly emitted a dead cross-link would
+      # otherwise be found by a reader, which is the failure this job exists to
+      # prevent.
+      - name: Render the decision record
+        run: python3 scripts/render-adrs.py
+
       # Cheap checks, because the site has no tests and a broken link or a
       # malformed page would otherwise be found by a reader.
       - name: Check the pages parse and their links exist
@@ -44,7 +62,9 @@ jobs:
           import html.parser, pathlib, re, sys
 
           site = pathlib.Path("site")
-          pages = sorted(site.glob("*.html"))
+          # rglob, not glob: the decision record lives in site/adr/ and is the
+          # only part of this site somebody did not write by hand.
+          pages = sorted(site.rglob("*.html"))
           if not pages:
               sys.exit("no pages found")
 
@@ -58,18 +78,19 @@ jobs:
               except Exception as e:
                   bad.append(f"{p}: does not parse: {e}")
 
-              # Local links only; anything with a scheme is somebody else's
-              # problem and not worth failing a deploy over.
+              # Resolved against the page that contains it, not against site/:
+              # a page one directory down says ../style.css, and checking that
+              # from the root would both miss real breakage and invent some.
               for href in re.findall(r'href="([^"#]+)', text):
                   if "://" in href or href.startswith("mailto:"):
                       continue
-                  if not (site / href).exists():
+                  if not (p.parent / href).exists():
                       bad.append(f"{p}: dead link to {href}")
 
               for src in re.findall(r'src="([^"#]+)', text):
                   if "://" in src:
                       continue
-                  if not (site / src).exists():
+                  if not (p.parent / src).exists():
                       bad.append(f"{p}: missing asset {src}")
 
           if bad:

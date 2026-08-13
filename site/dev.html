@@ -36,7 +36,7 @@
         Go, cgo, userspace WireGuard, Linux and Android.
     </p>
     <div class="cta">
-        <a class="primary" href="#adr">The decision record</a>
+        <a class="primary" href="adr/index.html">The decision record</a>
         <a href="#build">Building</a>
         <a href="#proven">What is proven</a>
     </div>
@@ -81,7 +81,7 @@
     on and a hole punch lands on the wrong mapping. Kernel WireGuard owns its
     socket and will not share it, which is the reason the data plane is in
     userspace at all
-    (<a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/002-userspace-not-kernel-wireguard.md">ADR-002</a>).
+    (<a href="adr/002-userspace-not-kernel-wireguard.html">ADR-002</a>).
 </p>
 
 <p>
@@ -100,7 +100,7 @@ STUN      : msg[1] == 0x01 with the magic cookie at offset 4
     and filters in place, following NetBird's ICEBind. That preserves batching
     and GSO/GRO offload ‚Äî the data path never goes through a channel, which is
     what makes go-libp2p's shared-conn approach unsuitable here
-    (<a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/001-wireguard-not-libp2p-streams.md">ADR-001</a>).
+    (<a href="adr/001-wireguard-not-libp2p-streams.html">ADR-001</a>).
 </p>
 
 <p>
@@ -109,7 +109,7 @@ STUN      : msg[1] == 0x01 with the magic cookie at offset 4
     handshakes at five candidates and let the best win ‚Äî you would be
     overwriting the endpoint under yourself. Probe with cheap packets first,
     then set the endpoint that answered
-    (<a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/009-probe-before-setting-endpoint.md">ADR-009</a>).
+    (<a href="adr/009-probe-before-setting-endpoint.html">ADR-009</a>).
     Every pong echoes the source address it was observed at, so with N peers you
     get N-1 vantage points on your own public address and need no STUN server.
 </p>
@@ -141,7 +141,7 @@ STUN      : msg[1] == 0x01 with the magic cookie at offset 4
     Peers stay in one mesh and no subscribe/unsubscribe traffic announces the
     rotation to neighbours. Rotating the pubsub topic instead would emit visible
     subscription churn and drop the mesh into a fresh anonymity set of one
-    (<a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/006-rotating-rendezvous-topics.md">ADR-006</a>).
+    (<a href="adr/006-rotating-rendezvous-topics.html">ADR-006</a>).
 </p>
 
 <p>
@@ -149,7 +149,7 @@ STUN      : msg[1] == 0x01 with the magic cookie at offset 4
     themselves, because WireGuard relearns a peer's endpoint from any correctly
     authenticated packet. The announce loop exists to bootstrap, to repair after
     a move, and to carry membership changes
-    (<a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/003-waku-as-rendezvous-not-control-plane.md">ADR-003</a>).
+    (<a href="adr/003-waku-as-rendezvous-not-control-plane.html">ADR-003</a>).
 </p>
 
 <h3>Control: signed inside the ciphertext</h3>
@@ -170,7 +170,7 @@ STUN      : msg[1] == 0x01 with the magic cookie at offset 4
     A relay is not a separate message type: it is a flag on the ordinary
     announce, so relays inherit endpoint validation and path probing unchanged
     and there are no relay addresses to distribute
-    (<a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/014-relay-discovery-via-announce.md">ADR-014</a>).
+    (<a href="adr/014-relay-discovery-via-announce.html">ADR-014</a>).
 </p>
 
 <h2 id="addressing">Derived addressing</h2>
@@ -190,7 +190,7 @@ addr   = prefix : SHA256("mesh/v1/addr" || device_pub)[0:10]  <span class="c">‚Ü
     self-enforcing with zero shared state. No allocation messages, no conflict
     resolution, no leases, no split-brain when two nodes join at once. Collision
     probability across ten devices is about 4√ó10‚Åª¬≤¬≥
-    (<a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/005-derived-addressing.md">ADR-005</a>).
+    (<a href="adr/005-derived-addressing.html">ADR-005</a>).
 </p>
 
 <p>
@@ -216,7 +216,7 @@ addr   = prefix : SHA256("mesh/v1/addr" || device_pub)[0:10]  <span class="c">‚Ü
     across two meshes would carry the same 80-bit suffix into both and let
     anyone in either correlate you. That is why each mesh gets its own identity
     rather than sharing one
-    (<a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/015-multiple-meshes-one-daemon.md">ADR-015</a>).</p>
+    (<a href="adr/015-multiple-meshes-one-daemon.html">ADR-015</a>).</p>
 </div>
 
 <p>
@@ -228,7 +228,7 @@ addr   = prefix : SHA256("mesh/v1/addr" || device_pub)[0:10]  <span class="c">‚Ü
     not announced, and two devices may pick different aliases for the same peer
     without anything noticing ‚Äî which is what keeps it from needing the
     coordination this project exists to avoid
-    (<a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/021-synthetic-ipv4.md">ADR-021</a>).
+    (<a href="adr/021-synthetic-ipv4.html">ADR-021</a>).
 </p>
 
 <h2 id="packages">The package map</h2>
@@ -240,7 +240,7 @@ addr   = prefix : SHA256("mesh/v1/addr" || device_pub)[0:10]  <span class="c">‚Ü
     <code>/proc</code>, no systemd assumptions outside <code>cmd/</code> and
     <code>packaging/</code>. That rule is why the Android port was cheap: the
     app runs the same core through gomobile rather than a reimplementation
-    (<a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/016-android-reuses-the-go-core.md">ADR-016</a>).
+    (<a href="adr/016-android-reuses-the-go-core.html">ADR-016</a>).
 </p>
 
 <table>
@@ -283,32 +283,32 @@ addr   = prefix : SHA256("mesh/v1/addr" || device_pub)[0:10]  <span class="c">‚Ü
 
 <table>
 <tr><th>#</th><th>Decision</th><th>Status</th></tr>
-<tr><td>001</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/001-wireguard-not-libp2p-streams.md">WireGuard for the data plane, not libp2p streams</a></td><td>accepted</td></tr>
-<tr><td>002</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/002-userspace-not-kernel-wireguard.md">Userspace WireGuard, not the kernel module</a></td><td>accepted</td></tr>
-<tr><td>003</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/003-waku-as-rendezvous-not-control-plane.md">Waku as rendezvous, not a live control plane</a></td><td>accepted</td></tr>
-<tr><td>004</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/004-public-fleet-not-own-cluster.md">The public logos.dev fleet, not our own cluster</a></td><td>accepted</td></tr>
-<tr><td>005</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/005-derived-addressing.md">Overlay addresses derived from keys, no IPAM</a></td><td>accepted</td></tr>
-<tr><td>006</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/006-rotating-rendezvous-topics.md">Rotating rendezvous topics on a stable shard</a></td><td>accepted</td></tr>
-<tr><td>007</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/007-separate-device-and-wireguard-keys.md">Separate device and WireGuard keys</a></td><td>accepted</td></tr>
-<tr><td>008</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/008-bearer-network-key-for-v1.md">A bearer network key for v1</a></td><td>accepted, temporary</td></tr>
-<tr><td>009</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/009-probe-before-setting-endpoint.md">Probe candidates before setting a WireGuard endpoint</a></td><td>accepted</td></tr>
-<tr><td>010</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/010-ship-a-container-not-a-binary.md">Ship a container image, not a binary</a></td><td>accepted</td></tr>
-<tr><td>011</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/011-no-mixnet.md">No mixnet in the data path</a></td><td>accepted</td></tr>
-<tr><td>012</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/012-relay-hosting.md">Who runs the relay (you may not need a VPS)</a></td><td>accepted</td></tr>
-<tr><td>013</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/013-name-resolution.md">Name resolution: hosts file now, DNS server next</a></td><td>accepted</td></tr>
-<tr><td>014</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/014-relay-discovery-via-announce.md">Relay discovery: a flag on the announce, not a separate message</a></td><td>accepted</td></tr>
-<tr><td>015</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/015-multiple-meshes-one-daemon.md">Multiple meshes in one daemon</a></td><td>accepted</td></tr>
-<tr><td>016</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/016-android-reuses-the-go-core.md">Android reuses the Go core</a></td><td>accepted</td></tr>
-<tr><td>017</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/017-invite-tokens.md">Invite tokens</a></td><td>accepted, built</td></tr>
-<tr><td>018</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/018-credentials-instead-of-a-shared-key.md">Credentials instead of a shared key</a></td><td>accepted, mostly built</td></tr>
-<tr><td>019</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/019-service-addresses.md">An address per service</a></td><td>proposed; the name router is built</td></tr>
-<tr><td>020</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/020-membership-is-a-seam.md">Membership is a seam</a></td><td>accepted</td></tr>
-<tr><td>021</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/021-synthetic-ipv4.md">A synthetic IPv4 address per peer</a></td><td>accepted; translator built</td></tr>
-<tr><td>022</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/022-keycard-for-the-admin-key.md">A Keycard for the admin key</a></td><td>proposed; seam built, card blocked on a key-type decision</td></tr>
-<tr><td>023</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/023-announcing-services.md">Announcing services</a></td><td>accepted; built</td></tr>
-<tr><td>024</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/024-ask-the-router.md">Ask the router for a way in</a></td><td>accepted; built and proven</td></tr>
-<tr><td>025</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/025-control-from-a-desktop-app.md">Control from a desktop app</a></td><td>accepted; settings built, admission deliberately not</td></tr>
-<tr><td>026</td><td><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/026-announce-what-is-bound.md">Announce what is bound to the mesh address</a></td><td>accepted; built, off by default</td></tr>
+<tr><td>001</td><td><a href="adr/001-wireguard-not-libp2p-streams.html">WireGuard for the data plane, not libp2p streams</a></td><td>accepted</td></tr>
+<tr><td>002</td><td><a href="adr/002-userspace-not-kernel-wireguard.html">Userspace WireGuard, not the kernel module</a></td><td>accepted</td></tr>
+<tr><td>003</td><td><a href="adr/003-waku-as-rendezvous-not-control-plane.html">Waku as rendezvous, not a live control plane</a></td><td>accepted</td></tr>
+<tr><td>004</td><td><a href="adr/004-public-fleet-not-own-cluster.html">The public logos.dev fleet, not our own cluster</a></td><td>accepted</td></tr>
+<tr><td>005</td><td><a href="adr/005-derived-addressing.html">Overlay addresses derived from keys, no IPAM</a></td><td>accepted</td></tr>
+<tr><td>006</td><td><a href="adr/006-rotating-rendezvous-topics.html">Rotating rendezvous topics on a stable shard</a></td><td>accepted</td></tr>
+<tr><td>007</td><td><a href="adr/007-separate-device-and-wireguard-keys.html">Separate device and WireGuard keys</a></td><td>accepted</td></tr>
+<tr><td>008</td><td><a href="adr/008-bearer-network-key-for-v1.html">A bearer network key for v1</a></td><td>accepted, temporary</td></tr>
+<tr><td>009</td><td><a href="adr/009-probe-before-setting-endpoint.html">Probe candidates before setting a WireGuard endpoint</a></td><td>accepted</td></tr>
+<tr><td>010</td><td><a href="adr/010-ship-a-container-not-a-binary.html">Ship a container image, not a binary</a></td><td>accepted</td></tr>
+<tr><td>011</td><td><a href="adr/011-no-mixnet.html">No mixnet in the data path</a></td><td>accepted</td></tr>
+<tr><td>012</td><td><a href="adr/012-relay-hosting.html">Who runs the relay (you may not need a VPS)</a></td><td>accepted</td></tr>
+<tr><td>013</td><td><a href="adr/013-name-resolution.html">Name resolution: hosts file now, DNS server next</a></td><td>accepted</td></tr>
+<tr><td>014</td><td><a href="adr/014-relay-discovery-via-announce.html">Relay discovery: a flag on the announce, not a separate message</a></td><td>accepted</td></tr>
+<tr><td>015</td><td><a href="adr/015-multiple-meshes-one-daemon.html">Multiple meshes in one daemon</a></td><td>accepted</td></tr>
+<tr><td>016</td><td><a href="adr/016-android-reuses-the-go-core.html">Android reuses the Go core</a></td><td>accepted</td></tr>
+<tr><td>017</td><td><a href="adr/017-invite-tokens.html">Invite tokens</a></td><td>accepted, built</td></tr>
+<tr><td>018</td><td><a href="adr/018-credentials-instead-of-a-shared-key.html">Credentials instead of a shared key</a></td><td>accepted, mostly built</td></tr>
+<tr><td>019</td><td><a href="adr/019-service-addresses.html">An address per service</a></td><td>proposed; the name router is built</td></tr>
+<tr><td>020</td><td><a href="adr/020-membership-is-a-seam.html">Membership is a seam</a></td><td>accepted</td></tr>
+<tr><td>021</td><td><a href="adr/021-synthetic-ipv4.html">A synthetic IPv4 address per peer</a></td><td>accepted; translator built</td></tr>
+<tr><td>022</td><td><a href="adr/022-keycard-for-the-admin-key.html">A Keycard for the admin key</a></td><td>proposed; seam built, card blocked on a key-type decision</td></tr>
+<tr><td>023</td><td><a href="adr/023-announcing-services.html">Announcing services</a></td><td>accepted; built</td></tr>
+<tr><td>024</td><td><a href="adr/024-ask-the-router.html">Ask the router for a way in</a></td><td>accepted; built and proven</td></tr>
+<tr><td>025</td><td><a href="adr/025-control-from-a-desktop-app.html">Control from a desktop app</a></td><td>accepted; settings built, admission deliberately not</td></tr>
+<tr><td>026</td><td><a href="adr/026-announce-what-is-bound.html">Announce what is bound to the mesh address</a></td><td>accepted; built, off by default</td></tr>
 </table>
 
 <p>

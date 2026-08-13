@@ -16,3 +16,10 @@ android/*.apk
 android/*-sources.jar
 android/shrooms-unsigned.apk
 android/.kotlin/
+
+# The decision record, rendered from docs/adr/*.md by scripts/render-adrs.py
+# (make site-adrs). Not committed: the markdown is the source, the Pages
+# workflow builds these on every deploy, and a checked-in copy is twenty-seven
+# files that go stale the moment somebody edits an ADR without running the
+# renderer.
+site/adr/
