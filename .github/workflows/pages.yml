@@ -51,6 +51,12 @@ jobs:
       # other one. A renderer that quietly emitted a dead cross-link would
       # otherwise be found by a reader, which is the failure this job exists to
       # prevent.
+      # Any `$ ` typed into a code block since the last deploy gets moved into
+      # a pseudo-element here, so a snippet added by hand cannot reintroduce a
+      # prompt that pastes into a shell.
+      - name: Move shell prompts out of the text
+        run: python3 scripts/site-prompts.py
+
       - name: Render the decision record
         run: python3 scripts/render-adrs.py
 

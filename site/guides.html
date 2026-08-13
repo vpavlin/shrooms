@@ -61,8 +61,8 @@
 </p>
 
 <pre><code>$ ssh root@vps.mesh
-$ ping6 laptop.mesh
-$ resolvectl query vps.mesh        <span class="c"># names shrooms0 as the link that answered</span></code></pre>
+<span class="cmd">ping6 laptop.mesh</span>
+<span class="cmd">resolvectl query vps.mesh        <span class="c"># names shrooms0 as the link that answered</span></code></pre></span>
 
 <p>
     That resolver is authoritative for one suffix and answers nothing else — no
@@ -149,8 +149,8 @@ self          laptop  fd3b:ffe9:f81:81a7:18bc:69b1:9bb:7e69
 services = ["immich:2283", "jellyfin:8096"]</code></pre>
 
 <pre><code>$ sudo shrooms reload            <span class="c"># re-reads the config; applies services</span>
-$ curl http://immich.nas.mesh    <span class="c"># from any other device, phone included</span>
-$ curl http://immich.nas.mesh:2283   <span class="c"># the declared port also works</span></code></pre>
+<span class="cmd">curl http://immich.nas.mesh    <span class="c"># from any other device, phone included</span></span>
+<span class="cmd">curl http://immich.nas.mesh:2283   <span class="c"># the declared port also works</span></code></pre></span>
 
 <p>
     The name is <code>&lt;service&gt;.&lt;device&gt;.mesh</code>.
@@ -293,7 +293,7 @@ After=shrooms.service</code></pre>
 </p>
 
 <pre><code>$ echo 'net.ipv6.ip_nonlocal_bind=1' | sudo tee /etc/sysctl.d/99-shrooms.conf
-$ sudo sysctl --system</code></pre>
+<span class="cmd">sudo sysctl --system</code></pre></span>
 
 <h3>Peers are not told until you say so</h3>
 
@@ -422,8 +422,8 @@ default  jellyfin  http://jellyfin.nas.mesh  <span class="a">(unreachable now)</
 </p>
 
 <pre><code>$ shrooms init --mesh shared          <span class="c"># a second network on this node</span>
-$ sudo systemctl restart shrooms
-$ shrooms invite --mesh shared        <span class="c"># admit one device to it</span></code></pre>
+<span class="cmd">sudo systemctl restart shrooms</span>
+<span class="cmd">shrooms invite --mesh shared        <span class="c"># admit one device to it</span></code></pre></span>
 
 <p>Or join one somebody else runs, giving it a name of your own:</p>
 
@@ -471,7 +471,7 @@ mesh.shared.enabled   = "false"    <span class="c"># a member of it, not running
 <p>Names take a mesh label when they need one:</p>
 
 <pre><code>$ ping vps.shared.mesh     <span class="c"># unambiguous, and canonical</span>
-$ ping nas.mesh            <span class="c"># fine while only one mesh has a `nas`</span></code></pre>
+<span class="cmd">ping nas.mesh            <span class="c"># fine while only one mesh has a `nas`</span></code></pre></span>
 
 <p>
     The short form is answered only when exactly one mesh has that name, so a
@@ -551,7 +551,7 @@ vps    $ sudo shrooms join --invite BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U --name vps
   vps              203h0m0s left
   phone            unknown expiry
 
-$ shrooms admin renew         <span class="c"># signs for everything inside ten days of expiry</span></code></pre>
+<span class="cmd">shrooms admin renew         <span class="c"># signs for everything inside ten days of expiry</span></code></pre></span>
 
 <p>
     <code>--within</code> widens the window, <code>--all</code> renews everybody
@@ -569,7 +569,7 @@ $ shrooms admin renew         <span class="c"># signs for everything inside ten 
 device  8f2c1d…
 tunnel  4a90b3…
 
-$ shrooms admin revoke --device 8f2c1d…
+<span class="cmd">shrooms admin revoke --device 8f2c1d…</span>
 Revoked 8f2c1d…, serial <span class="p">1786439411</span> and below.
 
 Published. Every node that sees it verifies the signature itself,
@@ -793,5 +793,6 @@ mode = "Core"      <span class="c"># relay for the network (default)</span></cod
 </div>
 
 <script src="field.js"></script>
+<script src="copy.js"></script>
 </body>
 </html>

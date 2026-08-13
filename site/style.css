@@ -333,6 +333,47 @@ pre {
 }
 
 pre code { background: none; padding: 0; color: #cfd8de; }
+
+/* The shell prompt, drawn but not text.
+   A `$ ` typed into the block is selected by a triple click and pasted into a
+   terminal along with the command, where it runs nothing. A pseudo-element is
+   not text: not selected, not copied, and not read out as something to type. */
+.cmd::before {
+    content: "$ ";
+    color: var(--ash);
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+/* The copy button. Quiet until the block is hovered, because it is an
+   affordance rather than a feature, and a page of buttons reads as a form. */
+pre .copy {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    padding: 3px 9px;
+    font: inherit;
+    font-size: 11px;
+    color: var(--ash);
+    background: rgba(14, 18, 22, 0.9);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+
+pre:hover .copy, pre .copy:focus-visible { opacity: 1; }
+
+pre .copy:hover {
+    color: var(--phosphor);
+    border-color: rgba(53, 240, 160, 0.45);
+}
+
+/* Never hidden where there is no hover to reveal it. */
+@media (hover: none) {
+    pre .copy { opacity: 1; }
+}
 pre .p { color: var(--phosphor); }  /* prompts and good news */
 pre .c { color: var(--ash); }       /* comments */
 pre .a { color: var(--amber); }     /* warnings */

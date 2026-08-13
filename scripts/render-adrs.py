@@ -312,8 +312,21 @@ def blocks(lines, seen):
                 code.append(lines[i])
                 i += 1
             i += 1  # the closing fence, or the end of the file
-            out.append("<pre><code>%s</code></pre>"
-                       % html.escape("\n".join(code)))
+            # The shell prompt goes in a pseudo-element rather than in the
+            # text, so a triple click selects the command and not the `$ `
+            # in front of it. site/copy.js copies these lines and skips the
+            # output between them.
+            rendered = []
+            for c in code:
+                escaped = html.escape(c)
+                stripped = escaped.lstrip()
+                if stripped.startswith("$ "):
+                    indent = escaped[:len(escaped) - len(stripped)]
+                    rendered.append('%s<span class="cmd">%s</span>'
+                                    % (indent, stripped[2:]))
+                else:
+                    rendered.append(escaped)
+            out.append("<pre><code>%s</code></pre>" % "\n".join(rendered))
             continue
 
         m = HEADING.match(line)
@@ -479,6 +492,7 @@ PAGE = """<!doctype html>
 </div>
 
 <script src="../field.js"></script>
+<script src="../copy.js"></script>
 </body>
 </html>
 """

@@ -95,7 +95,7 @@
 </ul>
 
 <pre><code>$ curl -fsSLO https://raw.githubusercontent.com/vpavlin/shrooms/master/scripts/install.sh
-$ sudo bash install.sh prepare --name nas    <span class="c"># install, start, wait for a mesh</span></code></pre>
+<span class="cmd">sudo bash install.sh prepare --name nas    <span class="c"># install, start, wait for a mesh</span></code></pre></span>
 
 <p><strong>What you should see</strong></p>
 
@@ -180,9 +180,9 @@ and back here:
 </p>
 
 <pre><code>$ git clone https://github.com/vpavlin/shrooms &amp;&amp; cd shrooms
-$ make deps-release       <span class="c"># prebuilt liblogosdelivery; there is no distribution of it</span>
-$ make shrooms
-$ sudo make install       <span class="c"># binary, libraries, systemd unit, bash completion</span></code></pre>
+<span class="cmd">make deps-release       <span class="c"># prebuilt liblogosdelivery; there is no distribution of it</span></span>
+<span class="cmd">make shrooms</span>
+<span class="cmd">sudo make install       <span class="c"># binary, libraries, systemd unit, bash completion</span></code></pre></span>
 
 <p>
     <code>make install</code> relinks the binary with an rpath pointing at
@@ -250,9 +250,9 @@ http://apps.vpavlin.xyz/fdroid/repo
 <h3>Building the APK yourself</h3>
 
 <pre><code>$ make apk                       <span class="c"># android/shrooms.apk, debug-signed</span>
-$ adb install -r android/shrooms.apk
+<span class="cmd">adb install -r android/shrooms.apk</span>
 
-$ make fdroid                    <span class="c"># build unsigned, sign on the repo host, publish</span></code></pre>
+<span class="cmd">make fdroid                    <span class="c"># build unsigned, sign on the repo host, publish</span></code></pre></span>
 
 <p>
     <code>make apk</code> needs the Android SDK and an NDK; it builds the
@@ -276,7 +276,7 @@ $ make fdroid                    <span class="c"># build unsigned, sign on the r
 
 <pre><code>$ curl -fsSLO https://github.com/vpavlin/shrooms/releases/download/shrooms-v0.3.0/shrooms-0.3.0.lgx
 <span class="c"># and the core module it depends on</span>
-$ curl -LO https://github.com/vpavlin/shrooms/releases/download/shrooms_core-v0.2.0/shrooms_core-0.2.0.lgx
+<span class="cmd">curl -LO https://github.com/vpavlin/shrooms/releases/download/shrooms_core-v0.2.0/shrooms_core-0.2.0.lgx</span>
 
 <span class="c"># then in Basecamp: Package Manager, Install from file, pick the .lgx</span></code></pre>
 
@@ -344,8 +344,8 @@ $ curl -LO https://github.com/vpavlin/shrooms/releases/download/shrooms_core-v0.
 <h3>Building the package yourself</h3>
 
 <pre><code>$ make basecamp-check     <span class="c"># load the real view offscreen against a fixture</span>
-$ make basecamp-lgx       <span class="c"># build the installable package</span>
-$ make basecamp-publish   <span class="c"># cut a GitHub release carrying it</span></code></pre>
+<span class="cmd">make basecamp-lgx       <span class="c"># build the installable package</span></span>
+<span class="cmd">make basecamp-publish   <span class="c"># cut a GitHub release carrying it</span></code></pre></span>
 
 <p>
     <code>basecamp-lgx</code> builds the portable variant through nix, because
@@ -368,9 +368,9 @@ $ make basecamp-publish   <span class="c"># cut a GitHub release carrying it</sp
 </ul>
 
 <pre><code>$ ssh root@VPS_IP
-$ curl -fsSLO https://raw.githubusercontent.com/vpavlin/shrooms/master/scripts/install.sh
-$ sudo bash install.sh prepare --name vps --relay
-$ ufw allow 51820/udp                        <span class="c"># or your firewall's equivalent</span></code></pre>
+<span class="cmd">curl -fsSLO https://raw.githubusercontent.com/vpavlin/shrooms/master/scripts/install.sh</span>
+<span class="cmd">sudo bash install.sh prepare --name vps --relay</span>
+<span class="cmd">ufw allow 51820/udp                        <span class="c"># or your firewall's equivalent</span></code></pre></span>
 
 <p><strong>What you should see</strong></p>
 
@@ -437,7 +437,7 @@ This node relays. Open its UDP port if a firewall is in the way:
 </p>
 
 <pre><code>$ ./scripts/deploy.sh root@VPS_IP --relay --name vps --key &lt;NETWORK-KEY&gt;
-$ ./scripts/deploy.sh root@VPS_IP --init --relay --name vps   <span class="c"># or create the mesh</span></code></pre>
+<span class="cmd">./scripts/deploy.sh root@VPS_IP --init --relay --name vps   <span class="c"># or create the mesh</span></code></pre></span>
 
 <p>
     With <code>--init</code> the config is generated <em>locally</em>, by your
@@ -579,14 +579,14 @@ Asking to join as "nas"...
 </p>
 
 <pre><code><span class="c"># on the machine being set up, by whoever is doing the setup</span>
-$ sudo shrooms prepare --name nas --relay
+<span class="cmd">sudo shrooms prepare --name nas --relay</span>
 Prepared /etc/shrooms/config.toml for "nas".
 
 The mesh key is not set. Add it yourself:
   <span class="p">sudo shrooms set-key</span>
 
 <span class="c"># later, by whoever holds the key</span>
-$ sudo shrooms set-key
+<span class="cmd">sudo shrooms set-key</span>
 Mesh key:
 <span class="p">Key written to /etc/shrooms/config.toml.</span>
 The daemon was waiting for this and is bringing the mesh up now.</code></pre>
@@ -634,8 +634,8 @@ NAME         OVERLAY IP                              ANNOUNCE  TUNNEL  ENDPOINT 
 <span class="p">vps (relay)</span>  fd48:d107:3fce:a332:855c:1059:8060:59d7  online    up 42s  203.0.113.4:51820          12.4K/8.1K  18s
 <span class="p">phone</span>        fd48:d107:3fce:9d1c:7b2e:41a:cc90:1f22   online    up 1m   relay:…@203.0.113.4:51820  1.1K/900    24s
 
-$ ping6 vps.mesh
-$ ssh vps.mesh</code></pre>
+<span class="cmd">ping6 vps.mesh</span>
+<span class="cmd">ssh vps.mesh</code></pre></span>
 
 <p>
     A healthy roster has both columns and they mean different things.
@@ -783,5 +783,6 @@ reflexive addresses (as peers observe us):
 </div>
 
 <script src="field.js"></script>
+<script src="copy.js"></script>
 </body>
 </html>
