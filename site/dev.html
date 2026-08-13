@@ -309,6 +309,7 @@ addr   = prefix : SHA256("mesh/v1/addr" || device_pub)[0:10]  <span class="c">â†
 <tr><td>024</td><td><a href="adr/024-ask-the-router.html">Ask the router for a way in</a></td><td>accepted; built and proven</td></tr>
 <tr><td>025</td><td><a href="adr/025-control-from-a-desktop-app.html">Control from a desktop app</a></td><td>accepted; settings built, admission deliberately not</td></tr>
 <tr><td>026</td><td><a href="adr/026-announce-what-is-bound.html">Announce what is bound to the mesh address</a></td><td>accepted; built, off by default</td></tr>
+<tr><td>027</td><td><a href="adr/027-punching-through-the-relay.html">Punch through the relay we already have</a></td><td>proposed</td></tr>
 </table>
 
 <p>
@@ -431,7 +432,10 @@ addr   = prefix : SHA256("mesh/v1/addr" || device_pub)[0:10]  <span class="c">â†
 </p>
 
 <p>
-    <strong>Punching between two NATed peers is still unproven</strong>, and it
+    <strong>Punching between two NATed peers is still unproven.</strong> There
+    is a plan for it now â€” <a href="adr/027-punching-through-the-relay.html">ADR-027</a>,
+    a simultaneous open coordinated over the relay the pair already use, with
+    every part in place except the coordination. It
     is a different mechanism from the above. Three reasons it is hard, all
     learned rather than assumed:
 </p>

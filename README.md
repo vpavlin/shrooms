@@ -1175,7 +1175,13 @@ mobile data dialled it directly, on a mesh with no publicly reachable member
 ([ADR-024](docs/adr/024-ask-the-router.md)). Whether your router answers is
 between you and your router; when it does not, nothing is worse than before.
 
-**Punching between two NATed peers is still unproven**, and it is a different
+**Punching between two NATed peers is still unproven.** There is now a plan for
+it — [ADR-027](docs/adr/027-punching-through-the-relay.md), a simultaneous open
+coordinated over the relay the pair are already using — prompted by Logos
+Storage shipping the equivalent with libp2p's DCUtR in v0.4.2. Every part
+exists here except the coordination: reflexive addresses are already collected,
+the control plane already carries sealed messages, and UDP needs only rough
+simultaneity rather than DCUtR's RTT arithmetic. It is a different
 mechanism from the above. The reasons it is hard are now clearer than they
 were:
 
@@ -1225,6 +1231,13 @@ liblogosdelivery still said cluster 2. Every peer connected, compared metadata,
 disagreed and hung up — which looks exactly like an outage. The default is now
 `logos.test`, whose preset is correct, and `cluster_id` exists as an override
 for the next time a fleet moves ahead of the library. `make s1` detects this.
+
+**Port mapping speaks PCP and NAT-PMP but not UPnP-IGD.** Plenty of consumer
+routers speak only the third, which is exactly the home network this is for, so
+the hit rate is lower than it needs to be. Logos Storage solved the same problem
+by adopting libplum, a C library covering all three; the reasoning for writing
+UPnP in stdlib Go instead — one pinned native dependency already costs enough —
+is in [ADR-027](docs/adr/027-punching-through-the-relay.md).
 
 **Testing on real infrastructure keeps finding bugs that containers hide**, all
 of them timing-, NAT- or lossy-network-dependent. Prefer hardware for anything
