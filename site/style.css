@@ -150,12 +150,36 @@ nav .mark {
     font-weight: 700;
     letter-spacing: 0.04em;
     text-decoration: none;
+
+    /* Three things, all of which move the word off the mark's centre by a
+       pixel or two, which is exactly enough to look wrong:
+       line-height, because the default leaves the glyphs sitting high in a
+       taller line box; the bottom border every other nav link has, inherited
+       from `nav a` below and cancelled here; and the padding that would come
+       with it. */
+    line-height: 1;
+    border-bottom: 0;
+    padding-bottom: 0;
 }
 
 .nav-logo {
-    width: 22px;
-    height: 22px;
-    border-radius: 6px;
+    /* Block, so it is not also an inline box with a baseline of its own — the
+       usual reason an image beside text sits low even inside a centred flex
+       row. */
+    display: block;
+    flex: none;
+    width: 24px;
+    height: 24px;
+    border-radius: 7px;
+
+    /* The drawing sits low inside its square: the cap starts around a quarter
+       of the way down and the stem runs almost to the bottom edge, so its
+       optical centre is below its geometric one. Aligning the boxes therefore
+       reads as the word sitting high. A pixel back up costs nothing and fixes
+       what the eye actually sees. */
+    position: relative;
+    top: -1px;
+
     /* A little of the hero's glow, so the masthead is recognisably the same
        object rather than a shrunken copy of it. */
     filter: drop-shadow(0 0 8px rgba(53, 240, 160, 0.45));
