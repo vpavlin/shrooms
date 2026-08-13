@@ -200,13 +200,71 @@ def stem_line(x0, stem_h, lean, sway, top_y, node, n=14):
         y = top_y + (HORIZON - top_y) * t
         pts.append((stem_axis(x0, stem_h, lean, sway, y), y))
 
-    # The descent, bowed away from the direction the stem came from, which
-    # continues the sway rather than reversing it.
-    foot = pts[-1]
-    prev = pts[-2]
-    side = 1.0 if (foot[0] - prev[0]) >= 0 else -1.0
-    pts += curve(foot, node, 0.10 * side, n=10)[1:]
+    # The descent. Its control point sits along the direction the stem was
+    # already travelling, which is what makes the join smooth: a quadratic
+    # leaves its start heading straight at its control point, so putting that
+    # point on the incoming tangent means the curve continues the stem rather
+    # than setting off somewhere of its own.
+    #
+    # Bowing perpendicular to the chord — which is what this did — happens to
+    # look right when the node lies the way the stem was already leaning, and
+    # visibly kinks at the soil when it does not. Two of the three did not.
+    foot, prev = pts[-1], pts[-2]
+    tx, ty = foot[0] - prev[0], foot[1] - prev[1]
+    tl = math.hypot(tx, ty) or 1.0
+    tx, ty = tx / tl, ty / tl
+
+    dx, dy = node[0] - foot[0], node[1] - foot[1]
+    dl = math.hypot(dx, dy) or 1.0
+    # How far along that tangent to reach. Shortened when the node lies against
+    # the stem's direction, or the curve overshoots and comes back — which is a
+    # different ugly shape, not a fix for this one.
+    align = max(0.15, (tx * dx + ty * dy) / dl)
+    cx, cy = foot[0] + tx * dl * 0.55 * align, foot[1] + ty * dl * 0.55 * align
+
+    for i in range(1, 13):
+        t = i / 12
+        u = 1.0 - t
+        pts.append((u * u * foot[0] + 2 * u * t * cx + t * t * node[0],
+                    u * u * foot[1] + 2 * u * t * cy + t * t * node[1]))
     return pts
+
+
+def exit_tangent(x0, stem_h, lean, sway, eps=0.6):
+    """The direction a stem is travelling as it reaches the soil."""
+    a = stem_axis(x0, stem_h, lean, sway, HORIZON - eps)
+    b = stem_axis(x0, stem_h, lean, sway, HORIZON)
+    d = math.hypot(b - a, eps) or 1.0
+    return ((b - a) / d, eps / d)
+
+
+def pick_node(foot, tan, nodes):
+    """Which node a stem joins: near, and in front of it.
+
+    Nearest alone is not enough, and this is the whole of why two of the three
+    stems had a corner at the soil. A stem leaving the surface heading left,
+    attached to the nearest node — which happened to be to its right — has to
+    turn around to get there, and no amount of care at the join can hide a
+    reversal. Weighting by alignment picks a node the stem is already going
+    towards, and then the curve simply continues.
+
+    A node twice as far but dead ahead beats one close behind, which is the
+    right trade for a drawing: the line is prettier and the graph is no less
+    true, since which node a stem happens to touch means nothing.
+    """
+    def score(n):
+        dx, dy = n[0] - foot[0], n[1] - foot[1]
+        d = math.hypot(dx, dy) or 1e-6
+        # Sideways agreement only. Every node is below the foot, so a dot
+        # product against the whole tangent is dominated by the downward
+        # component and calls everything "ahead" — which is why the first
+        # version of this changed nothing. What makes a stem double back is
+        # horizontal, so that is what is measured.
+        turn = 0.0
+        if tan[0] * (dx / d) < 0.0:
+            turn = abs(tan[0])
+        return d * (1.0 + 1.4 * turn)
+    return min(nodes, key=score)
 
 
 def mycelium():
@@ -285,8 +343,8 @@ def _geometry(simple=False):
         depth = 2 if simple else (3, 2, 1)[min(k, 2)]
         caps.append(cap_triangles(stem_axis(x0, sh, lean, sway, base), w, h, base, depth))
         foot = (stem_axis(x0, sh, lean, sway, HORIZON), HORIZON)
-        near = min(nodes, key=lambda n: (n[0] - foot[0]) ** 2 + (n[1] - foot[1]) ** 2)
-        stems.append(stem_line(x0, sh, lean, sway, base - h * 0.02, near))
+        stems.append(stem_line(x0, sh, lean, sway, base - h * 0.02,
+                               pick_node(foot, exit_tangent(x0, sh, lean, sway), nodes)))
 
     return caps, stems, nodes, links
 
