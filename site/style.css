@@ -172,7 +172,16 @@ nav {
     align-items: center;
     gap: 18px;
     flex-wrap: wrap;
-    padding: 14px 0;
+
+    /* Padded on the sides, and pulled out by the same amount, so the bar's
+       blurred backdrop still spans the column while the mark and the last link
+       are not touching its edges. Without the negative margin the bar would
+       simply be narrower than the text under it, which looks like a mistake
+       from the other direction. */
+    padding: 12px 16px;
+    margin: 0 -16px;
+    border-radius: 0 0 14px 14px;
+
     background: linear-gradient(var(--void) 70%, transparent);
     font-size: 13px;
 }
