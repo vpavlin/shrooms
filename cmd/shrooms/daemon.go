@@ -1142,6 +1142,17 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 					out.Meshes[i].AnnounceBound = mc.AnnounceBound
 					delete(at, mc.Label)
 				}
+				// What each running mesh has bound to its own address, which
+				// only an instance can answer — the config knows what is
+				// announced, not what is listening.
+				for _, in := range instances {
+					for i := range out.Meshes {
+						if out.Meshes[i].Label == in.label {
+							out.Meshes[i].BoundHere = in.mesh.BoundHere()
+						}
+					}
+				}
+
 				// Whatever is left is running and no longer in the config,
 				// which is a mesh that has been left and not yet restarted out
 				// of. It is still carrying traffic, so it is still listed.

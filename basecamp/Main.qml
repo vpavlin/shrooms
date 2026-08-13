@@ -794,6 +794,15 @@ Item {
         return out
     }
 
+    /** The bound ports belonging to one mesh, for that mesh's own block. */
+    function boundFor(label) {
+        var out = []
+        for (var i = 0; i < root.boundRows.length; i++) {
+            if (root.boundRows[i].mesh === label) out.push(root.boundRows[i])
+        }
+        return out
+    }
+
     /** Days until a unix-seconds stamp, or 999 when there is none. */
     function daysTo(unix) {
         if (!unix) return 999
@@ -1934,168 +1943,181 @@ Layout.preferredWidth: 0
                                     // precisely how a mesh became unreachable from
                                     // every screen at once.
                                     model: root.switchableMeshes
-                                    delegate: RowLayout {
-                                        spacing: 10
+                                    delegate: ColumnLayout {
+                                        // A small block per mesh rather than one long row. Six switches
+                                        // and a sentence do not fit a panel this wide — the state text
+                                        // was being elided down to "stops a", which is the one part of
+                                        // the row that is not self-explanatory.
+                                        //
+                                        // Identity and lifecycle on the first line, disclosure on the
+                                        // second, and what would be disclosed under both.
                                         Layout.fillWidth: true
                                         Layout.preferredWidth: 0
-                                        Layout.leftMargin: root.sz(12)
+                                        Layout.topMargin: root.sz(3)
+                                        spacing: root.sz(2)
 
-                                        // On means the config says on, not that a
-                                        // tunnel exists. The two differ for exactly as
-                                        // long as it takes to restart, and binding the
-                                        // switch to the tunnel is what made a click
-                                        // look like it had failed.
                                         readonly property bool isOn: modelData.disabled !== true
                                         readonly property bool pending: modelData.not_running === true
                                                                         || modelData.left === true
                                         readonly property bool primary: root.isPrimary(modelData)
 
-                                        Rectangle {
-                                            width: root.sz(7); height: root.sz(7); radius: root.sz(4)
-                                            // Hollow while the config and the process
-                                            // disagree, so a pending mesh is visibly
-                                            // neither of the two settled states.
-                                            color: parent.pending ? "transparent"
-                                                 : (parent.isOn ? root.meshTint(modelData.label) : cLine)
-                                            border.color: parent.isOn ? root.meshTint(modelData.label) : cAsh
-                                            border.width: parent.pending ? 1 : 0
-                                        }
-                                        Text {
-                                            // Defensive because this view runs against
-                                            // daemons it was not built with: a mesh
-                                            // entry without a label is malformed, and
-                                            // "?" says so where an undefined binding
-                                            // just logs to a console nobody reads.
-                                            text: modelData.label || "?"
-                                            color: parent.isOn ? cBone : cAsh
-                                            font.family: "monospace"; font.pixelSize: root.fs(11)
-                                            Layout.preferredWidth: root.sz(100)
-                                            elide: Text.ElideRight
-                                        }
-                                        Text {
-                                            text: "on"
-                                            color: root.pick(parent.isOn)
-                                            font.family: "monospace"; font.pixelSize: root.fs(11)
-                                            MouseArea {
-                                                anchors.fill: parent
-                                                cursorShape: Qt.PointingHandCursor
-                                                onClicked: root.callWrite("setMeshEnabled",
-                                                                          [modelData.label, true])
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            spacing: root.sz(10)
+                                            Rectangle {
+                                                width: root.sz(7); height: root.sz(7); radius: root.sz(4)
+                                                color: parent.parent.pending ? "transparent"
+                                                     : (parent.parent.isOn ? root.meshTint(modelData.label) : cLine)
+                                                border.color: parent.parent.isOn ? root.meshTint(modelData.label) : cAsh
+                                                border.width: parent.parent.pending ? 1 : 0
+                                            }
+                                            Text {
+                                                text: modelData.label || "?"
+                                                color: parent.parent.isOn ? cBone : cAsh
+                                                font.family: "monospace"; font.pixelSize: root.fs(11)
+                                                Layout.preferredWidth: root.sz(84)
+                                                elide: Text.ElideRight
+                                            }
+                                            Text {
+                                                text: "on"
+                                                color: root.pick(parent.parent.isOn)
+                                                font.family: "monospace"; font.pixelSize: root.fs(11)
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: root.callWrite("setMeshEnabled", [modelData.label, true])
+                                                }
+                                            }
+                                            Text {
+                                                // Absent on the primary mesh rather than present and
+                                                // refused: the daemon rejects both of these for it.
+                                                visible: !parent.parent.primary
+                                                text: "off"
+                                                color: root.pick(!parent.parent.isOn)
+                                                font.family: "monospace"; font.pixelSize: root.fs(11)
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: root.callWrite("setMeshEnabled", [modelData.label, false])
+                                                }
+                                            }
+                                            Text {
+                                                visible: !parent.parent.primary
+                                                property bool armed: false
+                                                text: armed ? "sure?" : "leave"
+                                                color: armed ? cAmber : cRust
+                                                font.family: "monospace"; font.pixelSize: root.fs(11)
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: {
+                                                        if (!parent.armed) { parent.armed = true; return }
+                                                        parent.armed = false
+                                                        root.callWrite("leaveMesh", [modelData.label])
+                                                    }
+                                                }
+                                            }
+                                            Item { Layout.fillWidth: true }
+                                            Text {
+                                                text: root.meshState(modelData)
+                                                visible: text !== ""
+                                                color: cAmber
+                                                font.family: "monospace"; font.pixelSize: root.fs(9)
                                             }
                                         }
-                                        Text {
-                                            // Absent on the primary mesh rather than
-                                            // present and refused: the daemon rejects
-                                            // both of these for it, and a button whose
-                                            // only outcome is an error is worse than no
-                                            // button.
-                                            visible: !parent.primary
-                                            text: "off"
-                                            color: root.pick(!parent.isOn)
-                                            font.family: "monospace"; font.pixelSize: root.fs(11)
-                                            MouseArea {
-                                                anchors.fill: parent
-                                                cursorShape: Qt.PointingHandCursor
-                                                onClicked: root.callWrite("setMeshEnabled",
-                                                                          [modelData.label, false])
+
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            Layout.leftMargin: root.sz(17)
+                                            spacing: root.sz(10)
+                                            Text {
+                                                text: "tell peers"
+                                                color: cAsh
+                                                font.family: "monospace"; font.pixelSize: root.fs(9)
                                             }
-                                        }
-                                        Text {
-                                            // Whether this device forwards for peers of *this*
-                                            // mesh that cannot reach each other. Per mesh, because
-                                            // carrying traffic for your own machines and for
-                                            // somebody else's are different choices.
-                                            //
-                                            // Nothing in this window could set it, and a mesh with
-                                            // no relay is invisible until somebody on mobile data
-                                            // reaches nobody.
-                                            text: "relay"
-                                            color: root.pick(modelData.relay === true)
-                                            font.family: "monospace"; font.pixelSize: root.fs(11)
-                                            MouseArea {
-                                                anchors.fill: parent
-                                                cursorShape: Qt.PointingHandCursor
-                                                onClicked: root.callWrite("setRelay",
-                                                                          [modelData.label,
-                                                                           modelData.relay !== true])
+                                            Text {
+                                                // Per mesh, because it is per mesh in the config: telling
+                                                // your own machines what you run and telling somebody
+                                                // else's are different decisions (ADR-023).
+                                                text: "services"
+                                                color: root.pick(modelData.announce_services === true)
+                                                font.family: "monospace"; font.pixelSize: root.fs(10)
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: root.callWrite("setAnnounceServices",
+                                                                              [modelData.label,
+                                                                               modelData.announce_services !== true])
+                                                }
                                             }
-                                        }
-                                        Text {
-                                            // What this mesh's members are told about what runs
-                                            // here. Per mesh, because it is per mesh in the config
-                                            // and because telling your own machines and telling
-                                            // somebody else's are different decisions (ADR-023).
-                                            //
-                                            // It used to be one row above, addressing the first mesh
-                                            // whatever you were looking at.
-                                            text: "services"
-                                            color: root.pick(modelData.announce_services === true)
-                                            font.family: "monospace"; font.pixelSize: root.fs(11)
-                                            MouseArea {
-                                                anchors.fill: parent
-                                                cursorShape: Qt.PointingHandCursor
-                                                onClicked: root.callWrite("setAnnounceServices",
-                                                                          [modelData.label,
-                                                                           modelData.announce_services !== true])
+                                            Text {
+                                                // And the ports that merely happen to be listening
+                                                // (ADR-026) — separate, because those are discovered
+                                                // rather than declared.
+                                                text: "ports"
+                                                color: root.pick(modelData.announce_bound === true)
+                                                font.family: "monospace"; font.pixelSize: root.fs(10)
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: root.callWrite("setAnnounceBound",
+                                                                              [modelData.label,
+                                                                               modelData.announce_bound !== true])
+                                                }
                                             }
-                                        }
-                                        Text {
-                                            // And the ports that merely happen to be listening
-                                            // (ADR-026) — a separate switch, because those are
-                                            // discovered rather than declared.
-                                            text: "ports"
-                                            color: root.pick(modelData.announce_bound === true)
-                                            font.family: "monospace"; font.pixelSize: root.fs(11)
-                                            MouseArea {
-                                                anchors.fill: parent
-                                                cursorShape: Qt.PointingHandCursor
-                                                onClicked: root.callWrite("setAnnounceBound",
-                                                                          [modelData.label,
-                                                                           modelData.announce_bound !== true])
+                                            Text {
+                                                text: "· forward for others"
+                                                color: cAsh
+                                                font.family: "monospace"; font.pixelSize: root.fs(9)
                                             }
+                                            Text {
+                                                text: "relay"
+                                                color: root.pick(modelData.relay === true)
+                                                font.family: "monospace"; font.pixelSize: root.fs(10)
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: root.callWrite("setRelay",
+                                                                              [modelData.label, modelData.relay !== true])
+                                                }
+                                            }
+                                            Item { Layout.fillWidth: true }
                                         }
-                                        Text {
-                                            visible: !parent.primary
-                                            // Two clicks, because this one cannot be
-                                            // undone from here: coming back needs a
-                                            // new invite from somebody already in.
-                                            property bool armed: false
-                                            text: armed ? "sure?" : "leave"
-                                            color: armed ? cAmber : cRust
-                                            font.family: "monospace"; font.pixelSize: root.fs(11)
-                                            MouseArea {
-                                                anchors.fill: parent
-                                                cursorShape: Qt.PointingHandCursor
-                                                onClicked: {
-                                                    if (!parent.armed) { parent.armed = true; return }
-                                                    parent.armed = false
-                                                    root.callWrite("leaveMesh", [modelData.label])
+
+                                        // What "ports" would disclose, under the switch that discloses
+                                        // it. Choosing blind is the alternative, and the list changes
+                                        // every time somebody starts a server and forgets.
+                                        Repeater {
+                                            model: root.boundFor(modelData.label)
+                                            delegate: RowLayout {
+                                                Layout.fillWidth: true
+                                                Layout.leftMargin: root.sz(17)
+                                                spacing: root.sz(8)
+                                                Text {
+                                                    text: modelData.spec
+                                                    color: modelData.announced ? cPhosphor : cAsh
+                                                    font.family: "monospace"; font.pixelSize: root.fs(9)
+                                                    Layout.preferredWidth: root.sz(74)
+                                                    elide: Text.ElideRight
+                                                }
+                                                Text {
+                                                    text: modelData.addr
+                                                    color: bMouse.containsMouse ? cPhosphor : cAsh
+                                                    font.family: "monospace"; font.pixelSize: root.fs(9)
+                                                    font.underline: bMouse.containsMouse
+                                                    elide: Text.ElideRight
+                                                    Layout.fillWidth: true
+                                                    Layout.preferredWidth: 0
+                                                    MouseArea {
+                                                        id: bMouse
+                                                        anchors.fill: parent
+                                                        hoverEnabled: true
+                                                        cursorShape: Qt.PointingHandCursor
+                                                        onClicked: root.copyText(modelData.addr)
+                                                    }
                                                 }
                                             }
                                         }
-                                        Text {
-                                            visible: parent.primary && text !== ""
-                                            text: "· this device's first mesh"
-                                            color: cAsh
-                                            font.family: "monospace"; font.pixelSize: root.fs(10)
-                                        }
-                                        Item { Layout.fillWidth: true }
-                                        Text {
-                                            // The pending state, right-aligned into the space
-                                            // the filler leaves. It was at the end of the row,
-                                            // where a whole sentence sat after three one-word
-                                            // switches and pushed them off the panel.
-                                            //
-                                            // Without it a click writes the config, changes
-                                            // nothing visible, and reads as a failure.
-                                            text: root.meshState(modelData)
-                                            visible: text !== ""
-                                            color: cAmber
-                                            font.family: "monospace"; font.pixelSize: root.fs(9)
-                                            horizontalAlignment: Text.AlignRight
-                                            elide: Text.ElideRight
-                                            Layout.maximumWidth: root.sz(190)
-                                        }
                                     }
                                 }
 
@@ -2103,49 +2125,6 @@ Layout.preferredWidth: 0
 
 
 
-                                // What this device would disclose on this mesh,
-                                // listed under the switch that would disclose it.
-                                // Deciding whether to announce your bound ports
-                                // without being shown which ones they are is a
-                                // decision taken blind — and the answer changes
-                                // every time somebody starts a server and forgets
-                                // about it.
-                                Repeater {
-                                    model: root.boundRows
-                                    delegate: RowLayout {
-                                        Layout.fillWidth: true
-                                        Layout.leftMargin: root.sz(24)
-                                        spacing: root.sz(8)
-                                        Text {
-                                            text: modelData.spec
-                                            color: modelData.announced ? cPhosphor : cAsh
-                                            font.family: "monospace"; font.pixelSize: root.fs(10)
-                                            Layout.preferredWidth: root.sz(90)
-                                            elide: Text.ElideRight
-                                        }
-                                        Text {
-                                            text: modelData.addr
-                                            color: boundCopy.containsMouse ? cPhosphor : cAsh
-                                            font.family: "monospace"; font.pixelSize: root.fs(10)
-                                            font.underline: boundCopy.containsMouse
-                                            elide: Text.ElideRight
-                                            Layout.fillWidth: true
-                                            Layout.preferredWidth: 0
-                                            MouseArea {
-                                                id: boundCopy
-                                                anchors.fill: parent
-                                                hoverEnabled: true
-                                                cursorShape: Qt.PointingHandCursor
-                                                onClicked: root.copyText(modelData.addr)
-                                            }
-                                        }
-                                        Text {
-                                            text: modelData.announced ? "listed" : "not listed"
-                                            color: cAsh
-                                            font.family: "monospace"; font.pixelSize: root.fs(9)
-                                        }
-                                    }
-                                }
 
                                 Text {
                                     // Only when something is actually pending, so it
