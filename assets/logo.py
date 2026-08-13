@@ -42,17 +42,39 @@ from PIL import Image, ImageDraw, ImageFilter
 VIEW = 108.0
 CX = 54.0
 
+# How far the adaptive launcher foreground is scaled down so the drawing lands
+# in the 72-unit safe zone. Nothing else is scaled: the SVG, the site logo and
+# the legacy icons are square and uncropped, and sizing the mark for the one
+# consumer that crops would waste the other three.
+SAFE = 72.0 / 108.0
+
 # The soil line. High enough that the mycelium gets real room — it is the
 # subject as much as the mushrooms are — and low enough that the caps are not
 # crammed against the top of the safe zone.
-HORIZON = 62.0
+HORIZON = 58.0
 
 VOID = (7, 9, 11)
 EARTH = (26, 20, 15)          # under the soil, barely lighter than the void
 EARTH_LINE = (58, 42, 31)     # the soil line itself
 # Tan, because that is what these mushrooms are, and muted because phosphor is
 # the only colour in this project allowed to shout.
-CAP = (198, 168, 108)
+# The caps.
+#
+# Tan was tried first, on the grounds that it is what these mushrooms are, and
+# it was the only warm colour in a mark made otherwise of phosphor, violet and
+# bone — it read as belonging to a different drawing. Violet is what the spores
+# already are, what "relayed" is everywhere else in this project, and the
+# colour phosphor is paired with on both front-ends. Two colours, both of them
+# already meaning something.
+#
+# One per fruiting body, so the alternative is one line: give them the three
+# mesh tints the graph uses to group peers —
+#
+#   CAPS = [(154, 123, 255), (90, 169, 255), (255, 111, 181)]
+#
+# which says "three devices, three meshes" and is more vivid at the cost of
+# being three colours in a logo.
+CAPS = [(154, 123, 255), (154, 123, 255), (154, 123, 255)]
 PHOSPHOR = (53, 240, 160)     # the living network
 VIOLET = (154, 123, 255)      # spores, and "relayed" everywhere else
 BONE = (214, 221, 227)
@@ -75,9 +97,9 @@ BONE = (214, 221, 227)
 #
 #   x, cap half-width, cap height, stem height, lean, sway
 SHROOMS = [
-    (47.0, 14.0, 13.0, 25.0, 0.30, -0.30),
-    (72.0, 9.6, 9.0, 16.5, -0.34, 0.30),
-    (29.0, 7.4, 7.0, 10.5, 0.22, 0.34),
+    (47.0, 15.5, 15.0, 32.0, 0.26, -0.26),
+    (82.0, 11.0, 10.5, 21.0, -0.30, 0.28),
+    (25.0, 8.6, 8.0, 13.0, 0.20, 0.32),
 ]
 
 
@@ -96,6 +118,30 @@ def stem_axis(x0, stem_h, lean, sway, y):
     return (x0
             + lean * (1.0 - t) * stem_h * 0.55
             + sway * math.sin(math.pi * t) * stem_h * 0.34)
+
+def curve(a, b, bend, n=10):
+    """A gently bowed line from a to b, as a polyline.
+
+    Everything that connects two points in this mark is drawn with this, which
+    is the point: the stems curved and the links were dead straight, so the two
+    read as different kinds of object and every stem visibly broke where it
+    entered the soil.
+
+    It is also what both front-ends do — the graph draws its links as
+    quadratic curves "because mycelium does not grow in straight lines" — so
+    the mark and the app now bow their connections the same way.
+    """
+    mx, my = (a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    cx, cy = mx - dy * bend, my + dx * bend
+    pts = []
+    for i in range(n + 1):
+        t = i / n
+        u = 1.0 - t
+        pts.append((u * u * a[0] + 2 * u * t * cx + t * t * b[0],
+                    u * u * a[1] + 2 * u * t * cy + t * t * b[1]))
+    return pts
+
 
 def gasket(a, b, c, depth, out):
     """Collect the inverted triangles of a Sierpinski gasket.
@@ -138,58 +184,55 @@ def cap_triangles(x0, w, h, base_y, depth):
     return [apex, left, right], holes
 
 
-def stem_line(x0, stem_h, lean, sway, top_y, bot_y, n=16):
-    """The stem as a polyline, to be drawn as a glowing line.
+def stem_line(x0, stem_h, lean, sway, top_y, node, n=14):
+    """The stem, from under the cap all the way down to its node.
 
-    It was a filled shape in a pale flesh colour, which is what a mushroom stem
-    looks like and not what anything else in this project looks like. Every
-    connection on both front-ends is a glowing phosphor line; a stem is the
-    connection between what the network grew and the network itself, so it is
-    drawn the same way. The mark then belongs to the same family as the app
-    rather than being a drawing that happens to sit beside it.
+    One line, not two. It used to stop at the soil and a separate straight
+    segment ran from there to the nearest node, which put a visible kink at
+    exactly the place the mark is about — where what grew meets what grew it.
+
+    Below the soil it continues as a curve that leaves the foot going the way
+    the stem was already going, so there is no corner at the surface either.
     """
     pts = []
     for i in range(n + 1):
         t = i / n
-        y = top_y + (bot_y - top_y) * t
+        y = top_y + (HORIZON - top_y) * t
         pts.append((stem_axis(x0, stem_h, lean, sway, y), y))
+
+    # The descent, bowed away from the direction the stem came from, which
+    # continues the sway rather than reversing it.
+    foot = pts[-1]
+    prev = pts[-2]
+    side = 1.0 if (foot[0] - prev[0]) >= 0 else -1.0
+    pts += curve(foot, node, 0.10 * side, n=10)[1:]
     return pts
 
 
 def mycelium():
-    """The network under the soil: nodes, links, and the root of each stem.
+    """The network under the soil: nodes and the links between them.
 
-    Sparser than it was, and laid out like the graph the two front-ends draw
-    rather than like a scatter. It had three rows of fifteen nodes with
-    nearest-neighbour links and a few random long ones, which is a fair model
-    of a mycelium and, at any size a launcher icon is shown, a green smudge.
+    Spread across the whole width and down to the bottom edge, because the
+    drawing sat in the middle of its square with a band of nothing above and
+    below it. The adaptive launcher icon is the one output that cannot take
+    that, and it gets a scale transform instead of the whole mark being sized
+    for the strictest consumer.
 
-    Eight nodes on a shallow arc now, each linked to its neighbours plus a few
-    crossing links so it reads as a mesh and not a chain. The arc matters: it
-    puts every node at a different depth, which gives the eye something to
-    follow, and it curves up towards the stems it feeds.
+    Links come back as bowed polylines rather than pairs of endpoints, so they
+    are the same kind of thing as a stem and can be drawn by the same code.
     """
     nodes = [
-        (18.0, 74.0), (31.0, 82.0), (45.0, 87.0), (59.0, 88.0),
-        (73.0, 84.0), (86.0, 77.0), (38.0, 72.0), (66.0, 73.0),
+        (10.0, 74.0), (24.0, 86.0), (40.0, 95.0), (58.0, 97.0),
+        (76.0, 90.0), (95.0, 79.0), (33.0, 72.0), (69.0, 74.0),
     ]
-    # The chain along the arc, then three links across it. Written out rather
-    # than generated: eight nodes is few enough to place by hand, and a mark
-    # that changes when somebody edits a random seed is not a mark.
-    edges = [
+    pairs = [
         (0, 1), (1, 2), (2, 3), (3, 4), (4, 5),
         (0, 6), (6, 2), (6, 3), (3, 7), (7, 4), (7, 5),
     ]
-
-    # Each stem's foot joins the nearest node, which is the whole idea of the
-    # mark: what is above the ground grew out of what is below it.
-    roots = []
-    for x0, _w, _h, sh, lean, sway in SHROOMS:
-        foot = (stem_axis(x0, sh, lean, sway, HORIZON), HORIZON)
-        near = min(nodes, key=lambda n: (n[0] - foot[0]) ** 2 + (n[1] - foot[1]) ** 2)
-        roots.append((foot, near))
-
-    return nodes, edges, roots
+    # Alternating bows, so the field looks grown rather than combed one way.
+    links = [curve(nodes[i], nodes[j], 0.055 if (k % 2) else -0.055)
+             for k, (i, j) in enumerate(pairs)]
+    return nodes, links
 
 
 def spores(n=6):
@@ -212,33 +255,40 @@ def spores(n=6):
 # than a second drawing that would drift from this one.
 # Chunkier than the full drawing on purpose: at this size a tall thin stem
 # under a narrow cap reads as an exclamation mark, not a mushroom.
-SHROOMS_SMALL = [(54.0, 25.0, 21.0, 15.0, 0.0, 0.0)]
-NODES_SMALL = [(23.0, 72.0), (42.0, 85.0), (67.0, 83.0), (86.0, 70.0)]
+SHROOMS_SMALL = [(54.0, 30.0, 26.0, 22.0, 0.0, 0.0)]
+NODES_SMALL = [(14.0, 72.0), (38.0, 92.0), (70.0, 90.0), (94.0, 68.0)]
 EDGES_SMALL = [(0, 1), (1, 2), (2, 3), (0, 2)]
 
 
 def _geometry(simple=False):
-    """Everything the three renderers draw, computed once."""
+    """Everything the three renderers draw, computed once.
+
+    Two kinds of thing come out of here now: filled shapes (the caps and their
+    holes) and polylines (the stems and the links). Everything that connects is
+    a polyline and is drawn the same way, which is what stops the stems and the
+    network reading as two different drawings sharing a square.
+    """
     shrooms = SHROOMS_SMALL if simple else SHROOMS
+    if simple:
+        nodes = NODES_SMALL
+        links = [curve(nodes[i], nodes[j], 0.06 if (k % 2) else -0.06)
+                 for k, (i, j) in enumerate(EDGES_SMALL)]
+    else:
+        nodes, links = mycelium()
+
     caps, stems = [], []
     for k, (x0, w, h, sh, lean, sway) in enumerate(shrooms):
         base = HORIZON - sh
         # The tallest gets three levels, the others two and one. Depth costs
         # nothing to draw and everything to read: a small cap subdivided three
-        # times is a smudge, and all three at the same depth looks printed.
-        depth = (3, 2, 1)[min(k, 2)]
-        # The cap goes where the top of the stem actually is, not where a
-        # straight stem would have put it.
-        caps.append(cap_triangles(stem_axis(x0, sh, lean, sway, base), w, h, base,
-                                  2 if simple else depth))
-        stems.append(stem_line(x0, sh, lean, sway, base - h * 0.02, HORIZON))
-    if simple:
-        foot = (SHROOMS_SMALL[0][0], HORIZON)
-        near = min(NODES_SMALL, key=lambda n: (n[0] - foot[0]) ** 2 + (n[1] - foot[1]) ** 2)
-        return caps, stems, NODES_SMALL, EDGES_SMALL, [(foot, near)]
+        # times is a smudge, and all three at one depth looks printed.
+        depth = 2 if simple else (3, 2, 1)[min(k, 2)]
+        caps.append(cap_triangles(stem_axis(x0, sh, lean, sway, base), w, h, base, depth))
+        foot = (stem_axis(x0, sh, lean, sway, HORIZON), HORIZON)
+        near = min(nodes, key=lambda n: (n[0] - foot[0]) ** 2 + (n[1] - foot[1]) ** 2)
+        stems.append(stem_line(x0, sh, lean, sway, base - h * 0.02, near))
 
-    nodes, edges, roots = mycelium()
-    return caps, stems, nodes, edges, roots
+    return caps, stems, nodes, links
 
 
 def _poly(points):
@@ -248,10 +298,13 @@ def _poly(points):
     return d + " Z"
 
 
-def _lines(pairs):
-    """Line segments as path data, for the hyphae."""
-    return " ".join("M %.2f %.2f L %.2f %.2f" % (a[0], a[1], b[0], b[1])
-                    for a, b in pairs)
+def _lines(polylines):
+    """Polylines as path data, for everything that connects two points."""
+    out = []
+    for pts in polylines:
+        out.append("M %.2f %.2f " % pts[0]
+                   + " ".join("L %.2f %.2f" % p for p in pts[1:]))
+    return " ".join(out)
 
 
 # --- PNG ---------------------------------------------------------------------
@@ -261,7 +314,7 @@ SMALL = 128
 
 def render_png(path, size, background=True):
     big = size >= SMALL
-    caps, stems, nodes, edges, roots = _geometry(simple=not big)
+    caps, stems, nodes, links = _geometry(simple=not big)
     s = size / VIEW
 
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
@@ -287,41 +340,38 @@ def render_png(path, size, background=True):
     glow = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     gd = ImageDraw.Draw(glow)
     width = max(1, int(size * (0.022 if big else 0.045)))
-    for i, j in edges:
-        gd.line([P(*nodes[i]), P(*nodes[j])], fill=PHOSPHOR + (150,), width=width)
-    for foot, near in roots:
-        gd.line([P(*foot), P(*near)], fill=PHOSPHOR + (170,), width=width)
-    for k in range(len(stems)):
-        gd.line([P(*p) for p in stems[k]], fill=PHOSPHOR + (150,),
-                width=width, joint="curve")
+    for pts in links + stems:
+        gd.line([P(*p) for p in pts], fill=PHOSPHOR + (155,), width=width, joint="curve")
     glow = glow.filter(ImageFilter.GaussianBlur(size * 0.016))
     img.alpha_composite(glow)
 
     thin = max(2, int(size * (0.008 if big else 0.022)))
-    for i, j in edges:
-        d.line([P(*nodes[i]), P(*nodes[j])], fill=PHOSPHOR + (235,), width=thin)
-    for foot, near in roots:
-        d.line([P(*foot), P(*near)], fill=PHOSPHOR + (255,), width=thin)
+    for pts in links:
+        d.line([P(*p) for p in pts], fill=PHOSPHOR + (235,), width=thin, joint="curve")
 
+    # The soil line under the stems and over the links, so the ground reads as
+    # a surface that the stems pass through rather than stand on.
+    d.line([P(4, HORIZON), P(VIEW - 4, HORIZON)],
+           fill=EARTH_LINE, width=max(1, int(size * 0.012)))
+
+    stem_w = max(2, int(size * (0.011 if big else 0.026)))
+    for pts in stems:
+        d.line([P(*p) for p in pts], fill=PHOSPHOR + (255,),
+               width=stem_w, joint="curve")
+
+    # Nodes after the stems, because a stem ends at one and would otherwise be
+    # drawn across it — the join is the point of the whole mark.
     r = size * (0.017 if big else 0.045)
     for x, y in nodes:
         cx, cy = P(x, y)
         d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=BONE)
 
-    # The soil line, drawn over the links so the ground reads as a surface.
-    d.line([P(4, HORIZON), P(VIEW - 4, HORIZON)],
-           fill=EARTH_LINE, width=max(1, int(size * 0.012)))
-
-    # The stems, over the soil line, and the caps over those. Tallest last so
-    # it sits in front.
-    stem_w = max(2, int(size * (0.011 if big else 0.026)))
+    # The caps last. Tallest drawn last so it sits in front.
     for k in ([0] if len(caps) == 1 else [1, 2, 0]):
-        d.line([P(*p) for p in stems[k]], fill=PHOSPHOR + (255,),
-               width=stem_w, joint="curve")
         # The cap: one triangle with a gasket punched out of it. The holes are
         # filled with the background rather than a darker tint, so the figure
         # is the same subtraction the site draws and not a decoration on top.
-        poly(caps[k][0], CAP)
+        poly(caps[k][0], CAPS[k % len(CAPS)])
         for hole in caps[k][1]:
             poly(hole, VOID)
 
@@ -338,7 +388,7 @@ def render_png(path, size, background=True):
 # --- Android VectorDrawable --------------------------------------------------
 
 def render_vector(path):
-    caps, stems, nodes, edges, roots = _geometry()
+    caps, stems, nodes, links = _geometry()
 
     def hexa(c):
         return "#%02X%02X%02X" % c
@@ -348,15 +398,26 @@ def render_vector(path):
              '<vector xmlns:android="http://schemas.android.com/apk/res/android"',
              '    android:width="108dp" android:height="108dp"',
              '    android:viewportWidth="108" android:viewportHeight="108">',
-             "",
-             "    <!-- the soil -->",
-             f'    <path android:pathData="M 0 {HORIZON} L 108 {HORIZON} L 108 108 L 0 108 Z" '
-             f'android:fillColor="{hexa(EARTH)}"/>',
-             "",
-             "    <!-- mycelium: the mesh, where mycelium actually lives -->"]
+             ""]
+    # Everything goes inside one group, scaled about the centre so the whole
+    # drawing lands inside the adaptive icon's safe zone. This file is the
+    # launcher foreground and a launcher may mask anything outside the middle
+    # 72 of 108, while the SVG and the PNGs are not cropped at all and want the
+    # full square. One drawing, one transform, rather than a composition sized
+    # for the tightest crop and loose everywhere else.
+    #
+    # The soil is inside it too. It was outside, which left the horizon at full
+    # size while everything that meets it shrank — a mark whose ground line
+    # does not touch its stems.
+    parts.append('    <group android:pivotX="54" android:pivotY="54" '
+                 f'android:scaleX="{SAFE:.3f}" android:scaleY="{SAFE:.3f}">')
+    parts.append("    <!-- the soil -->")
+    parts.append(f'    <path android:pathData="M -20 {HORIZON} L 128 {HORIZON} '
+                 f'L 128 148 L -20 148 Z" android:fillColor="{hexa(EARTH)}"/>')
+    parts.append("")
+    parts.append("    <!-- mycelium: the mesh, where mycelium actually lives -->")
 
-    hyphae = _lines([(nodes[i], nodes[j]) for i, j in edges] +
-                    [(f, n) for f, n in roots])
+    hyphae = _lines(links)
     parts.append(f'    <path android:pathData="{hyphae}" android:strokeColor="{hexa(PHOSPHOR)}" '
                  f'android:strokeWidth="2.6" android:strokeAlpha="0.35" android:strokeLineCap="round"/>')
     parts.append(f'    <path android:pathData="{hyphae}" android:strokeColor="{hexa(PHOSPHOR)}" '
@@ -374,7 +435,7 @@ def render_vector(path):
     # The stems, as strokes rather than filled shapes, so they read as the same
     # kind of thing as the links below them.
     for k in (1, 2, 0):
-        stem = _lines(list(zip(stems[k][:-1], stems[k][1:])))
+        stem = _lines([stems[k]])
         parts.append(f'    <path android:pathData="{stem}" '
                      f'android:strokeColor="{hexa(PHOSPHOR)}" android:strokeWidth="2.6" '
                      f'android:strokeAlpha="0.35" android:strokeLineCap="round"/>')
@@ -382,7 +443,7 @@ def render_vector(path):
                      f'android:strokeColor="{hexa(PHOSPHOR)}" android:strokeWidth="1.3" '
                      f'android:strokeLineCap="round"/>')
         parts.append(f'    <path android:pathData="{_poly(caps[k][0])}" '
-                     f'android:fillColor="{hexa(CAP)}"/>')
+                     f'android:fillColor="{hexa(CAPS[k % len(CAPS)])}"/>')
         # The gasket, punched out in the background colour. A vector drawable
         # has no even-odd subtraction worth relying on across API levels, so
         # the holes are drawn as shapes in the colour behind them — which is
@@ -391,6 +452,13 @@ def render_vector(path):
             parts.append(f'    <path android:pathData="{_poly(hole)}" '
                          f'android:fillColor="{hexa(VOID)}"/>')
 
+    parts.append("")
+    parts.append("    <!-- spores: how a mesh gains a member -->")
+    for x, y, r in spores():
+        parts.append(f'    <path android:pathData="M {x:.2f} {y - r:.2f} '
+                     f'a {r:.2f} {r:.2f} 0 1 0 0.01 0 Z" '
+                     f'android:fillColor="{hexa(VIOLET)}"/>')
+    parts.append("    </group>")
     parts.append("</vector>")
 
     with open(path, "w") as f:
@@ -401,13 +469,12 @@ def render_vector(path):
 # --- SVG ---------------------------------------------------------------------
 
 def render_svg(path):
-    caps, stems, nodes, edges, roots = _geometry()
+    caps, stems, nodes, links = _geometry()
 
     def hexa(c):
         return "#%02X%02X%02X" % c
 
-    hyphae = _lines([(nodes[i], nodes[j]) for i, j in edges] +
-                    [(f, n) for f, n in roots])
+    hyphae = _lines(links)
 
     parts = ['<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" '
              'width="512" height="512">',
@@ -424,16 +491,19 @@ def render_svg(path):
     parts.append(f'<path d="M 4 {HORIZON} L 104 {HORIZON}" stroke="{hexa(EARTH_LINE)}" '
                  f'stroke-width="1.4" stroke-linecap="round"/>')
     for k in (1, 2, 0):
-        stem = _lines(list(zip(stems[k][:-1], stems[k][1:])))
+        stem = _lines([stems[k]])
         parts.append(f'<g filter="url(#g)" opacity="0.85"><path d="{sx.escape(stem)}" '
                      f'stroke="{hexa(PHOSPHOR)}" stroke-width="2.6" fill="none" '
                      f'stroke-linecap="round"/></g>')
         parts.append(f'<path d="{sx.escape(stem)}" stroke="{hexa(PHOSPHOR)}" '
                      f'stroke-width="1.2" fill="none" stroke-linecap="round"/>')
-        parts.append(f'<path d="{sx.escape(_poly(caps[k][0]))}" fill="{hexa(CAP)}"/>')
+        parts.append(f'<path d="{sx.escape(_poly(caps[k][0]))}" fill="{hexa(CAPS[k % len(CAPS)])}"/>')
         for hole in caps[k][1]:
             parts.append(f'<path d="{sx.escape(_poly(hole))}" fill="{hexa(VOID)}"/>')
 
+    for x, y, r in spores():
+        parts.append(f'<circle cx="{x:.2f}" cy="{y:.2f}" r="{r:.2f}" '
+                     f'fill="{hexa(VIOLET)}"/>')
     parts.append("</svg>")
 
     with open(path, "w") as f:
