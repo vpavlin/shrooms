@@ -321,6 +321,15 @@ if __name__ == "__main__":
     render_svg(os.path.join(here, "logo.svg"))
     render_vector(os.path.join(res, "drawable/ic_mesh.xml"))
 
+    # The website uses the same mark rather than an approximation of it. It
+    # gets both the file and the favicon, because a site that draws its own
+    # mushroom drifts from the app's within a week — which is exactly what
+    # happened before this line existed.
+    site = os.path.join(root, "site")
+    if os.path.isdir(site):
+        render_svg(os.path.join(site, "logo.svg"))
+        render_svg(os.path.join(site, "favicon.svg"))
+
     # Legacy launcher bitmaps, the Basecamp package icon, and a big one for
     # F-Droid, which cannot extract an adaptive icon from an APK.
     for dpi, px in [("mdpi", 48), ("hdpi", 72), ("xhdpi", 96), ("xxxhdpi", 192)]:
@@ -330,4 +339,4 @@ if __name__ == "__main__":
         render_png(os.path.join(d, "ic_launcher_round.png"), px)
     render_png(os.path.join(root, "basecamp/icon.png"), 512)
     render_png(os.path.join(here, "logo.png"), 512)
-    print("wrote the mark: svg, vector drawable, mipmaps, basecamp icon")
+    print("wrote the mark: svg, vector drawable, mipmaps, basecamp icon, site")

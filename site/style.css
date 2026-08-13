@@ -143,9 +143,22 @@ nav {
 }
 
 nav .mark {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
     color: var(--phosphor);
     font-weight: 700;
     letter-spacing: 0.04em;
+    text-decoration: none;
+}
+
+.nav-logo {
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    /* A little of the hero's glow, so the masthead is recognisably the same
+       object rather than a shrunken copy of it. */
+    filter: drop-shadow(0 0 8px rgba(53, 240, 160, 0.45));
 }
 
 nav a {
@@ -265,12 +278,23 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 3em 0; }
     transform-origin: 50% 100%;
 }
 
-.shroom svg { display: block; overflow: visible; }
-.shroom .halo { animation: breathe 7s ease-in-out infinite; transform-origin: 100px 86px; }
-.shroom .spot { animation: wink 9s ease-in-out infinite; }
-.shroom .s1 { animation-duration: 7s; }
-.shroom .s2 { animation-duration: 13s; }
-.shroom .s3 { animation-duration: 17s; }
+/* The mark is an <img> of the generated file rather than inline markup, so
+   the site cannot drift from the app's icon — which means its insides cannot
+   be animated from here. The glow around it can, and that is enough: it is
+   the cap's mesh that should look alive, and it already does. */
+.shroom img {
+    display: block;
+    width: 100%;
+    height: auto;
+    border-radius: 26px;
+    animation: glow 9s ease-in-out infinite;
+}
+
+@keyframes glow {
+    0%, 100% { filter: drop-shadow(0 0 18px rgba(53, 240, 160, 0.35)); }
+    33%      { filter: drop-shadow(0 0 34px rgba(154, 123, 255, 0.42)); }
+    66%      { filter: drop-shadow(0 0 26px rgba(255, 111, 181, 0.35)); }
+}
 
 @keyframes sprout {
     from { transform: translateY(26px) scaleY(0.55) scaleX(0.85); opacity: 0; }
@@ -279,10 +303,6 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 3em 0; }
 @keyframes bob {
     50% { transform: translateY(-8px) rotate(-1.2deg); }
 }
-@keyframes wink {
-    50% { opacity: 0.12; }
-}
-
 @media (max-width: 640px) {
     .shroom { width: 132px; height: 132px; }
 }
