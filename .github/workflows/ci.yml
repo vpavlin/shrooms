@@ -204,13 +204,18 @@ jobs:
       # the only way this gets tested at all in CI — and it caught two real
       # bugs (a blocked file:// XHR and a TypeError on a missing field) that
       # reading the file did not.
+      # qml-qt6 is the runtime itself, and it is a separate package from
+      # qt6-declarative-dev-tools — which ships qmllint, qmlformat, qmlls and
+      # nine other qml* tools but not `qml`. That split is why this job spent a
+      # week reporting "no qml runtime found" on a machine that had just
+      # installed Qt.
       - name: Install Qt for the offscreen check
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             qml6-module-qtquick qml6-module-qtquick-controls \
             qml6-module-qtquick-layouts qml6-module-qtqml-workerscript \
-            qt6-declarative-dev-tools libqt6svg6
+            qt6-declarative-dev-tools libqt6svg6 qml-qt6
       - name: Check the QML
         run: make basecamp-check
 
