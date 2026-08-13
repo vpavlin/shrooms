@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shrooms — 003. Waku as rendezvous, not a live control plane</title>
+<meta name="description" content="The natural reading of &quot;use a messaging network instead of a coordination server&quot; is to put the control plane on it: peers continuously subscribed, endpoint updates gossiped in real time.">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../style.css">
+<meta property="og:title" content="shrooms — 003. Waku as rendezvous, not a live control plane">
+<meta property="og:description" content="The natural reading of &quot;use a messaging network instead of a coordination server&quot; is to put the control plane on it: peers continuously subscribed, endpoint updates gossiped in real time.">
+<meta name="theme-color" content="#07090b">
+</head>
+<body>
+<div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+<div class="lattice" aria-hidden="true"></div>
+<canvas id="field"></canvas>
+<div class="grain" aria-hidden="true"></div>
+
+<div class="page">
+<nav>
+    <a class="mark" href="../index.html"><img class="nav-logo" src="../logo.svg" alt="" width="24" height="24">shrooms</a>
+    <a href="../index.html">what &amp; why</a>
+    <a href="../install.html">install</a>
+    <a href="../guides.html">guides</a>
+    <a href="../dev.html" class="here">dev notes</a>
+    <span class="spacer"></span>
+    <a href="https://github.com/vpavlin/shrooms">github</a>
+</nav>
+
+<header class="hero">
+<h1>003. Waku as rendezvous, not a live control plane</h1>
+<div class="note">
+<p><strong>Status:</strong> accepted</p>
+</div>
+<div class="cta">
+    <a href="index.html">← every decision</a>
+    <a href="../dev.html">dev notes</a>
+</div>
+</header>
+
+<h2 id="context">Context</h2>
+
+<p>The natural reading of &quot;use a messaging network instead of a coordination
+server&quot; is to put the control plane on it: peers continuously subscribed,
+endpoint updates gossiped in real time.</p>
+
+<h2 id="decision">Decision</h2>
+
+<p>Waku is a <strong>bootstrap and repair</strong> channel. It is used at cold start, on network
+change, and to repair a partition. It is not required in steady state.</p>
+
+<h2 id="why">Why</h2>
+
+<p><strong>WireGuard relearns a peer&#x27;s endpoint from any correctly-authenticated packet.</strong>
+A node that roams and sends first is relearned by every peer with no signalling
+at all. With <code>PersistentKeepalive</code> set, that is self-healing.</p>
+
+<p>So the steady state needs no control plane, and once any tunnel exists the mesh
+can carry its own control traffic — the pattern wesher and tinc use.</p>
+
+<p>Three consequences make this more than an optimisation:</p>
+
+<ul>
+<li><strong>Android forces it.</strong> Both nwaku and go-waku call <code>disconnectAllPeers()</code> if
+the keepalive loop is late by more than ~30 s. Doze suspends the SoC, so every
+Doze cycle tears down every Waku connection. Persistent connectivity is not an
+available behaviour on a phone.</li>
+<li><strong>Core mode is incoherent intermittently.</strong> Gossipsub is a <em>maintained</em>
+overlay: GRAFT to <code>dLow=4</code> needs seconds of heartbeats, the message cache holds
+~6 s of history, and scoring punishes graft-then-vanish. A node appearing for
+3 s every 15 minutes never forms a mesh and is a liability to its peers.</li>
+<li><strong>It makes the battery question disappear</strong> rather than needing to be tuned.</li>
+</ul>
+
+<h2 id="consequences">Consequences</h2>
+
+<ul>
+<li>Waku Store becomes load-bearing: intermittent peers may never be online
+simultaneously, so the async mailbox matters.</li>
+<li>Revocation is slower, bounded by how often a node checks in. Mitigated by
+short-expiry credentials (ADR-008).</li>
+<li>Discovery code must be <strong>periodic and idempotent</strong>, never session-shaped, or
+the Android port becomes a rewrite.</li>
+</ul>
+
+<footer>
+    <p>
+        shrooms is built in the open at
+        <a href="https://github.com/vpavlin/shrooms">github.com/vpavlin/shrooms</a>,
+        dual licensed Apache-2.0 or MIT.
+        Part of the <a href="https://logos.co">Logos</a> ecosystem: it rides on
+        Logos Delivery and ships as a Basecamp module.
+    </p>
+</footer>
+</div>
+
+<script src="../field.js"></script>
+</body>
+</html>

@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shrooms — 025. Control from a desktop app, and what the socket group may do</title>
+<meta name="description" content="The daemon holds a unix control socket, and basecamp/core — a Logos Basecamp module that runs outside the QML sandbox — already speaks HTTP over it to read /status. Everything else on that…">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../style.css">
+<meta property="og:title" content="shrooms — 025. Control from a desktop app, and what the socket group may do">
+<meta property="og:description" content="The daemon holds a unix control socket, and basecamp/core — a Logos Basecamp module that runs outside the QML sandbox — already speaks HTTP over it to read /status. Everything else on that…">
+<meta name="theme-color" content="#07090b">
+</head>
+<body>
+<div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+<div class="lattice" aria-hidden="true"></div>
+<canvas id="field"></canvas>
+<div class="grain" aria-hidden="true"></div>
+
+<div class="page">
+<nav>
+    <a class="mark" href="../index.html"><img class="nav-logo" src="../logo.svg" alt="" width="24" height="24">shrooms</a>
+    <a href="../index.html">what &amp; why</a>
+    <a href="../install.html">install</a>
+    <a href="../guides.html">guides</a>
+    <a href="../dev.html" class="here">dev notes</a>
+    <span class="spacer"></span>
+    <a href="https://github.com/vpavlin/shrooms">github</a>
+</nav>
+
+<header class="hero">
+<h1>025. Control from a desktop app, and what the socket group may do</h1>
+<div class="note">
+<p><strong>Status:</strong> accepted; settings, mesh on/off and leaving are built. Joining and
+issuing a credential from the socket are not — see &quot;What is deliberately still
+manual&quot;.</p>
+</div>
+<div class="cta">
+    <a href="index.html">← every decision</a>
+    <a href="../dev.html">dev notes</a>
+</div>
+</header>
+
+<h2 id="context">Context</h2>
+
+<p>The daemon holds a unix control socket, and <code>basecamp/core</code> — a Logos Basecamp
+module that runs outside the QML sandbox — already speaks HTTP over it to read
+<code>/status</code>. Everything else on that socket is read-only or root-only, so a
+desktop view can watch a mesh and change nothing about it. Every actual
+operation means a terminal.</p>
+
+<p>That is a poor split for the thing people most want a UI for. An invite is a
+token best delivered as a QR code on a screen; renaming a device is one field;
+switching a mesh off is one toggle. All of it currently requires remembering a
+command.</p>
+
+<p>The obvious objection is that the socket is powerful, and the obvious answer —
+&quot;only reads for the group, writes need root&quot; — is the one this ADR rejects.</p>
+
+<h2 id="what-the-socket-can-actually-do">What the socket can actually do</h2>
+
+<p>The question is not &quot;does this change something&quot; but <strong>what can the daemon do on
+its own</strong>, because the socket is exactly as powerful as the daemon behind it.</p>
+
+<p><a href="018-credentials-instead-of-a-shared-key.html">ADR-018</a> changed the answer, and
+nothing had noticed. On a mesh with <code>admin_keys</code>, membership is an admin-signed
+credential naming one device&#x27;s keys. The daemon does not hold the admin key: it
+is a passphrase-protected file in somebody&#x27;s home directory, and the daemon has
+never read it. So:</p>
+
+<ul>
+<li><strong>Minting an invite hands over the network key and admits nobody.</strong> The
+joining device gets the rendezvous secret, and every peer refuses its
+announces until the admin key signs a credential for it.</li>
+<li><strong>Removing a device needs a signature too.</strong> A revocation is honoured because
+the authority signed it, not because it arrived over a socket.</li>
+</ul>
+
+<p>So the socket&#x27;s real power is the <em>control plane&#x27;s confidentiality</em> — the
+network key, the roster, everybody&#x27;s endpoints — and this device&#x27;s own
+behaviour. Which is serious, and is not the power to decide who belongs.</p>
+
+<h2 id="decision">Decision</h2>
+
+<p><strong>Two tiers, drawn at what the daemon can do alone.</strong></p>
+
+<p><strong>The socket group</strong> may do everything the daemon holds by itself: read status,
+change this device&#x27;s name, mode and services, switch a mesh on or off, leave
+one, and reload. Access is decided by the file mode — the socket is 0660 with a
+configured group — so a caller who can connect is already authorised, and no
+further check is needed or offered.</p>
+
+<p><strong>Root, or the user the daemon runs as</strong> keeps what would let the socket alone
+rewrite membership: installing a credential for this device, and anything else
+that decides who belongs without a signature to check. Decided by SO_PEERCRED,
+which the kernel sets at connect time and no caller can forge.</p>
+
+<p><strong>This is the Docker model, and it should be documented like it.</strong> Membership of
+the <code>docker</code> group is famously equivalent to root, and the project says so
+plainly rather than pretending the permission is small. Here the grant is
+smaller and still serious: the group can read your mesh&#x27;s control plane and hand
+your network key to a device of its choosing. It cannot make that device a
+member. Both halves belong in the documentation, because a grant people
+misjudge is worse than one they decline.</p>
+
+<h3 id="written-to-the-config-not-applied-in-memory">Written to the config, not applied in memory</h3>
+
+<p>Every setting endpoint edits <code>config.toml</code> and lets the reloader apply what it
+can. The config is what a restart reads, so a change applied only to the running
+process is one that silently reverts — a worse failure than one that needs a
+restart, because it looks like it worked.</p>
+
+<p>Two consequences worth stating:</p>
+
+<ul>
+<li><strong>The file is re-read for every request.</strong> Something else edits it — a person
+with an editor, <code>shrooms join</code>, the Android bindings — and writing back a copy
+held since startup would discard their work without a word.</li>
+<li><strong>The whole config is validated before it is written.</strong> A config that does not
+parse is a daemon that will not start, and the next reboot is the worst
+possible time to discover it. A rejected change leaves the file untouched.</li>
+</ul>
+
+<h3 id="names-are-stored-in-the-form-that-resolves">Names are stored in the form that resolves</h3>
+
+<p><code>Living Room NAS</code> is stored as <code>living-room-nas</code>, because that is what answers
+to <code>living-room-nas.mesh</code>. Storing what was typed gives a device whose name
+works in the roster and not in a browser, which is a bug report nobody enjoys
+writing.</p>
+
+<h2 id="what-is-deliberately-still-manual">What is deliberately still manual</h2>
+
+<p><strong>Joining another mesh over the socket.</strong> The daemon has what it needs — a
+rendezvous connection to redeem the invite, and the config to write — but a new
+mesh is a new WireGuard device and only runs after a restart. Worth building;
+not worth half-building, because a join that appears to work and does nothing
+until the next reboot is exactly the kind of thing people remember about a
+tool.</p>
+
+<p><strong>Issuing a credential.</strong> An invite is two halves (ADR-017): the daemon holds
+the exchange and the admin key signs. The socket can do the first and must not
+be able to do the second — that separation is the whole reason group access is a
+bounded grant. So a desktop invite flow has to reach the admin key in the user&#x27;s
+own session, which means running the CLI with a passphrase rather than teaching
+the socket to sign. The shape that fits: the UI collects the passphrase and runs
+<code>shrooms invite</code>, keeping every line of signing code in one place, and later
+that prompt becomes a Keycard tap (<a href="022-keycard-for-the-admin-key.html">ADR-022</a>).</p>
+
+<h2 id="consequences">Consequences</h2>
+
+<ul>
+<li>A desktop app can drive everything except admission, without sudo and without
+a terminal.</li>
+<li><code>socket_group</code> becomes a documented, deliberate grant instead of a way to
+avoid typing sudo before <code>status</code>.</li>
+<li>The one operation a UI most wants — an invite as a QR code — still needs a
+passphrase prompt, which is the correct place for the friction to live.</li>
+<li>One more surface that can misconfigure a node, so the endpoints validate the
+whole config rather than their own field, and say what they changed.</li>
+</ul>
+
+<footer>
+    <p>
+        shrooms is built in the open at
+        <a href="https://github.com/vpavlin/shrooms">github.com/vpavlin/shrooms</a>,
+        dual licensed Apache-2.0 or MIT.
+        Part of the <a href="https://logos.co">Logos</a> ecosystem: it rides on
+        Logos Delivery and ships as a Basecamp module.
+    </p>
+</footer>
+</div>
+
+<script src="../field.js"></script>
+</body>
+</html>

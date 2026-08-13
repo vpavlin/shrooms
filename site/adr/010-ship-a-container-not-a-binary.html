@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shrooms — 010. Ship a container image, not a binary</title>
+<meta name="description" content="A single static binary is the nicest deployment story: scp it and run. That is what the project aimed for.">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../style.css">
+<meta property="og:title" content="shrooms — 010. Ship a container image, not a binary">
+<meta property="og:description" content="A single static binary is the nicest deployment story: scp it and run. That is what the project aimed for.">
+<meta name="theme-color" content="#07090b">
+</head>
+<body>
+<div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+<div class="lattice" aria-hidden="true"></div>
+<canvas id="field"></canvas>
+<div class="grain" aria-hidden="true"></div>
+
+<div class="page">
+<nav>
+    <a class="mark" href="../index.html"><img class="nav-logo" src="../logo.svg" alt="" width="24" height="24">shrooms</a>
+    <a href="../index.html">what &amp; why</a>
+    <a href="../install.html">install</a>
+    <a href="../guides.html">guides</a>
+    <a href="../dev.html" class="here">dev notes</a>
+    <span class="spacer"></span>
+    <a href="https://github.com/vpavlin/shrooms">github</a>
+</nav>
+
+<header class="hero">
+<h1>010. Ship a container image, not a binary</h1>
+<div class="note">
+<p><strong>Status:</strong> accepted</p>
+</div>
+<div class="cta">
+    <a href="index.html">← every decision</a>
+    <a href="../dev.html">dev notes</a>
+</div>
+</header>
+
+<h2 id="context">Context</h2>
+
+<p>A single static binary is the nicest deployment story: <code>scp</code> it and run. That is
+what the project aimed for.</p>
+
+<h2 id="decision">Decision</h2>
+
+<p>Ship a container image.</p>
+
+<h2 id="why">Why</h2>
+
+<p><strong><code>liblogosdelivery</code> requires glibc 2.38.</strong> Our own Go binary only needs 2.34,
+but the library does not, and that decides it:</p>
+
+<table>
+<tr><th>target</th><th>glibc</th><th>works?</th></tr>
+<tr><td>Debian 12</td><td>2.36</td><td>✗</td></tr>
+<tr><td>Ubuntu 24.04</td><td>2.39</td><td>✓</td></tr>
+<tr><td>Ubuntu 25.10</td><td>2.42</td><td>✓</td></tr>
+</table>
+
+<p>A tarball therefore fails on the most common VPS image. Static linking is not
+available either: building <code>liblogosdelivery</code> from source is blocked upstream
+(the Nim build fails with <code>illegal effect: NestedPoll</code> at both master and the
+revision the Android bindings pin), so we cannot control how it is linked.</p>
+
+<p>The image also carries the 21 shared libraries Basecamp ships alongside it —
+which matters, because the library <strong>dlopens <code>libpq</code> at runtime</strong> for its Store
+backend, and that failure is fatal and only visible at startup.</p>
+
+<h2 id="consequences">Consequences</h2>
+
+<ul>
+<li>Docker is a dependency on every node.</li>
+<li>Deployment ships ~250 MB rather than 11 MB. <code>docker save | gzip | ssh</code> makes
+that a one-off.</li>
+<li><strong>Host networking is required, not incidental.</strong> Behind docker&#x27;s bridge NAT the
+reflexive address peers observe would be the docker gateway&#x27;s and the source
+port would be rewritten, so hole punching would fight a layer of NAT that does
+not exist in reality.</li>
+</ul>
+
+<h2 id="what-would-change-our-mind">What would change our mind</h2>
+
+<p>Upstream fixing the Nim build, which would let us build the library ourselves
+and consider static linking — or a <code>liblogosdelivery</code> built against an older
+glibc.</p>
+
+<footer>
+    <p>
+        shrooms is built in the open at
+        <a href="https://github.com/vpavlin/shrooms">github.com/vpavlin/shrooms</a>,
+        dual licensed Apache-2.0 or MIT.
+        Part of the <a href="https://logos.co">Logos</a> ecosystem: it rides on
+        Logos Delivery and ships as a Basecamp module.
+    </p>
+</footer>
+</div>
+
+<script src="../field.js"></script>
+</body>
+</html>

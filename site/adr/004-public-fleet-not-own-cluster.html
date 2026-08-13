@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shrooms — 004. The public logos.dev fleet, not our own cluster</title>
+<meta name="description" content="Waku supports private networks: pick a cluster ID in 16–65535, run your own bootstrap nodes, and the mandatory metadata handshake hard-disconnects anyone on a different cluster. That gives…">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../style.css">
+<meta property="og:title" content="shrooms — 004. The public logos.dev fleet, not our own cluster">
+<meta property="og:description" content="Waku supports private networks: pick a cluster ID in 16–65535, run your own bootstrap nodes, and the mandatory metadata handshake hard-disconnects anyone on a different cluster. That gives…">
+<meta name="theme-color" content="#07090b">
+</head>
+<body>
+<div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+<div class="lattice" aria-hidden="true"></div>
+<canvas id="field"></canvas>
+<div class="grain" aria-hidden="true"></div>
+
+<div class="page">
+<nav>
+    <a class="mark" href="../index.html"><img class="nav-logo" src="../logo.svg" alt="" width="24" height="24">shrooms</a>
+    <a href="../index.html">what &amp; why</a>
+    <a href="../install.html">install</a>
+    <a href="../guides.html">guides</a>
+    <a href="../dev.html" class="here">dev notes</a>
+    <span class="spacer"></span>
+    <a href="https://github.com/vpavlin/shrooms">github</a>
+</nav>
+
+<header class="hero">
+<h1>004. The public logos.dev fleet, not our own cluster</h1>
+<div class="note">
+<p><strong>Status:</strong> accepted</p>
+</div>
+<div class="cta">
+    <a href="index.html">← every decision</a>
+    <a href="../dev.html">dev notes</a>
+</div>
+</header>
+
+<h2 id="context">Context</h2>
+
+<p>Waku supports private networks: pick a cluster ID in 16–65535, run your own
+bootstrap nodes, and the mandatory metadata handshake hard-disconnects anyone on
+a different cluster. That gives a genuinely isolated network.</p>
+
+<h2 id="decision">Decision</h2>
+
+<p>Use the public <code>logos.dev</code> fleet (cluster 2).</p>
+
+<h2 id="why">Why</h2>
+
+<ul>
+<li><strong>Nothing to run.</strong> The six entry nodes are <code>/dns4/</code> multiaddrs hardcoded in
+the library — DNS names, not IPs. The bootstrap anchor costs nothing and
+survives the VPS moving.</li>
+<li><strong>No RLN.</strong> Cluster 2 has <code>rlnRelay: false</code>, which deletes per-device
+memberships (RLN&#x27;s Shamir sharing leaks the key if one membership publishes
+twice in an epoch), the ~$5/6mo/device cost, and ZK proving on phones.</li>
+<li><strong>Crowd cover.</strong> Sharing a shard with other applications is the only anonymity
+set available.</li>
+<li>It is the user&#x27;s own ecosystem&#x27;s fleet.</li>
+</ul>
+
+<h2 id="consequences">Consequences</h2>
+
+<ul>
+<li><strong>It is a dev fleet with no SLA.</strong> It may be reset or reconfigured. This is a
+real dependency for a daily driver.</li>
+<li>Being a public bus makes the rotating-topic design (ADR-006) and payload
+encryption load-bearing rather than optional.</li>
+<li>Mix is enabled on cluster 2, which matters for Edge-mode publishes — see
+DESIGN §9 R1.</li>
+</ul>
+
+<h2 id="mitigation">Mitigation</h2>
+
+<p>Nothing is pinned but one 32-byte mesh public key, so moving to another cluster
+(or our own) is a config change rather than a redesign. Keep that path warm.</p>
+
+<footer>
+    <p>
+        shrooms is built in the open at
+        <a href="https://github.com/vpavlin/shrooms">github.com/vpavlin/shrooms</a>,
+        dual licensed Apache-2.0 or MIT.
+        Part of the <a href="https://logos.co">Logos</a> ecosystem: it rides on
+        Logos Delivery and ships as a Basecamp module.
+    </p>
+</footer>
+</div>
+
+<script src="../field.js"></script>
+</body>
+</html>

@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shrooms — 019. An address per service</title>
+<meta name="description" content="What ships is the Context section below, not the Decision: services = [&quot;immich:2283&quot;] publishes immich.nas.mesh, and internal/service forwards to it, routing on the HTTP Host header or the…">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../style.css">
+<meta property="og:title" content="shrooms — 019. An address per service">
+<meta property="og:description" content="What ships is the Context section below, not the Decision: services = [&quot;immich:2283&quot;] publishes immich.nas.mesh, and internal/service forwards to it, routing on the HTTP Host header or the…">
+<meta name="theme-color" content="#07090b">
+</head>
+<body>
+<div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+<div class="lattice" aria-hidden="true"></div>
+<canvas id="field"></canvas>
+<div class="grain" aria-hidden="true"></div>
+
+<div class="page">
+<nav>
+    <a class="mark" href="../index.html"><img class="nav-logo" src="../logo.svg" alt="" width="24" height="24">shrooms</a>
+    <a href="../index.html">what &amp; why</a>
+    <a href="../install.html">install</a>
+    <a href="../guides.html">guides</a>
+    <a href="../dev.html" class="here">dev notes</a>
+    <span class="spacer"></span>
+    <a href="https://github.com/vpavlin/shrooms">github</a>
+</nav>
+
+<header class="hero">
+<h1>019. An address per service</h1>
+<div class="note">
+<p><strong>Status:</strong> still proposed — the general form of what the name router already
+does for HTTP</p>
+</div>
+<div class="cta">
+    <a href="index.html">← every decision</a>
+    <a href="../dev.html">dev notes</a>
+</div>
+</header>
+
+<p>What ships is the Context section below, not the Decision: <code>services =
+[&quot;immich:2283&quot;]</code> publishes <code>immich.nas.mesh</code>, and <code>internal/service</code> forwards to
+it, routing on the HTTP <code>Host</code> header or the TLS SNI on the two shared ports.
+That is in daily use. The address derivation proposed here — reserving the low
+bits of the host part per service — is <strong>not built</strong>, and it is a flag day when
+it is.</p>
+
+<h2 id="context">Context</h2>
+
+<p>A device publishes services (<code>services = [&quot;immich:2283&quot;]</code>) and they are reached
+as <code>&lt;service&gt;.&lt;device&gt;.mesh</code>. Every service on a device resolves to that
+device&#x27;s single overlay address, because that is the only address it has.</p>
+
+<p>That makes the port part of the name unavoidable in the general case. Two
+services cannot both be port 80 on one address, and <em>which service a connection
+wants</em> has to be carried somewhere.</p>
+
+<p>The shipped answer carries it in the protocol: the daemon listens on 80 and 443
+and routes on the HTTP <code>Host</code> header or the TLS SNI. That covers a browser,
+which is where the port hurts most, and it covers nothing else. <code>ssh</code>,
+syncthing, Postgres and every other protocol name nothing on the wire and still
+need <code>&lt;service&gt;.&lt;device&gt;.mesh:&lt;port&gt;</code>.</p>
+
+<p>The clean answer is for each service to have its own address. Then a port is
+only ever ambiguous within one service, which is the ordinary situation
+everywhere else.</p>
+
+<h2 id="decision-proposed">Decision (proposed)</h2>
+
+<p><strong>Reserve the low bits of the host part for services.</strong></p>
+
+<p>Today (ADR-008):</p>
+
+<pre><code>prefix   fd || SHA256(&quot;mesh/v1/ula&quot; || NK)[0:5]        48 bits
+host     SHA256(&quot;mesh/v1/addr&quot; || device_pub)[0:10]    80 bits</code></pre>
+
+<p>Proposed:</p>
+
+<pre><code>prefix   fd || SHA256(&quot;mesh/v1/ula&quot; || NK)[0:5]        48 bits   unchanged
+device   SHA256(&quot;mesh/v1/addr&quot; || device_pub)[0:8]     64 bits
+service  SHA256(&quot;mesh/v1/svc&quot; || device_pub || name)[0:2]  16 bits, zero for the device itself</code></pre>
+
+<p>Three properties follow, and they are the whole argument:</p>
+
+<p><strong>Any peer can compute a service address without being told.</strong> It needs the
+device&#x27;s public key, which the roster already carries, and the service name,
+which is in the name the user typed. Nothing has to be announced — which
+matters, because the announce was already within ~12 bytes of its then 512-byte
+padding (ADR-014) and a service list would not fit.</p>
+
+<p><strong>Routing stays per-device.</strong> A peer&#x27;s WireGuard <code>AllowedIPs</code> becomes
+<code>&lt;prefix&gt;:&lt;device&gt;::/112</code> instead of a <code>/128</code>. One entry, covering that device
+and every service it will ever publish, computed from its key alone. No dynamic
+reconfiguration, and nothing to keep in sync.</p>
+
+<p><strong>The port stops being part of the name.</strong> <code>immich.home-server.mesh</code> resolves to
+an address only immich answers on, so the daemon can forward port 80 there — and
+port 22, and 5432 — with no ambiguity and no protocol sniffing. The name router
+becomes unnecessary rather than merely limited.</p>
+
+<h3 id="what-it-costs">What it costs</h3>
+
+<p><strong>Every overlay address changes.</strong> The device host part goes from 80 bits to 64,
+so every device gets a new address. Not a rotation of the network key — names,
+keys and membership are untouched — but every node must upgrade before any node
+does, or two nodes compute different addresses for the same device and no
+tunnel forms. For a personal mesh of a handful of machines that is an afternoon;
+it is still a flag day, and it gets worse with every device added.</p>
+
+<p><strong>64 bits of device hash instead of 80.</strong> Collision needs ~2^32 devices by the
+birthday bound. Irrelevant at personal-mesh scale, and worth writing down
+because it is the kind of margin that is quietly spent and never revisited.</p>
+
+<p><strong>16 bits of service hash.</strong> Collision between two services <em>on one device</em> at
+around 256 services, which is far past what the config is for — and it is
+detectable locally, at config load, by the one machine that knows both names.
+So it can be a refusal rather than a mystery.</p>
+
+<h2 id="alternatives">Alternatives</h2>
+
+<p><strong>Keep the name router and stop here.</strong> What is built. Covers browsers, which is
+most of the demand, at zero migration cost. The case against is that it is
+protocol sniffing: it works because HTTP and TLS happen to announce the name,
+and every protocol that does not is left needing a port forever.</p>
+
+<p><strong>Announce service addresses instead of deriving them.</strong> Removes the layout
+change entirely — each device says what it publishes and at which address. It
+does not fit: the announce is nearly at its padded size, and growing that size
+changes the fixed-length property the padding exists for. It also makes adding a
+service a distributed operation, where deriving keeps it local to one config
+file.</p>
+
+<p><strong>Add addresses to <code>AllowedIPs</code> when a name is resolved.</strong> No layout change and
+no announce: the resolver computes the service address, adds a <code>/128</code> for it,
+and answers. Rejected because the route then depends on a DNS query having
+happened on that device — anything using a cache, a hosts file, or a bare
+address fails, and the failure is intermittent, which is the worst kind.</p>
+
+<p><strong>A SOCKS or HTTP proxy on each device.</strong> Solves it for clients configured to
+use a proxy and not for anything else. A VPN whose services need proxy settings
+has given up the property that makes it a VPN.</p>
+
+<h2 id="consequences">Consequences</h2>
+
+<ul>
+<li>The name router (<code>internal/service/router.go</code>) becomes redundant and should be
+deleted rather than kept as a second path to the same thing.</li>
+<li><code>&lt;service&gt;.&lt;device&gt;.mesh</code> works for every protocol, with the service&#x27;s own
+port, and <code>ssh immich.home-server.mesh</code> means what it looks like.</li>
+<li>A service name that does not exist gets an address that nothing answers on,
+so it fails as a refused connection rather than as a 404 from the router.
+Slightly worse diagnostics for a slightly more honest model.</li>
+<li>Best done before the mesh grows, and before ADR-018 credentials, since both
+touch enrolment and one flag day is cheaper than two.</li>
+</ul>
+
+<footer>
+    <p>
+        shrooms is built in the open at
+        <a href="https://github.com/vpavlin/shrooms">github.com/vpavlin/shrooms</a>,
+        dual licensed Apache-2.0 or MIT.
+        Part of the <a href="https://logos.co">Logos</a> ecosystem: it rides on
+        Logos Delivery and ships as a Basecamp module.
+    </p>
+</footer>
+</div>
+
+<script src="../field.js"></script>
+</body>
+</html>

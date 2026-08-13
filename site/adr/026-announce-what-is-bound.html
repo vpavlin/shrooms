@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shrooms — 026. Announce what is bound to the mesh address</title>
+<meta name="description" content="ADR-023 states the security position plainly: publishing a service is the access decision, and services forwards a mesh connection to a loopback port — which makes every member a local user…">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../style.css">
+<meta property="og:title" content="shrooms — 026. Announce what is bound to the mesh address">
+<meta property="og:description" content="ADR-023 states the security position plainly: publishing a service is the access decision, and services forwards a mesh connection to a loopback port — which makes every member a local user…">
+<meta name="theme-color" content="#07090b">
+</head>
+<body>
+<div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+<div class="lattice" aria-hidden="true"></div>
+<canvas id="field"></canvas>
+<div class="grain" aria-hidden="true"></div>
+
+<div class="page">
+<nav>
+    <a class="mark" href="../index.html"><img class="nav-logo" src="../logo.svg" alt="" width="24" height="24">shrooms</a>
+    <a href="../index.html">what &amp; why</a>
+    <a href="../install.html">install</a>
+    <a href="../guides.html">guides</a>
+    <a href="../dev.html" class="here">dev notes</a>
+    <span class="spacer"></span>
+    <a href="https://github.com/vpavlin/shrooms">github</a>
+</nav>
+
+<header class="hero">
+<h1>026. Announce what is bound to the mesh address</h1>
+<div class="note">
+<p><strong>Status:</strong> accepted; built, off by default</p>
+</div>
+<div class="cta">
+    <a href="index.html">← every decision</a>
+    <a href="../dev.html">dev notes</a>
+</div>
+</header>
+
+<h2 id="context">Context</h2>
+
+<p><a href="023-announcing-services.html">ADR-023</a> states the security position plainly:
+publishing a service is the access decision, and <code>services</code> forwards a mesh
+connection to a loopback port — which makes every member a local user of
+anything that trusts <code>127.0.0.1</code>, and what is missing is authentication in the
+application.</p>
+
+<p>There is a second arrangement that ADR did not consider, and it is better.</p>
+
+<p><strong>Bind the service to the overlay address.</strong> <code>sshd</code> listening on
+<code>fd3b:ffe9:f81:81a7:…:22</code> rather than on <code>::</code> is reachable by mesh members and
+by nobody else — not the LAN, not a café network, not the internet — because
+only members can route to that prefix at all. The bind <em>is</em> the access control.
+No forwarder is involved, no name router, and the application needs no
+awareness of the mesh.</p>
+
+<p>It works today and needs no code. What it lacks is that nobody is told: the
+port is reachable at <code>laptop.mesh:22</code> and the only way to know is to have been
+told by a person.</p>
+
+<h2 id="decision">Decision</h2>
+
+<p><strong>Announce the ports listening on this device&#x27;s mesh address, per mesh, off by
+default.</strong></p>
+
+<pre><code>announce_services = &quot;true&quot;   # the names this device forwards (ADR-023)
+announce_bound    = &quot;true&quot;   # the ports already listening on its mesh address</code></pre>
+
+<h3 id="these-are-a-different-claim-from-adr-023-s-and-are-carried-separately">These are a different claim from ADR-023&#x27;s, and are carried separately</h3>
+
+<table>
+<tr><th></th><th>how it is reached</th><th>what makes it work</th></tr>
+<tr><td><code>services</code></td><td><code>immich.nas.mesh</code></td><td>this daemon forwards to a local port</td></tr>
+<tr><td>bound port</td><td><code>nas.mesh:22</code></td><td>the service is on the mesh address itself</td></tr>
+</table>
+
+<p>They travel in the same control message and in different fields, because
+rendering one as the other prints an address that does not work: there is no
+<code>ssh.laptop.mesh</code>, and there is no forwarder behind <code>laptop.mesh:2283</code>.</p>
+
+<h3 id="only-exactly-our-own-address-counts">Only exactly our own address counts</h3>
+
+<p>A socket bound to <code>::</code> is reachable from every network the device is on. Listing
+it as a mesh service would be a claim about who can reach it, and a false one.
+So the filter is exact address equality against this mesh&#x27;s overlay address —
+not &quot;any IPv6 socket&quot;, not &quot;not loopback&quot;.</p>
+
+<p>That also makes the feature self-documenting in the useful direction: a service
+appears here <strong>because</strong> somebody bound it to the mesh, which is the act that
+made it mesh-only.</p>
+
+<h3 id="discovered-not-declared-and-that-is-the-risk">Discovered, not declared, and that is the risk</h3>
+
+<p><code>services</code> entries are written one line at a time by somebody who meant it.
+These are found. So this announces whatever happens to be bound, including the
+debug server you started for ten minutes and forgot — to everyone on that mesh.</p>
+
+<p>The ports are <strong>already reachable</strong> by every member either way, so this is
+disclosure rather than exposure, and the same argument ADR-023 makes applies:
+a member can find them by connecting to a few hundred ports, and what the
+announcement adds is intent in names. It is still the reason this is off by
+default and per mesh, and the reason the log says what it announced.</p>
+
+<p>Port 80 and 443 are excluded: they are the name router&#x27;s, and announcing them
+as &quot;http&quot; would send somebody to a router rather than to anything.</p>
+
+<h3 id="names-are-advisory">Names are advisory</h3>
+
+<p>A short table of well-known ports, so <code>22</code> reads as <code>ssh</code>, and anything else is
+announced by its number as <code>port-4711:4711</code>. The port is the fact and the name
+is for reading; deriving a nicer name from the process would need to inspect
+<code>/proc/&lt;pid&gt;/fd</code> for socket inodes, which is a great deal of machinery for a
+label a person can read off the number anyway.</p>
+
+<h2 id="consequences">Consequences</h2>
+
+<ul>
+<li>Binding a service to the mesh becomes a discoverable act rather than a
+private arrangement, which makes the strongest access-control pattern this
+system offers also the most convenient one.</li>
+<li>One more thing announced by default? No — off by default, like ADR-023, and
+for a stronger reason, since these are found rather than chosen.</li>
+<li>The roster can show <code>nas.mesh:22</code> next to <code>immich.nas.mesh</code>, which is the
+whole point: what a device offers, however it offers it.</li>
+<li>Linux only, since it reads <code>/proc/net/tcp6</code> and <code>/proc/net/udp6</code>. There is no
+portable API for the question, and every tool that answers it does the same.
+A kernel without those tables reports nothing rather than failing.</li>
+</ul>
+
+<footer>
+    <p>
+        shrooms is built in the open at
+        <a href="https://github.com/vpavlin/shrooms">github.com/vpavlin/shrooms</a>,
+        dual licensed Apache-2.0 or MIT.
+        Part of the <a href="https://logos.co">Logos</a> ecosystem: it rides on
+        Logos Delivery and ships as a Basecamp module.
+    </p>
+</footer>
+</div>
+
+<script src="../field.js"></script>
+</body>
+</html>

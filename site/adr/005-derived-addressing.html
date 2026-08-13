@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shrooms — 005. Overlay addresses derived from keys, no IPAM</title>
+<meta name="description" content="Every mesh VPN must assign each node an overlay address. Tailscale and ZeroTier allocate from a coordinator; Nebula bakes it into the certificate at signing time; innernet uses a CIDR tree…">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../style.css">
+<meta property="og:title" content="shrooms — 005. Overlay addresses derived from keys, no IPAM">
+<meta property="og:description" content="Every mesh VPN must assign each node an overlay address. Tailscale and ZeroTier allocate from a coordinator; Nebula bakes it into the certificate at signing time; innernet uses a CIDR tree…">
+<meta name="theme-color" content="#07090b">
+</head>
+<body>
+<div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+<div class="lattice" aria-hidden="true"></div>
+<canvas id="field"></canvas>
+<div class="grain" aria-hidden="true"></div>
+
+<div class="page">
+<nav>
+    <a class="mark" href="../index.html"><img class="nav-logo" src="../logo.svg" alt="" width="24" height="24">shrooms</a>
+    <a href="../index.html">what &amp; why</a>
+    <a href="../install.html">install</a>
+    <a href="../guides.html">guides</a>
+    <a href="../dev.html" class="here">dev notes</a>
+    <span class="spacer"></span>
+    <a href="https://github.com/vpavlin/shrooms">github</a>
+</nav>
+
+<header class="hero">
+<h1>005. Overlay addresses derived from keys, no IPAM</h1>
+<div class="note">
+<p><strong>Status:</strong> accepted</p>
+</div>
+<div class="cta">
+    <a href="index.html">← every decision</a>
+    <a href="../dev.html">dev notes</a>
+</div>
+</header>
+
+<h2 id="context">Context</h2>
+
+<p>Every mesh VPN must assign each node an overlay address. Tailscale and ZeroTier
+allocate from a coordinator; Nebula bakes it into the certificate at signing
+time; innernet uses a CIDR tree on a server. All of these need something
+authoritative.</p>
+
+<h2 id="decision">Decision</h2>
+
+<p>Derive it:</p>
+
+<pre><code>prefix = fd || SHA256(&quot;mesh/v1/ula&quot; || NK)[0:5]          → a /48
+addr   = prefix : SHA256(&quot;mesh/v1/addr&quot; || device_pub)[0:10]   → /128</code></pre>
+
+<h2 id="why">Why</h2>
+
+<p><strong>It deletes an entire subsystem.</strong> No allocation messages, no conflict
+resolution, no leases, no split-brain when two nodes join concurrently. Every
+node computes every other node&#x27;s address locally from a public key it already
+has, which also makes WireGuard&#x27;s <code>AllowedIPs</code> self-enforcing with zero shared
+state.</p>
+
+<p><strong>80 bits is ample because the address is not an authenticator.</strong> cjdns and
+Yggdrasil need 113–120 committed bits because their addresses <em>are</em> the security
+boundary. Here, authentication comes from WireGuard&#x27;s handshake and (later) the
+admin-signed credential; the address is just a stable, collision-free name.
+Collision probability across 10 devices is ~4×10⁻²³.</p>
+
+<p><strong>No vanity mining.</strong> cjdns brute-forces keys for its <code>0xfc</code> prefix and RFC 3972
+CGA does hash extension only because someone else fixes their prefix. We derive
+our own from the network key, so the full host part is available directly.</p>
+
+<p><code>fd00::/8</code> per RFC 4193 — deliberately not <code>fc00::/8</code> (cjdns squats it and it
+collides with real ULA space) nor <code>0200::/7</code> (Yggdrasil).</p>
+
+<h2 id="consequences">Consequences</h2>
+
+<ul>
+<li>Addresses change if the network key rotates. Acceptable: rotation is already
+a re-enrolment event.</li>
+<li>No human-friendly addressing; names come from the announce and are advisory.</li>
+<li>A device&#x27;s address is computable by anyone holding its public key. Not a leak
+— the address is not secret — but worth knowing.</li>
+</ul>
+
+<footer>
+    <p>
+        shrooms is built in the open at
+        <a href="https://github.com/vpavlin/shrooms">github.com/vpavlin/shrooms</a>,
+        dual licensed Apache-2.0 or MIT.
+        Part of the <a href="https://logos.co">Logos</a> ecosystem: it rides on
+        Logos Delivery and ships as a Basecamp module.
+    </p>
+</footer>
+</div>
+
+<script src="../field.js"></script>
+</body>
+</html>

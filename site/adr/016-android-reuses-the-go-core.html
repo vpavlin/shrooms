@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shrooms — 016. Android reuses the Go core</title>
+<meta name="description" content="Android being a full mesh participant — not a client of something else — was an original constraint. iOS is explicitly out of scope, which removes the 50 MiB network-extension limit that…">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../style.css">
+<meta property="og:title" content="shrooms — 016. Android reuses the Go core">
+<meta property="og:description" content="Android being a full mesh participant — not a client of something else — was an original constraint. iOS is explicitly out of scope, which removes the 50 MiB network-extension limit that…">
+<meta name="theme-color" content="#07090b">
+</head>
+<body>
+<div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+<div class="lattice" aria-hidden="true"></div>
+<canvas id="field"></canvas>
+<div class="grain" aria-hidden="true"></div>
+
+<div class="page">
+<nav>
+    <a class="mark" href="../index.html"><img class="nav-logo" src="../logo.svg" alt="" width="24" height="24">shrooms</a>
+    <a href="../index.html">what &amp; why</a>
+    <a href="../install.html">install</a>
+    <a href="../guides.html">guides</a>
+    <a href="../dev.html" class="here">dev notes</a>
+    <span class="spacer"></span>
+    <a href="https://github.com/vpavlin/shrooms">github</a>
+</nav>
+
+<header class="hero">
+<h1>016. Android reuses the Go core</h1>
+<div class="note">
+<p><strong>Status:</strong> accepted; prototype in progress</p>
+</div>
+<div class="cta">
+    <a href="index.html">← every decision</a>
+    <a href="../dev.html">dev notes</a>
+</div>
+</header>
+
+<h2 id="context">Context</h2>
+
+<p>Android being a full mesh participant — not a client of something else — was an
+original constraint. iOS is explicitly out of scope, which removes the 50 MiB
+network-extension limit that shapes every other design in this space.</p>
+
+<p>The mesh logic is not small: rotating rendezvous topics, sealed announces with
+replay protection, derived addressing, reflexive discovery, hole punching, relay
+selection, path scoring, endpoint churn avoidance. Most of today&#x27;s bugs were in
+that logic, and each fix is a property nobody would rediscover by reading the
+code.</p>
+
+<h2 id="decision">Decision</h2>
+
+<p><strong>The Android app is a UI and a <code>VpnService</code> around the same Go core.</strong> Nothing
+in <code>internal/</code> is reimplemented in Kotlin.</p>
+
+<p>The core is compiled to an <code>.aar</code> with <code>gomobile bind</code>. Kotlin owns exactly
+three things Go cannot do: acquiring the TUN file descriptor from
+<code>VpnService.Builder</code>, protecting sockets, and the interface.</p>
+
+<h3 id="no-jni-bridge">No JNI bridge</h3>
+
+<p>qaku-logos hand-writes a JNI shim over liblogosdelivery, and its README is
+mostly the hazards of doing so: caching a global ref in <code>JNI_OnLoad</code>, attaching
+the JVM per callback thread with a <code>pthread_key</code> detach, never attaching inside
+<code>assert()</code> because NDEBUG strips it and you get a release-only SIGSEGV.</p>
+
+<p>None of that applies here. That shim exists because React Native must go
+JS → Kotlin → C. We go <strong>Go → C directly</strong>, which <code>internal/waku</code> already does
+and which cgo already handles — including the callback arriving on a foreign
+thread, the exact problem the JNI notes are about.</p>
+
+<p>Verified: the Android <code>liblogosdelivery.h</code> is a strict superset of the one we
+build against — it adds the reliable-channel API (<code>logosdelivery_channel_*</code>) and
+<code>logosdelivery_kernel</code>, and every symbol <code>internal/waku</code> uses is present.</p>
+
+<h2 id="what-android-forces">What Android forces</h2>
+
+<p><strong>Sockets must be protected, or the tunnel eats itself.</strong> A UDP socket created
+inside a <code>VpnService</code> routes through the tunnel by default, so our own
+rendezvous and disco traffic would loop into the interface carrying it.
+<code>VpnService.protect(fd)</code> exempts it. wireguard-go exposes
+<code>(*conn.StdNetBind).PeekLookAtSocketFd4/6</code> for precisely this; our <code>Bind</code> wraps
+the inner bind, so it must forward those.</p>
+
+<p>This is the single highest-risk detail. It fails as &quot;nothing works at all&quot; with
+no useful error, and it is invisible on every other platform.</p>
+
+<p><strong>arm64 only.</strong> There is no public x86_64 <code>liblogosdelivery.so</code>, so an emulator
+has no node. Testing needs a real arm64 phone, and CI can build but not run.</p>
+
+<p><strong>Library load order.</strong> <code>libc++_shared</code> → <code>librln</code> → <code>liblogosdelivery</code>.
+Packaged in <code>jniLibs/arm64-v8a</code>, where the dynamic linker resolves the
+<code>DT_NEEDED</code> chain; the explicit <code>System.loadLibrary</code> ordering qaku needs is a
+consequence of its shim being loaded separately.</p>
+
+<p><strong>Doze.</strong> The rendezvous connection will be killed when the screen is off. This
+is survivable by design — Waku is rendezvous, not a control plane, so existing
+tunnels continue (DESIGN §2) — but discovery stops, and reconnect must not hit
+nwaku&#x27;s 8.5-hour peer backoff. A foreground service with a persistent
+notification is required regardless, to keep the VPN alive.</p>
+
+<p><strong>The overlay is IPv6-only</strong>, and <code>VpnService.Builder</code> must be told so:
+<code>addAddress</code> with the derived /128, <code>addRoute</code> for the mesh /48 only. Routing
+everything would make this a full-tunnel VPN, which it is not.</p>
+
+<h2 id="consequences">Consequences</h2>
+
+<ul>
+<li>A bug fixed in the mesh is fixed on both platforms at once. Given how many of
+today&#x27;s were timing-dependent and invisible in containers, having one
+implementation rather than two is the main safeguard.</li>
+<li>The <code>.aar</code> carries a 29 MB native library plus ~8 MB of dependencies. Fine for
+Android; it is the number that would have made iOS impossible.</li>
+<li><code>gomobile bind</code> constrains the exported API to a narrow type set. The boundary
+is therefore deliberately small — start, stop, a JSON status snapshot, and a
+callback for protecting sockets — rather than exposing Go types to Kotlin.</li>
+<li>DNS becomes available essentially free once the resolver exists (ADR-013):
+<code>addDnsServer</code> plus <code>addSearchDomain</code> is a first-class API here, unlike every
+other platform.</li>
+</ul>
+
+<footer>
+    <p>
+        shrooms is built in the open at
+        <a href="https://github.com/vpavlin/shrooms">github.com/vpavlin/shrooms</a>,
+        dual licensed Apache-2.0 or MIT.
+        Part of the <a href="https://logos.co">Logos</a> ecosystem: it rides on
+        Logos Delivery and ships as a Basecamp module.
+    </p>
+</footer>
+</div>
+
+<script src="../field.js"></script>
+</body>
+</html>

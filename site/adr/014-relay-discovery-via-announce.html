@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shrooms — 014. Relay discovery: a flag on the announce, not a separate message</title>
+<meta name="description" content="A phone on carrier-grade NAT reached a peer through a relay on a public VPS, with neither end told the relay existed — both found it in the roster, and selection is made per mesh. The…">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../style.css">
+<meta property="og:title" content="shrooms — 014. Relay discovery: a flag on the announce, not a separate message">
+<meta property="og:description" content="A phone on carrier-grade NAT reached a peer through a relay on a public VPS, with neither end told the relay existed — both found it in the roster, and selection is made per mesh. The…">
+<meta name="theme-color" content="#07090b">
+</head>
+<body>
+<div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+<div class="lattice" aria-hidden="true"></div>
+<canvas id="field"></canvas>
+<div class="grain" aria-hidden="true"></div>
+
+<div class="page">
+<nav>
+    <a class="mark" href="../index.html"><img class="nav-logo" src="../logo.svg" alt="" width="24" height="24">shrooms</a>
+    <a href="../index.html">what &amp; why</a>
+    <a href="../install.html">install</a>
+    <a href="../guides.html">guides</a>
+    <a href="../dev.html" class="here">dev notes</a>
+    <span class="spacer"></span>
+    <a href="https://github.com/vpavlin/shrooms">github</a>
+</nav>
+
+<header class="hero">
+<h1>014. Relay discovery: a flag on the announce, not a separate message</h1>
+<div class="note">
+<p><strong>Status:</strong> accepted; implemented and proven on real infrastructure (M3)</p>
+</div>
+<div class="cta">
+    <a href="index.html">← every decision</a>
+    <a href="../dev.html">dev notes</a>
+</div>
+</header>
+
+<p>A phone on carrier-grade NAT reached a peer through a relay on a public VPS,
+with neither end told the relay existed — both found it in the roster, and
+selection is made per mesh. The deterministic-selection rule below has one
+consequence worth stating here: candidates are drawn only from peers <em>believed
+online</em>, so a node whose rendezvous plane fails silently stops being selected
+and quietly stops relaying, with nothing reporting an error. That is what the
+daemon&#x27;s rendezvous watchdogs exist to catch.</p>
+
+<h2 id="context">Context</h2>
+
+<p>&quot;A small VPS is acceptable, but it must be auto-discovered — no hardcoded IPs&quot;
+was an original project constraint. Until now it was the one that was broken:
+<code>relay_addr</code> was configured by hand, so a fresh client had no way to learn a
+relay existed at all.</p>
+
+<p>DESIGN §4 originally specced this as a distinct message on its own topic:</p>
+
+<pre><code>RelayAnnounce{relay_pk, addrports[], seq, expiry, sig} → /vpn/1/relay/</code></pre>
+
+<p>Store-backed, fetched with <code>waku_store_query</code> on start.</p>
+
+<h2 id="decision">Decision</h2>
+
+<p><strong>A relay is just a peer that is willing to forward, so it is advertised as a
+<code>relay</code> boolean on the ordinary <code>EndpointAnnounce</code>.</strong> No second message type, no
+second topic, no second subscription, no Store dependency.</p>
+
+<pre><code>// Relay says this device will forward traffic for peers that cannot reach
+// each other directly.
+Relay bool `json:&quot;relay,omitempty&quot;`</code></pre>
+
+<h2 id="why-this-is-better-than-the-original-spec">Why this is better than the original spec</h2>
+
+<p><strong>Everything a relay needs is already what an announce carries.</strong> Its keys, its
+candidate addresses, its liveness. A separate message would have restated all of
+it under a second signature.</p>
+
+<p><strong>Relays inherit the whole peer pipeline for free.</strong> Endpoint validation, path
+probing, offline detection, replay protection, epoch rotation and padding all
+apply unchanged. A relay address is only ever used after probes have actually
+reached it — the ADR-009 rule, which we would otherwise have had to re-derive
+for relays specifically.</p>
+
+<p><strong>It removes the Store dependency from a critical path.</strong> S2 (logos.dev
+retention) has never been run; making relay discovery depend on Store would have
+made an unmeasured property load-bearing. Relays are always-on by definition, so
+the live announce stream is sufficient for them in a way it is not for
+intermittent peers.</p>
+
+<p><strong>One fewer subscription</strong> on a shard we share with the rest of the fleet.</p>
+
+<p>The cost is that a relay is not discoverable to a node that has not yet heard a
+live announce — up to one announce interval. For an always-on relay this is
+bounded and small, and the node has nothing to relay in its first seconds anyway.</p>
+
+<h2 id="selection-must-be-deterministic-across-nodes">Selection must be deterministic across nodes</h2>
+
+<p>This is the non-obvious part and the reason the implementation is not simply
+&quot;pick the fastest&quot;.</p>
+
+<p>The relay forwards by destination WireGuard key, and can only do so for a peer
+that has registered with it. <strong>If A and B pick different relays, their traffic
+never meets</strong> — each is registered somewhere the other is not sending. Selection
+must therefore be a pure function of state both ends already share.</p>
+
+<p>So: <strong>lowest device ID among online, probe-confirmed relays.</strong> Deliberately
+<em>not</em> lowest RTT, which each side measures for itself and would disagree on.
+<code>TestSelectRelayIsDeterministicAcrossNodes</code> pins this — it fails if the tiebreak
+is changed to RTT, which is exactly the plausible-looking &quot;improvement&quot; someone
+would otherwise make.</p>
+
+<p>Two further rules fall out:</p>
+
+<ul>
+<li><strong>Only probe-confirmed addresses.</strong> Unlike a direct endpoint, WireGuard cannot
+relearn a relay path from an inbound packet, so an unverified relay address
+blackholes silently and permanently rather than self-correcting.</li>
+<li><strong>A relay never selects an upstream relay.</strong> It is publicly reachable by
+definition, and self-selection would loop.</li>
+</ul>
+
+<h2 id="consequences">Consequences</h2>
+
+<ul>
+<li><code>relay_addr</code> survives as a config escape hatch to pin a relay — useful for
+bringing up a mesh whose relay has not announced yet, and for debugging — but
+is not needed in normal operation.</li>
+<li><strong>Any node can become a relay by setting one config value</strong>, with nothing to
+distribute afterwards. This is what makes the volunteer-relay idea in
+<a href="012-relay-hosting.html">ADR-012</a> a matter of incentives rather than code.</li>
+<li>A relay&#x27;s IP may change freely; the announce carries the new one.</li>
+<li>Relay willingness is self-asserted, like names (ADR-008). A member that
+advertises <code>relay = true</code> and then drops traffic degrades the mesh for pairs
+that select it. Bounded by the fact that it is <em>already</em> a member — it could
+drop traffic anyway — and by relays being probe-confirmed before use. Ranking
+relays by observed reliability is the answer if this ever bites, but it must
+preserve cross-node determinism, which naive per-node scoring would not.</li>
+</ul>
+
+<footer>
+    <p>
+        shrooms is built in the open at
+        <a href="https://github.com/vpavlin/shrooms">github.com/vpavlin/shrooms</a>,
+        dual licensed Apache-2.0 or MIT.
+        Part of the <a href="https://logos.co">Logos</a> ecosystem: it rides on
+        Logos Delivery and ships as a Basecamp module.
+    </p>
+</footer>
+</div>
+
+<script src="../field.js"></script>
+</body>
+</html>

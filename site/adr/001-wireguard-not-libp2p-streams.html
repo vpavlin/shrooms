@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shrooms — 001. WireGuard for the data plane, not libp2p streams</title>
+<meta name="description" content="The obvious design, given that the project is built on a libp2p-based messaging network, is to tunnel IP over libp2p streams: one substrate, one identity system, NAT traversal inherited…">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../style.css">
+<meta property="og:title" content="shrooms — 001. WireGuard for the data plane, not libp2p streams">
+<meta property="og:description" content="The obvious design, given that the project is built on a libp2p-based messaging network, is to tunnel IP over libp2p streams: one substrate, one identity system, NAT traversal inherited…">
+<meta name="theme-color" content="#07090b">
+</head>
+<body>
+<div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+<div class="lattice" aria-hidden="true"></div>
+<canvas id="field"></canvas>
+<div class="grain" aria-hidden="true"></div>
+
+<div class="page">
+<nav>
+    <a class="mark" href="../index.html"><img class="nav-logo" src="../logo.svg" alt="" width="24" height="24">shrooms</a>
+    <a href="../index.html">what &amp; why</a>
+    <a href="../install.html">install</a>
+    <a href="../guides.html">guides</a>
+    <a href="../dev.html" class="here">dev notes</a>
+    <span class="spacer"></span>
+    <a href="https://github.com/vpavlin/shrooms">github</a>
+</nav>
+
+<header class="hero">
+<h1>001. WireGuard for the data plane, not libp2p streams</h1>
+<div class="note">
+<p><strong>Status:</strong> accepted</p>
+</div>
+<div class="cta">
+    <a href="index.html">← every decision</a>
+    <a href="../dev.html">dev notes</a>
+</div>
+</header>
+
+<h2 id="context">Context</h2>
+
+<p>The obvious design, given that the project is built on a libp2p-based messaging
+network, is to tunnel IP over libp2p streams: one substrate, one identity
+system, NAT traversal inherited from the library.</p>
+
+<h2 id="decision">Decision</h2>
+
+<p>Carry traffic over WireGuard on its own UDP socket. Use libp2p/Waku only for
+rendezvous.</p>
+
+<h2 id="why">Why</h2>
+
+<p>The performance gap is not marginal. EdgeVPN, which tunnels over libp2p streams,
+was measured against WireGuard on identical hardware:</p>
+
+<table>
+<tr><th></th><th>libp2p streams</th><th>WireGuard</th></tr>
+<tr><td>gigabit LAN</td><td>106 Mb/s</td><td>893 Mb/s</td></tr>
+<tr><td>real WAN</td><td>~30 Mb/s</td><td>~859 Mb/s</td></tr>
+<tr><td>CPU</td><td>200%</td><td>1–2%</td></tr>
+</table>
+
+<p>Raising the MTU to 9000 <em>collapses</em> the libp2p case to 8.6 Mb/s. libp2p&#x27;s own
+maintainers put IP-over-libp2p at 2–10× overhead
+(<a href="https://github.com/libp2p/specs/issues/626">libp2p/specs#626</a>, open since
+Aug 2024 with no implementation).</p>
+
+<p>The cause is structural: every existing libp2p VPN serialises all flows onto one
+mutex-guarded ordered stream, so one lost segment stalls every flow — the
+classic TCP-over-TCP meltdown that WireGuard&#x27;s own documentation cites as the
+reason it refuses to run over TCP.</p>
+
+<p>For calibration, a Raspberry Pi 4 does 777 Mb/s–1.02 Gb/s of kernel WireGuard.
+Any home WAN is slower than that, so WireGuard makes throughput a non-issue
+while libp2p streams would make it <em>the</em> issue.</p>
+
+<h2 id="consequences">Consequences</h2>
+
+<ul>
+<li>Two transports to operate rather than one.</li>
+<li>NAT traversal must be built rather than inherited (see ADR-009). This is less
+of a loss than it appears: libp2p&#x27;s DCUtR punches a hole for <em>libp2p&#x27;s</em> socket,
+not WireGuard&#x27;s, so it was never going to help.</li>
+<li>The data plane is boring and fast, which is what a daily driver needs.</li>
+</ul>
+
+<h2 id="what-would-change-our-mind">What would change our mind</h2>
+
+<p>A libp2p datagram API landing with measured throughput within ~2× of WireGuard.
+<code>quic.SendDatagram</code> is reachable today via <code>conn.As</code>, but quic-go&#x27;s own docs say
+the datagram send path is unoptimised.</p>
+
+<footer>
+    <p>
+        shrooms is built in the open at
+        <a href="https://github.com/vpavlin/shrooms">github.com/vpavlin/shrooms</a>,
+        dual licensed Apache-2.0 or MIT.
+        Part of the <a href="https://logos.co">Logos</a> ecosystem: it rides on
+        Logos Delivery and ships as a Basecamp module.
+    </p>
+</footer>
+</div>
+
+<script src="../field.js"></script>
+</body>
+</html>

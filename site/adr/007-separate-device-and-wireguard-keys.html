@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shrooms — 007. Separate device and WireGuard keys</title>
+<meta name="description" content="One Ed25519 keypair could serve as both the libp2p/control-plane identity and (converted to X25519) the WireGuard static key. It is mechanically clean: Ed25519 → X25519 conversion is…">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../style.css">
+<meta property="og:title" content="shrooms — 007. Separate device and WireGuard keys">
+<meta property="og:description" content="One Ed25519 keypair could serve as both the libp2p/control-plane identity and (converted to X25519) the WireGuard static key. It is mechanically clean: Ed25519 → X25519 conversion is…">
+<meta name="theme-color" content="#07090b">
+</head>
+<body>
+<div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+<div class="lattice" aria-hidden="true"></div>
+<canvas id="field"></canvas>
+<div class="grain" aria-hidden="true"></div>
+
+<div class="page">
+<nav>
+    <a class="mark" href="../index.html"><img class="nav-logo" src="../logo.svg" alt="" width="24" height="24">shrooms</a>
+    <a href="../index.html">what &amp; why</a>
+    <a href="../install.html">install</a>
+    <a href="../guides.html">guides</a>
+    <a href="../dev.html" class="here">dev notes</a>
+    <span class="spacer"></span>
+    <a href="https://github.com/vpavlin/shrooms">github</a>
+</nav>
+
+<header class="hero">
+<h1>007. Separate device and WireGuard keys</h1>
+<div class="note">
+<p><strong>Status:</strong> accepted</p>
+</div>
+<div class="cta">
+    <a href="index.html">← every decision</a>
+    <a href="../dev.html">dev notes</a>
+</div>
+</header>
+
+<h2 id="context">Context</h2>
+
+<p>One Ed25519 keypair could serve as both the libp2p/control-plane identity and
+(converted to X25519) the WireGuard static key. It is mechanically clean:
+Ed25519 → X25519 conversion is standard, and the Ed25519 scalar is already in
+the clamped form WireGuard expects.</p>
+
+<h2 id="decision">Decision</h2>
+
+<p>Two independent keypairs per device: Ed25519 for identity and signing, X25519
+for WireGuard.</p>
+
+<h2 id="why">Why</h2>
+
+<p>The cryptography is <em>probably</em> fine. Thormarker
+(<a href="https://eprint.iacr.org/2021/509">eprint 2021/509</a>) proves joint security for
+Ed25519 signatures alongside an X25519 KEM in the ROM, without even assuming
+domain separation. But nothing published covers Ed25519 signing alongside
+<code>Noise_IKpsk2</code> specifically, and Valsorda declines to call the conversion safe
+in general.</p>
+
+<p><strong>The decisive argument is not cryptographic.</strong> WireGuard needs the raw scalar
+in memory to perform DH. If the device key is also the WireGuard key, it can
+never live in a TPM, Secure Enclave or YubiKey as a non-exportable key — which
+is the single best mitigation against a stolen laptop, and worth more than any
+protocol change.</p>
+
+<p>Two supporting reasons: independent rotation (rotate the WireGuard key after a
+scare without changing identity or overlay address), and blast radius —
+<code>wg showconf</code>, config backups and <code>/etc/wireguard/*.conf</code> move WireGuard keys
+around casually, and an identity key should never be in those places.</p>
+
+<p>The cost of separation is 32 bytes in a message we are already signing.</p>
+
+<h2 id="consequences">Consequences</h2>
+
+<ul>
+<li>Two keys to persist and back up.</li>
+<li>The binding between them is the signed announce: the device key signs a
+message naming the WireGuard key. That signed tuple <em>is</em> the certificate.</li>
+</ul>
+
+<footer>
+    <p>
+        shrooms is built in the open at
+        <a href="https://github.com/vpavlin/shrooms">github.com/vpavlin/shrooms</a>,
+        dual licensed Apache-2.0 or MIT.
+        Part of the <a href="https://logos.co">Logos</a> ecosystem: it rides on
+        Logos Delivery and ships as a Basecamp module.
+    </p>
+</footer>
+</div>
+
+<script src="../field.js"></script>
+</body>
+</html>

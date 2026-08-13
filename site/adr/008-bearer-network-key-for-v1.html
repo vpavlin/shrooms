@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shrooms — 008. A bearer network key for v1</title>
+<meta name="description" content="A single 32-byte network key currently does three jobs: derives the rendezvous topic, encrypts payloads, and grants membership. Anyone holding it is a member, permanently.">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../style.css">
+<meta property="og:title" content="shrooms — 008. A bearer network key for v1">
+<meta property="og:description" content="A single 32-byte network key currently does three jobs: derives the rendezvous topic, encrypts payloads, and grants membership. Anyone holding it is a member, permanently.">
+<meta name="theme-color" content="#07090b">
+</head>
+<body>
+<div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+<div class="lattice" aria-hidden="true"></div>
+<canvas id="field"></canvas>
+<div class="grain" aria-hidden="true"></div>
+
+<div class="page">
+<nav>
+    <a class="mark" href="../index.html"><img class="nav-logo" src="../logo.svg" alt="" width="24" height="24">shrooms</a>
+    <a href="../index.html">what &amp; why</a>
+    <a href="../install.html">install</a>
+    <a href="../guides.html">guides</a>
+    <a href="../dev.html" class="here">dev notes</a>
+    <span class="spacer"></span>
+    <a href="https://github.com/vpavlin/shrooms">github</a>
+</nav>
+
+<header class="hero">
+<h1>008. A bearer network key for v1</h1>
+<div class="note">
+<p><strong>Status:</strong> accepted, explicitly temporary</p>
+</div>
+<div class="cta">
+    <a href="index.html">← every decision</a>
+    <a href="../dev.html">dev notes</a>
+</div>
+</header>
+
+<h2 id="context">Context</h2>
+
+<p>A single 32-byte network key currently does three jobs: derives the rendezvous
+topic, encrypts payloads, and grants membership. Anyone holding it is a member,
+permanently.</p>
+
+<h2 id="decision">Decision</h2>
+
+<p>Ship v1 this way. Replace the third job — authorization — with admin-signed
+per-device credentials in M5.</p>
+
+<h2 id="why-ship-it">Why ship it</h2>
+
+<p>Configuration is one secret, which makes the whole system explainable in two
+commands. At 3–5 machines you control, &quot;rotate the key and re-enrol&quot; is a chore
+rather than a project.</p>
+
+<h2 id="why-it-must-not-stay">Why it must not stay</h2>
+
+<p>Five concrete failures:</p>
+
+<ol>
+<li>No per-device revocation — losing a laptop means rotating everything.</li>
+<li>Any device&#x27;s compromise is total; the weakest machine sets the security of
+the mesh.</li>
+<li>No expiry — a key that leaked two years ago still works.</li>
+<li>The copy/pasted artifact stays valid forever, in shell history and clipboard
+managers.</li>
+<li>No per-device capabilities.</li>
+</ol>
+
+<h2 id="the-replacement">The replacement</h2>
+
+<p>Only <em>authorization</em> changes. Rendezvous genuinely needs a shared secret — every
+member must independently compute the same topic with no coordination — but that
+secret need not also grant membership.</p>
+
+<ul>
+<li><code>K_rdv</code> keeps deriving the topic, payload key and per-pair PSKs.</li>
+<li>Membership becomes ~100 bytes of admin-signed CBOR over <code>{device_pk, wg_pk,
+name, overlay_ip, not_before, not_after, caps}</code>, verified against <code>admin_pk</code>
+— a <em>public</em> value in config.</li>
+<li><code>shrooms invite</code> emits a <strong>one-time, 15-minute</strong> token. This is the
+highest-value single change: a leaked clipboard stops being worth anything.
+Built — see <a href="017-invite-tokens.html">ADR-017</a>.</li>
+<li>Revocation is gossiped and tears down live tunnels. Nebula&#x27;s documented gap is
+that its blocklist is not distributed at all; ours is.</li>
+</ul>
+
+<h2 id="migration-cost-paid-now">Migration cost, paid now</h2>
+
+<p><code>admin_pk</code> already exists in config and <code>credential</code> already exists in the
+announce, both empty and ignored. M5 is a behaviour change rather than a
+wire-format and config break across every machine simultaneously.</p>
+
+<footer>
+    <p>
+        shrooms is built in the open at
+        <a href="https://github.com/vpavlin/shrooms">github.com/vpavlin/shrooms</a>,
+        dual licensed Apache-2.0 or MIT.
+        Part of the <a href="https://logos.co">Logos</a> ecosystem: it rides on
+        Logos Delivery and ships as a Basecamp module.
+    </p>
+</footer>
+</div>
+
+<script src="../field.js"></script>
+</body>
+</html>

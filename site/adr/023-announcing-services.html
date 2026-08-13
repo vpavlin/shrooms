@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shrooms — 023. Announcing services</title>
+<meta name="description" content="services publishes a local port on the mesh under a name — immich:2283 becomes immich.nas.mesh (ADR-019). Nothing announces it. Every node knows only what it publishes itself, so the roster…">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../style.css">
+<meta property="og:title" content="shrooms — 023. Announcing services">
+<meta property="og:description" content="services publishes a local port on the mesh under a name — immich:2283 becomes immich.nas.mesh (ADR-019). Nothing announces it. Every node knows only what it publishes itself, so the roster…">
+<meta name="theme-color" content="#07090b">
+</head>
+<body>
+<div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+<div class="lattice" aria-hidden="true"></div>
+<canvas id="field"></canvas>
+<div class="grain" aria-hidden="true"></div>
+
+<div class="page">
+<nav>
+    <a class="mark" href="../index.html"><img class="nav-logo" src="../logo.svg" alt="" width="24" height="24">shrooms</a>
+    <a href="../index.html">what &amp; why</a>
+    <a href="../install.html">install</a>
+    <a href="../guides.html">guides</a>
+    <a href="../dev.html" class="here">dev notes</a>
+    <span class="spacer"></span>
+    <a href="https://github.com/vpavlin/shrooms">github</a>
+</nav>
+
+<header class="hero">
+<h1>023. Announcing services</h1>
+<div class="note">
+<p><strong>Status:</strong> accepted; built</p>
+</div>
+<div class="cta">
+    <a href="index.html">← every decision</a>
+    <a href="../dev.html">dev notes</a>
+</div>
+</header>
+
+<h2 id="context">Context</h2>
+
+<p><code>services</code> publishes a local port on the mesh under a name — <code>immich:2283</code>
+becomes <code>immich.nas.mesh</code> (ADR-019). Nothing announces it. Every node knows only
+what it publishes itself, so the roster can show your own services and never
+anyone else&#x27;s, and finding out what a peer offers means remembering, or asking
+the person.</p>
+
+<p>The obvious improvement is to put them on the announce. The obvious worry is
+that this hands every member a list of what you run.</p>
+
+<h2 id="what-it-actually-discloses">What it actually discloses</h2>
+
+<p>Less than it first appears, and not nothing.</p>
+
+<p><strong>An announce is readable by every member and by nobody else.</strong> It is sealed
+under the per-epoch key derived from the network key; a passive observer on the
+shard sees a fixed-size ciphertext (SECURITY.md).</p>
+
+<p><strong>Members can already enumerate services.</strong> They listen on the device&#x27;s overlay
+address at known ports, and that address is in the announce. Scanning a single
+/128 for a few hundred common ports is seconds of work. So announcing buys
+<em>discoverability</em>, not access — it does not make anything reachable that was not
+reachable before.</p>
+
+<p><strong>What it does add is intent, in names.</strong> &quot;immich&quot;, &quot;home-assistant&quot;,
+&quot;jellyfin&quot; tells a reader what you run and what to try, which a port scan does
+not. On a mesh of your own machines that is worth nothing. On a mesh shared with
+other people it is an inventory you did not mean to hand over, and the people on
+it are exactly the ones for whom a list is useful.</p>
+
+<p>That asymmetry is the whole decision, and it maps onto something that already
+exists: meshes are separate, with separate configs.</p>
+
+<h3 id="the-control-that-matters-is-elsewhere">The control that matters is elsewhere</h3>
+
+<p>Worth stating plainly, because it is easy to mistake this setting for a
+security boundary: it is not one. <strong>Whether a service is published on a mesh is
+the access decision</strong>, and <code>services</code> is per mesh. A service published on your
+own mesh and not on a shared one is unreachable from the shared one — different
+prefix, different WireGuard device, different AllowedIPs — whatever any
+announce says.</p>
+
+<p>Announcing is metadata about something a member can already reach. Someone you
+have admitted to a mesh can scan the device and connect to it; hiding the names
+does not change that, and treating this switch as protection would be worse than
+not having it.</p>
+
+<p>What survives is smaller and still real: an inventory shortens the work for
+whoever has compromised a member&#x27;s laptop, and service names can be personal in
+a way open ports are not. Enough to default it off on a mesh with other people
+on it. Not enough to refuse the feature.</p>
+
+<h2 id="decision">Decision</h2>
+
+<p><strong>Announce services, per mesh, off by default.</strong></p>
+
+<pre><code>services = [&quot;immich:2283&quot;, &quot;jellyfin:8096&quot;]
+announce_services = &quot;true&quot;          # this mesh&#x27;s peers may see the names
+
+mesh.shared.key = &quot;D4R5TBD...&quot;      # a mesh with other people on it —
+                                    # nothing said about services here</code></pre>
+
+<p><strong>Carried in their own control message, not on the announce.</strong> Announces are
+padded to 512 or 1024 bytes and a credential already forced the larger size; a
+service list would compete for that budget and be trimmed exactly when there is
+most to say. A separate message, sealed the same way and sent every few minutes,
+keeps the announce small and lets the list be trimmed independently.</p>
+
+<p><strong>Names stay scoped to the device that claims them.</strong> A service name is
+self-asserted, like a device name (ADR-008): a member can publish a service
+called <code>immich</code> on their own machine. Displaying it as <code>immich.their-laptop.mesh</code>
+— which is already how the names work — makes that visible rather than
+confusing. The roster should show the device, always.</p>
+
+<p><strong>A service list is a claim, not a promise.</strong> It says what a device intends to
+publish, not what is running. <code>shrooms status</code> on the publishing node is the only
+thing that knows whether the port is actually answering, so a peer&#x27;s list should
+be shown as names to try, not as a health display.</p>
+
+<h2 id="consequences">Consequences</h2>
+
+<ul>
+<li>The roster can show what the mesh offers, which is the point.</li>
+<li>A shared mesh discloses nothing by default, and turning it on is one line and
+one mesh at a time.</li>
+<li>One more message type on the control plane, at a few hundred bytes every few
+minutes. Negligible beside the ~20 MB/h the rendezvous node costs anyway.</li>
+<li>The name router already routes by <code>Host</code> and SNI, so a name from the roster is
+directly usable: no port to remember, which was the point of ADR-019.</li>
+<li>If the per-recipient announce wrapping of ADR-018 is ever built, this message
+should ride the same mechanism rather than growing its own.</li>
+</ul>
+
+<footer>
+    <p>
+        shrooms is built in the open at
+        <a href="https://github.com/vpavlin/shrooms">github.com/vpavlin/shrooms</a>,
+        dual licensed Apache-2.0 or MIT.
+        Part of the <a href="https://logos.co">Logos</a> ecosystem: it rides on
+        Logos Delivery and ships as a Basecamp module.
+    </p>
+</footer>
+</div>
+
+<script src="../field.js"></script>
+</body>
+</html>

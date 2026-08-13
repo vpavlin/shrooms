@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shrooms — 006. Rotating rendezvous topics on a stable shard</title>
+<meta name="description" content="On a public bus, a static content topic is a permanent label. Anyone who learns it can watch the mesh forever, and Waku&#x27;s Store would let them query history retroactively.">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../style.css">
+<meta property="og:title" content="shrooms — 006. Rotating rendezvous topics on a stable shard">
+<meta property="og:description" content="On a public bus, a static content topic is a permanent label. Anyone who learns it can watch the mesh forever, and Waku&#x27;s Store would let them query history retroactively.">
+<meta name="theme-color" content="#07090b">
+</head>
+<body>
+<div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+<div class="lattice" aria-hidden="true"></div>
+<canvas id="field"></canvas>
+<div class="grain" aria-hidden="true"></div>
+
+<div class="page">
+<nav>
+    <a class="mark" href="../index.html"><img class="nav-logo" src="../logo.svg" alt="" width="24" height="24">shrooms</a>
+    <a href="../index.html">what &amp; why</a>
+    <a href="../install.html">install</a>
+    <a href="../guides.html">guides</a>
+    <a href="../dev.html" class="here">dev notes</a>
+    <span class="spacer"></span>
+    <a href="https://github.com/vpavlin/shrooms">github</a>
+</nav>
+
+<header class="hero">
+<h1>006. Rotating rendezvous topics on a stable shard</h1>
+<div class="note">
+<p><strong>Status:</strong> accepted</p>
+</div>
+<div class="cta">
+    <a href="index.html">← every decision</a>
+    <a href="../dev.html">dev notes</a>
+</div>
+</header>
+
+<h2 id="context">Context</h2>
+
+<p>On a public bus, a static content topic is a permanent label. Anyone who learns
+it can watch the mesh forever, and Waku&#x27;s Store would let them query history
+retroactively.</p>
+
+<h2 id="decision">Decision</h2>
+
+<p>Derive the content topic from the network key and a time epoch:</p>
+
+<pre><code>tag          = HMAC-SHA256(K_topic, &quot;mesh/v1/rendezvous&quot; || be64(epoch))[0:16]
+contentTopic = &quot;/&lt;app&gt;/&lt;ver&gt;/&quot; || base32(tag) || &quot;/proto&quot;</code></pre>
+
+<p>Rotate hourly; accept <code>epoch-1</code>, <code>epoch</code>, <code>epoch+1</code> for clock skew.</p>
+
+<h2 id="why">Why</h2>
+
+<p>Waku autosharding computes <code>shard = sha256(application ‖ version) mod
+numShards</code> — hashing <strong>only</strong> the application and version fields, not the whole
+content topic. So rotating the <code>{name}</code> field changes the topic while leaving
+the shard, and therefore the gossipsub mesh, fixed.</p>
+
+<p>That is what makes rotation free. Had we rotated the <em>pubsub</em> topic instead,
+every rotation would emit visible SUBSCRIBE/UNSUBSCRIBE churn to our neighbours
+and drop us into a fresh mesh with an anonymity set of one.</p>
+
+<p><strong>Verified, not assumed.</strong> Spike S3 published to six consecutive epoch topics
+against a live node; all six routed to <code>/waku/2/rs/2/3</code>, matching the locally
+computed value. This mattered because
+<a href="https://github.com/waku-org/nwaku/issues/2538">nwaku#2538</a> reports autosharding
+resolving content topics to the wrong shard.</p>
+
+<p>The application and version fields are deliberately generic. A distinctive
+application string would be a global cleartext label identifying the mesh on
+every message, even though <code>{name}</code> is opaque.</p>
+
+<h2 id="consequences">Consequences</h2>
+
+<ul>
+<li>Clock skew beyond the three-epoch window partitions the mesh. One hour with a
+±1 window is very forgiving; below ~10 minutes skew becomes the binding
+constraint.</li>
+<li>Changing <code>Application</code> or <code>Version</code> moves every topic to a different shard, so
+they are effectively frozen.</li>
+</ul>
+
+<footer>
+    <p>
+        shrooms is built in the open at
+        <a href="https://github.com/vpavlin/shrooms">github.com/vpavlin/shrooms</a>,
+        dual licensed Apache-2.0 or MIT.
+        Part of the <a href="https://logos.co">Logos</a> ecosystem: it rides on
+        Logos Delivery and ships as a Basecamp module.
+    </p>
+</footer>
+</div>
+
+<script src="../field.js"></script>
+</body>
+</html>

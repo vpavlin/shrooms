@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shrooms — 002. Userspace WireGuard, not the kernel module</title>
+<meta name="description" content="Kernel WireGuard is faster than wireguard-go and needs no embedding. On Linux it is the obvious choice.">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../style.css">
+<meta property="og:title" content="shrooms — 002. Userspace WireGuard, not the kernel module">
+<meta property="og:description" content="Kernel WireGuard is faster than wireguard-go and needs no embedding. On Linux it is the obvious choice.">
+<meta name="theme-color" content="#07090b">
+</head>
+<body>
+<div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+<div class="lattice" aria-hidden="true"></div>
+<canvas id="field"></canvas>
+<div class="grain" aria-hidden="true"></div>
+
+<div class="page">
+<nav>
+    <a class="mark" href="../index.html"><img class="nav-logo" src="../logo.svg" alt="" width="24" height="24">shrooms</a>
+    <a href="../index.html">what &amp; why</a>
+    <a href="../install.html">install</a>
+    <a href="../guides.html">guides</a>
+    <a href="../dev.html" class="here">dev notes</a>
+    <span class="spacer"></span>
+    <a href="https://github.com/vpavlin/shrooms">github</a>
+</nav>
+
+<header class="hero">
+<h1>002. Userspace WireGuard, not the kernel module</h1>
+<div class="note">
+<p><strong>Status:</strong> accepted</p>
+</div>
+<div class="cta">
+    <a href="index.html">← every decision</a>
+    <a href="../dev.html">dev notes</a>
+</div>
+</header>
+
+<h2 id="context">Context</h2>
+
+<p>Kernel WireGuard is faster than wireguard-go and needs no embedding. On Linux it
+is the obvious choice.</p>
+
+<h2 id="decision">Decision</h2>
+
+<p>Use userspace WireGuard (wireguard-go) everywhere.</p>
+
+<h2 id="why">Why</h2>
+
+<p><strong>NAT traversal and the tunnel must share one UDP socket.</strong> Tailscale states the
+constraint plainly: otherwise the reflexive address you discover via STUN or an
+in-band echo is not the port your data actually arrives on, and hole punches
+land on the wrong mapping.</p>
+
+<p>Kernel WireGuard owns its socket and will not share it. This is why Tailscale
+runs wireguard-go on every platform despite the kernel module existing.</p>
+
+<p>Two supporting reasons:</p>
+
+<ul>
+<li><strong>Android has no kernel WireGuard without root.</strong> The official app&#x27;s
+<code>WgQuickBackend</code> requires root; the Play Store path is <code>GoBackend</code>, i.e.
+wireguard-go. Since Android forces userspace anyway, kernel WG would be a
+Linux-only special case rather than an architecture.</li>
+<li><strong>The throughput cost is not what it used to be.</strong> With GSO/GRO (merged
+Oct 2023), wireguard-go measured 13.0 Gb/s against the kernel&#x27;s 11.8 on the
+same machine. The gap only appears without offload.</li>
+</ul>
+
+<h2 id="consequences">Consequences</h2>
+
+<ul>
+<li>Lower throughput on Linux than the kernel module would give, in exchange for
+NAT traversal being possible at all.</li>
+<li>One code path across Linux and Android.</li>
+<li>Kernel WireGuard remains available later as an opportunistic fast path for
+nodes with a stable public endpoint, where no traversal is needed.</li>
+</ul>
+
+<footer>
+    <p>
+        shrooms is built in the open at
+        <a href="https://github.com/vpavlin/shrooms">github.com/vpavlin/shrooms</a>,
+        dual licensed Apache-2.0 or MIT.
+        Part of the <a href="https://logos.co">Logos</a> ecosystem: it rides on
+        Logos Delivery and ships as a Basecamp module.
+    </p>
+</footer>
+</div>
+
+<script src="../field.js"></script>
+</body>
+</html>

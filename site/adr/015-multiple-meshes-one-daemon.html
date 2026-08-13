@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shrooms — 015. Multiple meshes in one daemon</title>
+<meta name="description" content="Per-mesh identity is derived from one master secret, each mesh gets its own WireGuard device rather than one TUN carrying several prefixes, and credentials, relay selection, services and…">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../style.css">
+<meta property="og:title" content="shrooms — 015. Multiple meshes in one daemon">
+<meta property="og:description" content="Per-mesh identity is derived from one master secret, each mesh gets its own WireGuard device rather than one TUN carrying several prefixes, and credentials, relay selection, services and…">
+<meta name="theme-color" content="#07090b">
+</head>
+<body>
+<div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+<div class="lattice" aria-hidden="true"></div>
+<canvas id="field"></canvas>
+<div class="grain" aria-hidden="true"></div>
+
+<div class="page">
+<nav>
+    <a class="mark" href="../index.html"><img class="nav-logo" src="../logo.svg" alt="" width="24" height="24">shrooms</a>
+    <a href="../index.html">what &amp; why</a>
+    <a href="../install.html">install</a>
+    <a href="../guides.html">guides</a>
+    <a href="../dev.html" class="here">dev notes</a>
+    <span class="spacer"></span>
+    <a href="https://github.com/vpavlin/shrooms">github</a>
+</nav>
+
+<header class="hero">
+<h1>015. Multiple meshes in one daemon</h1>
+<div class="note">
+<p><strong>Status:</strong> accepted; built and in daily use.</p>
+</div>
+<div class="cta">
+    <a href="index.html">← every decision</a>
+    <a href="../dev.html">dev notes</a>
+</div>
+</header>
+
+<p>Per-mesh identity is derived from one master secret, each mesh gets its own
+WireGuard device rather than one TUN carrying several prefixes, and
+credentials, relay selection, services and the synthetic IPv4 block
+(<a href="021-synthetic-ipv4.html">ADR-021</a>) are all per mesh. Names resolve across the
+meshes a node belongs to. Running now on a laptop and a phone with two meshes
+each, plus a VPS and two LAN machines.</p>
+
+<p><strong>The <code>mesh_id</code> collision is settled</strong>, in favour of
+<a href="018-credentials-instead-of-a-shared-key.html">ADR-018</a>: a mesh is named by the
+hash of its admin public key, and the address prefix derives from that
+(<code>cred.MeshID.Prefix</code>), not from the network key as this ADR originally had it.</p>
+
+<h2 id="context">Context</h2>
+
+<p>Alice has a mesh for her own machines. Bob has one for his. They also want a
+shared mesh so Bob can reach Alice&#x27;s NAS, without either gaining access to the
+other&#x27;s private mesh.</p>
+
+<p>The cryptography already supports this cleanly. Everything is derived from the
+network key — the /48 prefix, the rendezvous topics and their payload key, the
+pairwise WireGuard PSKs, the disco key, the relay key — so two meshes are
+independent by construction, with no shared mutable state to get wrong.</p>
+
+<p>Running one daemon per mesh therefore almost works today. It was rejected: it
+multiplies configs, state directories, TUN interfaces, ports, control sockets
+and Logos Messaging nodes, and the last of those is the expensive one. The
+requirement is that <code>shrooms join</code> can be run more than once and that be the
+end of it.</p>
+
+<h2 id="decision">Decision</h2>
+
+<p><strong>One daemon, one messaging node, many meshes — but a WireGuard device, a TUN
+and a UDP port each.</strong></p>
+
+<p>The original line here was &quot;one TUN, one UDP port&quot;, and building it showed that
+to be wrong in a way worth recording rather than quietly changing.</p>
+
+<p>A wireguard-go <code>Device</code> has exactly one static private key, and the whole point
+of the per-mesh identity below is that the key differs per mesh. Worse,
+WireGuard allows <strong>one preshared key per peer</strong>, and our PSK is per mesh — so a
+peer that shares two meshes with us cannot be one entry on one device at all.
+Two devices are therefore forced.</p>
+
+<p>Two devices cannot share a UDP port either. A transport packet identifies its
+destination only by a receiver index the receiving device allocated, so nothing
+in the packet says which device it belongs to. Handing every packet to both and
+letting the wrong one fail authentication would work — everything is
+authenticated — but it doubles the work on the data path and turns other
+meshes&#x27;&#x27; traffic into a stream of decrypt failures in the log. Boring and
+separate beats clever and shared here.</p>
+
+<p>What that costs is one NAT mapping per mesh rather than one shared, so hole
+punching no longer amortises across meshes. What it keeps is the expensive
+thing: <strong>one Logos Delivery node</strong>, whose ~20 MB/h dwarfs everything else a node
+does (see the bandwidth measurements in the README). Running a daemon per mesh
+would have duplicated that, which is what this ADR set out to avoid.</p>
+
+<p>Ports are allocated from <code>listen_port</code> upwards in label order, so a config that
+names one mesh listens exactly where it always did.</p>
+
+<h3 id="per-mesh-identity-derived-from-one-master-secret">Per-mesh identity, derived from one master secret</h3>
+
+<pre><code>device_key(m) = HKDF(master_secret, &quot;mesh/v1/identity&quot; || mesh_id)
+wg_key(m)     = HKDF(master_secret, &quot;mesh/v1/wg&quot;       || mesh_id)</code></pre>
+
+<p>This is load-bearing, not hygiene. WireGuard identifies peers by public key
+within a device and allows <strong>one preshared key per peer</strong>, while our PSK is
+per-mesh. A device that shares two meshes with us therefore cannot be
+represented twice on one WireGuard device — unless it presents a different
+public key in each, which per-mesh derivation gives for free.</p>
+
+<p>It also closes a linkability leak. <code>OverlayAddr</code> mixes the network key into the
+prefix but <strong>not</strong> into the host bits, which are <code>SHA256(&quot;mesh/v1/addr&quot; ||
+device_pub)</code>. A device reusing one identity therefore carries the same 80-bit
+suffix in every mesh it joins, so anyone in two meshes can correlate devices
+across them. The same is true of <code>DevicePub</code> in the announce. Per-mesh
+identities remove both, and mean joining a shared mesh reveals nothing about
+membership of a private one.</p>
+
+<p><code>mesh_id</code> is derived from the network key, not chosen, so it needs no agreement:</p>
+
+<pre><code>network_id = SHA256(&quot;mesh/v1/meshid&quot; || NK)[0:8]</code></pre>
+
+<p><strong>Renamed from <code>mesh_id</code>, because that name was taken.</strong>
+<a href="018-credentials-instead-of-a-shared-key.html">ADR-018</a> introduced a <em>different</em>
+mesh id — the hash of the sorted admin key set — which is what a credential
+names and what says which authority admitted you. Two identifiers with one name,
+one of which the address prefix depends on, is a bug waiting for a bad afternoon.</p>
+
+<p>They are not the same thing and neither can replace the other:</p>
+
+<table>
+<tr><th></th><th>derived from</th><th>exists when</th><th>answers</th></tr>
+<tr><td><strong>network id</strong></td><td>the network key</td><td>always</td><td>which mesh is this, locally</td></tr>
+<tr><td><strong>mesh id</strong> (ADR-018)</td><td>the admin key set</td><td>only with an authority</td><td>who may admit devices</td></tr>
+</table>
+
+<p>A mesh with no <code>admin_keys</code> — which is every mesh today, and which stays
+supported — has no ADR-018 mesh id at all, so the network id is the only one
+that can key per-mesh derivation. Nothing about this is visible on the wire:
+the address prefix already derives from the network key (ADR-005), and this
+identifier is a local label over the same secret.</p>
+
+<h3 id="mesh-names-are-local-labels">Mesh names are local labels</h3>
+
+<pre><code>shrooms join &lt;KEY&gt; --mesh shared</code></pre>
+
+<p>Optional; defaults to a short rendering of <code>mesh_id</code>. Names are <strong>local to the
+node</strong>, and deliberately not carried in the announce.</p>
+
+<p>There is no authenticated channel to distribute a mesh&#x27;s name. Putting it in the
+announce would make it self-asserted, exactly like device names (ADR-008), so
+any member could rename the mesh for everyone else. Alice calling it <code>shared</code>
+while Bob calls it <code>alice-nas</code> is not a defect — it is the only thing that can
+be true without an authority. <code>mesh_id</code> is the identifier; the name is a label
+over it.</p>
+
+<p>Names must be unique on the node, and <code>join</code> rejects a collision.</p>
+
+<h3 id="naming-peer-mesh-suffix">Naming: <code>$peer.$mesh.$suffix</code></h3>
+
+<p><code>vps.mesh</code> is ambiguous the moment two meshes contain a <code>vps</code>. So the qualified
+form is canonical:</p>
+
+<pre><code>vps.home.mesh
+nas.shared.mesh</code></pre>
+
+<p>The short form <code>vps.mesh</code> is <strong>also</strong> emitted, but only when that peer name is
+unambiguous across every joined mesh. A single-mesh node — which is every node
+today — therefore sees no change, and ambiguity degrades by removing the short
+name rather than by silently resolving it to one of the candidates.</p>
+
+<p>This is the same rule already applied to duplicate device names within a mesh
+(<code>hosts.Render</code> appends a piece of the address rather than letting the last
+writer win), extended one level out.</p>
+
+<h3 id="configuration">Configuration</h3>
+
+<p>Meshes are flat, prefixed keys rather than TOML tables:</p>
+
+<pre><code>mesh.home.key    = &quot;P27KNQ2...&quot;
+mesh.home.relay  = &quot;true&quot;
+mesh.shared.key  = &quot;D4R5TBD...&quot;</code></pre>
+
+<p>The config parser is a hand-rolled TOML subset with no table support. Prefixed
+keys need no parser rewrite and give per-mesh options for free. The single-mesh
+<code>network_key = &quot;...&quot;</code> form stays valid and means one mesh named <code>default</code>.</p>
+
+<h3 id="state">State</h3>
+
+<p><code>state.json</code> grows a per-mesh map holding the derived identity and, critically,
+the announce sequence number — <code>Seq</code> must persist per mesh, since it is per
+device <em>per mesh</em> that peers&#x27; replay guards track.</p>
+
+<p><strong>Existing state is migrated by keeping its keys, not by re-deriving them.</strong> A
+node that regenerated its identity would change its overlay address and
+WireGuard public key, breaking every established tunnel and appearing to its
+peers as a new device while the old one lingered until it timed out. The
+existing identity is written under the existing mesh&#x27;s id verbatim.</p>
+
+<h3 id="credentials-are-per-mesh">Credentials are per mesh</h3>
+
+<p>Each mesh carries its own <code>admin_keys</code>, its own credential in the announce, and
+its own revocation list. Nothing is shared between meshes but the device, which
+is the point: being admitted to Bob&#x27;s shared mesh says nothing about Alice&#x27;s
+private one, and an admin who can revoke you there cannot touch you here.</p>
+
+<p>Since identities are per mesh, a credential names the per-mesh device and
+WireGuard keys. That falls out for free — those are the keys the announce is
+signed with in that mesh — but it means a credential issued for one mesh is not
+merely untrusted in another, it does not even name the right device.</p>
+
+<h3 id="the-network-key-path-stays">The network key path stays</h3>
+
+<p><code>network_key = &quot;...&quot;</code> remains valid and means one mesh named <code>default</code>, and a
+mesh with no <code>admin_keys</code> keeps admitting anyone who holds its key. Not as a
+transitional courtesy: it is how a mesh is bootstrapped, how one is recovered,
+and the only thing that works when nothing is running on the other end. Invites
+and credentials are the better path and are not yet the only path — auto-renewal
+is not built, so a credentialled mesh still needs a human every thirty days.</p>
+
+<p>Concretely, nothing in this ADR may require an authority to exist.</p>
+
+<h3 id="the-waiting-daemon-is-the-runtime-half">The waiting daemon is the runtime half</h3>
+
+<p>A daemon that gains a mesh while running is what &quot;join more than once&quot; means,
+and it is <a href="https://github.com/vpavlin/shrooms/blob/master/cmd/shrooms/waiting.go">already built</a> for the empty case: a
+daemon with no key holds the control socket and takes a mesh over <code>/join</code>. The
+remaining work is that the same call must be accepted by a daemon that already
+has one, and must add rather than replace.</p>
+
+<h2 id="consequences">Consequences</h2>
+
+<p><strong>Joining a mesh does not bridge it to another.</strong> Each node is an endpoint, not
+a router: there is no IP forwarding, and <code>AllowedIPs</code> bounds what each peer may
+send. Bob cannot reach Alice&#x27;s private mesh through a machine that is in both
+unless she deliberately enables forwarding. This is the property the whole
+arrangement rests on and it is worth stating explicitly, because the obvious
+fear — &quot;I joined a shared mesh and exposed my home network&quot; — is not what
+happens.</p>
+
+<p><strong>One NAT mapping serves every mesh.</strong> Sharing the socket was already required
+for traversal (ADR-002); the side effect is that hole punching and reflexive
+discovery amortise across meshes rather than being repeated per mesh.</p>
+
+<p><strong>Rendezvous cost is sub-linear.</strong> All meshes&#x27; topics hash to the same shard
+(spike S3), so N meshes add N×3 content-topic subscriptions but no additional
+gossipsub mesh.</p>
+
+<p><strong>Inbound control packets must be tried against each mesh&#x27;s keys.</strong> Announces,
+disco probes and relay frames carry no cleartext mesh identifier — deliberately,
+since one would be a membership oracle for a passive observer. Demultiplexing is
+therefore trial decryption, O(meshes) per packet. Fine at the scale this is for;
+if it ever isn&#x27;t, the fix is a per-mesh listen port, which costs privacy.</p>
+
+<p><strong>Every mesh needs its own IPv4 aliases.</strong> <a href="021-synthetic-ipv4.html">ADR-021</a>
+gives each peer a synthetic address derived from its device key. With per-mesh
+identities that derivation is already distinct per mesh, so the aliases do not
+collide by construction — but the <em>table</em> must be per mesh, or one mesh&#x27;s peer
+would answer another&#x27;s name.</p>
+
+<p><strong>Sharing a mesh key still shares everything.</strong> The network key is a bearer
+credential (ADR-008): giving Bob the key to mesh C makes him a full member who
+can enrol further devices, with no revocation until M5. &quot;Let Bob reach this one
+service&quot; is not expressible and is squarely M5 work. Accepted deliberately —
+this is the position today, and multi-mesh at least contains the blast radius to
+one mesh rather than requiring Alice to share her private one.</p>
+
+<h2 id="staging">Staging</h2>
+
+<ol>
+<li><strong>Mesh naming and per-mesh hosts blocks.</strong> Independently useful: the
+<code>/etc/hosts</code> marker is currently a fixed string, so two writers fight.</li>
+<li><strong>Config and state</strong> — prefixed keys, per-mesh identity, migration.</li>
+<li><strong>Runtime</strong> — a mesh instance per mesh: its own WireGuard device, TUN and
+port, sharing the rendezvous node, the control socket and the resolver.</li>
+</ol>
+
+<footer>
+    <p>
+        shrooms is built in the open at
+        <a href="https://github.com/vpavlin/shrooms">github.com/vpavlin/shrooms</a>,
+        dual licensed Apache-2.0 or MIT.
+        Part of the <a href="https://logos.co">Logos</a> ecosystem: it rides on
+        Logos Delivery and ships as a Basecamp module.
+    </p>
+</footer>
+</div>
+
+<script src="../field.js"></script>
+</body>
+</html>
