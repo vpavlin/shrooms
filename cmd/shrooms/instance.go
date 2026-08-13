@@ -39,6 +39,10 @@ type instance struct {
 	// if it gave one (ADR-024).
 	mapped netip.AddrPort
 
+	// primary marks the mesh written as network_key — the one this device was
+	// built around. It wins an unqualified name (see named).
+	primary bool
+
 	// relay is whether this node forwards for peers of this mesh. Per mesh:
 	// carrying traffic for one set of people does not imply carrying it for
 	// another (ADR-015).
@@ -171,10 +175,30 @@ type namedMesh struct {
 	alias  func(netip.Addr) (netip.Addr, bool)
 }
 
+// named orders the meshes for the resolver: this device's own mesh first.
+//
+// The order decides who wins a short name, and it used to be alphabetical —
+// meshes are sorted by label everywhere else so that output does not reshuffle
+// between runs, and the resolver inherited that. So laptop.mesh went to
+// "default" over "home" because d sorts before h, and would have gone to
+// "home" over "work" for the same reason. That is an accident wearing the
+// clothes of a decision.
+//
+// The device's primary mesh wins instead: the one written as network_key,
+// which is the mesh it was built around and the one its own name has always
+// meant. Everything else keeps its stable order behind that, and the qualified
+// form — laptop.home.mesh — remains the way to say which one you mean.
 func named(instances []*instance) []namedMesh {
 	out := make([]namedMesh, 0, len(instances))
 	for _, in := range instances {
-		out = append(out, namedMesh{label: in.label, lookup: in.mesh.Lookup, alias: in.mesh.LookupV4})
+		if in.primary {
+			out = append(out, namedMesh{label: in.label, lookup: in.mesh.Lookup, alias: in.mesh.LookupV4})
+		}
+	}
+	for _, in := range instances {
+		if !in.primary {
+			out = append(out, namedMesh{label: in.label, lookup: in.mesh.Lookup, alias: in.mesh.LookupV4})
+		}
 	}
 	return out
 }

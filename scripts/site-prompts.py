@@ -15,8 +15,14 @@ import pathlib
 import re
 import sys
 
-# A command line inside a code block: optional leading spaces, "$ ", the rest.
-LINE = re.compile(r'^(\s*)\$ (.+)$')
+# A command line inside a code block. The prompt may follow the opening tags
+# rather than start the line — `<pre><code>$ ssh ...` is how the first command
+# of a block is usually written, and matching only at the start of a line left
+# exactly one unconverted prompt in every block, which is worse than none.
+# A prompt may also carry which machine to run it on — `laptop $ shrooms
+# invite` — and that label is no more typeable than the dollar is, so it goes
+# out of the text with it.
+LINE = re.compile(r'^(\s*(?:<pre>)?(?:<code>)?)([a-z0-9._-]*\s*)\$ (.+)$')
 BLOCK = re.compile(r'(<pre>.*?</pre>)', re.S)
 
 
@@ -25,7 +31,9 @@ def convert(block: str) -> str:
     for line in block.split("\n"):
         m = LINE.match(line)
         if m and 'class="cmd"' not in line:
-            out.append(f'{m.group(1)}<span class="cmd">{m.group(2)}</span>')
+            tags, host, cmd = m.group(1), m.group(2), m.group(3)
+            prefix = f'<span class="host">{host}</span>' if host.strip() else ""
+            out.append(f'{tags}{prefix}<span class="cmd">{cmd}</span>')
         else:
             out.append(line)
     return "\n".join(out)

@@ -60,7 +60,7 @@
     <code>&lt;device&gt;.mesh</code>:
 </p>
 
-<pre><code>$ ssh root@vps.mesh
+<pre><code><span class="cmd">ssh root@vps.mesh</span>
 <span class="cmd">ping6 laptop.mesh</span>
 <span class="cmd">resolvectl query vps.mesh        <span class="c"># names shrooms0 as the link that answered</span></code></pre></span>
 
@@ -79,7 +79,7 @@
     the first:
 </p>
 
-<pre><code>$ resolvectl status shrooms0       <span class="c"># expect DNS Servers: &lt;overlay&gt; and Domain: ~mesh</span></code></pre>
+<pre><code><span class="cmd">resolvectl status shrooms0       <span class="c"># expect DNS Servers: &lt;overlay&gt; and Domain: ~mesh</span></code></pre></span>
 
 <p>
     Port 53 needs <code>CAP_NET_BIND_SERVICE</code>, which the packaged unit
@@ -121,7 +121,7 @@ unanswerable 5 · <span class="a">ipv4-only 15</span> · other-type 5</code></pr
     peer's overlay address and is translated at the tun.
 </p>
 
-<pre><code>$ shrooms status
+<pre><code><span class="cmd">shrooms status</span>
 network       fd3b:ffe9:f81::/48                       peers 4 (4 up)
 self          laptop  fd3b:ffe9:f81:81a7:18bc:69b1:9bb:7e69
 <span class="p">ipv4          198.18.44.9</span>                              for clients that ask only for A records</code></pre>
@@ -148,7 +148,7 @@ self          laptop  fd3b:ffe9:f81:81a7:18bc:69b1:9bb:7e69
 <pre><code><span class="c"># /etc/shrooms/config.toml on nas</span>
 services = ["immich:2283", "jellyfin:8096"]</code></pre>
 
-<pre><code>$ sudo shrooms reload            <span class="c"># re-reads the config; applies services</span>
+<pre><code><span class="cmd">sudo shrooms reload            <span class="c"># re-reads the config; applies services</span></span>
 <span class="cmd">curl http://immich.nas.mesh    <span class="c"># from any other device, phone included</span></span>
 <span class="cmd">curl http://immich.nas.mesh:2283   <span class="c"># the declared port also works</span></code></pre></span>
 
@@ -198,7 +198,7 @@ services = ["immich:2283", "jellyfin:8096"]</code></pre>
     than taking it.
 </p>
 
-<pre><code>$ shrooms status
+<pre><code><span class="cmd">shrooms status</span>
 …
 services published here
 NAME      REACHABLE AS              FORWARDS TO       CONNS
@@ -261,7 +261,7 @@ services = ["ha:8080-&gt;192.168.0.116:80"]</code></pre>
 
 <p><code>sshd</code>, for instance. Take the address from <code>shrooms status</code>:</p>
 
-<pre><code>$ shrooms status | head -2
+<pre><code><span class="cmd">shrooms status | head -2</span>
 network       fd3b:ffe9:f81::/48
 self          laptop  <span class="p">fd3b:ffe9:f81:81a7:18bc:69b1:9bb:7e69</span></code></pre>
 
@@ -292,7 +292,7 @@ After=shrooms.service</code></pre>
     restarting underneath it:
 </p>
 
-<pre><code>$ echo 'net.ipv6.ip_nonlocal_bind=1' | sudo tee /etc/sysctl.d/99-shrooms.conf
+<pre><code><span class="cmd">echo 'net.ipv6.ip_nonlocal_bind=1' | sudo tee /etc/sysctl.d/99-shrooms.conf</span>
 <span class="cmd">sudo sysctl --system</code></pre></span>
 
 <h3>Peers are not told until you say so</h3>
@@ -303,7 +303,7 @@ After=shrooms.service</code></pre>
     anything is:
 </p>
 
-<pre><code>$ shrooms bound
+<pre><code><span class="cmd">shrooms bound</span>
 MESH     WOULD ANNOUNCE  REACHED AS
 default  ssh:22          laptop.mesh:22
 default  dev:3000        laptop.mesh:3000
@@ -350,7 +350,7 @@ They are already reachable by every member; this is about being told.</code></pr
 announce_services = "true"     <span class="c"># this mesh's peers may see the names</span>
 announce_bound    = "true"     <span class="c"># and the ports bound to its address</span></code></pre>
 
-<pre><code>$ shrooms status
+<pre><code><span class="cmd">shrooms status</span>
 …
 services offered by peers
 MESH     NAME      TRY
@@ -421,15 +421,15 @@ default  jellyfin  http://jellyfin.nas.mesh  <span class="a">(unreachable now)</
     Mint a second on a node that already has one:
 </p>
 
-<pre><code>$ shrooms init --mesh shared          <span class="c"># a second network on this node</span>
+<pre><code><span class="cmd">shrooms init --mesh shared          <span class="c"># a second network on this node</span></span>
 <span class="cmd">sudo systemctl restart shrooms</span>
 <span class="cmd">shrooms invite --mesh shared        <span class="c"># admit one device to it</span></code></pre></span>
 
 <p>Or join one somebody else runs, giving it a name of your own:</p>
 
-<pre><code>$ sudo shrooms join --invite BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U --mesh friends</code></pre>
+<pre><code><span class="cmd">sudo shrooms join --invite BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U --mesh friends</code></pre></span>
 
-<pre><code>$ shrooms status
+<pre><code><span class="cmd">shrooms status</span>
 mesh <span class="p">default</span>  fd69:bd41:d9bc:7fb7:…  fd69:bd41:d9bc::/48  shrooms0   peers 2
 mesh <span class="p">shared</span>   fdfb:6ad9:cb3f:2e1a:…  fdfb:6ad9:cb3f::/48  shrooms01  peers 1</code></pre>
 
@@ -470,7 +470,7 @@ mesh.shared.enabled   = "false"    <span class="c"># a member of it, not running
 
 <p>Names take a mesh label when they need one:</p>
 
-<pre><code>$ ping vps.shared.mesh     <span class="c"># unambiguous, and canonical</span>
+<pre><code><span class="cmd">ping vps.shared.mesh     <span class="c"># unambiguous, and canonical</span></span>
 <span class="cmd">ping nas.mesh            <span class="c"># fine while only one mesh has a `nas`</span></code></pre></span>
 
 <p>
@@ -498,13 +498,13 @@ mesh.shared.enabled   = "false"    <span class="c"># a member of it, not running
     screen. On a machine that is already a member, with its daemon running:
 </p>
 
-<pre><code>laptop $ shrooms invite
+<pre><code><span class="host">laptop </span><span class="cmd">shrooms invite</span>
         Invite valid for 15m0s. On the joining device:
           shrooms join --invite <span class="p">BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U</span>
         [QR code]
         Waiting...
 
-vps    $ sudo shrooms join --invite BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U --name vps
+<span class="host">vps    </span><span class="cmd">sudo shrooms join --invite BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U --name vps</span>
         Asking to join as "vps"...
         <span class="p">Enrolled.</span> Credential serial 1786439411, expires 2026-09-10T11:03:51+02:00.</code></pre>
 
@@ -546,7 +546,7 @@ vps    $ sudo shrooms join --invite BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U --name vps
     holds the admin key, against a running node:
 </p>
 
-<pre><code>$ shrooms admin renew --dry-run
+<pre><code><span class="cmd">shrooms admin renew --dry-run</span>
   laptop           612h0m0s left
   vps              203h0m0s left
   phone            unknown expiry
@@ -565,7 +565,7 @@ vps    $ sudo shrooms join --invite BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U --name vps
 
 <p>To withdraw a device before its credential expires:</p>
 
-<pre><code>$ shrooms keys                <span class="c"># on the device: its public keys, hex</span>
+<pre><code><span class="cmd">shrooms keys                <span class="c"># on the device: its public keys, hex</span></span>
 device  8f2c1d…
 tunnel  4a90b3…
 
@@ -663,7 +663,7 @@ learns it from whoever is up.</code></pre>
     gave one.
 </p>
 
-<pre><code>$ journalctl -u shrooms | grep "port map"
+<pre><code><span class="cmd">journalctl -u shrooms | grep "port map"</span>
 … port mapped by the router  mesh=default external=178.213.45.235:51821 proto=natpmp lifetime=2h0m0s</code></pre>
 
 <pre><code>port_mapping = "false"    <span class="c"># if you would rather it did not ask</span></code></pre>

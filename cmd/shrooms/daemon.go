@@ -146,8 +146,12 @@ func cmdDaemon(args []string) error {
 		// is the one this device already belonged to, and keeps its keys —
 		// re-deriving them would change its address and make it a stranger to
 		// every peer. A mesh labelled "aaa" sorts first and is not it.
+		primary := isLegacyMesh(cfg, mc)
 		in, err := startInstance(ctx, log, cfg, st, node, mc, iface, port,
-			blocks[id], isLegacyMesh(cfg, mc), *verbose)
+			blocks[id], primary, *verbose)
+		if in != nil {
+			in.primary = primary
+		}
 		if in != nil {
 			instances = append(instances, in)
 		}

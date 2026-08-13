@@ -94,7 +94,7 @@
     <li>root on the machine</li>
 </ul>
 
-<pre><code>$ curl -fsSLO https://raw.githubusercontent.com/vpavlin/shrooms/master/scripts/install.sh
+<pre><code><span class="cmd">curl -fsSLO https://raw.githubusercontent.com/vpavlin/shrooms/master/scripts/install.sh</span>
 <span class="cmd">sudo bash install.sh prepare --name nas    <span class="c"># install, start, wait for a mesh</span></code></pre></span>
 
 <p><strong>What you should see</strong></p>
@@ -179,7 +179,7 @@ and back here:
     a remote install from.
 </p>
 
-<pre><code>$ git clone https://github.com/vpavlin/shrooms &amp;&amp; cd shrooms
+<pre><code><span class="cmd">git clone https://github.com/vpavlin/shrooms &amp;&amp; cd shrooms</span>
 <span class="cmd">make deps-release       <span class="c"># prebuilt liblogosdelivery; there is no distribution of it</span></span>
 <span class="cmd">make shrooms</span>
 <span class="cmd">sudo make install       <span class="c"># binary, libraries, systemd unit, bash completion</span></code></pre></span>
@@ -249,7 +249,7 @@ http://apps.vpavlin.xyz/fdroid/repo
 
 <h3>Building the APK yourself</h3>
 
-<pre><code>$ make apk                       <span class="c"># android/shrooms.apk, debug-signed</span>
+<pre><code><span class="cmd">make apk                       <span class="c"># android/shrooms.apk, debug-signed</span></span>
 <span class="cmd">adb install -r android/shrooms.apk</span>
 
 <span class="cmd">make fdroid                    <span class="c"># build unsigned, sign on the repo host, publish</span></code></pre></span>
@@ -274,7 +274,7 @@ http://apps.vpavlin.xyz/fdroid/repo
     a group you are in</li>
 </ul>
 
-<pre><code>$ curl -fsSLO https://github.com/vpavlin/shrooms/releases/download/shrooms-v0.3.0/shrooms-0.3.0.lgx
+<pre><code><span class="cmd">curl -fsSLO https://github.com/vpavlin/shrooms/releases/download/shrooms-v0.3.0/shrooms-0.3.0.lgx</span>
 <span class="c"># and the core module it depends on</span>
 <span class="cmd">curl -LO https://github.com/vpavlin/shrooms/releases/download/shrooms_core-v0.2.0/shrooms_core-0.2.0.lgx</span>
 
@@ -343,7 +343,7 @@ http://apps.vpavlin.xyz/fdroid/repo
 
 <h3>Building the package yourself</h3>
 
-<pre><code>$ make basecamp-check     <span class="c"># load the real view offscreen against a fixture</span>
+<pre><code><span class="cmd">make basecamp-check     <span class="c"># load the real view offscreen against a fixture</span></span>
 <span class="cmd">make basecamp-lgx       <span class="c"># build the installable package</span></span>
 <span class="cmd">make basecamp-publish   <span class="c"># cut a GitHub release carrying it</span></code></pre></span>
 
@@ -367,7 +367,7 @@ http://apps.vpavlin.xyz/fdroid/repo
     <li>one inbound UDP port, 51820 by default</li>
 </ul>
 
-<pre><code>$ ssh root@VPS_IP
+<pre><code><span class="cmd">ssh root@VPS_IP</span>
 <span class="cmd">curl -fsSLO https://raw.githubusercontent.com/vpavlin/shrooms/master/scripts/install.sh</span>
 <span class="cmd">sudo bash install.sh prepare --name vps --relay</span>
 <span class="cmd">ufw allow 51820/udp                        <span class="c"># or your firewall's equivalent</span></code></pre></span>
@@ -436,7 +436,7 @@ This node relays. Open its UDP port if a firewall is in the way:
     <code>./bin/shrooms</code> here.
 </p>
 
-<pre><code>$ ./scripts/deploy.sh root@VPS_IP --relay --name vps --key &lt;NETWORK-KEY&gt;
+<pre><code><span class="cmd">./scripts/deploy.sh root@VPS_IP --relay --name vps --key &lt;NETWORK-KEY&gt;</span>
 <span class="cmd">./scripts/deploy.sh root@VPS_IP --init --relay --name vps   <span class="c"># or create the mesh</span></code></pre></span>
 
 <p>
@@ -460,7 +460,7 @@ This node relays. Open its UDP port if a firewall is in the way:
     asks twice for a passphrase to encrypt the admin key at rest:
 </p>
 
-<pre><code>$ sudo shrooms init --name laptop
+<pre><code><span class="cmd">sudo shrooms init --name laptop</span>
 <span class="p">Network key: GUPDIZSVIQRCBBC6APQFYDSDKTWK6Q5SYZY6ZLMVECQDQX3GIOYQ</span>
   copy this to your other machines — it is the only secret
 
@@ -498,7 +498,7 @@ Store it away from this machine. A password manager, a Keycard, paper.</code></p
     Then start the daemon:
 </p>
 
-<pre><code>$ sudo systemctl enable --now shrooms</code></pre>
+<pre><code><span class="cmd">sudo systemctl enable --now shrooms</code></pre></span>
 
 <p>
     The container installer takes the same verb —
@@ -520,7 +520,7 @@ Store it away from this machine. A password manager, a Keycard, paper.</code></p
     code, and waits:
 </p>
 
-<pre><code>$ shrooms invite
+<pre><code><span class="cmd">shrooms invite</span>
 Invite valid for 15m0s. On the joining device:
 
   <span class="p">shrooms join --invite BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U</span>
@@ -534,7 +534,7 @@ which is what makes it single-use — so leave this running.</code></pre>
     Then, on the newcomer, while the other machine is still waiting:
 </p>
 
-<pre><code>$ sudo shrooms join --invite BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U --name nas
+<pre><code><span class="cmd">sudo shrooms join --invite BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U --name nas</span>
 Asking to join as "nas"...
 
 <span class="p">Enrolled. Credential serial 1786439411, expires 2026-09-10T11:03:51+02:00.</span></code></pre>
@@ -626,7 +626,7 @@ The daemon was waiting for this and is bringing the mesh up now.</code></pre>
     messaging node joining the fleet — and a handshake shortly after.
 </p>
 
-<pre><code>$ shrooms status
+<pre><code><span class="cmd">shrooms status</span>
 network  fd48:d107:3fce::/48                     peers 2 (2 up)
 self     laptop  fd48:d107:3fce:2b84:226b:ac:f2c3:9f30
 
@@ -655,7 +655,7 @@ NAME         OVERLAY IP                              ANNOUNCE  TUNNEL  ENDPOINT 
     wherever it went before.
 </p>
 
-<pre><code>$ shrooms paths
+<pre><code><span class="cmd">shrooms paths</span>
 reflexive addresses (as peers observe us):
   203.0.113.9:41001</code></pre>
 

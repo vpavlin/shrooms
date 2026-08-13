@@ -345,9 +345,19 @@ pre code { background: none; padding: 0; color: #cfd8de; }
     -webkit-user-select: none;
 }
 
+/* The host a command is meant for — `laptop $ …`. Drawn, not text, for the
+   same reason the dollar is: it cannot be typed and must not be copied. */
+.host {
+    color: var(--ash);
+    user-select: none;
+    -webkit-user-select: none;
+}
+
 /* The copy button. Quiet until the block is hovered, because it is an
    affordance rather than a feature, and a page of buttons reads as a form. */
-pre .copy {
+.snip { position: relative; }
+
+.snip .copy {
     position: absolute;
     top: 8px;
     right: 8px;
@@ -359,20 +369,22 @@ pre .copy {
     border: 1px solid var(--line);
     border-radius: 7px;
     cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
     opacity: 0;
     transition: opacity 140ms ease, color 140ms ease, border-color 140ms ease;
 }
 
-pre:hover .copy, pre .copy:focus-visible { opacity: 1; }
+.snip:hover .copy, .snip .copy:focus-visible { opacity: 1; }
 
-pre .copy:hover {
+.snip .copy:hover {
     color: var(--phosphor);
     border-color: rgba(53, 240, 160, 0.45);
 }
 
 /* Never hidden where there is no hover to reveal it. */
 @media (hover: none) {
-    pre .copy { opacity: 1; }
+    .snip .copy { opacity: 1; }
 }
 pre .p { color: var(--phosphor); }  /* prompts and good news */
 pre .c { color: var(--ash); }       /* comments */

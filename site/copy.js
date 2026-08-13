@@ -16,6 +16,15 @@
     if (!blocks.length || !navigator.clipboard) return;
 
     for (const pre of blocks) {
+        // The button goes beside the block, not inside it. Appended to the
+        // <pre> it was part of the block's own text: selecting the snippet
+        // dragged the word "copy" along with it, and the copy-the-whole-block
+        // path put it on the clipboard.
+        const wrap = document.createElement("div");
+        wrap.className = "snip";
+        pre.parentNode.insertBefore(wrap, pre);
+        wrap.appendChild(pre);
+
         const button = document.createElement("button");
         button.className = "copy";
         button.type = "button";
@@ -26,8 +35,12 @@
 
         button.addEventListener("click", async () => {
             const commands = pre.querySelectorAll(".cmd");
+            // Trailing comments come along — they are part of the line and
+            // harmless in a shell — but the padding somebody used to line them
+            // up does not, or the clipboard gets a run of spaces in the middle
+            // of a command.
             const text = commands.length
-                ? Array.from(commands, (c) => c.textContent.trim()).join("\n")
+                ? Array.from(commands, (c) => c.textContent.replace(/\s+/g, " ").trim()).join("\n")
                 : pre.textContent.replace(/\n+$/, "");
 
             try {
@@ -44,6 +57,6 @@
             setTimeout(() => { button.textContent = "copy"; }, 1600);
         });
 
-        pre.appendChild(button);
+        wrap.appendChild(button);
     }
 })();
