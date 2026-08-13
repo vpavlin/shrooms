@@ -13,6 +13,7 @@ hand-copied hash is wrong the first time somebody rebuilds.
 
     make basecamp-publish     # builds, releases, and writes this
 """
+import datetime
 import hashlib
 import json
 import pathlib
@@ -42,6 +43,13 @@ def main():
     entry = {
         "name": name,
         "versions": [{
+            # Every entry in a working index carries this, and ours did not:
+            # the packages were listed and Basecamp offered no update for
+            # them. Not derived from the file, because the .lgx comes out of
+            # the nix store with a 1970 timestamp — this is when it was
+            # published, which is the question the field asks.
+            "releasedAt": datetime.datetime.now(datetime.timezone.utc)
+                          .strftime("%Y-%m-%dT%H:%M:%SZ"),
             "publisherRef": f"{name}-v{version}",
             "url": (f"https://github.com/vpavlin/shrooms/releases/download/"
                     f"{name}-v{version}/{name}-{version}.lgx"),

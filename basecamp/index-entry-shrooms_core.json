@@ -2,6 +2,7 @@
   "name": "shrooms_core",
   "versions": [
     {
+      "releasedAt": "2026-08-13T06:44:38Z",
       "publisherRef": "shrooms_core-v0.2.0",
       "url": "https://github.com/vpavlin/shrooms/releases/download/shrooms_core-v0.2.0/shrooms_core-0.2.0.lgx",
       "size": 4048778,

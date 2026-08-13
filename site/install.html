@@ -36,38 +36,55 @@
         reasoning, underneath, for when you want it.
     </p>
     <div class="cta">
-        <a class="primary" href="#where">Where are you installing?</a>
+        <a class="primary" href="#where">What are you meshing?</a>
         <a href="#first">Create a mesh</a>
         <a href="#trouble">When it does not work</a>
     </div>
 </header>
 
-<h2 id="where">Where are you installing?</h2>
+<h2 id="where">What are you meshing?</h2>
 
 <div class="grid">
-    <div class="card t1">
-        <h3><a href="#linux">A Linux machine →</a></h3>
+    <a class="card t1" href="#linux">
+        <h3>A Linux machine</h3>
         <p>A laptop, a NAS, a home server. One script, a container, a systemd
         unit.</p>
-    </div>
-    <div class="card t2">
-        <h3><a href="#android">An Android phone →</a></h3>
+    </a>
+    <a class="card t2" href="#android">
+        <h3>An Android phone</h3>
         <p>A full participant, not a client. From a self-hosted F-Droid
         repository, or built here.</p>
-    </div>
-    <div class="card t3">
-        <h3><a href="#desktop">A desktop, in Basecamp →</a></h3>
+    </a>
+    <a class="card t3" href="#desktop">
+        <h3>A desktop, in Basecamp</h3>
         <p>A view onto the daemon already running on this machine, installed as
         an <code>.lgx</code> package.</p>
-    </div>
-    <div class="card t4">
-        <h3><a href="#cloud">A cloud server →</a></h3>
+    </a>
+    <a class="card t4" href="#cloud">
+        <h3>A cloud server</h3>
         <p>The reachable member that anchors NAT traversal and relays for peers
         that cannot connect directly.</p>
-    </div>
+    </a>
 </div>
 
 <h2 id="linux">A Linux machine</h2>
+
+<div class="warn">
+    <p>
+        <strong>You are about to pipe somebody else's script into a root
+        shell.</strong> It installs a container, writes a systemd unit and
+        hands a network interface to a daemon — which is what you want it to
+        do, and is also indistinguishable from what you would not want it to
+        do until you have read it.
+    </p>
+    <p>
+        So read it, or have your AI overlords read it for you. It is 343 lines
+        and there is nothing clever in it:
+        <a href="https://github.com/vpavlin/shrooms/blob/master/scripts/install.sh">scripts/install.sh</a>.
+        The same goes for every other install-by-curl on the internet, most of
+        which will not say so on the page.
+    </p>
+</div>
 
 <p><strong>Prerequisites</strong></p>
 

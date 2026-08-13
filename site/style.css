@@ -452,6 +452,26 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 3em 0; }
 }
 
 .card h3 { margin: 0 0 0.4em; font-size: 0.72rem; }
+
+/* A whole card that is a link, for the chooser: the target is the card, and a
+   link inside one means aiming at three words instead of at the box somebody
+   is already pointing at. */
+a.card {
+    display: block;
+    text-decoration: none;
+    color: inherit;
+}
+
+a.card h3 {
+    color: var(--phosphor);
+}
+
+a.card::after {
+    content: " →";
+    color: var(--phosphor);
+    opacity: 0.55;
+    font-size: 0.8rem;
+}
 .card p { margin: 0; font-size: 0.9rem; color: var(--ash); max-width: none; }
 .card a { text-decoration: none; }
 

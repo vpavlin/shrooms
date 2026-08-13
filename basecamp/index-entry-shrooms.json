@@ -2,6 +2,7 @@
   "name": "shrooms",
   "versions": [
     {
+      "releasedAt": "2026-08-13T06:44:29Z",
       "publisherRef": "shrooms-v0.3.0",
       "url": "https://github.com/vpavlin/shrooms/releases/download/shrooms-v0.3.0/shrooms-0.3.0.lgx",
       "size": 44801,
