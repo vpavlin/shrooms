@@ -28,7 +28,8 @@ if [ -z "${QML:-}" ]; then
         $(ls -d /usr/lib/qt6/libexec/qml 2>/dev/null | head -1) \
         $(ls -d /nix/store/*-qtdeclarative-*/bin/qml 2>/dev/null | sort -V | tail -1) \
         $(find /usr/lib /usr/lib64 /usr/libexec /usr/local/lib -maxdepth 4 \
-              -name qml -type f -perm -u+x 2>/dev/null | head -1)
+              \( -name qml -o -name qml6 \) -type f -perm -u+x 2>/dev/null | head -1) \
+        $(dpkg -L qt6-declarative-dev-tools 2>/dev/null | grep -E '/(qml|qml6)$$' | head -1)
     do
         [ -x "$candidate" ] || continue
         QML=$candidate
@@ -47,6 +48,9 @@ if [ -z "${QML:-}" ] || [ ! -x "$QML" ]; then
     echo "looked in: PATH, /usr/lib/qt6/bin, /usr/lib/*/qt6/bin, /nix/store," >&2
     echo "and a find under /usr/lib, /usr/lib64, /usr/libexec, /usr/local/lib" >&2
     ls -d /usr/lib/*/qt6/bin /usr/lib/qt6/* 2>/dev/null >&2 || true
+    echo "files from qt6-declarative-dev-tools:" >&2
+    dpkg -L qt6-declarative-dev-tools 2>/dev/null | grep -iE "bin|libexec" | head -20 >&2 || \
+        echo "  (package not installed)" >&2
     exit 1
 fi
 echo "==> qml runtime: $QML"

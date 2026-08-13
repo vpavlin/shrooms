@@ -124,11 +124,11 @@ type meshInstance struct {
 	// under a different name — and when it is, the session is still running
 	// with the old one. See resolveAll.
 	networkID string
-	mesh    *mesh.Mesh
-	dev     *wg.Device
-	aliases *v4.Table
-	self    netip.Addr
-	prefix  netip.Prefix
+	mesh      *mesh.Mesh
+	dev       *wg.Device
+	aliases   *v4.Table
+	self      netip.Addr
+	prefix    netip.Prefix
 }
 
 // Init creates a new mesh and returns its network key.

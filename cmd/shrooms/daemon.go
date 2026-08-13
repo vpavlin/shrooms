@@ -1205,7 +1205,7 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 					// the short form is answered by the first one — so an
 					// unqualified name for a peer on any other mesh points at
 					// an address on a network it is not on.
-					DNSName:   mesh.QualifiedDNSName(p.Name, meshLabel, cfg.HostsSuffix),
+					DNSName: mesh.QualifiedDNSName(p.Name, meshLabel, cfg.HostsSuffix),
 				}
 				if best, ok := m.BestPath(p.ID(), now); ok {
 					ps.RTTMs = best.RTT.Milliseconds()

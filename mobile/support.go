@@ -248,10 +248,10 @@ func snapshot(m *mesh.Mesh, suffix, label string) statusPayload {
 			// or a peer on the second mesh is named at an address on the
 			// first. The phone showed a bound ssh port as laptop.mesh:22 when
 			// the port was on another mesh entirely.
-			DNSName:  mesh.QualifiedDNSName(p.Name, label, suffix),
-			Overlay:  p.Overlay.String(),
-			Online:   p.Online(now),
-			Relay:    p.Relay,
+			DNSName: mesh.QualifiedDNSName(p.Name, label, suffix),
+			Overlay: p.Overlay.String(),
+			Online:  p.Online(now),
+			Relay:   p.Relay,
 		}
 		if st, ok := stats[p.WGPub.String()]; ok {
 			sp.Live = st.Live(now)

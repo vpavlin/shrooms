@@ -328,6 +328,14 @@ vet-cgo: check-lib
 ## takes about twenty seconds with it, which is not a reason to run a weaker
 ## check than the one that gates a push.
 test: check-lib
+	@# Formatting first, and part of `make test` rather than only in CI.
+	@# It was a separate CI step alone, so a local loop could be green for a
+	@# whole day while every push was red — which teaches you to ignore CI.
+	@unformatted=$$(gofmt -l ./cmd ./internal ./mobile); \
+	if [ -n "$$unformatted" ]; then \
+	  echo "not gofmt'd:"; echo "$$unformatted"; \
+	  echo "run: make fmt"; exit 1; \
+	fi
 	$(GO) test -race ./...
 
 ## --- site ---
