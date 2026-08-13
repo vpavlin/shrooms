@@ -34,6 +34,16 @@ data class Peer(
      * listening — only the publishing device knows whether the port answers.
      */
     val services: List<String> = emptyList(),
+    /**
+     * What this peer says is listening on its own mesh address, as "name:port"
+     * (ADR-026). Reached as <device>.mesh:<port> — no forwarder and no name of
+     * its own, which is why it is not in [services].
+     *
+     * A different kind of claim from a service, and shown as one: a service was
+     * declared by somebody who meant it, a bound port is whatever happened to be
+     * listening when the peer last looked.
+     */
+    val bound: List<String> = emptyList(),
 ) {
     /**
      * Three states, not two. A peer can be announcing yet unreachable, which is
@@ -176,8 +186,13 @@ object MeshState {
                 p.optJSONArray("services")?.let { a ->
                     for (j in 0 until a.length()) svc += a.optString(j)
                 }
+                val bnd = mutableListOf<String>()
+                p.optJSONArray("bound")?.let { a ->
+                    for (j in 0 until a.length()) bnd += a.optString(j)
+                }
                 peers += Peer(
                     services = svc,
+                    bound = bnd,
                     mesh = p.optString("mesh"),
                     name = p.optString("name"),
                     dnsName = p.optString("dns_name"),

@@ -120,7 +120,17 @@ type statusPeer struct {
 	Relay   bool   `json:"relay,omitempty"`
 	// Services are the names this peer says it publishes (ADR-023). A claim
 	// about what it offers, not a report that anything is listening.
-	Services         []string `json:"services,omitempty"`
+	Services []string `json:"services,omitempty"`
+
+	// Bound is what this peer says is listening on its own mesh address, as
+	// "name:port" (ADR-026). Reached as <device>.mesh:<port> — no forwarder
+	// and no name of its own, which is why it is not in Services.
+	//
+	// The daemon has reported this since ADR-026 landed and these bindings did
+	// not, so the phone could not show a bound port however loudly a peer
+	// announced it. Two front-ends over one core is worth exactly as much as
+	// the narrower of the two.
+	Bound            []string `json:"bound,omitempty"`
 	Live             bool     `json:"live"`
 	HandshakeAgeS    int64    `json:"handshake_age_s,omitempty"`
 	Endpoint         string   `json:"endpoint,omitempty"`
@@ -225,10 +235,11 @@ func snapshot(m *mesh.Mesh, suffix string) statusPayload {
 	out.Rendezvous.Detail = h.Detail(now)
 
 	stats, _ := m.PeerStats()
-	svc := m.Services(now)
+	svc, bnd := m.Services(now), m.Bound(now)
 	for _, p := range m.Roster().Current(now) {
 		sp := statusPeer{
 			Services: svc[p.ID()],
+			Bound:    bnd[p.ID()],
 			Name:     p.Name,
 			DNSName:  mesh.DNSName(p.Name, suffix),
 			Overlay:  p.Overlay.String(),

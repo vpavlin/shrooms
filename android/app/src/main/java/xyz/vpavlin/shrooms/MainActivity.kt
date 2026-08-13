@@ -795,15 +795,34 @@ private fun MeshScreen(
         // service is a claim about what a device offers, and a device that is
         // asleep still offers it. Drawn the same as a reachable one, though, it
         // invites somebody to tap an address that cannot answer.
-        data class Offer(val name: String, val mesh: String, val url: String, val live: Boolean)
+        data class Offer(
+            val name: String,
+            val mesh: String,
+            val url: String,
+            val live: Boolean,
+            /** A port merely listening on the mesh address, not a published service. */
+            val bound: Boolean,
+        )
         // The mesh rather than the device, because the URL already names the
         // device — immich.k11.mesh — and which mesh a service is on is the
         // thing you cannot read off it. Shown only when there is more than
         // one, where it is the answer to "why can I not reach that".
         val offered = remember(snap.peers) {
             snap.peers.flatMap { p ->
+                val host = p.dnsName.ifEmpty { p.name }
                 p.services.map { svc ->
-                    Offer(svc, p.mesh, "http://$svc.${p.dnsName.ifEmpty { p.name }}", p.live)
+                    Offer(svc, p.mesh, "http://$svc.$host", p.live, false)
+                } + p.bound.map { b ->
+                    // "ssh:22" — the name is advisory and the port is the fact,
+                    // so the port is what goes in the address. No scheme: this
+                    // is a socket on the mesh address, not a forwarded service,
+                    // and http:// would open the wrong thing convincingly.
+                    val port = b.substringAfterLast(':', "")
+                    Offer(
+                        b.substringBefore(':'), p.mesh,
+                        host + if (port.isEmpty()) "" else ":$port",
+                        p.live, true,
+                    )
                 }
             }.sortedWith(compareBy({ !it.live }, { it.mesh }, { it.name }))
         }
@@ -812,12 +831,21 @@ private fun MeshScreen(
             Spacer(Modifier.height(18.dp))
             Box(Modifier.padding(horizontal = 24.dp)) { Label("SERVICES") }
             Spacer(Modifier.height(6.dp))
-            offered.forEach { (name, mesh, url, live) ->
+            offered.forEach { (name, mesh, url, live, isBound) ->
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable {
+                            // A bound port is a host and a port with no scheme
+                            // (ADR-026), so there is nothing to open — guessing
+                            // http:// for an ssh port would open the wrong
+                            // thing convincingly. It copies instead, which is
+                            // what you want it for on a phone anyway.
+                            if (isBound) {
+                                clipboard.setText(AnnotatedString(url))
+                                return@clickable
+                            }
                             // Opening it is the whole point. A browser is the
                             // right guess for a mesh service and the wrong one
                             // for some, so a failure to resolve a handler is
@@ -851,8 +879,9 @@ private fun MeshScreen(
                         )
                     }
                     Text(
-                        if (live) url.removePrefix("http://")
-                        else url.removePrefix("http://") + "  ·  unreachable",
+                        url.removePrefix("http://")
+                            + (if (isBound) "  ·  bound" else "")
+                            + (if (live) "" else "  ·  unreachable"),
                         style = MaterialTheme.typography.labelSmall,
                         color = if (live) Palette.Bone else Palette.Line,
                         maxLines = 1,
@@ -973,6 +1002,17 @@ private fun PeerDetails(p: Peer) {
         // every few minutes, and only it knows whether the port answers.
         for (svc in p.services) {
             CopyableDetail("offers", "http://$svc.${p.dnsName.ifEmpty { p.name }}")
+        }
+        // And the ports merely listening on its mesh address (ADR-026). A host
+        // and a port rather than a URL, because there is no forwarder and no
+        // scheme to guess — offering http:// for an ssh port would be a
+        // confident lie.
+        for (b in p.bound) {
+            val port = b.substringAfterLast(':', "")
+            CopyableDetail(
+                "listening",
+                p.dnsName.ifEmpty { p.name } + if (port.isEmpty()) "" else ":$port",
+            )
         }
         Spacer(Modifier.height(8.dp))
         CopyableDetail("ping", "ping6 -c3 " + p.dnsName.ifEmpty { p.overlay })
