@@ -112,8 +112,9 @@ func NewAuthority(keys ...ed25519.PublicKey) (*Authority, error) {
 	}
 	out := make([]ed25519.PublicKey, 0, len(keys))
 	for _, k := range keys {
-		if len(k) != ed25519.PublicKeySize {
-			return nil, fmt.Errorf("admin key is %d bytes, want %d", len(k), ed25519.PublicKeySize)
+		if !knownKeySize(len(k)) {
+			return nil, fmt.Errorf("admin key is %d bytes, want %d (ed25519) or %d (secp256k1)",
+				len(k), ed25519.PublicKeySize, secp256k1PubKeySize)
 		}
 		out = append(out, append(ed25519.PublicKey(nil), k...))
 	}
@@ -379,7 +380,7 @@ func VerifyBy(auth *Authority, c *Credential, now time.Time) error {
 
 	signed := false
 	for _, k := range auth.Keys {
-		if ed25519.Verify(k, d[:], c.Sig) {
+		if verifyKey(k, d[:], c.Sig) {
 			signed = true
 			break
 		}
@@ -412,7 +413,7 @@ func Verify(adminPub ed25519.PublicKey, c *Credential, now time.Time) error {
 	if err != nil {
 		return fmt.Errorf("credential is malformed: %w", err)
 	}
-	if !ed25519.Verify(adminPub, d[:], c.Sig) {
+	if !verifyKey(adminPub, d[:], c.Sig) {
 		return ErrBadSignature
 	}
 	if now.Unix() < c.NotBefore {
@@ -526,7 +527,7 @@ func VerifyRevocationBy(auth *Authority, r *Revocation) error {
 		return fmt.Errorf("revocation is malformed: %w", err)
 	}
 	for _, k := range auth.Keys {
-		if ed25519.Verify(k, d[:], r.Sig) {
+		if verifyKey(k, d[:], r.Sig) {
 			if r.MeshID != auth.ID() {
 				return ErrWrongMesh
 			}
@@ -545,7 +546,7 @@ func VerifyRevocation(adminPub ed25519.PublicKey, r *Revocation) error {
 	if err != nil {
 		return fmt.Errorf("revocation is malformed: %w", err)
 	}
-	if !ed25519.Verify(adminPub, d[:], r.Sig) {
+	if !verifyKey(adminPub, d[:], r.Sig) {
 		return ErrBadSignature
 	}
 	return nil
