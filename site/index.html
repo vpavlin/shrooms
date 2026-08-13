@@ -151,6 +151,52 @@ test     <span class="p">k11</span> (relay)  online    up 1m   192.168.0.125:518
     </div>
 </div>
 
+<h2 id="daemon">A word about the daemon</h2>
+
+<p>
+    The thing that runs on each of your machines is called the <strong>shrooms
+    daemon</strong>, and that word is doing more work than it looks.
+</p>
+
+<p>
+    A daemon in the Unix sense was named at MIT in the sixties after
+    <em>Maxwell's demon</em> — the imaginary being in a thermodynamics thought
+    experiment who stands at a little door sorting molecules, tirelessly, for
+    no reward. It stuck because that is exactly what a background process is: a
+    patient attendant doing the sorting you would rather not think about.
+</p>
+
+<p>
+    But the older word underneath it is the Greek <em>daimōn</em>, and a daimōn
+    is not a devil. It is an attendant spirit — an intelligence that goes with
+    you. Socrates described a <em>daimonion</em> that never told him what to do
+    and only ever warned him off a mistake. Not a master and not a servant.
+    Something along for the trip.
+</p>
+
+<div class="note">
+    <p>
+        Which makes the naming here almost embarrassingly literal. There is a
+        mycelium under everything, quietly connecting things that look
+        separate. Something fruits where the conditions are right. A helpful
+        spirit sits with each of your machines and handles the sorting. Nobody
+        is in charge and it works anyway.
+    </p>
+    <p>
+        The good trips are the ones where the thing in the background is on
+        your side. So: no coordination server, no company in the path, nothing
+        that phones home. Your daemon answers to you and to nobody else, which
+        is the whole of the design and, as it happens, the correct set and
+        setting.
+    </p>
+</div>
+
+<p>
+    It is also the practical difference from every mesh with a control plane
+    somebody else runs. Those have a daemon too — it just does not work for
+    you.
+</p>
+
 <h2 id="honest">What it is not</h2>
 
 <p>

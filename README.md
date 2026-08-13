@@ -890,6 +890,32 @@ the already-weak sender anonymity [SECURITY.md](SECURITY.md) describes.
 changing what a node contributes to a shared network should be a decision rather
 than a default that quietly picks a side.
 
+## A word about the daemon
+
+The thing on each machine is the **shrooms daemon**, and that word is carrying
+more than it looks.
+
+A Unix daemon was named at MIT in the sixties after *Maxwell's demon* — the
+being in the thought experiment who stands at a little door sorting molecules,
+tirelessly, for no reward. The name stuck because that is what a background
+process is. But the word underneath it is the Greek *daimōn*, which is not a
+devil: it is an attendant spirit, an intelligence that goes with you. Socrates'
+*daimonion* never told him what to do and only ever warned him off a mistake.
+Not a master, not a servant. Along for the trip.
+
+Which makes this almost embarrassingly literal. A mycelium under everything,
+quietly connecting things that look separate. Something fruits where conditions
+are right. A helpful spirit sits with each machine and does the sorting. Nobody
+is in charge and it works anyway.
+
+The good trips are the ones where the thing in the background is on your side —
+so no coordination server, no company in the path, nothing that phones home.
+Your daemon answers to you and to nobody else. That is the whole design, and
+also the correct set and setting.
+
+It is the practical difference from every mesh with somebody else's control
+plane, too. Those have a daemon as well; it just does not work for you.
+
 ## Desktop monitoring and control
 
 A Basecamp view — the same graph and list as the phone, and the same things you

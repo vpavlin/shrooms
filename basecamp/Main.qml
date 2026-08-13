@@ -127,6 +127,15 @@ Item {
     property string logSince: "0"
     readonly property int logKeep: 200
 
+    // Why there is no log, when there is no log.
+    //
+    // This pane silently showed nothing against a daemon too old to have the
+    // endpoint, which is the exact failure this whole feature exists to stop:
+    // an empty box is indistinguishable from a quiet daemon, and the one thing
+    // a diagnostic must never do is fail quietly. So every reason the lines did
+    // not arrive is kept and rendered in their place.
+    property string logProblem: ""
+
     function pumpLogs() {
         if (!logsOpen || !haveCore) return
         var t = String(callCore("logs", [root.logSince]) || "").trim()
@@ -134,8 +143,27 @@ Item {
             try { t = String(JSON.parse(t)).trim() } catch (e) { break }
         }
         var d = null
-        try { d = JSON.parse(t) } catch (e) { return }
-        if (!d || !d.lines || !d.lines.length) return
+        try { d = JSON.parse(t) } catch (e) { d = null }
+        if (!d) {
+            root.logProblem = "the module returned nothing readable"
+            return
+        }
+        if (d.error) {
+            // A 404 here has one cause and one fix, and the daemon's own
+            // wording for it ("404 page not found") says neither. Named,
+            // because "cannot read the daemon" sends somebody to check whether
+            // it is running — and it plainly is, since everything above this
+            // pane is being drawn from it.
+            var detail = String(d.detail || "")
+            root.logProblem = detail.indexOf("404") >= 0
+                ? "this daemon has no log endpoint — it predates the pane. "
+                  + "Update the daemon and restart it; everything else here "
+                  + "keeps working meanwhile."
+                : d.error + (detail ? " — " + detail : "")
+            return
+        }
+        root.logProblem = ""
+        if (!d.lines || !d.lines.length) return
 
         var out = root.logLines.concat(d.lines)
         // Bounded here as well as in the daemon: the daemon caps what it
@@ -175,13 +203,45 @@ Item {
         for (var i = 0; i < 2 && t.charAt(0) === '"'; i++) {
             try { t = String(JSON.parse(t)).trim() } catch (e) { break }
         }
+        // Not every endpoint answers in JSON, and assuming they all did is why
+        // `reload` reported "the daemon said nothing readable" after every
+        // successful reload since this form was built. /reload answers a plain
+        // sentence — `reloaded: 1 mesh(es) republished services` — and the
+        // module only returns a body at all when the daemon answered 2xx. So a
+        // body that is not JSON is a success whose message is the body.
+        //
+        // The failure shape is unambiguous: the module builds its own
+        // {"error":…} document, so anything starting with a brace is
+        // structured and anything else is the daemon talking.
         var d = null
-        try { d = JSON.parse(t) } catch (e) { d = null }
+        if (t.charAt(0) === "{") {
+            try { d = JSON.parse(t) } catch (e) { d = null }
+        }
+        if (!d && t !== "") {
+            root.said = t
+            root.saidBad = false
+            root.reload()
+            return
+        }
         if (!d) {
-            root.said = "the daemon said nothing readable"
+            // Nothing at all came back. The module returns "" when the method
+            // does not exist on it — an out-of-date shrooms_core — and the
+            // view has no way to ask which methods it has, so that is named.
+            root.said = "no answer from shrooms_core. If this control is new, "
+                      + "update the shrooms_core module in Basecamp as well as "
+                      + "this view — they ship separately and the view cannot "
+                      + "tell which version is installed."
             root.saidBad = true
         } else if (d.error) {
-            root.said = d.error + (d.detail ? " — " + d.detail : "")
+            // A 404 means the daemon does not have the endpoint, which is a
+            // version problem and not a fault. "the daemon answered 404" reads
+            // as a bug in the app; it is a daemon that predates the button.
+            var detail = String(d.detail || "")
+            root.said = detail.indexOf("404") >= 0
+                ? "this daemon is older than that control — update the daemon "
+                  + "and restart it (sudo systemctl restart shrooms). "
+                  + "Everything else here keeps working meanwhile."
+                : d.error + (detail ? " — " + detail : "")
             root.saidBad = true
         } else {
             root.said = d.result ? d.result : "done"
@@ -1131,6 +1191,37 @@ Item {
                     Layout.fillWidth: true
                 }
 
+                // Said once, up front, rather than discovered one button at a
+                // time. The daemon and this view ship separately and update
+                // separately, so a view newer than its daemon is the ordinary
+                // case after an update — and every control that the daemon does
+                // not have yet fails in its own way, which reads as "it's all
+                // weirdly half-broken" rather than as one version skew.
+                //
+                // Detected by the version field, which arrived in the same
+                // daemon as the log and the restart. Its absence is exactly the
+                // set of daemons that lack them.
+                Text {
+                    visible: root.everLoaded && root.st.version === undefined
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: cAmber
+                    font.family: "monospace"; font.pixelSize: 10
+                    text: "this daemon is older than this view: the log, the restart "
+                          + "button and joining a mesh will not answer. Everything else "
+                          + "here works. To update it:"
+                }
+                TextEdit {
+                    visible: root.everLoaded && root.st.version === undefined
+                    Layout.fillWidth: true
+                    readOnly: true
+                    selectByMouse: true
+                    color: cBone
+                    font.family: "monospace"; font.pixelSize: 10
+                    text: "sudo install -m755 bin/shrooms /usr/local/bin/shrooms && "
+                          + "sudo systemctl restart shrooms"
+                }
+
                 ColumnLayout {
                     visible: root.settingsOpen
                     Layout.fillWidth: true
@@ -1881,9 +1972,14 @@ Item {
 
                     Text {
                         visible: root.logLines.length === 0
-                        anchors.centerIn: parent
-                        text: "nothing logged since this pane was opened"
-                        color: cAsh
+                        anchors.fill: parent
+                        anchors.margins: 16
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                        wrapMode: Text.WordWrap
+                        text: root.logProblem !== "" ? root.logProblem
+                                                     : "nothing logged since this pane was opened"
+                        color: root.logProblem !== "" ? cAmber : cAsh
                         font.family: "monospace"; font.pixelSize: 10
                     }
                 }
