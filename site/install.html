@@ -289,6 +289,26 @@ http://apps.vpavlin.xyz/fdroid/repo
     socket group is not set it says so, rather than showing an empty mesh.
 </p>
 
+<p>
+    It also <em>changes</em> things, which is the part that removes the
+    terminal: this device's name, whether it runs the rendezvous plane as edge
+    or core, what it publishes and whether those names and its bound ports are
+    announced, whether it relays for a mesh, whether the router is asked for a
+    way in, which meshes run, joining one with an invite token and leaving one
+    — and restarting the daemon, which is what applies the settings that need
+    it. Beside that: every device's services as addresses you can click, when
+    each credential expires, and the daemon's own log, because Basecamp cannot
+    read the journal.
+</p>
+
+<p>
+    <strong>What it cannot do is admit anybody.</strong> On a mesh with admin
+    keys, membership is a credential signed by a key the daemon has never held,
+    so nothing reachable through this socket can make a device a member or
+    remove one. That is the line the design draws, and it is why handing the
+    socket to a group is a bounded grant rather than a way to admit anybody.
+</p>
+
 <h3>Why it needs a companion module</h3>
                 <p>
                     Two packages, versioned separately:

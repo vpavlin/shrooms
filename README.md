@@ -789,6 +789,34 @@ the short name rather than silently picking a network for you.
 The first mesh in a config keeps the interface, port and identity it always had,
 so adding a second changes nothing about the first.
 
+### Seeing them, and switching one off
+
+`shrooms mesh` lists every mesh this device belongs to, running or not — which
+is the point of it. `status` reports what the daemon is *doing*, and a mesh
+that has been switched off has no instance to report, so it vanishes from the
+one list that could have switched it back on. That is exactly how a mesh went
+missing here for a day.
+
+```console
+$ sudo shrooms mesh
+MESH     STATE  PREFIX                CREDENTIAL  RELAY  SERVICES
+default  on     fd3b:ffe9:f81::/48    not needed  yes    2
+test     OFF    fd7b:15fb:5ec1::/48   held
+
+test is switched off. It keeps its key and credentials:
+  sudo shrooms mesh enable test && sudo systemctl restart shrooms
+```
+
+Switching one off is the reversible half of leaving it: the key stays, the
+credential stays, it simply does not run. Leaving discards the config entry and
+needs a fresh invite to undo.
+
+It reads the config directly rather than asking the daemon, so it works when
+the daemon is down — which is when you most want to know what is in the file —
+and needs `sudo`, because that file is full of network keys.
+
+
+
 ### HTTPS
 
 The name router serves **http** by default, and browsers try **https** first.
@@ -1033,7 +1061,7 @@ download.
 | **services** | ✅ local ports and LAN devices published by name, including things that never joined the mesh |
 | **Android** | ✅ a full participant, in daily use — tunnels, names, roaming between wifi and mobile data |
 | **M4** seamless operation | 🟨 roaming survives, the mesh repairs itself after a rendezvous outage, and both daemon and app now restart themselves when that plane dies quietly; switching networks is still rough on the phone |
-| **M5** credentials | ✅ issued, carried, verified, revoked over the control plane, and renewed by a sweep ([ADR-018](docs/adr/018-credentials-instead-of-a-shared-key.md)) — though no credential has yet been watched roll over on live devices |
+| **M5** credentials | ✅ issued, carried, verified, revoked over the control plane, and renewed by a sweep ([ADR-018](docs/adr/018-credentials-instead-of-a-shared-key.md)); a sweep reissued to a remote device on live hardware, 2026-08-13 |
 | **multi-mesh** | ✅ several meshes in one daemon and one app, each with its own identity, addresses, relay and services ([ADR-015](docs/adr/015-multiple-meshes-one-daemon.md)) |
 | **invites** | ✅ one device at a time, fifteen minutes, no key pasted ([ADR-017](docs/adr/017-invite-tokens.md)) |
 | **Basecamp view** | ✅ published, with `shrooms_core` reading the daemon from outside the QML sandbox |
@@ -1160,9 +1188,20 @@ announces have been missing for twelve minutes. Recovery is a restart in both
 places, because the delivery library keeps process-global state and has never
 survived being restarted inside a live process.
 
-**Renewal has not been run against a real mesh.** The sweep, the control message
-and the storage are built and unit-tested; nobody has yet watched a credential
-actually roll over on live devices. The clock is thirty days.
+**Renewal has now been run against a real mesh.** On 2026-08-13 a sweep
+reissued credentials on a three-member mesh: the admin key signed, the daemon
+published, and a *remote* device — a phone, untouched — verified against the
+same admin keys and stored its own, going from 28 days left to 30. The half
+that had never been exercised was that one, and it works.
+
+Two things it taught. The first run renewed nothing, correctly: every member
+had 28 days and the window opens at 10, so the guard is doing its job and a
+sweep that renewed eagerly would have looked identical on the surface. And the
+one member that did not renew was off the network entirely — renewal travels
+over the rendezvous plane, so a device whose tunnel is healthy and whose
+Delivery connection is not cannot be renewed. `live` and `online` being
+separate fields in the status payload is what made that a one-look diagnosis
+rather than an investigation.
 
 **A fleet migration broke everything once, silently.** On 2026-08-07 logos.dev
 moved to cluster 3 while the preset compiled into our pinned

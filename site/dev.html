@@ -405,7 +405,7 @@ addr   = prefix : SHA256("mesh/v1/addr" || device_pub)[0:10]  <span class="c">�
 <tr><td><span class="dot on"></span>Android</td><td>a full participant, in daily use — tunnels, names, roaming between wifi and mobile data</td></tr>
 <tr><td><span class="dot on"></span>multi-mesh</td><td>several meshes in one daemon and one app, each with its own identity, addresses, relay and services</td></tr>
 <tr><td><span class="dot on"></span>invites</td><td>one device at a time, fifteen minutes, no key pasted</td></tr>
-<tr><td><span class="dot on"></span>Basecamp view</td><td>published, with <code>shrooms_core</code> reading the daemon from outside the QML sandbox</td></tr>
+<tr><td><span class="dot on"></span>Basecamp module</td><td>published: reads the mesh and changes what the daemon can change alone — settings, services, meshes, joining, leaving, restarting — through <code>shrooms_core</code>, which reaches the control socket from outside the QML sandbox. Never admission, which needs the admin key</td></tr>
 <tr><td><span class="dot off"></span><strong>S2</strong> fleet Store retention</td><td>never run. Android shipped without depending on it, so it left the critical path unmeasured</td></tr>
 <tr><td><span class="dot off"></span><strong>S4</strong> WireGuard throughput baseline</td><td>never run, minor</td></tr>
 </table>
@@ -472,11 +472,18 @@ addr   = prefix : SHA256("mesh/v1/addr" || device_pub)[0:10]  <span class="c">�
     survived being restarted inside a live process.
 </p>
 
-<div class="warn">
-    <p><strong>Renewal has not been run against a real mesh.</strong> The sweep,
-    the control message and the storage are built and unit-tested; nobody has
-    yet watched a credential actually roll over on live devices. The clock is
-    thirty days.</p>
+<div class="note">
+    <p><strong>Renewal has now been run against a real mesh.</strong> On
+    2026-08-13 a sweep reissued credentials on a three-member mesh: the admin
+    key signed, the daemon published, and a <em>remote</em> device — a phone,
+    untouched — verified against the same admin keys and stored its own, going
+    from 28 days left to 30. The half that had never been exercised was that
+    one.</p>
+    <p>The first run renewed nothing, correctly: every member had 28 days and
+    the window opens at 10. The one member that did not renew was off the
+    network entirely — renewal travels over the rendezvous plane, so a device
+    whose tunnel is healthy and whose Delivery connection is not cannot be
+    renewed.</p>
 </div>
 
 <p>

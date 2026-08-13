@@ -46,9 +46,28 @@ behaviour. Which is serious, and is not the power to decide who belongs.
 **Two tiers, drawn at what the daemon can do alone.**
 
 **The socket group** may do everything the daemon holds by itself: read status
-and the recent log, change this device's name, mode and services, switch a mesh
-on or off, join one with an invite token, leave one, reload, and restart the
-daemon. Access is decided by the file mode — the socket is 0660 with a
+and the recent log, change this device's name, its rendezvous mode and its
+services, whether those services and its bound ports are announced, whether it
+relays for a mesh, whether the router is asked for a way in, switch a mesh on
+or off, join one with an invite token, leave one, reload, and restart the
+daemon.
+
+Three of those arrived late and are worth naming, because their absence was an
+oversight rather than a decision. **Relaying is per mesh** (ADR-013) — carrying
+traffic for your own machines and for somebody else's are different choices —
+and nothing in either front-end could set it, while a mesh with no relay is
+invisible until somebody on mobile data reaches nobody. **Announcing bound
+ports** (ADR-026) had a config field and no control. And **port mapping**
+(ADR-024) is on by default and asks to be reachable from the internet, which is
+a decision somebody may want to take back without finding a config file.
+
+What is deliberately not reachable, so that the list above is a decision rather
+than an accident: the network key and the admin keys, which are secrets; the
+fleet settings, since a UI that can move a node to somebody else's rendezvous
+network is a way to take a node away from its owner; and the interface, port,
+socket group and status file, which are deployment rather than use. `advertise`
+is the only real judgement call and stays out — port mapping and reflexive
+discovery cover what it is for. Access is decided by the file mode — the socket is 0660 with a
 configured group — so a caller who can connect is already authorised, and no
 further check is needed or offered.
 

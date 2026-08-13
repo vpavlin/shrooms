@@ -491,6 +491,37 @@ mesh.shared.enabled   = "false"    <span class="c"># a member of it, not running
     happens.</p>
 </div>
 
+<h3>Seeing them, and switching one off</h3>
+
+<p>
+    <code>shrooms mesh</code> lists every mesh this device belongs to, running
+    or not — which is the whole point of it. <code>status</code> reports what
+    the daemon is <em>doing</em>, and a mesh that has been switched off has no
+    instance to report, so it disappears from the one list that could have
+    switched it back on.
+</p>
+
+<pre><code><span class="cmd">sudo shrooms mesh</span>
+MESH     STATE  PREFIX                CREDENTIAL  RELAY  SERVICES
+default  on     fd3b:ffe9:f81::/48    not needed  yes    2
+test     OFF    fd7b:15fb:5ec1::/48   held
+
+test is switched off. It keeps its key and credentials:
+  sudo shrooms mesh enable test &amp;&amp; sudo systemctl restart shrooms</code></pre>
+
+<p>
+    Switching one off is the reversible half of leaving it: the key stays, the
+    credential stays, it simply does not run. Leaving discards the config entry
+    and needs a fresh invite to undo — which is why the two are different
+    words.
+</p>
+
+<p>
+    It reads the config directly rather than asking the daemon, so it works
+    when the daemon is down, which is when you most want to know what is in the
+    file. That also means <code>sudo</code>: the file is full of network keys.
+</p>
+
 <h2 id="membership">6. Invites and membership</h2>
 
 <p>
