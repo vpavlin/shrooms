@@ -340,7 +340,12 @@ def _geometry(simple=False):
         # The tallest gets three levels, the others two and one. Depth costs
         # nothing to draw and everything to read: a small cap subdivided three
         # times is a smudge, and all three at one depth looks printed.
-        depth = 2 if simple else (3, 2, 1)[min(k, 2)]
+        # One subdivision at icon sizes. Two survived while the cap was a
+        # filled shape with holes punched in it; as line work the inner
+        # triangles are strokes a pixel and a half wide at 48 points, and they
+        # silt up into a smudge. One inverted triangle still says "gasket" and
+        # still resolves.
+        depth = 1 if simple else (3, 2, 1)[min(k, 2)]
         caps.append(cap_triangles(stem_axis(x0, sh, lean, sway, base), w, h, base, depth))
         foot = (stem_axis(x0, sh, lean, sway, HORIZON), HORIZON)
         stems.append(stem_line(x0, sh, lean, sway, base - h * 0.02,
@@ -400,6 +405,10 @@ def render_png(path, size, background=True):
     width = max(1, int(size * (0.022 if big else 0.045)))
     for pts in links + stems:
         gd.line([P(*p) for p in pts], fill=PHOSPHOR + (155,), width=width, joint="curve")
+    for k in range(len(caps)):
+        for tri in [caps[k][0]] + caps[k][1]:
+            gd.line([P(*q) for q in tri + [tri[0]]],
+                    fill=CAPS[k % len(CAPS)] + (150,), width=width, joint="curve")
     glow = glow.filter(ImageFilter.GaussianBlur(size * 0.016))
     img.alpha_composite(glow)
 
@@ -413,6 +422,10 @@ def render_png(path, size, background=True):
            fill=EARTH_LINE, width=max(1, int(size * 0.012)))
 
     stem_w = max(2, int(size * (0.011 if big else 0.026)))
+    # The gasket's inner triangles are small, so its stroke is thinner than a
+    # stem's — but never below two pixels, under which a line stops being a
+    # line and becomes a grey suggestion.
+    cap_w = max(2, int(size * (0.008 if big else 0.020)))
     for pts in stems:
         d.line([P(*p) for p in pts], fill=PHOSPHOR + (255,),
                width=stem_w, joint="curve")
@@ -426,12 +439,12 @@ def render_png(path, size, background=True):
 
     # The caps last. Tallest drawn last so it sits in front.
     for k in ([0] if len(caps) == 1 else [1, 2, 0]):
-        # The cap: one triangle with a gasket punched out of it. The holes are
-        # filled with the background rather than a darker tint, so the figure
-        # is the same subtraction the site draws and not a decoration on top.
-        poly(caps[k][0], CAPS[k % len(CAPS)])
-        for hole in caps[k][1]:
-            poly(hole, VOID)
+        # The cap: the gasket as line work, in the same idiom as everything
+        # else here. It was filled, which made it the only solid shape in a
+        # mark otherwise made of glowing lines.
+        for tri in [caps[k][0]] + caps[k][1]:
+            d.line([P(*q) for q in tri + [tri[0]]],
+                   fill=CAPS[k % len(CAPS)] + (255,), width=cap_w, joint="curve")
 
     if big:
         for x, y, rr in spores():
@@ -500,15 +513,19 @@ def render_vector(path):
         parts.append(f'    <path android:pathData="{stem}" '
                      f'android:strokeColor="{hexa(PHOSPHOR)}" android:strokeWidth="1.3" '
                      f'android:strokeLineCap="round"/>')
-        parts.append(f'    <path android:pathData="{_poly(caps[k][0])}" '
-                     f'android:fillColor="{hexa(CAPS[k % len(CAPS)])}"/>')
-        # The gasket, punched out in the background colour. A vector drawable
-        # has no even-odd subtraction worth relying on across API levels, so
-        # the holes are drawn as shapes in the colour behind them — which is
-        # flat here, above the soil, and therefore exact.
-        for hole in caps[k][1]:
-            parts.append(f'    <path android:pathData="{_poly(hole)}" '
-                         f'android:fillColor="{hexa(VOID)}"/>')
+        # The gasket as line work, which also disposes of a wrinkle the filled
+        # version had: the holes were painted in the background colour, so they
+        # were only correct while the thing behind them was flat. Strokes are
+        # correct over anything.
+        cap = _lines([[*tri, tri[0]] for tri in [caps[k][0]] + caps[k][1]])
+        parts.append(f'    <path android:pathData="{cap}" '
+                     f'android:strokeColor="{hexa(CAPS[k % len(CAPS)])}" '
+                     f'android:strokeWidth="2.2" android:strokeAlpha="0.35" '
+                     f'android:strokeLineCap="round" android:strokeLineJoin="round"/>')
+        parts.append(f'    <path android:pathData="{cap}" '
+                     f'android:strokeColor="{hexa(CAPS[k % len(CAPS)])}" '
+                     f'android:strokeWidth="0.9" android:strokeLineCap="round" '
+                     f'android:strokeLineJoin="round"/>')
 
     parts.append("")
     parts.append("    <!-- spores: how a mesh gains a member -->")
@@ -555,9 +572,12 @@ def render_svg(path):
                      f'stroke-linecap="round"/></g>')
         parts.append(f'<path d="{sx.escape(stem)}" stroke="{hexa(PHOSPHOR)}" '
                      f'stroke-width="1.2" fill="none" stroke-linecap="round"/>')
-        parts.append(f'<path d="{sx.escape(_poly(caps[k][0]))}" fill="{hexa(CAPS[k % len(CAPS)])}"/>')
-        for hole in caps[k][1]:
-            parts.append(f'<path d="{sx.escape(_poly(hole))}" fill="{hexa(VOID)}"/>')
+        cap = _lines([[*tri, tri[0]] for tri in [caps[k][0]] + caps[k][1]])
+        parts.append(f'<g filter="url(#g)" opacity="0.8"><path d="{sx.escape(cap)}" '
+                     f'stroke="{hexa(CAPS[k % len(CAPS)])}" stroke-width="2.2" fill="none" '
+                     f'stroke-linejoin="round"/></g>')
+        parts.append(f'<path d="{sx.escape(cap)}" stroke="{hexa(CAPS[k % len(CAPS)])}" '
+                     f'stroke-width="0.9" fill="none" stroke-linejoin="round"/>')
 
     for x, y, r in spores():
         parts.append(f'<circle cx="{x:.2f}" cy="{y:.2f}" r="{r:.2f}" '
