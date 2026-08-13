@@ -95,9 +95,14 @@ func runtimeHandlers(mux *http.ServeMux, log *slog.Logger, tail *logtail.Ring, r
 			writeJSON(w, map[string]string{
 				"result": "restarting; settings that needed one are applied when it comes back",
 			})
-			if f, ok := w.(http.Flusher); ok {
-				f.Flush()
-			}
+			// Deliberately not flushed. A flush commits the response before the
+			// handler returns, which makes Go send it chunked — and the module
+			// reading this takes everything after the headers as the body, so
+			// the chunk framing would land in front of the JSON and a restart
+			// that worked would report "the daemon said nothing readable". Left
+			// to the ordinary path, Go buffers it, sets Content-Length, and
+			// writes it when the handler returns, which is well inside the
+			// pause below.
 			go func() {
 				// A moment for the response to reach a caller that is
 				// notoriously bad at reading one — the QML bridge does a
