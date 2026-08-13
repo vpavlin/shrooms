@@ -340,6 +340,22 @@ type meshStatus struct {
 	// is invisible until a peer on mobile data cannot reach anything.
 	Relays int `json:"relays"`
 
+	// What the config says about this mesh, so a UI can show the current
+	// setting rather than only offering the buttons that change it.
+	//
+	// This was the whole of why the settings section read as broken: every
+	// toggle was a pair of actions in fixed colours, with nothing anywhere
+	// saying which one was in force. "on" looked highlighted because it was a
+	// button, not because the mesh was on.
+	//
+	// Read from the config on disk rather than from the running instance,
+	// because that is what these controls write and what a restart will apply
+	// — and showing the running value after a click would report the click as
+	// having done nothing.
+	Relay            bool `json:"relay,omitempty"`
+	AnnounceServices bool `json:"announce_services,omitempty"`
+	AnnounceBound    bool `json:"announce_bound,omitempty"`
+
 	// Disabled means this device is a member of the mesh and is not running
 	// it. Reported because the alternative is what happened: switching a mesh
 	// off removed it from the only list any front-end had, so the reversible
@@ -374,6 +390,14 @@ type statusPayload struct {
 	Overlay string       `json:"overlay"`
 	Prefix  string       `json:"prefix"`
 	Peers   []peerStatus `json:"peers"`
+
+	// Mode is what the config says this node contributes to the rendezvous
+	// plane, and ModeRunning is what this process actually started as. They
+	// differ exactly between a change and the restart that applies it, and a
+	// UI that shows only one of them either hides the click or hides the
+	// truth.
+	Mode        string `json:"mode,omitempty"`
+	ModeRunning string `json:"mode_running,omitempty"`
 
 	// Version is this daemon's build, so a UI can say what it is talking to.
 	// The Android app has always shown its own; the desktop showed the
@@ -1045,18 +1069,42 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 			out.Meshes = append(out.Meshes, ms)
 		}
 
-		// The meshes this device belongs to but is not running. Read from the
-		// config on disk rather than from the copy loaded at startup, because
-		// switching one off writes the file and the running daemon keeps its
-		// instance until a restart — so the startup copy is exactly the wrong
-		// answer for the case this is here to cover.
+		// Everything the config says, which is a different question from what
+		// this process is doing and the one a settings form has to answer:
+		// these controls write the config, so the config is what a click
+		// changed and what a restart will apply.
+		//
+		// Read from disk on every snapshot rather than from the copy loaded at
+		// startup. The startup copy would report a mesh as running after it was
+		// switched off, and a mode as unchanged after it was changed — which is
+		// the click looking like it did nothing.
+		out.ModeRunning = cfg.Mode
 		if rl != nil {
 			if onDisk, err := state.LoadConfigUnvalidated(rl.cfgPath); err == nil {
+				out.Mode = onDisk.Mode
+				byLabel := map[string]state.Mesh{}
+				for _, mc := range onDisk.Meshes() {
+					byLabel[mc.Label] = mc
+				}
+				// The running ones, annotated with what the config says.
+				for i := range out.Meshes {
+					if mc, ok := byLabel[out.Meshes[i].Label]; ok {
+						out.Meshes[i].Relay = mc.Relay
+						out.Meshes[i].AnnounceServices = mc.AnnounceServices
+						out.Meshes[i].AnnounceBound = mc.AnnounceBound
+					}
+				}
+				// And the ones that are not running, which have no instance to
+				// be built from and would otherwise appear nowhere at all.
 				for _, mc := range onDisk.Meshes() {
 					if !mc.Disabled {
 						continue
 					}
-					off := meshStatus{Label: mc.Label, Disabled: true}
+					off := meshStatus{
+						Label: mc.Label, Disabled: true, Relay: mc.Relay,
+						AnnounceServices: mc.AnnounceServices,
+						AnnounceBound:    mc.AnnounceBound,
+					}
 					if k, err := mc.Key(); err == nil {
 						off.Prefix = k.Prefix().String()
 					}

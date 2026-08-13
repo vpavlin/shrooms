@@ -174,6 +174,41 @@ Item {
         root.logSince = String(d.lines[d.lines.length - 1].t)
     }
 
+    /**
+     * The colour of one option in a two-option setting.
+     *
+     * The whole settings section used to paint every option in a fixed colour,
+     * because each one is a button and buttons were styled as buttons. Which
+     * meant nothing on the form ever said what the current value was: "on" was
+     * bright next to a mesh that was switched off, and read as its state.
+     *
+     * So: the option in force is lit, the one you can move to is dim. Same rule
+     * everywhere, so the section can be read at a glance instead of clicked to
+     * find out.
+     */
+    function pick(current) { return current ? cPhosphor : cAsh }
+
+    /** The primary mesh's entry, which is the one the top-level fields describe. */
+    readonly property var primaryMesh: {
+        var ms = (root.st && root.st.meshes) ? root.st.meshes : []
+        for (var i = 0; i < ms.length; i++) {
+            if (ms[i] && ms[i].prefix && ms[i].prefix === root.st.prefix) return ms[i]
+        }
+        return ms.length ? ms[0] : ({})
+    }
+
+    /**
+     * True for the mesh this device was built around.
+     *
+     * It cannot be switched off or left — the single-mesh config form has
+     * nowhere to write "off", and a device with one mesh switched off is a
+     * device switched off. The daemon refuses both, so the row says so rather
+     * than offering two buttons that only ever produce an error.
+     */
+    function isPrimary(m) {
+        return !!(m && m.prefix && root.st.prefix && m.prefix === root.st.prefix)
+    }
+
     function levelColour(l) {
         if (l === "ERROR") return cRust
         if (l === "WARN") return cAmber
@@ -1370,7 +1405,7 @@ Item {
                         }
                         Text {
                             text: "list the names for peers"
-                            color: cPhosphor
+                            color: root.pick(root.primaryMesh.announce_services === true)
                             font.family: "monospace"; font.pixelSize: 11
                             MouseArea {
                                 anchors.fill: parent
@@ -1380,7 +1415,7 @@ Item {
                         }
                         Text {
                             text: "keep them to myself"
-                            color: cAsh
+                            color: root.pick(root.primaryMesh.announce_services !== true)
                             font.family: "monospace"; font.pixelSize: 11
                             MouseArea {
                                 anchors.fill: parent
@@ -1404,7 +1439,7 @@ Item {
                         }
                         Text {
                             text: "light  ~3 MB/h"
-                            color: cPhosphor
+                            color: root.pick(root.st.mode === "Edge")
                             font.family: "monospace"; font.pixelSize: 11
                             MouseArea {
                                 anchors.fill: parent
@@ -1414,7 +1449,7 @@ Item {
                         }
                         Text {
                             text: "relay  ~20 MB/h"
-                            color: cAmber
+                            color: root.st.mode === "Core" ? cAmber : cAsh
                             font.family: "monospace"; font.pixelSize: 11
                             MouseArea {
                                 anchors.fill: parent
@@ -1422,83 +1457,145 @@ Item {
                                 onClicked: root.callWrite("setMode", ["Core"])
                             }
                         }
+                        Text {
+                            // The config and the running process disagree
+                            // exactly between a change and the restart that
+                            // applies it. Saying so is the difference between
+                            // "my click did nothing" and "my click is waiting".
+                            visible: root.st.mode !== undefined
+                                     && root.st.mode_running !== undefined
+                                     && root.st.mode !== root.st.mode_running
+                            text: "· still running as " + (root.st.mode_running || "?")
+                                  + ", restart to apply"
+                            color: cAmber
+                            font.family: "monospace"; font.pixelSize: 10
+                        }
                         Item { Layout.fillWidth: true }
                     }
 
-                    // One row per mesh, when there is more than one: switching
-                    // a mesh off is not leaving it, and both are here because
-                    // both otherwise mean a terminal.
-                    Repeater {
-                        // Every mesh, switched off ones included — this list is
-                        // the only way back for one that is off, and driving it
-                        // from the running meshes is precisely how a mesh
-                        // became unreachable from every screen at once.
-                        //
-                        // Shown from one rather than two: a device with a
-                        // single running mesh and one switched off has two
-                        // entries here and needs both.
-                        model: root.switchableMeshes
-                        delegate: RowLayout {
-                            spacing: 8
-                            Layout.fillWidth: true
-                            Text {
-                                text: modelData.disabled === true ? "mesh · off" : "mesh"
-                                color: cAsh
-                                font.family: "monospace"; font.pixelSize: 11
-                                Layout.preferredWidth: 70
-                            }
-                            Text {
-                                // Defensive because this view runs against
-                                // daemons it was not built with: a mesh entry
-                                // without a label is malformed, and rendering
-                                // "?" says so where an undefined binding just
-                                // logs at the console nobody is reading.
-                                text: modelData.label || "?"
-                                color: cBone
-                                font.family: "monospace"; font.pixelSize: 11
-                                Layout.preferredWidth: 90
-                            }
-                            Text {
-                                text: "on"
-                                color: cPhosphor
-                                font.family: "monospace"; font.pixelSize: 11
-                                MouseArea {
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: root.callWrite("setMeshEnabled",
-                                                              [modelData.label, true])
+                    // The meshes this device belongs to.
+                    //
+                    // A section with a heading and a row per mesh, rather than
+                    // a row per mesh each labelled "mesh" — which is what this
+                    // was, and read as a stutter with the state hidden inside
+                    // it. Switching one off is not leaving it, and both live
+                    // here because both otherwise mean a terminal.
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        Layout.topMargin: 4
+                        spacing: 6
+                        visible: root.switchableMeshes.length > 0
+
+                        Text {
+                            text: "meshes"
+                            color: cAsh
+                            font.family: "monospace"; font.pixelSize: 11
+                        }
+
+                        Repeater {
+                            // Every mesh, switched off ones included — this
+                            // list is the only way back for one that is off,
+                            // and driving it from the running meshes is
+                            // precisely how a mesh became unreachable from
+                            // every screen at once.
+                            model: root.switchableMeshes
+                            delegate: RowLayout {
+                                spacing: 10
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 12
+
+                                readonly property bool isOn: modelData.disabled !== true
+                                readonly property bool primary: root.isPrimary(modelData)
+
+                                Rectangle {
+                                    width: 7; height: 7; radius: 4
+                                    color: parent.isOn ? root.meshTint(modelData.label) : cLine
                                 }
-                            }
-                            Text {
-                                text: "off"
-                                color: cAsh
-                                font.family: "monospace"; font.pixelSize: 11
-                                MouseArea {
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: root.callWrite("setMeshEnabled",
-                                                              [modelData.label, false])
+                                Text {
+                                    // Defensive because this view runs against
+                                    // daemons it was not built with: a mesh
+                                    // entry without a label is malformed, and
+                                    // "?" says so where an undefined binding
+                                    // just logs to a console nobody reads.
+                                    text: modelData.label || "?"
+                                    color: parent.isOn ? cBone : cAsh
+                                    font.family: "monospace"; font.pixelSize: 11
+                                    Layout.preferredWidth: 100
+                                    elide: Text.ElideRight
                                 }
-                            }
-                            Text {
-                                // Two clicks, because this one cannot be
-                                // undone from here: coming back needs a new
-                                // invite from somebody who is already in.
-                                property bool armed: false
-                                text: armed ? "sure?" : "leave"
-                                color: armed ? cAmber : cRust
-                                font.family: "monospace"; font.pixelSize: 11
-                                MouseArea {
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        if (!parent.armed) { parent.armed = true; return }
-                                        parent.armed = false
-                                        root.callWrite("leaveMesh", [modelData.label])
+                                Text {
+                                    text: "on"
+                                    color: root.pick(parent.isOn)
+                                    font.family: "monospace"; font.pixelSize: 11
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: root.callWrite("setMeshEnabled",
+                                                                  [modelData.label, true])
                                     }
                                 }
+                                Text {
+                                    // Absent on the primary mesh rather than
+                                    // present and refused: the daemon rejects
+                                    // both of these for it, and a button whose
+                                    // only outcome is an error is worse than no
+                                    // button.
+                                    visible: !parent.primary
+                                    text: "off"
+                                    color: root.pick(!parent.isOn)
+                                    font.family: "monospace"; font.pixelSize: 11
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: root.callWrite("setMeshEnabled",
+                                                                  [modelData.label, false])
+                                    }
+                                }
+                                Text {
+                                    visible: !parent.primary
+                                    // Two clicks, because this one cannot be
+                                    // undone from here: coming back needs a
+                                    // new invite from somebody already in.
+                                    property bool armed: false
+                                    text: armed ? "sure?" : "leave"
+                                    color: armed ? cAmber : cRust
+                                    font.family: "monospace"; font.pixelSize: 11
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: {
+                                            if (!parent.armed) { parent.armed = true; return }
+                                            parent.armed = false
+                                            root.callWrite("leaveMesh", [modelData.label])
+                                        }
+                                    }
+                                }
+                                Text {
+                                    visible: parent.primary
+                                    text: "· this device's first mesh"
+                                    color: cAsh
+                                    font.family: "monospace"; font.pixelSize: 10
+                                }
+                                Item { Layout.fillWidth: true }
                             }
-                            Item { Layout.fillWidth: true }
+                        }
+
+                        Text {
+                            // Only when something is actually pending, so it
+                            // is information rather than decoration.
+                            visible: {
+                                var ms = root.switchableMeshes
+                                for (var i = 0; i < ms.length; i++)
+                                    if (ms[i].disabled === true) return true
+                                return false
+                            }
+                            Layout.fillWidth: true
+                            Layout.leftMargin: 12
+                            wrapMode: Text.WordWrap
+                            color: cAsh
+                            font.family: "monospace"; font.pixelSize: 10
+                            text: "a mesh switched off keeps its key and credentials — "
+                                  + "switching it back on and restarting is all it takes"
                         }
                     }
 

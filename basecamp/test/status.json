@@ -325,5 +325,25 @@
     "registered": true,
     "suffix": "mesh",
     "address": "fd3b:ffe9:f81:6f18:41e:c574:c529:5bbf"
-  }
+  },
+  "mode": "Edge",
+  "mode_running": "Core",
+  "meshes": [
+    {
+      "label": "default",
+      "overlay": "fd3b:ffe9:f81:6f18:41e:c574:c529:5bbf",
+      "prefix": "fd3b:ffe9:f81::/48",
+      "interface": "shrooms0",
+      "port": 51820,
+      "peers": 3,
+      "relays": 1,
+      "announce_services": true,
+      "relay": true
+    },
+    {
+      "label": "test",
+      "prefix": "fd7b:15fb:5ec1::/48",
+      "disabled": true
+    }
+  ]
 }

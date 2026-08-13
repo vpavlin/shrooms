@@ -56,6 +56,21 @@ Item {
                     + view.membershipText(view.peers[k].expires)
                     + " " + view.membershipColour(view.peers[k].expires))
             }
+            // The settings section, which showed every option in a fixed
+            // colour and so never said which one was in force — "on" was lit
+            // beside a mesh that was switched off, and read as its state.
+            console.error("SWITCHABLE=" + view.switchableMeshes.length
+                + " RUNNING=" + view.runningMeshes.length)
+            for (var m = 0; m < view.switchableMeshes.length; m++) {
+                var mm = view.switchableMeshes[m]
+                console.error("  mesh " + mm.label
+                    + " on=" + (mm.disabled !== true)
+                    + " lit=" + view.pick(mm.disabled !== true)
+                    + " primary=" + view.isPrimary(mm))
+            }
+            console.error("MODE=" + view.st.mode + " RUNNING=" + view.st.mode_running
+                + " ANNOUNCE=" + (view.primaryMesh.announce_services === true))
+
             Qt.quit()
         }
     }

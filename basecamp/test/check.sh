@@ -82,7 +82,7 @@ run() {
 
 echo "==> reads a status file sitting beside the view (the Basecamp case)"
 out=$(QML_XHR_ALLOW_FILE_READ=1 run "$QML" -I "$work" "$work/Harness.qml" "$work/status.json")
-echo "$out" | grep -E "^qml: (PEERS|VERSION|SERVICES|  )" || true
+echo "$out" | grep -E "^qml: (PEERS|VERSION|SERVICES|SWITCHABLE|MODE|  )" || true
 peers=$(echo "$out" | sed -n 's/.*PEERS=\([0-9]*\).*/\1/p' | head -1)
 [ "${peers:-0}" -gt 0 ] || { echo "FAIL: the view loaded but read no peers"; echo "$out" | head -20; exit 1; }
 echo "$out" | grep -q "TypeError\|ReferenceError\|is not a" && { echo "FAIL: script errors"; echo "$out"; exit 1; }
@@ -104,6 +104,22 @@ echo "$out" | grep -q "VERSION=v0.9.1-test" \
 # things, and rendering them alike sends somebody chasing a renewal.
 echo "$out" | grep -q "membership nothing ended" \
     || { echo "FAIL: an expired credential did not read as ended"; exit 1; }
+
+# The settings section. A mesh switched off has no instance behind it, so it is
+# absent from everything derived from the running meshes — and the list with the
+# switch on it must not be one of those. That is how a mesh went missing.
+echo "$out" | grep -q "SWITCHABLE=2 RUNNING=1" \
+    || { echo "FAIL: a switched-off mesh is missing from the list that can switch it on"; exit 1; }
+# Lit for the option in force, dim for the other. Fixed colours are why "on"
+# appeared highlighted next to a mesh that was off.
+echo "$out" | grep -q "mesh test on=false lit=#6b7680" \
+    || { echo "FAIL: a switched-off mesh is not drawn as off"; exit 1; }
+echo "$out" | grep -q "mesh default on=true lit=#35f0a0 primary=true" \
+    || { echo "FAIL: the primary mesh is not lit, or was not recognised as primary"; exit 1; }
+# The config and the running process disagree between a change and the restart
+# that applies it; both have to reach the view or the click looks like a no-op.
+echo "$out" | grep -q "MODE=Edge RUNNING=Core ANNOUNCE=true" \
+    || { echo "FAIL: did not read the configured settings alongside the running ones"; exit 1; }
 
 # Inside Basecamp only the sibling file resolves; the two below are for running
 # outside it, where there is no sandbox. Removing the sibling is what forces
