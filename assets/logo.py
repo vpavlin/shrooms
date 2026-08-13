@@ -56,70 +56,151 @@ CAP = (198, 168, 108)
 CAP_DARK = (118, 95, 55)
 STEM = (226, 224, 214)        # pale, slightly warm
 PHOSPHOR = (53, 240, 160)     # the living network
-VIOLET = (154, 123, 255)      # bruising, and "relayed" everywhere else
+VIOLET = (154, 123, 255)      # spores, and "relayed" everywhere else
+# The stem where it has bruised: violet mixed into the pale flesh rather than
+# laid over it, because that is what bruising is.
+BRUISE = (150, 140, 205)
 BONE = (214, 221, 227)
 
-# Three fruiting bodies: one grown, two coming up. Enough to read as "several
-# devices" rather than "a mushroom", which is the point — the mesh is the
-# subject and these are what it produced.
+# Three fruiting bodies, and none of them standing to attention.
 #
-#   x, cap half-width, cap height, stem height, lean
+# The first version of this was read as "a castle with three towers", which was
+# fair and is worth recording because every part of it was a decision:
+#
+#   Straight vertical stems of even width are columns. Real ones bend, so these
+#   bend — each has a sway as well as a lean, and no two the same.
+#
+#   A cone is a tower roof. The cap profile is a dome now, widest low down,
+#   with a rim that curls under; the overhang is the thing that says mushroom,
+#   and a straight-sided cap has none.
+#
+#   Tall-in-the-middle-flanked-by-two is a castle silhouette before it is
+#   anything else. They cluster off-centre instead, at three different heights,
+#   with one leaning across another.
+#
+#   x, cap half-width, cap height, stem height, lean, sway
 SHROOMS = [
-    (54.0, 13.0, 22.0, 28.0, 0.0),
-    (29.0, 7.6, 13.0, 16.0, -0.16),
-    (78.0, 6.4, 11.0, 12.5, 0.14),
+    (47.0, 9.6, 21.0, 26.0, 0.34, -0.34),
+    (70.0, 6.8, 14.5, 17.0, -0.38, 0.30),
+    (31.0, 5.4, 11.0, 10.0, 0.22, 0.34),
 ]
 
 
-def cap_outline(x0, w, h, base_y, lean, n=26):
-    """A psilocybe cap: a tall bell with a small point at the apex.
+def stem_axis(x0, stem_h, lean, sway, y):
+    """Where a stem's centre line is at height y.
 
-    Not an ellipse. The profile is a power curve, which puts the shoulders low
-    and the mass high, and the papilla — the little nipple real ones carry — is
-    a narrow bump added at the top. Both are what make the silhouette read as
-    this mushroom rather than as a generic one.
+    One function, used by the stem outline and by whatever sits on top of it.
+    They were two expressions that had to agree, and the day they stopped
+    agreeing a cap ended up beside its stem rather than on it.
+    """
+    top = HORIZON - stem_h
+    t = 0.0 if stem_h <= 0 else (y - top) / (HORIZON - top)
+    t = max(0.0, min(1.0, t))
+    # Lean tilts the top away from the foot; sway bows the middle, which is
+    # what stops it reading as a drawn line rather than a grown thing.
+    return (x0
+            + lean * (1.0 - t) * stem_h * 0.55
+            + sway * math.sin(math.pi * t) * stem_h * 0.34)
+
+def cap_outline(x0, w, h, base_y, n=26):
+    """A liberty cap: a tall bell with a flared rim and a point on top.
+
+    Parameterised by height rather than by width, which is the whole of why
+    this works. Sweeping x and solving for y gives a shape that is wide near
+    the apex — a bullet, or a thimble. Sweeping height and solving for width
+    gives sides that start narrow and widen all the way down, which is what a
+    bell is.
+
+    The exponent decides everything else. One is a straight cone, and a cone
+    with a stem under it is a tower with a roof — which is what the first
+    version of this mark was read as. Below one the sides bulge outward and it
+    reads as grown rather than built. The rim then kicks out and turns under in
+    the last few percent of the height, because a psilocybe's margin is everted
+    and because the overhang is what makes it a mushroom at a glance.
     """
     pts = []
-    # A normalised gaussian: round over the top, falling away steeply at the
-    # shoulders and meeting the rim exactly. A power curve was tried first and
-    # produced straight sides — three party hats rather than three mushrooms.
-    k = 2.9
-    def bell(u):
-        return (math.exp(-k * u * u) - math.exp(-k)) / (1.0 - math.exp(-k))
+    curl = h * 0.09          # how far the rim turns under
 
+    def half(v):
+        """Half-width at v, where v is 0 at the rim and 1 at the apex."""
+        # A square root, which is a rounded crown: near the apex the width
+        # falls off as the square of the height, so the top is a dome. Higher
+        # exponents converge to a point instead, and a point on top of a stem
+        # is a spire — 0.68 was tried and still read as a roof.
+        body = (1.0 - v) ** 0.5
+        # The everted margin, over the bottom tenth only. A psilocybe's rim
+        # turns out before it turns under.
+        return body * (1.0 + 0.16 * math.exp(-v / 0.08))
+
+    def drop(v):
+        return curl * math.exp(-v / 0.05)
+
+    # Up the left side, over the apex, and down the right. The apex is rounded
+    # by the profile itself and carries a papilla only as a slight rise — an
+    # explicit point above the crown turned the whole cap back into a triangle,
+    # which is the thing this shape exists to avoid.
+    for i in range(n + 1):
+        v = i / n
+        pts.append((x0 - w * half(v), base_y - h * v + drop(v)))
+    for i in range(n + 1):
+        v = 1.0 - i / n
+        pts.append((x0 + w * half(v), base_y - h * v + drop(v)))
+
+    # The underside, as its own shape rather than the tail of this one. The
+    # renderers used to take the second half of the point list for it, which
+    # worked only as long as nobody changed the order — and when somebody did,
+    # every cap grew a dark diagonal wedge across it.
+    rim = w * half(0.0)
+    under = []
+    # Out along the rim, which hangs lowest at its edges...
     for i in range(n + 1):
         u = -1.0 + 2.0 * i / n
-        y = base_y - h * bell(u)
-        # The papilla, narrow enough to read as a point and not a spike.
-        y -= h * 0.07 * math.exp(-((u / 0.16) ** 2))
-        pts.append((x0 + w * u + lean * (base_y - y) * 0.5, y))
-
-    # The underside, curving up slightly to the stem so the cap sits on it
-    # rather than floating above it.
+        under.append((x0 + rim * u, base_y + curl * (u * u)))
+    # ...and back along the gills, which rise towards the stem. The gap between
+    # the two is the overhang.
     for i in range(n + 1):
         u = 1.0 - 2.0 * i / n
-        y = base_y - h * 0.09 * (1.0 - u * u)
-        pts.append((x0 + w * u + lean * (base_y - y) * 0.5, y))
-    return pts
+        under.append((x0 + rim * u, base_y - h * 0.17 * (1.0 - u * u)))
+    return pts, under
 
 
-def stem_outline(x0, half, top_y, bot_y, lean, n=14):
-    """A slender stem, wider at the base and leaning a little.
+def stem_outline(x0, half, stem_h, lean, sway, top_y, bot_y, n=20):
+    """A slender stem that bends, tapering towards the cap.
 
-    Real ones are not straight, and a mark made of three identical vertical
-    lines looks printed rather than grown.
+    Sampled off stem_axis rather than carrying its own idea of where the stem
+    is, so the curve and the cap cannot drift apart.
     """
     left, right = [], []
     for i in range(n + 1):
         t = i / n
         y = top_y + (bot_y - top_y) * t
-        # A gentle flare at the foot, where it enters the soil.
-        wdt = half * (1.0 + 0.55 * t * t)
-        # The same 0.5 factor the cap uses. They were different, and the
-        # rightmost cap ended up beside its stem rather than on it.
-        bend = lean * (bot_y - y) * 0.5
-        left.append((x0 + bend - wdt, y))
-        right.append((x0 + bend + wdt, y))
+        cx = stem_axis(x0, stem_h, lean, sway, y)
+        # Wider at the foot and narrowest just under the cap, which is the way
+        # round real ones are and the opposite of a column.
+        wdt = half * (0.86 + 0.5 * t * t)
+        left.append((cx - wdt, y))
+        right.append((cx + wdt, y))
+    return left + right[::-1]
+
+
+def stem_foot(x0, half, stem_h, lean, sway, bot_y, tall=6.0, n=8):
+    """The bruised section of stem just above the soil.
+
+    A piece of the stem rather than a mark across it. Psilocybes go blue where
+    they are handled or damaged, which is a stain through the flesh — and a bar
+    of a second colour laid over a stem reads as a band on a straw. Built from
+    stem_axis like everything else, so it follows the bend.
+    """
+    top_y = bot_y - tall
+    left, right = [], []
+    for i in range(n + 1):
+        t = i / n
+        y = top_y + (bot_y - top_y) * t
+        cx = stem_axis(x0, stem_h, lean, sway, y)
+        tt = (y - (HORIZON - stem_h)) / max(1e-6, stem_h)
+        wdt = half * (0.86 + 0.5 * tt * tt) * 1.02
+        left.append((cx - wdt, y))
+        right.append((cx + wdt, y))
     return left + right[::-1]
 
 
@@ -188,8 +269,10 @@ def mycelium():
     # The roots: each stem's foot joins the nearest node, so the mushrooms are
     # visibly part of the network rather than standing on top of it.
     roots = []
-    for x0, _w, _h, sh, lean in SHROOMS:
-        foot = (x0 + lean * sh * 0.2, HORIZON)
+    for x0, _w, _h, sh, lean, sway in SHROOMS:
+        # Where the stem actually meets the soil, which with a bent stem is not
+        # where its nominal x is.
+        foot = (stem_axis(x0, sh, lean, sway, HORIZON), HORIZON)
         near = min(nodes, key=lambda n: (n[0] - foot[0]) ** 2 + (n[1] - foot[1]) ** 2)
         roots.append((foot, near))
 
@@ -199,7 +282,8 @@ def mycelium():
 def spores(n=6):
     """Spores drifting off the tallest cap — how a mesh gains a member."""
     rnd = random.Random(7)
-    x0, w, h, sh, _lean = SHROOMS[0]
+    x0, w, h, sh, lean, sway = SHROOMS[0]
+    x0 = stem_axis(x0, sh, lean, sway, HORIZON - sh)
     top = HORIZON - sh - h
     return [
         (x0 + rnd.uniform(-1.4, 2.6) * w * 0.8,
@@ -215,7 +299,7 @@ def spores(n=6):
 # than a second drawing that would drift from this one.
 # Chunkier than the full drawing on purpose: at this size a tall thin stem
 # under a narrow cap reads as an exclamation mark, not a mushroom.
-SHROOMS_SMALL = [(54.0, 23.0, 25.0, 16.0, 0.0)]
+SHROOMS_SMALL = [(54.0, 21.0, 24.0, 14.0, 0.0, 0.0)]
 NODES_SMALL = [(23.0, 72.0), (42.0, 85.0), (67.0, 83.0), (86.0, 70.0)]
 EDGES_SMALL = [(0, 1), (1, 2), (2, 3), (0, 2)]
 
@@ -223,19 +307,24 @@ EDGES_SMALL = [(0, 1), (1, 2), (2, 3), (0, 2)]
 def _geometry(simple=False):
     """Everything the three renderers draw, computed once."""
     shrooms = SHROOMS_SMALL if simple else SHROOMS
-    caps, stems = [], []
-    for x0, w, h, sh, lean in shrooms:
+    caps, stems, feet = [], [], []
+    for x0, w, h, sh, lean, sway in shrooms:
         base = HORIZON - sh
-        caps.append(cap_outline(x0, w, h, base, lean))
-        stems.append(stem_outline(x0, max(1.15, w * (0.135 if simple else 0.115)),
-                                  base - h * 0.06, HORIZON + 1.5, lean))
+        # The cap goes where the top of the stem actually is, not where a
+        # straight stem would have put it.
+        cap, under = cap_outline(stem_axis(x0, sh, lean, sway, base), w, h, base)
+        caps.append((cap, under))
+        halfw = max(1.15, w * (0.155 if simple else 0.125))
+        stems.append(stem_outline(x0, halfw, sh, lean, sway,
+                                  base - h * 0.05, HORIZON + 1.5))
+        feet.append(stem_foot(x0, halfw, sh, lean, sway, HORIZON + 1.5))
     if simple:
         foot = (SHROOMS_SMALL[0][0], HORIZON)
         near = min(NODES_SMALL, key=lambda n: (n[0] - foot[0]) ** 2 + (n[1] - foot[1]) ** 2)
-        return caps, stems, NODES_SMALL, EDGES_SMALL, [(foot, near)]
+        return caps, stems, feet, NODES_SMALL, EDGES_SMALL, [(foot, near)]
 
     nodes, edges, roots = mycelium()
-    return caps, stems, nodes, edges, roots
+    return caps, stems, feet, nodes, edges, roots
 
 
 def _poly(points):
@@ -258,7 +347,7 @@ SMALL = 128
 
 def render_png(path, size, background=True):
     big = size >= SMALL
-    caps, stems, nodes, edges, roots = _geometry(simple=not big)
+    caps, stems, feet, nodes, edges, roots = _geometry(simple=not big)
     s = size / VIEW
 
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
@@ -306,14 +395,12 @@ def render_png(path, size, background=True):
     for k in ([0] if len(caps) == 1 else [1, 2, 0]):
         poly(stems[k], STEM)
         # Bruising where the stem meets the soil.
-        foot = stems[k][len(stems[k]) // 2 - 2:len(stems[k]) // 2 + 2]
-        if foot:
-            d.line([P(*foot[0]), P(*foot[-1])], fill=VIOLET, width=max(1, int(size * 0.02)))
-        poly(caps[k], CAP)
+        # The bruise: a stained section of the stem, not a band across it.
+        poly(feet[k], BRUISE)
+        poly(caps[k][0], CAP)
         # A darker underside, so the cap has a lip rather than being a flat
         # shape stuck on a stick.
-        under = caps[k][len(caps[k]) // 2:]
-        poly(under, CAP_DARK)
+        poly(caps[k][1], CAP_DARK)
 
     if big:
         for x, y, rr in spores():
@@ -328,7 +415,7 @@ def render_png(path, size, background=True):
 # --- Android VectorDrawable --------------------------------------------------
 
 def render_vector(path):
-    caps, stems, nodes, edges, roots = _geometry()
+    caps, stems, feet, nodes, edges, roots = _geometry()
 
     def hexa(c):
         return "#%02X%02X%02X" % c
@@ -363,9 +450,13 @@ def render_vector(path):
     for k in (1, 2, 0):
         parts.append(f'    <path android:pathData="{_poly(stems[k])}" '
                      f'android:fillColor="{hexa(STEM)}"/>')
-        parts.append(f'    <path android:pathData="{_poly(caps[k])}" '
+        # The bruised foot. This drawing had it and the other two did not,
+        # which is how three renderers of one mark quietly become three marks.
+        parts.append(f'    <path android:pathData="{_poly(feet[k])}" '
+                     f'android:fillColor="{hexa(BRUISE)}"/>')
+        parts.append(f'    <path android:pathData="{_poly(caps[k][0])}" '
                      f'android:fillColor="{hexa(CAP)}"/>')
-        parts.append(f'    <path android:pathData="{_poly(caps[k][len(caps[k]) // 2:])}" '
+        parts.append(f'    <path android:pathData="{_poly(caps[k][1])}" '
                      f'android:fillColor="{hexa(CAP_DARK)}"/>')
     for x, y, r in spores():
         parts.append(f'    <path android:pathData="M {x:.2f} {y - r:.2f} '
@@ -380,7 +471,7 @@ def render_vector(path):
 # --- SVG ---------------------------------------------------------------------
 
 def render_svg(path):
-    caps, stems, nodes, edges, roots = _geometry()
+    caps, stems, feet, nodes, edges, roots = _geometry()
 
     def hexa(c):
         return "#%02X%02X%02X" % c
@@ -404,8 +495,9 @@ def render_svg(path):
                  f'stroke-width="1.4" stroke-linecap="round"/>')
     for k in (1, 2, 0):
         parts.append(f'<path d="{sx.escape(_poly(stems[k]))}" fill="{hexa(STEM)}"/>')
-        parts.append(f'<path d="{sx.escape(_poly(caps[k]))}" fill="{hexa(CAP)}"/>')
-        parts.append(f'<path d="{sx.escape(_poly(caps[k][len(caps[k]) // 2:]))}" '
+        parts.append(f'<path d="{sx.escape(_poly(feet[k]))}" fill="{hexa(BRUISE)}"/>')
+        parts.append(f'<path d="{sx.escape(_poly(caps[k][0]))}" fill="{hexa(CAP)}"/>')
+        parts.append(f'<path d="{sx.escape(_poly(caps[k][1]))}" '
                      f'fill="{hexa(CAP_DARK)}"/>')
     for x, y, r in spores():
         parts.append(f'<circle cx="{x:.2f}" cy="{y:.2f}" r="{r:.2f}" fill="{hexa(VIOLET)}"/>')
