@@ -339,7 +339,11 @@
       "relays": 1,
       "announce_services": true,
       "relay": true,
-      "announce_bound": false
+      "announce_bound": true,
+      "bound_here": [
+        "ssh:22",
+        "dev:3000"
+      ]
     },
     {
       "label": "test",

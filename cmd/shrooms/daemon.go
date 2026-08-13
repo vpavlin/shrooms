@@ -356,6 +356,15 @@ type meshStatus struct {
 	AnnounceServices bool `json:"announce_services,omitempty"`
 	AnnounceBound    bool `json:"announce_bound,omitempty"`
 
+	// BoundHere is what is listening on *this* device's address on this mesh,
+	// whether or not it is announced — the same list `shrooms bound` prints.
+	//
+	// Reported because a switch that discloses something should be next to the
+	// thing it would disclose. Deciding whether to announce your bound ports
+	// without being shown which ones they are is a decision taken blind, and
+	// the answer changes every time somebody starts a server and forgets.
+	BoundHere []string `json:"bound_here,omitempty"`
+
 	// NotRunning means the config has this mesh and this process does not.
 	// Switching one on writes the config and takes effect at the next restart,
 	// so between those two moments it belongs to neither list — which made the

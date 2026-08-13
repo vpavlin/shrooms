@@ -108,6 +108,40 @@ func (r *reloader) Reload(ctx context.Context) (string, error) {
 	return msg, nil
 }
 
+// ApplyAnnounce pushes the announce flags from the config onto the running
+// meshes, so a disclosure toggle takes effect when it is pressed.
+//
+// Every other setting here is written to the config and waits for a restart,
+// which is the right default: most of them are wired into a WireGuard device
+// or a rendezvous node at startup. These two are not. They gate what goes into
+// the next announcement, and there is nothing to rebuild — so making somebody
+// restart a daemon to stop disclosing something was both unnecessary and, for
+// a disclosure control, the wrong way round.
+func (r *reloader) ApplyAnnounce() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	cfg, err := state.LoadConfigUnvalidated(r.cfgPath)
+	if err != nil {
+		return err
+	}
+	byLabel := map[string]state.Mesh{}
+	for _, m := range cfg.Meshes() {
+		byLabel[m.Label] = m
+	}
+	for _, in := range r.instances {
+		m, ok := byLabel[in.label]
+		if !ok {
+			continue
+		}
+		if in.mesh.SetAnnounce(m.AnnounceServices, m.AnnounceBound) {
+			r.log.Info("announcing changed", "mesh", in.label,
+				"services", m.AnnounceServices, "bound", m.AnnounceBound)
+		}
+	}
+	return nil
+}
+
 // republish swaps one mesh's published services.
 func (r *reloader) republish(ctx context.Context, in *instance, cfg state.Config, m state.Mesh) error {
 	specs, err := service.ParseSpecs(m.Services)

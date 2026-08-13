@@ -62,7 +62,7 @@ const ServicesDebounce = 30 * time.Second
 // An announce already gets this treatment for the same reason (shouldReplyTo);
 // this is the same courtesy for the thing that is otherwise silent for minutes.
 func (m *Mesh) offerServices(now time.Time) {
-	if !m.cfg.AnnounceServices {
+	if svc, _ := m.Announcing(); !svc {
 		return
 	}
 	m.mu.Lock()
@@ -85,14 +85,16 @@ func (m *Mesh) offerServices(now time.Time) {
 // reported at startup, and repeating the complaint every five minutes would
 // not help anyone.
 func (m *Mesh) publishServices(now time.Time) error {
-	if m.node == nil || (!m.cfg.AnnounceServices && !m.cfg.AnnounceBound) {
+	// Read once, under the lock: these change while this loop runs now.
+	wantServices, wantBound := m.Announcing()
+	if m.node == nil || (!wantServices && !wantBound) {
 		return nil
 	}
 	m.mu.Lock()
 	m.lastServices = now
 	m.mu.Unlock()
 	var specs []service.Spec
-	if m.cfg.AnnounceServices {
+	if wantServices {
 		var err error
 		if specs, err = m.cfg.ServiceSpecs(); err != nil {
 			specs = nil
@@ -130,6 +132,56 @@ func (m *Mesh) publishServices(now time.Time) error {
 	}
 }
 
+// SetAnnounce changes whether this device's services and bound ports are listed
+// for its peers, on a running mesh.
+//
+// Live, unlike almost everything else that comes out of the config. It is a
+// boolean gating what goes into the next announcement — there is no device to
+// rebuild and no session to renegotiate — so needing a restart for it was an
+// oversight rather than a constraint. It was worse than that, in fact: neither
+// flag appeared in needsRestart either, so a reload neither applied them nor
+// said it had not.
+//
+// Returns whether anything changed, so a caller can skip republishing.
+func (m *Mesh) SetAnnounce(services, bound bool) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.cfg.AnnounceServices == services && m.cfg.AnnounceBound == bound {
+		return false
+	}
+	m.cfg.AnnounceServices = services
+	m.cfg.AnnounceBound = bound
+	// Forces the next tick to publish rather than waiting out the debounce: the
+	// point of a switch is that something happens when you press it.
+	m.lastServices = time.Time{}
+	return true
+}
+
+// Announcing reports what this mesh currently discloses.
+func (m *Mesh) Announcing() (services, bound bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.cfg.AnnounceServices, m.cfg.AnnounceBound
+}
+
+// Bound is what would be announced for this mesh right now, whether or not
+// announcing is on — which is the list a UI needs in order to show somebody
+// what they are about to disclose *before* they disclose it.
+func (m *Mesh) BoundHere() []string {
+	found, err := listeners.On([]netip.Addr{m.self})
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(found))
+	for _, l := range found {
+		if l.Port == 80 || l.Port == 443 || l.Port == 53 {
+			continue
+		}
+		out = append(out, l.Spec())
+	}
+	return out
+}
+
 // boundPorts is what is listening on this device's address on this mesh
 // (ADR-026), as "name:port".
 //
@@ -137,7 +189,7 @@ func (m *Mesh) publishServices(now time.Time) error {
 // is reachable from every network this device is on, and listing it here would
 // claim otherwise.
 func (m *Mesh) boundPorts() []string {
-	if !m.cfg.AnnounceBound {
+	if _, want := m.Announcing(); !want {
 		return nil
 	}
 	found, err := listeners.On([]netip.Addr{m.self})

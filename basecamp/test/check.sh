@@ -82,7 +82,7 @@ run() {
 
 echo "==> reads a status file sitting beside the view (the Basecamp case)"
 out=$(QML_XHR_ALLOW_FILE_READ=1 run "$QML" -I "$work" "$work/Harness.qml" "$work/status.json")
-echo "$out" | grep -E "^qml: (PEERS|VERSION|SERVICES|SWITCHABLE|MODE|  )" || true
+echo "$out" | grep -E "^qml: (PEERS|VERSION|SERVICES|SWITCHABLE|MODE|BOUNDHERE|  )" || true
 peers=$(echo "$out" | sed -n 's/.*PEERS=\([0-9]*\).*/\1/p' | head -1)
 [ "${peers:-0}" -gt 0 ] || { echo "FAIL: the view loaded but read no peers"; echo "$out" | head -20; exit 1; }
 echo "$out" | grep -q "TypeError\|ReferenceError\|is not a" && { echo "FAIL: script errors"; echo "$out"; exit 1; }
@@ -118,7 +118,12 @@ echo "$out" | grep -q "mesh default on=true lit=#35f0a0 primary=true" \
     || { echo "FAIL: the primary mesh is not lit, or was not recognised as primary"; exit 1; }
 # The config and the running process disagree between a change and the restart
 # that applies it; both have to reach the view or the click looks like a no-op.
-echo "$out" | grep -q "MODE=Edge RUNNING=Core ANNOUNCE=true BOUND=false RELAY=true PORTMAP=true" \
+# The switch that discloses bound ports must sit next to the ports it would
+# disclose, carrying the mesh label — an unqualified host names an address on
+# another network.
+echo "$out" | grep -q "BOUNDHERE=2 \[ssh:22@vps.default.mesh:22\*,dev:3000@vps.default.mesh:3000\*\]" \
+    || { echo "FAIL: this device's bound ports are missing or misnamed"; exit 1; }
+echo "$out" | grep -q "MODE=Edge RUNNING=Core ANNOUNCE=true BOUND=true RELAY=true PORTMAP=true" \
     || { echo "FAIL: did not read the configured settings alongside the running ones"; exit 1; }
 # The two states between a click and the restart that applies it. Each of these
 # belonged to neither list once, and each time the section emptied or doubled.

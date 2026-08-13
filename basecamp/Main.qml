@@ -766,6 +766,34 @@ Item {
         return out
     }
 
+    /**
+     * What this device has bound to a mesh address, per mesh.
+     *
+     * The same list `shrooms bound` prints, and shown for the same reason: it
+     * is what the announce switch beside it would disclose, and it is
+     * discovered rather than declared — so it changes without anybody editing
+     * anything.
+     */
+    readonly property var boundRows: {
+        var out = [], ms = (root.st && root.st.meshes) ? root.st.meshes : []
+        for (var i = 0; i < ms.length; i++) {
+            var b = ms[i].bound_here || []
+            for (var j = 0; j < b.length; j++) {
+                // "ssh:22" — the name is advisory, the port is the fact, and
+                // the host has to carry the mesh label or it names an address
+                // on another network entirely.
+                var parts = String(b[j]).split(":")
+                var port = parts.length > 1 ? parts[parts.length - 1] : ""
+                var host = root.st.name || "this-device"
+                if (ms.length > 1 && ms[i].label) host += "." + ms[i].label
+                out.push({ spec: b[j], mesh: ms[i].label,
+                           addr: host + ".mesh" + (port ? ":" + port : ""),
+                           announced: ms[i].announce_bound === true })
+            }
+        }
+        return out
+    }
+
     /** Days until a unix-seconds stamp, or 999 when there is none. */
     function daysTo(unix) {
         if (!unix) return 999
@@ -1772,54 +1800,11 @@ Layout.preferredWidth: 0
                                 }
                             }
 
-                            // Whether peers are told what this device publishes.
-                            //
-                            // The one setting here that changes what other people can
-                            // see rather than what this device does, so the words say
-                            // what it actually changes: a member can already reach
-                            // these services by connecting to the address, and this is
-                            // about whether the names are listed for them (ADR-023).
-                            RowLayout {
-                                spacing: 8
-                                Layout.fillWidth: true
-Layout.preferredWidth: 0
-                                Text {
-                                    text: "announce"
-                                    color: cAsh
-                                    font.family: "monospace"; font.pixelSize: root.fs(11)
-                                    Layout.preferredWidth: root.sz(70)
-                                }
-                                Text {
-                                    text: "services"
-                                    color: root.pick(root.primaryMesh.announce_services === true)
-                                    font.family: "monospace"; font.pixelSize: root.fs(11)
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: root.callWrite("setAnnounceServices",
-                                                                  ["", root.primaryMesh.announce_services !== true])
-                                    }
-                                }
-                                Text {
-                                    // The other half of what a peer can be told
-                                    // (ADR-026), and a separate disclosure:
-                                    // services are declared one line at a time
-                                    // by somebody who meant it, bound ports are
-                                    // whatever happens to be listening —
-                                    // including the thing you started for ten
-                                    // minutes and forgot.
-                                    text: "bound ports"
-                                    color: root.pick(root.primaryMesh.announce_bound === true)
-                                    font.family: "monospace"; font.pixelSize: root.fs(11)
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: root.callWrite("setAnnounceBound",
-                                                                  ["", root.primaryMesh.announce_bound !== true])
-                                    }
-                                }
-                                Item { Layout.fillWidth: true }
-                            }
+                            // Announcing moved into the mesh rows below, where it
+                            // belongs: it is per mesh in the config, and a single
+                            // row here could only ever address the first one. It
+                            // silently did — clicking it on a two-mesh node
+                            // changed a mesh the user was not looking at.
 
                             // Whether the router is asked for a way in (ADR-024).
                             //
@@ -2036,6 +2021,40 @@ Layout.preferredWidth: 0
                                             }
                                         }
                                         Text {
+                                            // What this mesh's members are told about what runs
+                                            // here. Per mesh, because it is per mesh in the config
+                                            // and because telling your own machines and telling
+                                            // somebody else's are different decisions (ADR-023).
+                                            //
+                                            // It used to be one row above, addressing the first mesh
+                                            // whatever you were looking at.
+                                            text: "services"
+                                            color: root.pick(modelData.announce_services === true)
+                                            font.family: "monospace"; font.pixelSize: root.fs(11)
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: root.callWrite("setAnnounceServices",
+                                                                          [modelData.label,
+                                                                           modelData.announce_services !== true])
+                                            }
+                                        }
+                                        Text {
+                                            // And the ports that merely happen to be listening
+                                            // (ADR-026) — a separate switch, because those are
+                                            // discovered rather than declared.
+                                            text: "ports"
+                                            color: root.pick(modelData.announce_bound === true)
+                                            font.family: "monospace"; font.pixelSize: root.fs(11)
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: root.callWrite("setAnnounceBound",
+                                                                          [modelData.label,
+                                                                           modelData.announce_bound !== true])
+                                            }
+                                        }
+                                        Text {
                                             visible: !parent.primary
                                             // Two clicks, because this one cannot be
                                             // undone from here: coming back needs a
@@ -2083,6 +2102,50 @@ Layout.preferredWidth: 0
 
 
 
+
+                                // What this device would disclose on this mesh,
+                                // listed under the switch that would disclose it.
+                                // Deciding whether to announce your bound ports
+                                // without being shown which ones they are is a
+                                // decision taken blind — and the answer changes
+                                // every time somebody starts a server and forgets
+                                // about it.
+                                Repeater {
+                                    model: root.boundRows
+                                    delegate: RowLayout {
+                                        Layout.fillWidth: true
+                                        Layout.leftMargin: root.sz(24)
+                                        spacing: root.sz(8)
+                                        Text {
+                                            text: modelData.spec
+                                            color: modelData.announced ? cPhosphor : cAsh
+                                            font.family: "monospace"; font.pixelSize: root.fs(10)
+                                            Layout.preferredWidth: root.sz(90)
+                                            elide: Text.ElideRight
+                                        }
+                                        Text {
+                                            text: modelData.addr
+                                            color: boundCopy.containsMouse ? cPhosphor : cAsh
+                                            font.family: "monospace"; font.pixelSize: root.fs(10)
+                                            font.underline: boundCopy.containsMouse
+                                            elide: Text.ElideRight
+                                            Layout.fillWidth: true
+                                            Layout.preferredWidth: 0
+                                            MouseArea {
+                                                id: boundCopy
+                                                anchors.fill: parent
+                                                hoverEnabled: true
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: root.copyText(modelData.addr)
+                                            }
+                                        }
+                                        Text {
+                                            text: modelData.announced ? "listed" : "not listed"
+                                            color: cAsh
+                                            font.family: "monospace"; font.pixelSize: root.fs(9)
+                                        }
+                                    }
+                                }
 
                                 Text {
                                     // Only when something is actually pending, so it

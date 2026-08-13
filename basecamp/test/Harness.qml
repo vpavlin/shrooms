@@ -44,6 +44,8 @@ Item {
             console.error("VERSION=" + (view.st.version || "?")
                 + " DNS=" + (view.st.dns ? (view.st.dns.registered ? "resolving" : "partial")
                                          : "absent"))
+            console.error("BOUNDHERE=" + view.boundRows.length
+                + " [" + view.boundRows.map(function(b){return b.spec+"@"+b.addr+(b.announced?"*":"")}).join(",") + "]")
             console.error("SERVICES=" + view.allServices.length
                 + " ROWS=" + view.serviceRows.length)
             for (var j = 0; j < view.allServices.length; j++) {

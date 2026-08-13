@@ -225,6 +225,7 @@ func controlHandlers(mux *http.ServeMux, log *slog.Logger, cfgPath string, rl *r
 				in.Enabled); err != nil {
 				return "", err
 			}
+			applyAnnounce(rl)
 			if in.Enabled {
 				return "peers will see the names of services published here", nil
 			}
@@ -245,6 +246,7 @@ func controlHandlers(mux *http.ServeMux, log *slog.Logger, cfgPath string, rl *r
 				in.Enabled); err != nil {
 				return "", err
 			}
+			applyAnnounce(rl)
 			if in.Enabled {
 				return "peers will see which ports are listening on this device's mesh address", nil
 			}
@@ -300,6 +302,23 @@ func leaveHandler(log *slog.Logger, cfgPath string) http.HandlerFunc {
 		delete(cfg.MeshSet, in.Label)
 		return "left " + in.Label + "; it stops on the next restart", nil
 	})
+}
+
+// applyAnnounce pushes a disclosure change onto the running meshes.
+//
+// Best effort and deliberately unreported: the config is written either way,
+// so the worst case is that the change lands at the next restart like every
+// other setting here — which is what it did before this existed. Failing the
+// request because the live update did not take would turn a working write into
+// an error.
+func applyAnnounce(rl *reloader) {
+	if rl == nil {
+		return
+	}
+	if err := rl.ApplyAnnounce(); err != nil {
+		rl.log.Warn("could not apply the announce change to the running mesh",
+			"err", err, "hint", "it takes effect on the next restart")
+	}
 }
 
 // setMeshBool writes one per-mesh flag, wherever the config keeps it.
