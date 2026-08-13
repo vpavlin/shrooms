@@ -53,13 +53,8 @@ EARTH_LINE = (58, 42, 31)     # the soil line itself
 # Tan, because that is what these mushrooms are, and muted because phosphor is
 # the only colour in this project allowed to shout.
 CAP = (198, 168, 108)
-CAP_DARK = (118, 95, 55)
-STEM = (226, 224, 214)        # pale, slightly warm
 PHOSPHOR = (53, 240, 160)     # the living network
 VIOLET = (154, 123, 255)      # spores, and "relayed" everywhere else
-# The stem where it has bruised: violet mixed into the pale flesh rather than
-# laid over it, because that is what bruising is.
-BRUISE = (150, 140, 205)
 BONE = (214, 221, 227)
 
 # Three fruiting bodies, and none of them standing to attention.
@@ -80,9 +75,9 @@ BONE = (214, 221, 227)
 #
 #   x, cap half-width, cap height, stem height, lean, sway
 SHROOMS = [
-    (47.0, 9.6, 21.0, 26.0, 0.34, -0.34),
-    (70.0, 6.8, 14.5, 17.0, -0.38, 0.30),
-    (31.0, 5.4, 11.0, 10.0, 0.22, 0.34),
+    (47.0, 14.0, 13.0, 25.0, 0.30, -0.30),
+    (72.0, 9.6, 9.0, 16.5, -0.34, 0.30),
+    (29.0, 7.4, 7.0, 10.5, 0.22, 0.34),
 ]
 
 
@@ -102,176 +97,94 @@ def stem_axis(x0, stem_h, lean, sway, y):
             + lean * (1.0 - t) * stem_h * 0.55
             + sway * math.sin(math.pi * t) * stem_h * 0.34)
 
-def cap_outline(x0, w, h, base_y, n=26):
-    """A liberty cap: a tall bell with a flared rim and a point on top.
+def gasket(a, b, c, depth, out):
+    """Collect the inverted triangles of a Sierpinski gasket.
 
-    Parameterised by height rather than by width, which is the whole of why
-    this works. Sweeping x and solving for y gives a shape that is wide near
-    the apex — a bullet, or a thimble. Sweeping height and solving for width
-    gives sides that start narrow and widen all the way down, which is what a
-    bell is.
+    The holes rather than the filled parts, because that is what gets drawn:
+    one triangle in the cap's colour with these punched out of it. Three levels
+    is 13 holes, which is as much as survives being 20 pixels wide.
+    """
+    if depth <= 0:
+        return
+    ab = ((a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0)
+    bc = ((b[0] + c[0]) / 2.0, (b[1] + c[1]) / 2.0)
+    ca = ((c[0] + a[0]) / 2.0, (c[1] + a[1]) / 2.0)
+    out.append([ab, bc, ca])
+    gasket(a, ab, ca, depth - 1, out)
+    gasket(ab, b, bc, depth - 1, out)
+    gasket(ca, bc, c, depth - 1, out)
 
-    The exponent decides everything else. One is a straight cone, and a cone
-    with a stem under it is a tower with a roof — which is what the first
-    version of this mark was read as. Below one the sides bulge outward and it
-    reads as grown rather than built. The rim then kicks out and turns under in
-    the last few percent of the height, because a psilocybe's margin is everted
-    and because the overhang is what makes it a mushroom at a glance.
+
+def cap_triangles(x0, w, h, base_y, depth):
+    """A cap as a triangle with a gasket in it.
+
+    Two things this project already had, put together. The site draws a
+    Sierpinski gasket because triangles and fractals are what people actually
+    report seeing, and because a gasket is a mesh subdividing — every vertex a
+    node, every edge a link. The graph on both front-ends draws the same
+    figure, one level deep.
+
+    So the cap is that figure rather than a picture of a mushroom cap. It reads
+    as a mushroom because of what is under it, which is how a mark works: the
+    silhouette carries the meaning and the detail carries the character.
+
+    Returns the outer triangle and the holes to punch out of it.
+    """
+    apex = (x0, base_y - h)
+    left = (x0 - w, base_y)
+    right = (x0 + w, base_y)
+    holes = []
+    gasket(apex, left, right, depth, holes)
+    return [apex, left, right], holes
+
+
+def stem_line(x0, stem_h, lean, sway, top_y, bot_y, n=16):
+    """The stem as a polyline, to be drawn as a glowing line.
+
+    It was a filled shape in a pale flesh colour, which is what a mushroom stem
+    looks like and not what anything else in this project looks like. Every
+    connection on both front-ends is a glowing phosphor line; a stem is the
+    connection between what the network grew and the network itself, so it is
+    drawn the same way. The mark then belongs to the same family as the app
+    rather than being a drawing that happens to sit beside it.
     """
     pts = []
-    curl = h * 0.09          # how far the rim turns under
-
-    def half(v):
-        """Half-width at v, where v is 0 at the rim and 1 at the apex."""
-        # A square root, which is a rounded crown: near the apex the width
-        # falls off as the square of the height, so the top is a dome. Higher
-        # exponents converge to a point instead, and a point on top of a stem
-        # is a spire — 0.68 was tried and still read as a roof.
-        body = (1.0 - v) ** 0.5
-        # The everted margin, over the bottom tenth only. A psilocybe's rim
-        # turns out before it turns under.
-        return body * (1.0 + 0.16 * math.exp(-v / 0.08))
-
-    def drop(v):
-        return curl * math.exp(-v / 0.05)
-
-    # Up the left side, over the apex, and down the right. The apex is rounded
-    # by the profile itself and carries a papilla only as a slight rise — an
-    # explicit point above the crown turned the whole cap back into a triangle,
-    # which is the thing this shape exists to avoid.
-    for i in range(n + 1):
-        v = i / n
-        pts.append((x0 - w * half(v), base_y - h * v + drop(v)))
-    for i in range(n + 1):
-        v = 1.0 - i / n
-        pts.append((x0 + w * half(v), base_y - h * v + drop(v)))
-
-    # The underside, as its own shape rather than the tail of this one. The
-    # renderers used to take the second half of the point list for it, which
-    # worked only as long as nobody changed the order — and when somebody did,
-    # every cap grew a dark diagonal wedge across it.
-    rim = w * half(0.0)
-    under = []
-    # Out along the rim, which hangs lowest at its edges...
-    for i in range(n + 1):
-        u = -1.0 + 2.0 * i / n
-        under.append((x0 + rim * u, base_y + curl * (u * u)))
-    # ...and back along the gills, which rise towards the stem. The gap between
-    # the two is the overhang.
-    for i in range(n + 1):
-        u = 1.0 - 2.0 * i / n
-        under.append((x0 + rim * u, base_y - h * 0.17 * (1.0 - u * u)))
-    return pts, under
-
-
-def stem_outline(x0, half, stem_h, lean, sway, top_y, bot_y, n=20):
-    """A slender stem that bends, tapering towards the cap.
-
-    Sampled off stem_axis rather than carrying its own idea of where the stem
-    is, so the curve and the cap cannot drift apart.
-    """
-    left, right = [], []
     for i in range(n + 1):
         t = i / n
         y = top_y + (bot_y - top_y) * t
-        cx = stem_axis(x0, stem_h, lean, sway, y)
-        # Wider at the foot and narrowest just under the cap, which is the way
-        # round real ones are and the opposite of a column.
-        wdt = half * (0.86 + 0.5 * t * t)
-        left.append((cx - wdt, y))
-        right.append((cx + wdt, y))
-    return left + right[::-1]
-
-
-def stem_foot(x0, half, stem_h, lean, sway, bot_y, tall=6.0, n=8):
-    """The bruised section of stem just above the soil.
-
-    A piece of the stem rather than a mark across it. Psilocybes go blue where
-    they are handled or damaged, which is a stain through the flesh — and a bar
-    of a second colour laid over a stem reads as a band on a straw. Built from
-    stem_axis like everything else, so it follows the bend.
-    """
-    top_y = bot_y - tall
-    left, right = [], []
-    for i in range(n + 1):
-        t = i / n
-        y = top_y + (bot_y - top_y) * t
-        cx = stem_axis(x0, stem_h, lean, sway, y)
-        tt = (y - (HORIZON - stem_h)) / max(1e-6, stem_h)
-        wdt = half * (0.86 + 0.5 * tt * tt) * 1.02
-        left.append((cx - wdt, y))
-        right.append((cx + wdt, y))
-    return left + right[::-1]
+        pts.append((stem_axis(x0, stem_h, lean, sway, y), y))
+    return pts
 
 
 def mycelium():
-    """The network under the soil: nodes, hyphae, and the roots of each stem.
+    """The network under the soil: nodes, links, and the root of each stem.
 
-    Built the way the mesh actually is — nodes linked to their nearest
-    neighbours, with a few longer links so it is a mesh and not a chain — and
-    then every mushroom is attached to the node nearest its foot. That last
-    part is the whole idea of the mark: what you see above the ground is
-    growing out of what you do not.
+    Sparser than it was, and laid out like the graph the two front-ends draw
+    rather than like a scatter. It had three rows of fifteen nodes with
+    nearest-neighbour links and a few random long ones, which is a fair model
+    of a mycelium and, at any size a launcher icon is shown, a green smudge.
+
+    Eight nodes on a shallow arc now, each linked to its neighbours plus a few
+    crossing links so it reads as a mesh and not a chain. The arc matters: it
+    puts every node at a different depth, which gives the eye something to
+    follow, and it curves up towards the stems it feeds.
     """
-    rnd = random.Random(20260813)
-    nodes = []
+    nodes = [
+        (18.0, 74.0), (31.0, 82.0), (45.0, 87.0), (59.0, 88.0),
+        (73.0, 84.0), (86.0, 77.0), (38.0, 72.0), (66.0, 73.0),
+    ]
+    # The chain along the arc, then three links across it. Written out rather
+    # than generated: eight nodes is few enough to place by hand, and a mark
+    # that changes when somebody edits a random seed is not a mark.
+    edges = [
+        (0, 1), (1, 2), (2, 3), (3, 4), (4, 5),
+        (0, 6), (6, 2), (6, 3), (3, 7), (7, 4), (7, 5),
+    ]
 
-    # Rows rather than a uniform scatter: hyphae spread sideways, and rows give
-    # the eye horizontal structure to read as "underground" instead of "stars".
-    for row, (y, count) in enumerate([(70.0, 5), (78.0, 6), (86.0, 4)]):
-        for i in range(count):
-            t = (i + 0.5) / count
-            x = 16.0 + 76.0 * t + rnd.uniform(-3.0, 3.0)
-            nodes.append((x, y + rnd.uniform(-2.2, 2.2)))
-
-    edges = []
-    # Nearest-neighbour links, then a few longer ones.
-    for i, (xi, yi) in enumerate(nodes):
-        best = sorted(
-            (j for j in range(len(nodes)) if j != i),
-            key=lambda j: (nodes[j][0] - xi) ** 2 + (nodes[j][1] - yi) ** 2,
-        )
-        for j in best[:2]:
-            if (min(i, j), max(i, j)) not in edges:
-                edges.append((min(i, j), max(i, j)))
-    for _ in range(4):
-        a, b = rnd.randrange(len(nodes)), rnd.randrange(len(nodes))
-        if a != b and (min(a, b), max(a, b)) not in edges:
-            edges.append((min(a, b), max(a, b)))
-
-    # Nearest-neighbour linking can leave a pair connected only to each other,
-    # which draws as two dots and a stick off in the corner and reads as a
-    # rendering fault rather than as part of the network. Join every component
-    # to the rest by its closest pair.
-    parent = list(range(len(nodes)))
-
-    def find(a):
-        while parent[a] != a:
-            parent[a] = parent[parent[a]]
-            a = parent[a]
-        return a
-
-    for a, b in edges:
-        parent[find(a)] = find(b)
-
-    while len({find(i) for i in range(len(nodes))}) > 1:
-        groups = {}
-        for i in range(len(nodes)):
-            groups.setdefault(find(i), []).append(i)
-        keys = sorted(groups)
-        home, other = groups[keys[0]], [i for k in keys[1:] for i in groups[k]]
-        a, b = min(((i, j) for i in home for j in other),
-                   key=lambda p: (nodes[p[0]][0] - nodes[p[1]][0]) ** 2
-                   + (nodes[p[0]][1] - nodes[p[1]][1]) ** 2)
-        edges.append((min(a, b), max(a, b)))
-        parent[find(a)] = find(b)
-
-    # The roots: each stem's foot joins the nearest node, so the mushrooms are
-    # visibly part of the network rather than standing on top of it.
+    # Each stem's foot joins the nearest node, which is the whole idea of the
+    # mark: what is above the ground grew out of what is below it.
     roots = []
     for x0, _w, _h, sh, lean, sway in SHROOMS:
-        # Where the stem actually meets the soil, which with a bent stem is not
-        # where its nominal x is.
         foot = (stem_axis(x0, sh, lean, sway, HORIZON), HORIZON)
         near = min(nodes, key=lambda n: (n[0] - foot[0]) ** 2 + (n[1] - foot[1]) ** 2)
         roots.append((foot, near))
@@ -299,7 +212,7 @@ def spores(n=6):
 # than a second drawing that would drift from this one.
 # Chunkier than the full drawing on purpose: at this size a tall thin stem
 # under a narrow cap reads as an exclamation mark, not a mushroom.
-SHROOMS_SMALL = [(54.0, 21.0, 24.0, 14.0, 0.0, 0.0)]
+SHROOMS_SMALL = [(54.0, 25.0, 21.0, 15.0, 0.0, 0.0)]
 NODES_SMALL = [(23.0, 72.0), (42.0, 85.0), (67.0, 83.0), (86.0, 70.0)]
 EDGES_SMALL = [(0, 1), (1, 2), (2, 3), (0, 2)]
 
@@ -307,24 +220,25 @@ EDGES_SMALL = [(0, 1), (1, 2), (2, 3), (0, 2)]
 def _geometry(simple=False):
     """Everything the three renderers draw, computed once."""
     shrooms = SHROOMS_SMALL if simple else SHROOMS
-    caps, stems, feet = [], [], []
-    for x0, w, h, sh, lean, sway in shrooms:
+    caps, stems = [], []
+    for k, (x0, w, h, sh, lean, sway) in enumerate(shrooms):
         base = HORIZON - sh
+        # The tallest gets three levels, the others two and one. Depth costs
+        # nothing to draw and everything to read: a small cap subdivided three
+        # times is a smudge, and all three at the same depth looks printed.
+        depth = (3, 2, 1)[min(k, 2)]
         # The cap goes where the top of the stem actually is, not where a
         # straight stem would have put it.
-        cap, under = cap_outline(stem_axis(x0, sh, lean, sway, base), w, h, base)
-        caps.append((cap, under))
-        halfw = max(1.15, w * (0.155 if simple else 0.125))
-        stems.append(stem_outline(x0, halfw, sh, lean, sway,
-                                  base - h * 0.05, HORIZON + 1.5))
-        feet.append(stem_foot(x0, halfw, sh, lean, sway, HORIZON + 1.5))
+        caps.append(cap_triangles(stem_axis(x0, sh, lean, sway, base), w, h, base,
+                                  2 if simple else depth))
+        stems.append(stem_line(x0, sh, lean, sway, base - h * 0.02, HORIZON))
     if simple:
         foot = (SHROOMS_SMALL[0][0], HORIZON)
         near = min(NODES_SMALL, key=lambda n: (n[0] - foot[0]) ** 2 + (n[1] - foot[1]) ** 2)
-        return caps, stems, feet, NODES_SMALL, EDGES_SMALL, [(foot, near)]
+        return caps, stems, NODES_SMALL, EDGES_SMALL, [(foot, near)]
 
     nodes, edges, roots = mycelium()
-    return caps, stems, feet, nodes, edges, roots
+    return caps, stems, nodes, edges, roots
 
 
 def _poly(points):
@@ -347,7 +261,7 @@ SMALL = 128
 
 def render_png(path, size, background=True):
     big = size >= SMALL
-    caps, stems, feet, nodes, edges, roots = _geometry(simple=not big)
+    caps, stems, nodes, edges, roots = _geometry(simple=not big)
     s = size / VIEW
 
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
@@ -365,7 +279,11 @@ def render_png(path, size, background=True):
         # rectangle in it stops being a mark.
         d.rectangle([0, HORIZON * s, size, size], fill=EARTH)
 
-    # Hyphae first, glowing, so the mushrooms sit in front of the network.
+    # Everything that glows is drawn twice: once wide and blurred, once thin
+    # and bright. Both the links below the soil and the stems above it, because
+    # a stem is a connection too — it joins what the network grew to the
+    # network — and drawing it in a different idiom is what made the old mark
+    # look like a picture beside the app instead of part of it.
     glow = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     gd = ImageDraw.Draw(glow)
     width = max(1, int(size * (0.022 if big else 0.045)))
@@ -373,6 +291,9 @@ def render_png(path, size, background=True):
         gd.line([P(*nodes[i]), P(*nodes[j])], fill=PHOSPHOR + (150,), width=width)
     for foot, near in roots:
         gd.line([P(*foot), P(*near)], fill=PHOSPHOR + (170,), width=width)
+    for k in range(len(stems)):
+        gd.line([P(*p) for p in stems[k]], fill=PHOSPHOR + (150,),
+                width=width, joint="curve")
     glow = glow.filter(ImageFilter.GaussianBlur(size * 0.016))
     img.alpha_composite(glow)
 
@@ -382,25 +303,27 @@ def render_png(path, size, background=True):
     for foot, near in roots:
         d.line([P(*foot), P(*near)], fill=PHOSPHOR + (255,), width=thin)
 
-    r = size * (0.014 if big else 0.045)
+    r = size * (0.017 if big else 0.045)
     for x, y in nodes:
         cx, cy = P(x, y)
         d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=BONE)
 
-    # The soil line, drawn over the hyphae so the ground reads as a surface.
+    # The soil line, drawn over the links so the ground reads as a surface.
     d.line([P(4, HORIZON), P(VIEW - 4, HORIZON)],
            fill=EARTH_LINE, width=max(1, int(size * 0.012)))
 
-    # Mushrooms, tallest last so it sits in front.
+    # The stems, over the soil line, and the caps over those. Tallest last so
+    # it sits in front.
+    stem_w = max(2, int(size * (0.011 if big else 0.026)))
     for k in ([0] if len(caps) == 1 else [1, 2, 0]):
-        poly(stems[k], STEM)
-        # Bruising where the stem meets the soil.
-        # The bruise: a stained section of the stem, not a band across it.
-        poly(feet[k], BRUISE)
+        d.line([P(*p) for p in stems[k]], fill=PHOSPHOR + (255,),
+               width=stem_w, joint="curve")
+        # The cap: one triangle with a gasket punched out of it. The holes are
+        # filled with the background rather than a darker tint, so the figure
+        # is the same subtraction the site draws and not a decoration on top.
         poly(caps[k][0], CAP)
-        # A darker underside, so the cap has a lip rather than being a flat
-        # shape stuck on a stick.
-        poly(caps[k][1], CAP_DARK)
+        for hole in caps[k][1]:
+            poly(hole, VOID)
 
     if big:
         for x, y, rr in spores():
@@ -415,7 +338,7 @@ def render_png(path, size, background=True):
 # --- Android VectorDrawable --------------------------------------------------
 
 def render_vector(path):
-    caps, stems, feet, nodes, edges, roots = _geometry()
+    caps, stems, nodes, edges, roots = _geometry()
 
     def hexa(c):
         return "#%02X%02X%02X" % c
@@ -447,20 +370,27 @@ def render_vector(path):
                  f'android:strokeColor="{hexa(EARTH_LINE)}" android:strokeWidth="1.4"/>')
     parts.append("")
     parts.append("    <!-- fruiting bodies: what the network grew -->")
+    parts.append("")
+    # The stems, as strokes rather than filled shapes, so they read as the same
+    # kind of thing as the links below them.
     for k in (1, 2, 0):
-        parts.append(f'    <path android:pathData="{_poly(stems[k])}" '
-                     f'android:fillColor="{hexa(STEM)}"/>')
-        # The bruised foot. This drawing had it and the other two did not,
-        # which is how three renderers of one mark quietly become three marks.
-        parts.append(f'    <path android:pathData="{_poly(feet[k])}" '
-                     f'android:fillColor="{hexa(BRUISE)}"/>')
+        stem = _lines(list(zip(stems[k][:-1], stems[k][1:])))
+        parts.append(f'    <path android:pathData="{stem}" '
+                     f'android:strokeColor="{hexa(PHOSPHOR)}" android:strokeWidth="2.6" '
+                     f'android:strokeAlpha="0.35" android:strokeLineCap="round"/>')
+        parts.append(f'    <path android:pathData="{stem}" '
+                     f'android:strokeColor="{hexa(PHOSPHOR)}" android:strokeWidth="1.3" '
+                     f'android:strokeLineCap="round"/>')
         parts.append(f'    <path android:pathData="{_poly(caps[k][0])}" '
                      f'android:fillColor="{hexa(CAP)}"/>')
-        parts.append(f'    <path android:pathData="{_poly(caps[k][1])}" '
-                     f'android:fillColor="{hexa(CAP_DARK)}"/>')
-    for x, y, r in spores():
-        parts.append(f'    <path android:pathData="M {x:.2f} {y - r:.2f} '
-                     f'a {r:.2f} {r:.2f} 0 1 0 0.01 0 Z" android:fillColor="{hexa(VIOLET)}"/>')
+        # The gasket, punched out in the background colour. A vector drawable
+        # has no even-odd subtraction worth relying on across API levels, so
+        # the holes are drawn as shapes in the colour behind them — which is
+        # flat here, above the soil, and therefore exact.
+        for hole in caps[k][1]:
+            parts.append(f'    <path android:pathData="{_poly(hole)}" '
+                         f'android:fillColor="{hexa(VOID)}"/>')
+
     parts.append("</vector>")
 
     with open(path, "w") as f:
@@ -471,7 +401,7 @@ def render_vector(path):
 # --- SVG ---------------------------------------------------------------------
 
 def render_svg(path):
-    caps, stems, feet, nodes, edges, roots = _geometry()
+    caps, stems, nodes, edges, roots = _geometry()
 
     def hexa(c):
         return "#%02X%02X%02X" % c
@@ -494,13 +424,16 @@ def render_svg(path):
     parts.append(f'<path d="M 4 {HORIZON} L 104 {HORIZON}" stroke="{hexa(EARTH_LINE)}" '
                  f'stroke-width="1.4" stroke-linecap="round"/>')
     for k in (1, 2, 0):
-        parts.append(f'<path d="{sx.escape(_poly(stems[k]))}" fill="{hexa(STEM)}"/>')
-        parts.append(f'<path d="{sx.escape(_poly(feet[k]))}" fill="{hexa(BRUISE)}"/>')
+        stem = _lines(list(zip(stems[k][:-1], stems[k][1:])))
+        parts.append(f'<g filter="url(#g)" opacity="0.85"><path d="{sx.escape(stem)}" '
+                     f'stroke="{hexa(PHOSPHOR)}" stroke-width="2.6" fill="none" '
+                     f'stroke-linecap="round"/></g>')
+        parts.append(f'<path d="{sx.escape(stem)}" stroke="{hexa(PHOSPHOR)}" '
+                     f'stroke-width="1.2" fill="none" stroke-linecap="round"/>')
         parts.append(f'<path d="{sx.escape(_poly(caps[k][0]))}" fill="{hexa(CAP)}"/>')
-        parts.append(f'<path d="{sx.escape(_poly(caps[k][1]))}" '
-                     f'fill="{hexa(CAP_DARK)}"/>')
-    for x, y, r in spores():
-        parts.append(f'<circle cx="{x:.2f}" cy="{y:.2f}" r="{r:.2f}" fill="{hexa(VIOLET)}"/>')
+        for hole in caps[k][1]:
+            parts.append(f'<path d="{sx.escape(_poly(hole))}" fill="{hexa(VOID)}"/>')
+
     parts.append("</svg>")
 
     with open(path, "w") as f:
