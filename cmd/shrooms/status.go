@@ -147,13 +147,16 @@ func cmdStatus(args []string) error {
 	// is this peer on" is the first question a split raises.
 	if len(st.Meshes) > 1 {
 		for _, m := range st.Meshes {
-			fmt.Fprintf(head, "mesh %s\t%s\t%s  %s  peers %d%s%s\n",
+			fmt.Fprintf(head, "mesh %s\t%s\t%s  %s  peers %d%s%s%s\n",
 				m.Label, m.Overlay, m.Prefix, m.Iface, m.Peers,
-				relayNote(m), expiryNote(m.Expires))
+				relayNote(m), expiryNote(m.Expires), enrolNote(m))
 		}
 	} else if len(st.Meshes) == 1 {
 		if relayNote(st.Meshes[0]) != "" {
 			fmt.Fprintf(head, "relay\tnone\tpeers on mobile data may reach only public addresses\n")
+		}
+		if st.Meshes[0].Unenrolled {
+			fmt.Fprintf(head, "member\t!! no credential\tpeers will refuse this device — %s\n", enrolFix(""))
 		}
 		if note := expiryNote(st.Meshes[0].Expires); note != "" {
 			fmt.Fprintf(head, "member\t%s\tuntil %s\n",
@@ -448,6 +451,29 @@ func expiryNote(unix int64) string {
 		return fmt.Sprintf("  membership ends in %d days", int(left.Hours()/24))
 	}
 	return ""
+}
+
+// enrolNote says when this device holds no credential for a mesh that admits by
+// one.
+//
+// Loud, and not silenced by anything, because it is the only failure here that
+// is invisible from the machine it is on. The node runs, its peers appear in
+// its roster, and every one of them refuses its announces — so the symptom
+// shows up on other people's machines as a device that never arrives. Without
+// this line, the status page of a node nobody will admit reads as healthy.
+func enrolNote(m meshStatus) string {
+	if !m.Unenrolled {
+		return ""
+	}
+	return "  !! no credential — " + enrolFix(m.Label)
+}
+
+// enrolFix is the command that ends it, aimed at the mesh in question.
+func enrolFix(label string) string {
+	if label == "" || label == "default" {
+		return "shrooms admin issue"
+	}
+	return "shrooms admin issue --mesh " + label
 }
 
 // relayNote says when a mesh has nowhere to relay through.

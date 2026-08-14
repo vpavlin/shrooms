@@ -648,6 +648,22 @@ func (m *Mesh) SelfExpiry() time.Time {
 	return time.Unix(c.NotAfter, 0)
 }
 
+// Unenrolled reports that this mesh admits by credential and this device does
+// not hold one.
+//
+// It is the one state in which a node is completely healthy and completely
+// invisible: it announces, its peers refuse it before it reaches their roster,
+// and it therefore sees them while none of them sees it. Nothing else on the
+// status page hints at it, which is how it cost an afternoon of looking at the
+// wrong machine — the symptom presents on the peers, not here.
+func (m *Mesh) Unenrolled() bool {
+	if m.authority == nil {
+		return false // membership is the network key; there is nothing to hold
+	}
+	_, err := cred.UnmarshalCredential(m.st.Credential)
+	return err != nil
+}
+
 // PeerExpiry is when a peer's credential runs out, or the zero time when this
 // node has not seen one for it.
 //

@@ -605,6 +605,15 @@ func (s *State) Save() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	path := filepath.Join(s.dir, "state.json")
+
+	// Ordering against other processes, not only other goroutines. The daemon
+	// writes this file every announce; an admin command that writes it too has
+	// only the gap between them to work in.
+	if release, err := s.lockFile(); err == nil {
+		defer release()
+	}
+
 	sf := stateFile{
 		DevicePriv: base64.StdEncoding.EncodeToString(s.Identity.DevicePriv),
 		WGPriv:     base64.StdEncoding.EncodeToString(s.Identity.WGPriv[:]),
@@ -618,12 +627,28 @@ func (s *State) Save() error {
 	if s.Master != (identity.Master{}) {
 		sf.Master = base64.StdEncoding.EncodeToString(s.Master[:])
 	}
+
+	// Merge over what is on disk rather than replacing it.
+	//
+	// This used to serialise the in-memory state and rename it over the file,
+	// which meant the last writer erased everything the other had done. The
+	// daemon writes on every announce, so the daemon always won: `init --mesh`
+	// created a mesh identity and enrolled it, and within 45 seconds the
+	// running daemon — holding a copy loaded before that mesh existed — wrote
+	// the file back without it. On the next restart the mesh had no identity,
+	// so a fresh one was minted, and that identity had no credential and never
+	// could: nobody had signed for it. It announced to a mesh that refused it,
+	// and the only visible symptom was a node that could see its peers while
+	// none of them could see it.
+	if disk, err := readStateFile(path); err == nil {
+		sf = mergeStateFiles(disk, sf)
+	}
+
 	raw, err := json.MarshalIndent(sf, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal state: %w", err)
 	}
 
-	path := filepath.Join(s.dir, "state.json")
 	// A unique temporary name as well as the lock. The lock orders writers in
 	// this process; the name means a second process — an admin command run
 	// while the daemon is up — cannot delete the file this one is about to

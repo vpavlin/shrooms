@@ -392,6 +392,15 @@ type meshStatus struct {
 	// and nothing else on the status page hints at it. Zero when the mesh has
 	// no admin keys, where membership is the network key and does not lapse.
 	Expires int64 `json:"expires,omitempty"`
+
+	// Unenrolled means this mesh admits by credential and this device holds
+	// none, so every peer refuses its announces before they reach a roster.
+	//
+	// Reported because it is invisible from here by construction: the node is
+	// running, its tunnel state is fine, and the failure appears only on other
+	// people's machines as a peer that never shows up. Without this the status
+	// page of a node nobody will admit is indistinguishable from a healthy one.
+	Unenrolled bool `json:"unenrolled,omitempty"`
 }
 
 // statusPayload is what the daemon reports over the control socket.
@@ -1092,6 +1101,7 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 			if e := in.mesh.SelfExpiry(); !e.IsZero() {
 				ms.Expires = e.Unix()
 			}
+			ms.Unenrolled = in.mesh.Unenrolled()
 			if a, ok := in.mesh.LookupV4(in.self); ok {
 				ms.OverlayV4 = a.String()
 			}
