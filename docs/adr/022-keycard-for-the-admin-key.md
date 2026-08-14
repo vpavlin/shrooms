@@ -177,11 +177,21 @@ Two things follow for the implementation, and one for the design:
   signatures — not in a change to the credential format, which already signs a
   digest at a time. On the phone this falls out for free: the app owns the NFC
   channel.
-- **The phone holds the pairing.** ADR-018's point that pairing is state worth
-  as much as physical possession applies here with the phone as the host, and a
-  phone is lost more often than a laptop. A pairing is revocable from the card
-  and worth nothing without the PIN, but it does mean the admin's *phone* joins
-  the set of things whose loss matters.
+- **The phone holds the pairing, and that is fine.** Pairing is host state — a
+  32-byte key and a slot index, one of five the card will ever grant — and
+  without it a host cannot issue any command past SELECT. Putting it on a phone
+  sounds worse than it is: it is a shortcut for somebody who *already has the
+  card*, and on its own it is a key to a lock that is not present. The card
+  lives in a safe and comes out for an invite or a monthly sweep, so the phone
+  alone yields nothing and the card alone still faces the PIN, three tries and
+  a wipe. That separation is the whole point of buying a card — what matters
+  stops living on the devices that move.
+
+  Two operational notes rather than risks: the card and the phone should not be
+  stored together, which a safe arranges by itself; and `unpair` is a card
+  command, so retiring a lost phone's slot means presenting the card to another
+  paired host. Five slots is not many, and a phone lost without cleanup costs
+  one silently.
 - **Pinless signing exists and is refused.** Applet 3.1 has `SIGN_P1_PINLESS`
   and a designated path that signs with no PIN at all — the gate is
   `pin.isValidated() || usePinless || isPinless()`. Applet 4.0 deletes it: its
