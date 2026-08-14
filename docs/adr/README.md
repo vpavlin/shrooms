@@ -37,3 +37,4 @@ number appears, its source is named.
 | [025](025-control-from-a-desktop-app.md) | Control from a desktop app | accepted; settings built, admission deliberately not |
 | [026](026-announce-what-is-bound.md) | Announce what is bound to the mesh address | accepted; built, off by default |
 | [027](027-punching-through-the-relay.md) | Punch through the relay we already have | proposed; every part exists except the coordination |
+| [028](028-when-the-fleet-turns-on-rln.md) | When the fleet turns on RLN | proposed; nothing to build yet, two questions to ask |

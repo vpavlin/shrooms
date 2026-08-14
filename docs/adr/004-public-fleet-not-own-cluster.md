@@ -19,7 +19,10 @@ Use the public `logos.dev` fleet (cluster 2).
   survives the VPS moving.
 - **No RLN.** Cluster 2 has `rlnRelay: false`, which deletes per-device
   memberships (RLN's Shamir sharing leaks the key if one membership publishes
-  twice in an epoch), the ~$5/6mo/device cost, and ZK proving on phones.
+  twice in an epoch), the ~$5/6mo/device cost, and ZK proving on phones. This
+  is the one reason here that somebody else controls, and
+  [ADR-028](028-when-the-fleet-turns-on-rln.md) works out what happens when
+  they change it.
 - **Crowd cover.** Sharing a shard with other applications is the only anonymity
   set available.
 - It is the user's own ecosystem's fleet.
