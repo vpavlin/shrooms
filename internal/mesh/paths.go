@@ -309,8 +309,49 @@ func (m *Mesh) candidates() []string {
 	// Keep the announce inside its fixed padding. Four is the real ceiling for
 	// a typical name; announceWith trims further if a longer one needs it, so
 	// this is a cheap first cut rather than the guarantee.
+	out = reserveLocal(out)
 	if len(out) > 4 {
 		out = out[:4]
 	}
 	return out
+}
+
+// reserveLocal makes sure a LAN address survives truncation.
+//
+// Both cuts above drop from the end, and local addresses are ordered last, so
+// on a node with several reflexive addresses the LAN address is the first thing
+// discarded. That is exactly backwards: a node with many reflexive addresses is
+// behind endpoint-dependent NAT, which is the case where its public addresses
+// are least likely to work — and it takes the LAN address away from peers in
+// the same building, who then reach it by hairpinning through the router, or
+// through a relay on another continent, for traffic that never had to leave the
+// house.
+//
+// So one place is held for the best private address, at index 1 rather than 0:
+// a peer that cannot reach us at all is worse off than one paying for a
+// hairpin, so the first slot stays with an address that works from outside.
+func reserveLocal(in []string) []string {
+	for i, s := range in {
+		if !isPrivate(s) {
+			continue
+		}
+		if i < 2 {
+			return in // already safe
+		}
+		out := make([]string, 0, len(in))
+		out = append(out, in[0], s)
+		out = append(out, in[1:i]...)
+		return append(out, in[i+1:]...)
+	}
+	return in
+}
+
+// isPrivate reports whether an announced endpoint is on a private network.
+//
+// Classified by the address rather than by where it came from, because a peer
+// on the same LAN observes us at a private address and reports it — so a
+// reflexive address is not necessarily an outside one.
+func isPrivate(s string) bool {
+	ap, err := netip.ParseAddrPort(s)
+	return err == nil && ap.Addr().IsPrivate()
 }

@@ -3,6 +3,7 @@ package disco
 import (
 	"encoding/hex"
 	"net/netip"
+	"sort"
 	"sync"
 	"time"
 )
@@ -311,15 +312,39 @@ func (p *Prober) Paths(peerID string) []Path {
 }
 
 // Reflexive returns the self-addresses peers have reported, most recent first.
+//
+// Actually sorted, which it was not: it returned them in map order, so the set
+// arrived in a different order every call. The caller announces the first few
+// and drops the rest, which turned "which of our addresses do peers learn" into
+// a coin flip re-tossed every announce — a peer could see an address once and
+// never again while nothing had changed.
 func (p *Prober) Reflexive(now time.Time) []netip.AddrPort {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	out := make([]netip.AddrPort, 0, len(p.reflexive))
+	type entry struct {
+		addr netip.AddrPort
+		seen time.Time
+	}
+	found := make([]entry, 0, len(p.reflexive))
 	for addr, seen := range p.reflexive {
 		if now.Sub(seen) < 10*time.Minute {
-			out = append(out, addr)
+			found = append(found, entry{addr, seen})
 		}
+	}
+	// Ties broken on the address so the order is total: several peers observing
+	// us at the same moment is normal, and two addresses that swap places are
+	// the thing this is here to stop.
+	sort.Slice(found, func(i, j int) bool {
+		if !found[i].seen.Equal(found[j].seen) {
+			return found[i].seen.After(found[j].seen)
+		}
+		return found[i].addr.String() < found[j].addr.String()
+	})
+
+	out := make([]netip.AddrPort, 0, len(found))
+	for _, e := range found {
+		out = append(out, e.addr)
 	}
 	return out
 }
