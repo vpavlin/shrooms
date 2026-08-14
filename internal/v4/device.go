@@ -35,7 +35,7 @@ type Device struct {
 	mss   uint16
 
 	mu    sync.Mutex
-	flows map[flowKey]time.Time
+	flows map[flowKey]flow
 
 	translatedOut atomic.Uint64
 	translatedIn  atomic.Uint64
@@ -53,6 +53,21 @@ type flowKey struct {
 	peerPort  uint16
 }
 
+// flow is what is remembered about a conversation.
+//
+// local is the IPv4 address the operating system chose to send from, and it is
+// recorded because it cannot be assumed. With one mesh it is always this
+// device's own alias. With two, the device holds an alias per mesh, and nothing
+// obliges the OS to pick the one belonging to the mesh a destination is in.
+// Addressing the reply to our own alias regardless meant it arrived at an
+// address the socket was not bound to, the kernel dropped it, and the
+// connection sat there until it timed out — with the tunnel up, the name
+// resolving, the packet translated and the peer answering.
+type flow struct {
+	seen  time.Time
+	local netip.Addr
+}
+
 // FlowIdle is how long a flow is remembered after its last packet.
 //
 // Two minutes covers a page load and a keepalive interval, and losing an entry
@@ -63,7 +78,7 @@ const FlowIdle = 2 * time.Minute
 // NewDevice wraps a tun. mss is the largest segment a translated TCP connection
 // may use; zero disables clamping.
 func NewDevice(dev tun.Device, table *Table, mss uint16) *Device {
-	return &Device{Device: dev, table: table, mss: mss, flows: make(map[flowKey]time.Time)}
+	return &Device{Device: dev, table: table, mss: mss, flows: make(map[flowKey]flow)}
 }
 
 // Stats reports how much has been translated in each direction, and how many
@@ -148,7 +163,9 @@ func (d *Device) toOverlay(pkt []byte) []byte {
 		return nil
 	}
 	if key, ok := keyOf(pkt[9], pkt[v4HeaderLen:], peer, true); ok {
-		d.remember(key)
+		// The source as sent, not the one we would have chosen.
+		src, _ := netip.AddrFromSlice(pkt[12:16])
+		d.remember(key, src)
 	}
 	return six
 }
@@ -167,10 +184,20 @@ func (d *Device) toAlias(pkt []byte) []byte {
 		return nil
 	}
 	key, ok := keyOf(pkt[6], pkt[v6HeaderLen:], src, false)
-	if !ok || !d.known(key) {
+	if !ok {
 		return nil // ordinary IPv6 traffic; leave it alone
 	}
-	return To4(pkt, alias, d.table.Self())
+	local, seen := d.known(key)
+	if !seen {
+		return nil
+	}
+	if !local.IsValid() {
+		// A flow remembered before this carried the address, or a packet whose
+		// source could not be read. Our own alias is the best guess and the old
+		// behaviour.
+		local = d.table.Self()
+	}
+	return To4(pkt, alias, local)
 }
 
 // keyOf builds a flow key from a packet's transport header. outbound says
@@ -199,33 +226,36 @@ func keyOf(proto byte, body []byte, peer netip.Addr, outbound bool) (flowKey, bo
 	return flowKey{}, false
 }
 
-func (d *Device) remember(k flowKey) {
+func (d *Device) remember(k flowKey, local netip.Addr) {
 	now := time.Now()
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.flows[k] = now
+	d.flows[k] = flow{seen: now, local: local}
 	// Swept here rather than on a timer: the table only grows when packets are
 	// being translated, so the moment one arrives is exactly when it is worth
 	// looking, and a daemon that is idle does no work.
 	if len(d.flows) > 64 {
-		for key, seen := range d.flows {
-			if now.Sub(seen) > FlowIdle {
+		for key, f := range d.flows {
+			if now.Sub(f.seen) > FlowIdle {
 				delete(d.flows, key)
 			}
 		}
 	}
 }
 
-func (d *Device) known(k flowKey) bool {
+// known returns the local address the flow was opened from, if it is still
+// live. The address matters as much as the fact: see toAlias.
+func (d *Device) known(k flowKey) (netip.Addr, bool) {
 	now := time.Now()
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	seen, ok := d.flows[k]
-	if !ok || now.Sub(seen) > FlowIdle {
-		return false
+	f, ok := d.flows[k]
+	if !ok || now.Sub(f.seen) > FlowIdle {
+		return netip.Addr{}, false
 	}
 	// Refreshed on use, so a long-lived connection does not expire underneath
 	// itself while it is still carrying traffic.
-	d.flows[k] = now
-	return true
+	f.seen = now
+	d.flows[k] = f
+	return f.local, true
 }
