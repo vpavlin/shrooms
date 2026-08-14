@@ -20,7 +20,15 @@ HOST=${FDROID_HOST:-192.168.0.152}
 FDROID_DIR=${FDROID_DIR:-'~/fdroid'}
 FDROID_BIN=${FDROID_BIN:-'~/fdroid-venv/bin/fdroid'}
 APP_ID=${APP_ID:-xyz.vpavlin.shrooms}
-VERSION_NAME=${VERSION_NAME:-1.2-invites}
+# Derived, the way the daemon and the portable build already derive theirs.
+#
+# It was the literal string "1.2-invites" for every publish, so three releases
+# in a row — including a day of fixes to path selection and the IPv4 translator
+# — all read the same in F-Droid, and neither a user nor the person who built
+# them could tell which was installed. A name that has to be remembered is a
+# name that stops being true; --dirty is kept so a publish from an uncommitted
+# tree says so out loud.
+VERSION_NAME=${VERSION_NAME:-$(git describe --tags --always --dirty 2>/dev/null || echo dev)}
 
 echo "==> checking $HOST"
 ssh "$HOST" "test -f $FDROID_DIR/config.yml" || { echo "no fdroid config on $HOST"; exit 1; }
