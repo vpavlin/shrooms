@@ -256,8 +256,106 @@ Treat that key as a password: anyone holding it is a member of the mesh.
 EOF
 fi
 
+# Firewall advice for the machine in front of us.
+#
+# Chosen by what is actually running rather than by distro, because the two
+# disagree often enough to matter: Fedora ships firewalld but a server may run
+# plain nftables, and Ubuntu ships ufw but frequently has it switched off. A
+# command for the wrong tool is worse than none — it appears to work, changes
+# nothing the active firewall consults, and the symptom stays.
+#
+# Two rules, not one, and they fail differently. The UDP port is the tunnel
+# itself: without it this node cannot be dialled, which looks like a peer that
+# never comes up. The interface rule is about traffic that has already arrived
+# through the tunnel — a host firewall does not know the mesh interface is the
+# mesh and files it under whatever it does with strangers, so `ssh host.mesh`
+# works (ssh is usually allowed) while a service published on port 80 is
+# refused. That pair of symptoms is a genuinely confusing thing to debug.
+firewall_hint() {
+    local port iface conf=/etc/shrooms/config.toml
+    port=$(sed -n 's/^ *listen_port *= *\([0-9]\+\).*/\1/p' "$conf" 2>/dev/null | head -1)
+    iface=$(sed -n 's/^ *interface *= *"\([^"]*\)".*/\1/p' "$conf" 2>/dev/null | head -1)
+    port=${port:-51820}
+    iface=${iface:-shrooms0}
+
+    echo "==> firewall"
+
+    if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+        cat <<EOF
+firewalld is running. The mesh interface lands in the "public" zone, which
+allows ssh and little else.
+
+  sudo firewall-cmd --permanent --add-port=$port/udp
+  sudo firewall-cmd --permanent --zone=trusted --add-interface=$iface
+  sudo firewall-cmd --reload
+
+The second line says traffic arriving over the mesh is trusted, which matches
+how access is decided here: by membership, enforced by WireGuard, not by port.
+On a mesh you share with other people do not do that — it gives their devices
+everything on this machine, not only what you published. There, open the
+specific ports instead:
+
+  sudo firewall-cmd --permanent --add-port=80/tcp
+EOF
+    elif command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi '^Status: active'; then
+        cat <<EOF
+ufw is active.
+
+  sudo ufw allow $port/udp
+  sudo ufw allow in on $iface
+
+The second line trusts anything arriving over the mesh, which is right for your
+own devices. On a mesh shared with other people, allow the published ports
+instead: sudo ufw allow in on $iface to any port 80 proto tcp
+EOF
+    elif command -v nft >/dev/null 2>&1 && nft list ruleset 2>/dev/null | grep -q 'chain input'; then
+        cat <<EOF
+nftables has rules loaded. Chain names vary, so check yours against
+\`sudo nft list ruleset\` before pasting — these assume the common inet filter:
+
+  sudo nft add rule inet filter input udp dport $port accept
+  sudo nft add rule inet filter input iifname "$iface" accept
+
+Added this way they are gone at reboot. Put them in /etc/nftables.conf, or
+wherever your distribution keeps the ruleset it restores.
+EOF
+    elif command -v iptables >/dev/null 2>&1 && iptables -S 2>/dev/null | grep -q '^-A INPUT'; then
+        cat <<EOF
+iptables has rules in INPUT.
+
+  sudo iptables -I INPUT -p udp --dport $port -j ACCEPT
+  sudo iptables -I INPUT -i $iface -j ACCEPT
+
+Those are lost at reboot unless something saves them — iptables-persistent on
+Debian and Ubuntu, iptables-services on RHEL.
+EOF
+    else
+        cat <<EOF
+No active host firewall found, so there is probably nothing to open here. If a
+peer still cannot reach this node, the block is upstream: a home router, or a
+cloud provider's security group. Both need $port/udp forwarded to this machine.
+EOF
+    fi
+
+    if [ "$RELAY" = yes ]; then
+        cat <<EOF
+
+This node relays for others, so being reachable is not optional for it: a relay
+nobody can dial is a relay that does nothing.
+EOF
+    fi
+
+    cat <<EOF
+
+Each additional mesh uses the next port and interface up — a second mesh is
+$((port + 1))/udp on ${iface}1.
+EOF
+}
+
+RELAY=no
 if docker run --rm --entrypoint /bin/sh -v "/etc/shrooms:/etc/shrooms$Z" "$IMAGE" \
        -c 'grep -q "^relay *= *\"true\"" /etc/shrooms/config.toml' 2>/dev/null; then
-    echo "This node relays. Open its UDP port if a firewall is in the way:"
-    echo "  ufw allow 51820/udp    # or the equivalent"
+    RELAY=yes
 fi
+
+firewall_hint
