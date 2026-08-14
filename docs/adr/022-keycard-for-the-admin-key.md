@@ -1,13 +1,19 @@
 # 022. A Keycard for the admin key
 
-**Status:** proposed. The seam is built; the card is blocked on a question this
-ADR got wrong.
+**Status:** accepted, and built up to the card itself.
 
 `cred.Signer` exists and the admin tooling signs through it, so the file-backed
-key and a card are already interchangeable above that line. What is not built is
-the card, because of the finding in "What the library actually does" below: it
-signs secp256k1, not ed25519, and that lands on every node rather than only on
-the admin's machine.
+key and a card are interchangeable above that line. The question this ADR
+originally got wrong — whether the card could sign ed25519 — has been settled
+against hardware and the applet source: it cannot, so option 1 below was taken.
+Every node now verifies both key types (`internal/cred/secp256k1.go`), and
+signing happens through a detached signer (`--sign-with`, or a digest read off
+the terminal) so no card driver is linked into shrooms at all.
+
+What remains is a live defect rather than a design question: signatures
+produced by `keycard-cli` do not verify against the public key that same tool
+exports. Until that is resolved with the Keycard developers, the seam works and
+the card does not.
 
 ## Context
 
@@ -74,18 +80,21 @@ effort:
    dependency — decred's is the light one, and is pure Go, so gomobile is fine
    with it. Existing meshes are untouched: a mesh's authority is fixed at mint,
    so this only ever applies to a mesh created with a card.
-2. **Find EdDSA on the card.** The applet may support more than this Go library
-   exposes — the library is not the applet — and if it does, the change stays
-   entirely on the admin's machine, which is what made this attractive in the
-   first place. Worth ten minutes with a card in hand before choosing option 1.
+2. **Find EdDSA on the card.** *Closed.* The hope was that the applet supported
+   more than this Go library exposes — the library is not the applet. Checked
+   with a card in hand and against the applet source at tag 3.1.0: there is no
+   ed25519 in it at all. The library was not hiding anything.
 3. **Do not do it.** The admin key is already offline and used a few times a
    year; a card improves it, and not at the price of a new signature scheme on
    every node.
 
-The recommendation is to try (2) with hardware before committing to (1), and to
-treat (1) as a real option rather than a workaround — a mesh minted with a card
-is a new mesh anyway, and the address prefix already derives from whatever the
-authority is.
+**(1) was taken**, once (2) was closed — and it turned out to be the smaller
+change of the two on offer. A mesh minted with a card is a new mesh anyway, the
+address prefix already derives from whatever the authority is, and the verifier
+is one pure-Go dependency that gomobile accepts. The dependency shrooms did
+*not* take is the card library: signing is detached, so go-ethereum stays out of
+the build and the admin's card can be driven by whatever tool the admin
+already trusts.
 
 ### The seam to build
 
@@ -122,11 +131,66 @@ would be the one nothing else exercises.
   currently a paper backup against a lost file; with a card it is the answer to
   a lost or wiped card. The recovery key should not also live on the same card,
   which is the obvious mistake.
-- **A card is not always present.** Renewal (ADR-018) is meant to be
-  hands-off, and a card is by definition not. Either renewal keeps a separate
-  online key in the authority set — which the fixed set already allows for —
-  or renewal requires a person, which is a real cost to state rather than
-  discover.
+- **A card is not always present.** Renewal (ADR-018) needs a person already —
+  the file-backed key prompts for its passphrase, so the sweep has never been
+  unattended — and a card changes the prompt rather than introducing one. What
+  it does change is the *count*: a sweep signs one credential per expiring
+  device. See below.
+
+### One PIN, many signatures — and the phone as the reader
+
+A renewal sweep signs once per expiring device, and an invite exchange signs
+again. If each signature cost a PIN entry, a card would make the thing it was
+meant to protect annoying enough to route around, which is the usual way
+hardware keys fail.
+
+It does not, and the reason is in the applet rather than in any client. PIN
+state is cleared in exactly one place — `selectApplet`, which runs on SELECT,
+so on power-up:
+
+```java
+private void selectApplet(APDU apdu) {
+  if (pin != null) {
+    altPIN.reset();
+    mainPIN.reset();
+```
+
+Nothing else resets it: not a signature, not a derivation. **Verify the PIN once
+and every subsequent `SIGN` in that card session is free**, for as long as the
+card stays powered and the client holds the same secure channel. A sweep over
+five devices is one PIN.
+
+That is what makes **the phone the natural reader**. Keycard is NFC, the phone
+already has the radio, and tapping a card to a phone is a gesture people
+perform without instruction. Because the field powers the card, holding it
+against the back *is* the session: unlock once, sign everything, take the card
+away and the card powers down and locks itself. There is no timeout to choose
+and nothing to remember to lock — the physical act and the security boundary
+are the same act, which is the property this rarely has.
+
+Two things follow for the implementation, and one for the design:
+
+- **The signer must outlive the digest.** `--sign-with` runs its command once
+  per digest, and `keycard-cli` unpairs at the end of every invocation, so five
+  devices is five sessions and five PINs today. Batching lives in a signer
+  process that stays alive across the sweep — reading digests and writing
+  signatures — not in a change to the credential format, which already signs a
+  digest at a time. On the phone this falls out for free: the app owns the NFC
+  channel.
+- **The phone holds the pairing.** ADR-018's point that pairing is state worth
+  as much as physical possession applies here with the phone as the host, and a
+  phone is lost more often than a laptop. A pairing is revocable from the card
+  and worth nothing without the PIN, but it does mean the admin's *phone* joins
+  the set of things whose loss matters.
+- **Pinless signing exists and is refused.** Applet 3.1 has `SIGN_P1_PINLESS`
+  and a designated path that signs with no PIN at all — the gate is
+  `pin.isValidated() || usePinless || isPinless()`. Applet 4.0 deletes it: its
+  `sign` accepts only `SIGN_P1_DERIVE` and requires `pin.isValidated()`
+  unconditionally. So it is a feature that works on one dev card and not on a
+  card bought next year, and what it buys is that possession of the card alone
+  admits devices to the mesh — which is precisely what the PIN is there to
+  prevent. The session behaviour gives the same ergonomics without either
+  problem.
 
 ### What it does not fix
 
