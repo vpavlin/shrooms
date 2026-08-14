@@ -173,6 +173,12 @@ class MeshVpnService : VpnService() {
                         val ov = m.optString("overlay")
                         val pfx = m.optString("prefix")
                         if (ov.isEmpty() || !pfx.contains("/")) continue
+                        // A mesh that is switched off is still listed, because
+                        // the UI shows its address — but claiming its prefix
+                        // here would pull that traffic into a tunnel with no
+                        // instance behind it, where it is dropped rather than
+                        // refused.
+                        if (m.optBoolean("disabled")) continue
                         builder.addAddress(ov, 128)
                         builder.addRoute(pfx.substringBefore("/"), pfx.substringAfter("/").toInt())
 

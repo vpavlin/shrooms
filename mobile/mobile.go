@@ -536,7 +536,18 @@ func MeshesJSON(configDir string) string {
 		V4Block  string `json:"v4_block"`
 	}
 	var out []entry
-	blocks := meshBlocks(cfg.Meshes())
+	// Assigned over the meshes that RUN, which is the set the tunnel assigns
+	// over (see Start). A block depends on the whole set — two meshes can prefer
+	// the same one and the loser is probed onto the next — so computing this
+	// over cfg.Meshes() while the tunnel computes it over cfg.Active() gave a
+	// mesh one block here and a different one there whenever a switched-off
+	// mesh collided with a running one. Android then installed the route for a
+	// range nothing translated into, so every synthetic IPv4 address the
+	// resolver handed out for that mesh went nowhere. IPv6 was unaffected,
+	// which is what made it so hard to see: a terminal resolves and connects
+	// over v6 and looks perfect, while a browser races A against AAAA and
+	// fails whenever the A wins.
+	blocks := meshBlocks(cfg.Active())
 	for _, m := range cfg.Meshes() {
 		nk, err := m.Key()
 		if err != nil {
@@ -548,20 +559,26 @@ func MeshesJSON(configDir string) string {
 			continue
 		}
 		self := identity.OverlayAddr(nk, ms.Identity.DevicePub)
-		aliases := v4.NewTableIn(blocks[networkID],
-			v4.Entry{Overlay: self, DevicePub: ms.Identity.DevicePub}, nil)
 		// Reported for a mesh that is switched off as well as one that is on.
 		// The identity and the address exist either way — they are derived, not
 		// allocated — and hiding them made a mesh look half-forgotten rather
 		// than simply not running.
-		out = append(out, entry{
+		e := entry{
 			Label:    m.Label,
 			Disabled: m.Disabled,
 			Overlay:  self.String(),
 			Prefix:   nk.Prefix().String(),
-			V4:       aliases.Self().String(),
-			V4Block:  aliases.Block().String(),
-		})
+		}
+		// The synthetic IPv4 side exists only while the mesh runs, because it is
+		// the running instance that translates into it. A switched-off mesh has
+		// no block, and saying it had one is what would put a route on the
+		// tunnel with nothing behind it.
+		if block, running := blocks[networkID]; running {
+			aliases := v4.NewTableIn(block,
+				v4.Entry{Overlay: self, DevicePub: ms.Identity.DevicePub}, nil)
+			e.V4, e.V4Block = aliases.Self().String(), aliases.Block().String()
+		}
+		out = append(out, e)
 	}
 	b, err := json.Marshal(out)
 	if err != nil {
