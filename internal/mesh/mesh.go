@@ -137,6 +137,14 @@ type Mesh struct {
 	// a device by staying quiet.
 	revoked *cred.List
 
+	// networkID names this mesh in the state dir, so its revocations survive a
+	// restart (see loadRevocations).
+	networkID string
+
+	// lastEpoch is the rendezvous epoch the last announce went out under. A
+	// change is the moment to re-publish what we know has been withdrawn.
+	lastEpoch int64
+
 	// grants remembers renewals already seen, so relaying one does not become
 	// a broadcast storm: every node passes on what is new to it, and without
 	// this "new to it" would be true every time it came back round.
@@ -219,6 +227,8 @@ func New(log *slog.Logger, cfg state.Config, st *state.State, node *waku.Node, d
 		rates:      newRates(),
 		subscribed: make(map[string]bool),
 	}
+	m.networkID = state.NetworkID(nk)
+	m.loadRevocations()
 	if cfg.Relay {
 		m.relaySrv = relay.NewServer(m.relayKey)
 		log.Info("acting as a relay for this mesh")
@@ -461,6 +471,16 @@ func (m *Mesh) Run(ctx context.Context) error {
 			// subscriptions; ours is the only side that knows they are gone.
 			m.repairRendezvous(now)
 
+			// Each epoch rotation, say again what has been withdrawn. See
+			// republishRevocations: this is what makes a revocation durable
+			// for a node that was not listening when it was first published.
+			if e := topic.Epoch(now); e != m.lastEpoch {
+				if m.lastEpoch != 0 {
+					m.republishRevocations(now)
+				}
+				m.lastEpoch = e
+			}
+
 			// Resubscribe first: near an epoch boundary the next topic must be
 			// live before we publish to it.
 			if err := m.resubscribe(now); err != nil {
@@ -681,6 +701,79 @@ func (m *Mesh) PeerExpiry(id string) time.Time {
 	return time.Time{}
 }
 
+// loadRevocations re-reads what this node had already been told is withdrawn.
+//
+// Every entry is verified again against the authority rather than trusted for
+// having been on our own disk: the file is the same shape as something a peer
+// hands us, and a list that is believed because of where it was found is a list
+// that can be edited by anyone who can write there.
+//
+// A mesh with no authority has nothing to verify against and nothing to revoke,
+// so it skips this entirely.
+func (m *Mesh) loadRevocations() {
+	if m.authority == nil {
+		return
+	}
+	raws := m.st.Revocations(m.networkID)
+	kept := 0
+	for _, raw := range raws {
+		r, err := cred.UnmarshalRevocation(raw)
+		if err != nil {
+			continue
+		}
+		if err := cred.VerifyRevocationBy(m.authority, r); err != nil {
+			m.log.Warn("dropping a stored revocation this mesh did not sign", "err", err)
+			continue
+		}
+		if m.revoked.Add(r, raw, time.Now().Add(cred.DefaultLife)) {
+			kept++
+		}
+	}
+	if kept > 0 {
+		m.log.Info("restored revocations", "count", kept)
+	}
+}
+
+// saveRevocations writes the list back, so a restart does not re-admit a device
+// somebody deliberately removed.
+func (m *Mesh) saveRevocations() {
+	if m.authority == nil {
+		return
+	}
+	if err := m.st.SetRevocations(m.networkID, m.revoked.All()); err != nil {
+		// Not fatal, and deliberately loud: the node keeps enforcing what it
+		// holds in memory, and the operator needs to know that guarantee now
+		// ends at the next restart.
+		m.log.Error("could not persist revocations; they will be lost on restart", "err", err)
+	}
+}
+
+// republishRevocations puts everything this node knows is withdrawn back on the
+// bus.
+//
+// A revocation used to be relayed exactly once, by whoever first heard it. That
+// left the guarantee resting on who happened to be online in that instant: a
+// node that was asleep, or that joined later, never learned it and admitted the
+// device for the rest of its credential's life. Re-publishing on each epoch
+// rotation makes the withdrawal a standing statement rather than an event, so a
+// node that misses it is wrong for at most an epoch rather than for a month.
+//
+// The cost is bounded by what an admin has signed — one small message per
+// revoked device per hour — and revocations are the one control message where
+// saying it again is always safe.
+func (m *Mesh) republishRevocations(now time.Time) {
+	all := m.revoked.All()
+	if len(all) == 0 {
+		return
+	}
+	for _, raw := range all {
+		if err := m.publishRevocation(raw, now); err != nil {
+			m.log.Debug("could not re-publish a revocation", "err", err)
+		}
+	}
+	m.log.Debug("re-published revocations", "count", len(all))
+}
+
 // publishRevocation puts a withdrawal on the bus.
 //
 // Re-published by every node that learns one, not only by the admin: an admin
@@ -752,6 +845,10 @@ func (m *Mesh) applyRevocation(raw []byte, now time.Time) (bool, error) {
 	if !m.revoked.Add(r, raw, now.Add(cred.DefaultLife)) {
 		return false, nil
 	}
+	// To disk before anything else: the rest of this function drops the peer
+	// and tells the bus, and a crash between those and the next write would
+	// leave a node that has forgotten why it dropped anybody.
+	m.saveRevocations()
 	m.log.Info("device revoked",
 		"device", hex.EncodeToString(r.DevicePub)[:16], "serial", r.Serial)
 	// Drop it now rather than waiting for its announce to lapse.
