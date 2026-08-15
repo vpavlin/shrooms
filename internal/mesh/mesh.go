@@ -1139,28 +1139,70 @@ func (m *Mesh) announceWith(now time.Time, fresh bool) error {
 //
 // Each of these maps is keyed by peer id and only ever grew: the roster, the
 // replay counters, the probe paths, the connection timings, the throughput
-// history and the announce-reply debounce. A peer that never returns stayed in
-// all six until the process restarted.
+// history, the announce-reply debounce, the endpoint-roam counters, the
+// per-peer service lists and the credential expiries. A peer that never
+// returns stayed in all of them until the process restarted.
+//
+// The last three were missed when this was written, and services was the
+// expensive one: it takes a signed list from any holder of the network key, so
+// on a bearer mesh it grew with every stranger who published one.
 //
 // Ordered deliberately: the roster is the authority on who exists, so it
 // decides who is gone and everything else follows. Doing it the other way
 // leaves state for a peer the roster still lists.
+//
+// Runs on the probe ticker, so anything also touched from the receive path is
+// reclaimed under the lock that guards it there.
 func (m *Mesh) pruneForgotten(now time.Time) {
 	gone := m.roster.Prune(now)
 	if len(gone) == 0 {
 		return
 	}
+	m.forget(gone)
+	m.log.Info("forgot peers not seen recently", "count", len(gone), "after", ForgetAfter)
+
+	// The data plane still holds them as WireGuard peers until the next sync.
+	m.requestResync()
+}
+
+// forget drops the per-peer state, each map under whichever lock guards it.
+//
+// Split out of pruneForgotten so it can be tested directly: the reclamation is
+// where the locking lives, and the roster call above is not the part that needs
+// proving.
+func (m *Mesh) forget(gone []string) {
 	for _, id := range gone {
 		m.guard.Forget(mustHexBytes(id))
 		m.prober.Forget(id)
 		m.timing.forget(id)
 		m.rates.forget(id)
+		// roams is only ever touched from the main loop — syncPeers and this
+		// function — so it needs no lock. The two below do.
+		delete(m.roams, id)
+	}
+
+	// repliedTo is written on the receive path under replyMu, and this runs on
+	// the probe ticker. The delete used to be here without the lock: two
+	// goroutines writing one map, which Go answers with a fatal crash rather
+	// than a corrupted read. Rare — it needs a peer to age out while announces
+	// are being processed — and rare concurrent map writes are the ones that
+	// take a year to reproduce.
+	m.replyMu.Lock()
+	for _, id := range gone {
 		delete(m.repliedTo, id)
 	}
-	m.log.Info("forgot peers not seen recently", "count", len(gone), "after", ForgetAfter)
+	m.replyMu.Unlock()
 
-	// The data plane still holds them as WireGuard peers until the next sync.
-	m.requestResync()
+	// services and expiry are guarded by m.mu and were never reclaimed at all.
+	// services is the one that matters: it accepts a signed list from any
+	// holder of the network key, so on a bearer mesh it grows with every
+	// stranger who publishes one and nothing ever took an entry out again.
+	m.mu.Lock()
+	for _, id := range gone {
+		delete(m.services, id)
+		delete(m.expiry, id)
+	}
+	m.mu.Unlock()
 }
 
 // mustHexBytes converts a peer id back to the device key it encodes. Peer ids
