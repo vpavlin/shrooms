@@ -171,6 +171,11 @@ type Mesh struct {
 	// admin has to renew before it stops being one.
 	expiry map[string]int64
 
+	// expiredDropped remembers whose credential we have already acted on, so
+	// noticing an expiry asks for one resync rather than one every probe tick
+	// for as long as the peer stays in the roster. Guarded by mu, like expiry.
+	expiredDropped map[string]bool
+
 	// authority is the set of admin keys this mesh trusts, or nil when
 	// membership is still the network key alone. Both worlds run at once
 	// during migration (ADR-018): nil behaves exactly as before.
@@ -204,28 +209,29 @@ func New(log *slog.Logger, cfg state.Config, st *state.State, node *waku.Node, d
 		return nil, err
 	}
 	m := &Mesh{
-		log:        log,
-		cfg:        cfg,
-		st:         st,
-		nk:         nk,
-		node:       node,
-		dev:        dev,
-		roster:     NewRoster(nk, st.Identity.DevicePub),
-		authority:  auth,
-		revoked:    cred.NewList(),
-		grants:     map[[32]byte]time.Time{},
-		expiry:     map[string]int64{},
-		guard:      control.NewReplayGuard(),
-		self:       identity.OverlayAddr(nk, st.Identity.DevicePub),
-		discoKey:   disco.DeriveKey(nk),
-		relayKey:   relay.DeriveKey(nk),
-		resync:     make(chan struct{}, 1),
-		reannounce: make(chan struct{}, 1),
-		repliedTo:  make(map[string]time.Time),
-		health:     newHealth(),
-		timing:     newTimings(time.Now()),
-		rates:      newRates(),
-		subscribed: make(map[string]bool),
+		log:            log,
+		cfg:            cfg,
+		st:             st,
+		nk:             nk,
+		node:           node,
+		dev:            dev,
+		roster:         NewRoster(nk, st.Identity.DevicePub),
+		authority:      auth,
+		revoked:        cred.NewList(),
+		grants:         map[[32]byte]time.Time{},
+		expiry:         map[string]int64{},
+		expiredDropped: map[string]bool{},
+		guard:          control.NewReplayGuard(),
+		self:           identity.OverlayAddr(nk, st.Identity.DevicePub),
+		discoKey:       disco.DeriveKey(nk),
+		relayKey:       relay.DeriveKey(nk),
+		resync:         make(chan struct{}, 1),
+		reannounce:     make(chan struct{}, 1),
+		repliedTo:      make(map[string]time.Time),
+		health:         newHealth(),
+		timing:         newTimings(time.Now()),
+		rates:          newRates(),
+		subscribed:     make(map[string]bool),
 	}
 	m.networkID = state.NetworkID(nk)
 	m.loadRevocations()
@@ -464,6 +470,7 @@ func (m *Mesh) Run(ctx context.Context) error {
 			m.registerWithRelay()
 			m.reportUnknown()
 			m.checkTunnels(now)
+			m.checkExpiries(now)
 			m.sampleRates(now)
 			m.pruneForgotten(now)
 		case now := <-ticker.C:
@@ -614,6 +621,9 @@ func (m *Mesh) checkMembership(a *control.Announce, now time.Time) error {
 		m.expiry = map[string]int64{}
 	}
 	m.expiry[hex.EncodeToString(a.DevicePub)] = c.NotAfter
+	// A renewal arrived: this peer may be carried again, and if it expires
+	// once more that is a new event worth acting on.
+	delete(m.expiredDropped, hex.EncodeToString(a.DevicePub))
 	m.mu.Unlock()
 	return nil
 }
@@ -699,6 +709,72 @@ func (m *Mesh) PeerExpiry(id string) time.Time {
 		return time.Unix(t, 0)
 	}
 	return time.Time{}
+}
+
+// expired reports that a peer's credential has run out, so it should no longer
+// be carried on the data plane.
+//
+// Only on a mesh that admits by credential. Where membership is the network key
+// there is nothing to expire, and a peer with no recorded expiry is one whose
+// announce we have not verified in this process — a node that has just started
+// knows nobody's expiry yet, and dropping every peer until each has announced
+// again would turn a restart into an outage.
+func (m *Mesh) expired(id string, now time.Time) bool {
+	if m.authority == nil {
+		return false
+	}
+	m.mu.Lock()
+	at, known := m.expiry[id]
+	m.mu.Unlock()
+	if !known {
+		return false
+	}
+	return now.After(time.Unix(at, 0))
+}
+
+// checkExpiries drops the tunnel to anyone whose credential has just run out.
+//
+// syncPeers is where the decision lives, but nothing was asking it to run: a
+// mesh where everybody is up and nothing moves can go hours without a resync,
+// and "expired" is not an event anything else notices. So this looks once a
+// tick and asks — once per peer, because the roster keeps a device for
+// ForgetAfter and it stays expired the whole time.
+func (m *Mesh) checkExpiries(now time.Time) {
+	if m.authority == nil {
+		return
+	}
+	for _, p := range m.roster.Peers() {
+		id := p.ID()
+		if !m.expired(id, now) {
+			continue
+		}
+		if !m.noteExpired(id) {
+			continue
+		}
+		// Loud. This takes a working device off the mesh on a schedule, and
+		// the person it happens to is usually elsewhere: the admin renews with
+		// a sweep, and a device that was asleep through it comes back to this.
+		m.log.Warn("credential expired; the tunnel is being dropped",
+			"peer", p.Name, "expired", m.PeerExpiry(id).Format(time.RFC3339),
+			"hint", "shrooms admin renew")
+		m.requestResync()
+	}
+}
+
+// noteExpired records that a peer's expiry has been acted on, reporting whether
+// this was the first time.
+//
+// The roster keeps a device for ForgetAfter and it stays expired for all of it,
+// so without this the probe tick would ask for a resync every three seconds for
+// six hours.
+func (m *Mesh) noteExpired(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.expiredDropped[id] {
+		return false
+	}
+	m.expiredDropped[id] = true
+	return true
 }
 
 // loadRevocations re-reads what this node had already been told is withdrawn.
@@ -1201,6 +1277,7 @@ func (m *Mesh) forget(gone []string) {
 	for _, id := range gone {
 		delete(m.services, id)
 		delete(m.expiry, id)
+		delete(m.expiredDropped, id)
 	}
 	m.mu.Unlock()
 }
@@ -1471,6 +1548,21 @@ func (m *Mesh) syncPeers() error {
 		// fleet went away is exactly what DESIGN §2 forbids.
 		st, haveStats := stats[p.WGPub.String()]
 		if !p.Online(now) && !(haveStats && st.Live(now)) {
+			continue
+		}
+
+		// An expired credential ends access now, not in six hours.
+		//
+		// Expiry used to stop the roster being *updated* and nothing more: the
+		// peer's later announces were refused, but its WireGuard peer stayed
+		// configured while its tunnel was live, and a 25-second keepalive keeps
+		// a tunnel live indefinitely. So the device was dropped only when it
+		// aged out of the roster at ForgetAfter — up to six hours of full mesh
+		// access on a credential that had run out. Only explicit revocation
+		// tore anything down promptly, and revocation is the mechanism that can
+		// be suppressed; expiry is the one SECURITY.md leans on because it
+		// cannot be.
+		if m.expired(p.ID(), now) {
 			continue
 		}
 
