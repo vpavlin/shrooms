@@ -469,14 +469,23 @@ per device:
 
 ```
 credential = Sign(admin_k, {
+    version,                    // the credential format, not the mesh's
+    mesh_id,                    // hash of the authority: no cross-mesh replay
     device_pk,                  // Ed25519, generated on-device, never leaves it
     wg_pk,                      // X25519
-    name,
-    overlay_ip,                 // derived, but pinned here so it is authenticated
-    not_before, not_after,      // 7-30 days, auto-renewed
-    caps                        // may-relay, may-route-subnet, ...
+    serial,                     // what a revocation withdraws, and everything below it
+    not_before, not_after,      // 30 days by default, renewed by an admin sweep
+    name
 })
 ```
+
+As built, and it differs from the sketch this section used to carry.
+`overlay_ip` is not signed: it derives from the signed `device_pk`, so signing
+it would authenticate a value that cannot disagree with the one it comes from.
+`caps` does not exist — there is no capability model in the code, and nothing
+reads or enforces one, so listing it here described an intention rather than a
+format. `mesh_id` and `serial` are the two fields that turned out to be needed
+and were not in the sketch.
 
 Devices present their credential in the handshake; peers verify against
 `admin_pk` — a *public* value you configure, not a secret. This buys per-device

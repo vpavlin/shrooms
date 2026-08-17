@@ -428,13 +428,20 @@ func Verify(adminPub ed25519.PublicKey, c *Credential, now time.Time) error {
 // Revocation withdraws a device before its credential expires.
 //
 // The serial rather than the whole credential, so a revocation is small enough
-// to gossip and to keep. NotBefore exists so a revocation cannot be replayed to
-// undo a later re-enrolment of the same device.
+// to gossip and to keep.
+//
+// What stops a revocation being replayed to undo a later re-enrolment is the
+// serial, not the timestamp: Revokes compares serials, and a device re-enrolled
+// at a higher serial is unaffected by a withdrawal of a lower one. This comment
+// used to credit a NotBefore field that does not exist, and Issued — which is
+// signed and carried on the wire — is read by nothing. Kept because it is in a
+// signed format that peers already parse, and because "when was this device
+// removed" is the obvious thing to want from it later.
 type Revocation struct {
 	MeshID    MeshID
 	DevicePub []byte
 	Serial    uint64
-	Issued    int64
+	Issued    int64 // signed, carried, not currently consulted
 	Sig       []byte
 }
 

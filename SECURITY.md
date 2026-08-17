@@ -16,10 +16,10 @@ adversary — if that is your threat model, do not use this.
 |---|---|
 | **Waku control messages** | Encrypted, XChaCha20-Poly1305 under a per-epoch key derived from the network key. Signature is *inside* the ciphertext, so the libp2p layer's `StrictNoSign` sender anonymity is not undone. |
 | **Message size** | Padded to one of two fixed plaintext sizes, 512 or 1024 bytes. "Came online", "changed IP" and "nothing happened" are indistinguishable within a size. Credentials (ADR-018) do not fit beside endpoints in 512, so a node that carries one uses 1024 — which means length now distinguishes a credentialled mesh from one that is not, though not which device or what changed. |
-| **Announce rate** | Fixed 45 s heartbeat. Endpoint changes ride the next scheduled announce rather than triggering an out-of-band publish. |
+| **Announce rate** | Fixed 45 s heartbeat, with two deliberate exceptions: a node answers a peer it has no tunnel to (bounded by a per-peer cooldown), and a router port mapping publishes immediately, since an address nobody has been told about is one nobody can dial (ADR-024). The fixed padding still hides *what* changed; the timing of those two says that something did. |
 | **Rendezvous topic** | Rotating hourly, derived from the network key via HMAC. An observer without the key cannot find the mesh's traffic. Verified (spike S3) to stay on one shard, so rotation emits no gossipsub subscription churn. |
 | **Store archival** | Announces are published `ephemeral: true`, so they are not persisted. Without this an observer who later learned the topic could query history retroactively. |
-| **Disco probes** | Encrypted, not merely authenticated. Constant 105 bytes regardless of type or address family, so ping and pong are indistinguishable by length. |
+| **Disco probes** | Encrypted, not merely authenticated. Constant 104 bytes regardless of type or address family, so ping and pong are indistinguishable by length. (109 on the wire, with the 5-byte demultiplexing header.) |
 | **Replay / rollback** | Monotonic per-device sequence numbers. A public bus lets anyone re-publish a captured message they cannot decrypt; without this they could roll a peer's endpoint back to a stale address. |
 | **Impersonation** | The announce signature is bound to the `DevicePub` named inside it, so holding the network key is not sufficient to impersonate a device. |
 | **On-disk material** | `config.toml` 0600, state dir 0700, `state.json` 0600. |
@@ -70,10 +70,15 @@ would remove it is not built.
 **The control socket's group is a real grant.** `socket_group` exists so a
 desktop app — and `shrooms status` — need not run as root, and it is not a
 read-only permission: that group may change this device's settings, switch a
-mesh off, leave one, and mint an invite, which hands the network key to whoever
-redeems it. What it cannot do is admit anybody. On a mesh with `admin_keys`,
-membership is a credential signed by a key the daemon has never held, so an
-invite minted this way produces a device every peer refuses.
+mesh off, and leave one.
+
+What it cannot do is admit anybody — including by invite, which an earlier
+version of this note said it could. Both halves of the exchange (`/invite/hold`
+and `/invite/reply`) are root-gated by SO_PEERCRED, and the `shrooms invite`
+command reads the network key from a 0600 root-owned config, so a group member
+who is not root cannot mint one. On a mesh with `admin_keys` it would not help
+if they could: membership is a credential signed by a key the daemon has never
+held.
 → Deliberate, and documented rather than minimised: the same shape as the
 `docker` group, with a smaller blast radius. Set it to a group you would trust
 with your mesh's metadata, which on a personal machine means your own login, and
@@ -153,16 +158,35 @@ value-per-effort, not by tidiness.
 It lands in shell history, clipboard managers, and whatever you pasted it into.
 Anyone who ever sees it is a member forever.
 
-**Change:** `shrooms invite` emits a token valid 15 minutes, single
-redemption. The joining device generates its own keys, redeems the token, and
-receives the network key — and, since phase 2 landed alongside it, a credential
-signed for those keys — over the resulting channel.
+**Change:** `shrooms invite` emits a token good for a window — fifteen minutes
+by default, up to two hours with `--ttl`. The joining device generates its own
+keys, redeems the token, and receives the network key — and, since phase 2
+landed alongside it, a credential signed for those keys — over the resulting
+channel.
 
-**What it does not fix:** the token *is* the authorisation, so whoever
-photographs it inside the window can join. That is minutes and one device
-against what used to be permanent and unlimited. Both halves of the exchange are
-padded to a constant, so the bus sees two fixed-size ciphertexts on a shard it
-cannot distinguish from the mesh's own traffic.
+**What it does not fix**, stated more carefully than it was:
+
+- **The token *is* the authorisation.** Whoever photographs it inside the window
+  can join. That is minutes and one device against what used to be permanent and
+  unlimited.
+- **"Single redemption" applies to the credential, not to the key.** One
+  non-deferred request wins the single held slot and gets a credential. On a
+  mesh with **no** admin keys, where the network key *is* membership, the
+  deferred answer hands that key to every requester inside the window, each
+  sealed to its own ephemeral key — so one observed token can produce unlimited
+  members there.
+- **The window is the inviter's clock, not a cryptographic bound.** The token
+  carries no expiry; it stops working when the inviting node stops holding the
+  topic open. A node that is killed mid-invite is what actually closes it.
+- **The response is not authenticated.** It is protected by the token and an
+  ephemeral exchange, but the trust anchor — the mesh's admin keys — arrives
+  *inside* that response. A token-holder who answers first can therefore plant
+  the joiner into a mesh of their choosing. Consistent with "the token is the
+  authorisation", and worth saying out loud.
+
+Both halves of the exchange are padded to a constant, so the bus sees two
+fixed-size ciphertexts on a shard it cannot distinguish from the mesh's own
+traffic.
 
 `shrooms join <NETWORK-KEY>` still exists for bootstrapping and recovery, and
 carries the old exposure when used.
@@ -190,9 +214,17 @@ per-device revocation and no expiry.
 - `K_rdv` keeps deriving the topic, payload key and per-pair PSKs — rendezvous
   genuinely needs a shared secret, since every member must compute the same
   topic with no coordination.
-- Membership becomes ~100 bytes of admin-signed CBOR over `{device_pk, wg_pk,
-  name, overlay_ip, not_before, not_after, caps}`, verified against `admin_pk`,
-  which is a **public** value in config.
+- Membership becomes an admin-signed credential over `{version, mesh_id,
+  device_pk, wg_pk, serial, not_before, not_after, name}`, verified against
+  `admin_pk`, which is a **public** value in config.
+
+  Two differences from what this document described before it was built.
+  `overlay_ip` is not signed and does not need to be: it is derived from the
+  signed `device_pk`, so signing it would authenticate a value that cannot
+  disagree. And there is **no `caps` field** — no capability model exists
+  anywhere in the code, so nothing can express or enforce one. `mesh_id` and
+  `serial` were added instead: the first stops a credential being replayed onto
+  another mesh, the second is what revocation withdraws.
 - 7–30 day expiry, auto-renewed while the admin is reachable.
 
 **Why the expiry matters more than the signature:** a gossip bus lets an
