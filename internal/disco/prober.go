@@ -219,7 +219,7 @@ func (p *Prober) HandlePong(m *Message, from netip.AddrPort, now time.Time) (pee
 
 	// Record where the peer saw us. This is reflexive discovery: with several
 	// peers we get several independent vantage points and need no STUN server.
-	if m.Observed.IsValid() {
+	if usableReflexive(m.Observed) {
 		if len(p.reflexive) < MaxReflexive || !p.reflexive[m.Observed].IsZero() {
 			p.reflexive[m.Observed] = now
 		}
@@ -241,6 +241,38 @@ func (p *Prober) HandlePong(m *Message, from netip.AddrPort, now time.Time) (pee
 	path.LastPong = now
 
 	return pr.peerID, true
+}
+
+// usableReflexive reports whether an address a peer claims to have observed us
+// at is worth remembering.
+//
+// Whatever a pong says used to be stored and then advertised to every other
+// peer as somewhere we can be reached. The pong is authenticated as coming from
+// a mesh member, which is all disco can currently prove (Phase 4), so a hostile
+// member could seed us with addresses of its choosing: at best our announces
+// then advertise places we are not, at worst they name a third party and every
+// honest peer probes it — a small reflector aimed by somebody else.
+//
+// This does not make the value trustworthy; it makes it plausible. An address
+// that could not be an external view of this device is refused, which is cheap
+// and removes the arbitrary-target case. Believing the rest is what Phase 4's
+// per-device disco authentication is for.
+func usableReflexive(ap netip.AddrPort) bool {
+	if !ap.IsValid() || ap.Port() == 0 {
+		return false
+	}
+	a := ap.Addr().Unmap()
+	switch {
+	case a.IsUnspecified(), a.IsLoopback(), a.IsMulticast(),
+		a.IsLinkLocalUnicast(), a.IsLinkLocalMulticast():
+		// None of these can be how anybody outside reaches us, and loopback
+		// would aim a probe at the prober.
+		return false
+	}
+	// Private and CGNAT addresses are kept deliberately: a peer on the same LAN
+	// observes us at a private address, and that is the single most useful
+	// candidate we ever collect (see candidates()).
+	return true
 }
 
 // NeedsProbe reports whether a peer should be probed now: either it has no

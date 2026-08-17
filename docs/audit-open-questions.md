@@ -75,3 +75,38 @@ labels, and the listener is reachable by any local user on a multi-user host.
 `/status` carries the same information in a tidier form, so the honest answer
 may be that both are equally sensitive and the split should be by *verb* rather
 than by path.
+
+## M5 — binding a relay registration to the device that owns the key
+
+**Built:** the relay table is bounded (`MaxRegistrations`), one address holds
+one key at a time, and the reverse index means filling in a forward's source is
+a lookup rather than a scan of the table per packet. That closes the resource
+exhaustion (M7) and stops one source accumulating entries.
+
+**Not built:** the hijack itself. `TypeRegister` is authenticated only by the
+mesh-wide MAC, which every member can compute, and nothing ties the key in the
+frame to the sender. A member can still register somebody else's WireGuard key
+against its own address, and honest peers forwarding to that victim then deliver
+to the attacker. Confidentiality holds — the payload is WireGuard-encrypted end
+to end — so this is availability plus "who talks to whom".
+
+The obvious cheap mitigation does not work: refusing to *move* an existing
+registration to a new address would stop an attacker stealing an active
+victim's slot, but it also breaks roaming, and roaming is the case relays exist
+for. A phone that changes network must be able to re-register.
+
+So the fix is a signature over the key by the device that owns it, which is a
+change to the register frame — a wire format decision, and one that wants doing
+once rather than twice:
+
+- **Sign the register frame now**, with the device key that already exists.
+  Smallest change, and it closes this specific hole.
+- **Wait for Phase 4** — per-device credentials on the control plane, which
+  ADR-018 already anticipates and which closes this and the acknowledged disco
+  gap in one move. Slower, and until then the hole stays open.
+- **Both**: an interim signature that Phase 4 later subsumes, accepting that the
+  frame format changes twice.
+
+Worth noting the same root cause is documented in SECURITY.md as the Phase-4
+disco gap, so this is not a new class of problem — it is the same one, in the
+relay.
