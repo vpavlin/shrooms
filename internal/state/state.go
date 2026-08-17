@@ -1019,7 +1019,10 @@ func WriteConfig(path string, c Config) error {
 		fmt.Fprintf(&b, "services = %s\n", formatArray(c.Services))
 	}
 
-	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
+	// Atomically, because this file holds the network key: a write interrupted
+	// halfway leaves a config that fails Validate, and a config that fails
+	// Validate is a daemon that will not start. See writeFileAtomic.
+	if err := writeFileAtomic(path, []byte(b.String()), 0o600); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
 	return nil

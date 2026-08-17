@@ -163,7 +163,24 @@ func joinAnother(ctx context.Context, log *slog.Logger, tr invite.Transport,
 		res.Expires = time.Unix(c.NotAfter, 0).Format(time.RFC3339)
 	}
 
-	if err := state.WriteConfig(cfgPath, cfg); err != nil {
+	// Re-read and add the one mesh under the lock, rather than writing back the
+	// copy loaded at the top of this function.
+	//
+	// Everything above happens across a network round trip to whoever answers
+	// the invite, which can take seconds, and a setting changed in that window
+	// would be silently reverted by writing a config from before it. Holding
+	// the lock for the whole exchange would be worse — every /config/* endpoint
+	// would block on somebody else's enrolment.
+	if err := state.UpdateConfig(cfgPath, func(live *state.Config) error {
+		if _, taken := live.MeshSet[label]; taken {
+			return fmt.Errorf("this device joined a mesh labelled %q while this one was being set up", label)
+		}
+		if live.MeshSet == nil {
+			live.MeshSet = map[string]state.Mesh{}
+		}
+		live.MeshSet[label] = cfg.MeshSet[label]
+		return live.Validate()
+	}); err != nil {
 		return nil, err
 	}
 	log.Info("joined another mesh", "label", label, "prefix", res.Prefix,

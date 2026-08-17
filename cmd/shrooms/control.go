@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -354,6 +355,11 @@ type settingRequest struct {
 	Enabled  bool     `json:"enabled,omitempty"`
 }
 
+// rejected marks a change the caller got wrong, as opposed to one this daemon
+// could not carry out — the difference between 400 and 500, which used to be
+// visible in the handler's shape and is now inside a callback.
+type rejected struct{ error }
+
 // writeSetting is the common shape: decode, apply to a freshly read config,
 // write it back, and say what happened.
 //
@@ -375,24 +381,31 @@ func writeSetting(log *slog.Logger, cfgPath string,
 			return
 		}
 
-		cfg, err := state.LoadConfigUnvalidated(cfgPath)
+		// Load, change and write as one operation under a lock. Two settings
+		// changed at once used to lose one of them: both handlers loaded the
+		// same config, and whichever wrote second had never seen the other's
+		// change. Nothing reported it — the setting simply went back.
+		var msg string
+		err := state.UpdateConfig(cfgPath, func(cfg *state.Config) error {
+			m, err := apply(cfg, in)
+			if err != nil {
+				return rejected{err}
+			}
+			// Validated as a whole before it is written: a config that does
+			// not load is a daemon that will not start, and finding that out
+			// at the next reboot is the worst possible time.
+			if err := cfg.Validate(); err != nil {
+				return rejected{err}
+			}
+			msg = m
+			return nil
+		})
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		msg, err := apply(&cfg, in)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		// Validated as a whole before it is written: a config that does not
-		// load is a daemon that will not start, and finding that out at the
-		// next reboot is the worst possible time.
-		if err := cfg.Validate(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if err := state.WriteConfig(cfgPath, cfg); err != nil {
+			var bad rejected
+			if errors.As(err, &bad) {
+				http.Error(w, bad.error.Error(), http.StatusBadRequest)
+				return
+			}
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
