@@ -1331,7 +1331,7 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 
 	// The log tail and the restart button, both of which exist because a UI
 	// cannot reach the journal or a terminal (ADR-025).
-	runtimeHandlers(mux, log, tail, restart)
+	runtimeHandlers(mux, log, rl.cfgPath, tail, restart)
 
 	// Changing this device's own settings, and applying them (ADR-025). In the
 	// socket group's tier, because none of it decides who belongs to a mesh —

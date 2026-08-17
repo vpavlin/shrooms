@@ -42,6 +42,11 @@ func main() {
 		// of `status`: status reports what the daemon is doing, and a mesh that
 		// is switched off is precisely the thing status cannot see.
 		err = cmdMesh(os.Args[2:])
+	case "config":
+		// Checking a hand-edited file before restarting into it. Services no
+		// longer stop the daemon starting, so this is where a typo in one is
+		// meant to be found.
+		err = cmdConfig(os.Args[2:])
 	case "reload":
 		err = cmdReload(os.Args[2:])
 	case "bound":
@@ -106,6 +111,7 @@ Usage:
                                           never reaches shell history
   shrooms daemon                     run the mesh node
   shrooms status [--json]            show the roster and tunnel state
+  shrooms config validate            check the config before restarting into it
   shrooms reload                     re-read the config; applies services
   shrooms bound                      what announce_bound would tell peers
   shrooms paths [NAME]               show probed candidates and which won

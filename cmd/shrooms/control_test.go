@@ -232,7 +232,7 @@ func TestAnnounceServicesIsOffUntilAsked(t *testing.T) {
 func TestLogsEndpointServesTheTail(t *testing.T) {
 	ring := logtail.NewRing(10)
 	mux := http.NewServeMux()
-	runtimeHandlers(mux, slog.New(slog.DiscardHandler), ring, nil)
+	runtimeHandlers(mux, slog.New(slog.DiscardHandler), "", ring, nil)
 
 	// A text handler to nowhere rather than slog.DiscardHandler: that one
 	// reports Enabled=false for every level, so a tee in front of it records
@@ -280,13 +280,31 @@ func TestLogsEndpointServesTheTail(t *testing.T) {
 // the pane that shows the problem is the pane that fails to render.
 func TestLogsEndpointEmptyIsAList(t *testing.T) {
 	mux := http.NewServeMux()
-	runtimeHandlers(mux, slog.New(slog.DiscardHandler), logtail.NewRing(4), nil)
+	runtimeHandlers(mux, slog.New(slog.DiscardHandler), "", logtail.NewRing(4), nil)
 
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/logs", nil))
 	if !strings.Contains(w.Body.String(), `"lines":[]`) {
 		t.Errorf("empty tail served %q", strings.TrimSpace(w.Body.String()))
 	}
+}
+
+// goodConfig writes a config that loads, for the restart guard: /restart now
+// refuses to exit into a config the next start would reject, since the daemon
+// is what somebody would fix it through.
+func goodConfig(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.toml")
+	cfg := state.DefaultConfig()
+	nk, err := identity.NewNetworkKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.NetworkKey = nk.String()
+	if err := state.WriteConfig(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func TestRestartRefusesWhenNothingWouldStartUsAgain(t *testing.T) {
@@ -296,7 +314,7 @@ func TestRestartRefusesWhenNothingWouldStartUsAgain(t *testing.T) {
 
 	ch := make(chan error, 1)
 	mux := http.NewServeMux()
-	runtimeHandlers(mux, slog.New(slog.DiscardHandler), nil, ch)
+	runtimeHandlers(mux, slog.New(slog.DiscardHandler), "", nil, ch)
 
 	w := post(t, mux, "/restart", "")
 	if w.Code != http.StatusConflict {
@@ -316,7 +334,7 @@ func TestRestartExitsWhenSomethingWouldStartUsAgain(t *testing.T) {
 
 	ch := make(chan error, 1)
 	mux := http.NewServeMux()
-	runtimeHandlers(mux, slog.New(slog.DiscardHandler), nil, ch)
+	runtimeHandlers(mux, slog.New(slog.DiscardHandler), goodConfig(t), nil, ch)
 
 	w := post(t, mux, "/restart", "")
 	if w.Code != http.StatusOK {
@@ -336,7 +354,7 @@ func TestRestartExitsWhenSomethingWouldStartUsAgain(t *testing.T) {
 
 func TestRestartRefusesGet(t *testing.T) {
 	mux := http.NewServeMux()
-	runtimeHandlers(mux, slog.New(slog.DiscardHandler), nil, make(chan error, 1))
+	runtimeHandlers(mux, slog.New(slog.DiscardHandler), goodConfig(t), nil, make(chan error, 1))
 
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/restart", nil))

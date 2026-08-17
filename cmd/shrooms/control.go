@@ -38,7 +38,7 @@ import (
 // names, and no secret, because the daemon logs none. The restart is the other
 // half of the settings that say "on the next restart": a caller who may switch
 // a mesh off may apply it.
-func runtimeHandlers(mux *http.ServeMux, log *slog.Logger, tail *logtail.Ring, restart chan<- error) {
+func runtimeHandlers(mux *http.ServeMux, log *slog.Logger, cfgPath string, tail *logtail.Ring, restart chan<- error) {
 	// The recent log, for a UI that cannot reach the journal (ADR-025).
 	//
 	// Same tier as /status and for the same reason: it carries what stderr
@@ -85,6 +85,19 @@ func runtimeHandlers(mux *http.ServeMux, log *slog.Logger, tail *logtail.Ring, r
 				http.Error(w, "nothing would start this daemon again, so exiting "+
 					"would leave the mesh down; restart it yourself "+
 					"(systemctl restart shrooms)", http.StatusConflict)
+				return
+			}
+			// And refuse to restart into a config that will not load.
+			//
+			// Exiting is the one operation that cannot be taken back from here:
+			// if the daemon does not come up, the mesh it was carrying is the
+			// way in to fix it, and on a remote machine that means no way in at
+			// all. So the config is read the way the next start will read it,
+			// first, while there is still something to answer with.
+			if _, err := state.LoadConfig(cfgPath); err != nil {
+				http.Error(w, "not restarting: the config on disk would not load, "+
+					"and this daemon is what you would fix it through — "+err.Error(),
+					http.StatusConflict)
 				return
 			}
 			log.Info("restarting on request from the control socket")

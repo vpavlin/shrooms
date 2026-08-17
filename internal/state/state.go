@@ -395,9 +395,22 @@ func (c *Config) Validate() error {
 	}
 	// Rejected at load rather than at bind: a typo here otherwise surfaces as
 	// one service quietly missing from a mesh that is otherwise fine.
-	if _, err := service.ParseSpecs(c.Services); err != nil {
-		return fmt.Errorf("services: %w", err)
-	}
+	// Services are deliberately NOT validated here.
+	//
+	// Validate runs at load, so anything it refuses is a daemon that will not
+	// start. A service is the least important thing in this file: it publishes
+	// a local port under a name, and the mesh works perfectly without it —
+	// startInstance already logs "services not published" and carries on, which
+	// is the behaviour this check was preventing from ever running.
+	//
+	// It cost real access. A mistyped service string on a remote machine made
+	// the daemon refuse to start, which took away the tunnel that was the way
+	// in to fix it. Nothing that optional may stand between a machine and its
+	// own mesh.
+	//
+	// Checked on the way IN instead, by whoever sets it — see ValidateServices
+	// and the /config/services handler — because that is where a person is
+	// present to be told, and where refusing costs nothing.
 	// Rejected at load: a mistyped admin key would otherwise surface much later
 	// as a mesh where every peer is refused, which looks like a network fault.
 	if _, err := c.Authority(); err != nil {
@@ -432,8 +445,22 @@ func parseAuthority(adminKeys []string) (*cred.Authority, error) {
 	return cred.NewAuthority(keys...)
 }
 
-// ServiceSpecs returns the parsed services. Validate has already checked them,
-// so an error here is a caller that skipped it.
+// ValidateServices reports whether the service list can be parsed.
+//
+// For write paths only: a caller about to store a config should refuse a
+// malformed service rather than let somebody discover it as a service that
+// silently never appears. Load does not call it — see Validate.
+func (c *Config) ValidateServices() error {
+	if _, err := service.ParseSpecs(c.Services); err != nil {
+		return fmt.Errorf("services: %w", err)
+	}
+	return nil
+}
+
+// ServiceSpecs returns the parsed services.
+//
+// An error is survivable everywhere it is called: the mesh runs without
+// publishing anything, so callers log and continue rather than failing.
 func (c *Config) ServiceSpecs() ([]service.Spec, error) {
 	return service.ParseSpecs(c.Services)
 }
