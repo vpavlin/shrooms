@@ -1,0 +1,35 @@
+# Native dependencies, pinned by content.
+#
+# liblogosdelivery has no canonical distribution and cannot be built from
+# source, so it arrives as a prebuilt binary from a release asset. It is then
+# linked into every binary, baked into the published container, installed under
+# /opt, and run as root with NET_ADMIN and host networking — and on Android it
+# goes inside the VPN app that sees all traffic and holds the network key.
+#
+# It was fetched over HTTPS with no other check, which trusts whoever can write
+# that release: an account compromise, a hostile fork reached through the REPO
+# or DEPS_TAG environment overrides, or a mistake in repackaging. TLS proves who
+# served the bytes, not what the bytes are.
+#
+# So each asset is pinned here by sha256 and verified after download. Changing
+# the pinned version is deliberately two steps — bump the tag, update the hash —
+# because a version bump that silently accepts new native code is the thing this
+# file exists to prevent.
+#
+# Format: <sha256>  <tag>/<asset>
+# Verified with: sha256sum -c, after rewriting the path to the download.
+
+1e93f3cdf05b910f276eb32539f15b206f91f26ea1b8132a9705037383e578ad  deps-v1/liblogosdelivery-linux-amd64.tar.gz
+
+# The Android side, from another project that vendors the same library.
+# Cloned by ref rather than by branch: --depth 1 of a default branch fetches
+# whatever HEAD happens to be that day, which is a moving dependency inside the
+# APK people install. The ref keeps it working; these hashes are what make it
+# safe, because a ref can be moved and a hash cannot.
+#
+# Pinned ref: b5f5e33e81a51da713853389602413fc0c42e7f4 (vpavlin/qaku-logos)
+
+e69496a4aeb51ebe61d0775ae9fefc76eee640f12317aa5174da67e5d4ec8fd6  android/arm64-v8a/libc++_shared.so
+23bff042dfabf944395fa5e90febb7ff363477ff98c3cc26c6fc8ad53212e34f  android/arm64-v8a/liblogosdelivery.so
+766bd58a36f9233a4647bcba16f9192a6cb691a211950401b8e0d6c826478e45  android/arm64-v8a/librln.so
+3681d42a5ca834a8a0e187139cf282b642122870c14737a65bf5aa297d017cd8  android/liblogosdelivery.h

@@ -34,6 +34,27 @@ if ! curl -fsSL "$url" -o "$tmp/$ASSET"; then
     exit 1
 fi
 
+# Verify before unpacking. This is native code that ends up linked into every
+# binary and running as root, so "we downloaded it over HTTPS" is not enough:
+# TLS says who served the bytes, not what they are. See deps/CHECKSUMS.
+want=$(awk -v k="$TAG/$ASSET" '$2 == k {print $1}' deps/CHECKSUMS)
+if [ -z "$want" ]; then
+    echo "no pinned checksum for $TAG/$ASSET in deps/CHECKSUMS"
+    echo "if you are moving to a new build, add its sha256 there in the same commit:"
+    echo "  sha256sum <the downloaded tarball>"
+    exit 1
+fi
+got=$(sha256sum "$tmp/$ASSET" | cut -d' ' -f1)
+if [ "$got" != "$want" ]; then
+    echo "checksum mismatch for $TAG/$ASSET"
+    echo "  expected $want"
+    echo "  got      $got"
+    echo "refusing to unpack. Either the release was rebuilt — in which case"
+    echo "update deps/CHECKSUMS deliberately — or this is not the file we pinned."
+    exit 1
+fi
+echo "==> checksum ok"
+
 tar xzf "$tmp/$ASSET" -C "$tmp"
 # The bundled files are read-only (they come from a Basecamp install), so a
 # plain cp over an existing copy fails with EACCES.
