@@ -52,6 +52,175 @@
         android:ellipsize="end"
         android:text="@string/widget_disconnected" />
 
+
+    <!-- Mesh row 1. Pre-declared and hidden when unused, rather than built
+         from a RemoteViewsService: a dynamic collection needs a service and a
+         factory, and a phone is on two or three meshes. Four is headroom. -->
+    <LinearLayout
+        android:id="@+id/widget_mesh_1"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginTop="5dp"
+        android:visibility="gone">
+
+        <ImageView
+            android:id="@+id/widget_mesh_dot_1"
+            android:layout_width="6dp"
+            android:layout_height="6dp"
+            android:src="@drawable/widget_dot_off"
+            android:contentDescription="@string/widget_state" />
+
+        <TextView
+            android:id="@+id/widget_mesh_name_1"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:textColor="#9AA6AF"
+            android:textSize="12sp"
+            android:fontFamily="monospace"
+            android:maxLines="1"
+            android:ellipsize="end" />
+
+        <TextView
+            android:id="@+id/widget_mesh_state_1"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:textColor="#6B7680"
+            android:textSize="12sp"
+            android:fontFamily="monospace"
+            android:maxLines="1" />
+    </LinearLayout>
+
+    <!-- Mesh row 2. Pre-declared and hidden when unused, rather than built
+         from a RemoteViewsService: a dynamic collection needs a service and a
+         factory, and a phone is on two or three meshes. Four is headroom. -->
+    <LinearLayout
+        android:id="@+id/widget_mesh_2"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginTop="5dp"
+        android:visibility="gone">
+
+        <ImageView
+            android:id="@+id/widget_mesh_dot_2"
+            android:layout_width="6dp"
+            android:layout_height="6dp"
+            android:src="@drawable/widget_dot_off"
+            android:contentDescription="@string/widget_state" />
+
+        <TextView
+            android:id="@+id/widget_mesh_name_2"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:textColor="#9AA6AF"
+            android:textSize="12sp"
+            android:fontFamily="monospace"
+            android:maxLines="1"
+            android:ellipsize="end" />
+
+        <TextView
+            android:id="@+id/widget_mesh_state_2"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:textColor="#6B7680"
+            android:textSize="12sp"
+            android:fontFamily="monospace"
+            android:maxLines="1" />
+    </LinearLayout>
+
+    <!-- Mesh row 3. Pre-declared and hidden when unused, rather than built
+         from a RemoteViewsService: a dynamic collection needs a service and a
+         factory, and a phone is on two or three meshes. Four is headroom. -->
+    <LinearLayout
+        android:id="@+id/widget_mesh_3"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginTop="5dp"
+        android:visibility="gone">
+
+        <ImageView
+            android:id="@+id/widget_mesh_dot_3"
+            android:layout_width="6dp"
+            android:layout_height="6dp"
+            android:src="@drawable/widget_dot_off"
+            android:contentDescription="@string/widget_state" />
+
+        <TextView
+            android:id="@+id/widget_mesh_name_3"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:textColor="#9AA6AF"
+            android:textSize="12sp"
+            android:fontFamily="monospace"
+            android:maxLines="1"
+            android:ellipsize="end" />
+
+        <TextView
+            android:id="@+id/widget_mesh_state_3"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:textColor="#6B7680"
+            android:textSize="12sp"
+            android:fontFamily="monospace"
+            android:maxLines="1" />
+    </LinearLayout>
+
+    <!-- Mesh row 4. Pre-declared and hidden when unused, rather than built
+         from a RemoteViewsService: a dynamic collection needs a service and a
+         factory, and a phone is on two or three meshes. Four is headroom. -->
+    <LinearLayout
+        android:id="@+id/widget_mesh_4"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginTop="5dp"
+        android:visibility="gone">
+
+        <ImageView
+            android:id="@+id/widget_mesh_dot_4"
+            android:layout_width="6dp"
+            android:layout_height="6dp"
+            android:src="@drawable/widget_dot_off"
+            android:contentDescription="@string/widget_state" />
+
+        <TextView
+            android:id="@+id/widget_mesh_name_4"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:textColor="#9AA6AF"
+            android:textSize="12sp"
+            android:fontFamily="monospace"
+            android:maxLines="1"
+            android:ellipsize="end" />
+
+        <TextView
+            android:id="@+id/widget_mesh_state_4"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:textColor="#6B7680"
+            android:textSize="12sp"
+            android:fontFamily="monospace"
+            android:maxLines="1" />
+    </LinearLayout>
+
     <!-- A LinearLayout as the spacer, not a Space or a View.
          RemoteViews inflates only a fixed set of classes — the launcher builds
          these views in its own process from a description we hand over — and

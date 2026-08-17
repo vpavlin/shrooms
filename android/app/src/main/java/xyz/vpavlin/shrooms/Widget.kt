@@ -84,6 +84,8 @@ class ShroomsWidget : AppWidgetProvider() {
                 ),
             )
 
+            renderMeshes(ctx, views, snap)
+
             // The action line toggles; everything else opens the app, because
             // the graph and the roster are what you want when the summary is
             // not enough.
@@ -91,6 +93,78 @@ class ShroomsWidget : AppWidgetProvider() {
             views.setOnClickPendingIntent(R.id.widget_name, openPending(ctx))
             views.setOnClickPendingIntent(R.id.widget_peers, openPending(ctx))
             return views
+        }
+
+        private val rowIds = listOf(
+            Triple(R.id.widget_mesh_1, R.id.widget_mesh_dot_1, R.id.widget_mesh_name_1),
+            Triple(R.id.widget_mesh_2, R.id.widget_mesh_dot_2, R.id.widget_mesh_name_2),
+            Triple(R.id.widget_mesh_3, R.id.widget_mesh_dot_3, R.id.widget_mesh_name_3),
+            Triple(R.id.widget_mesh_4, R.id.widget_mesh_dot_4, R.id.widget_mesh_name_4),
+        )
+        private val rowStateIds = listOf(
+            R.id.widget_mesh_state_1, R.id.widget_mesh_state_2,
+            R.id.widget_mesh_state_3, R.id.widget_mesh_state_4,
+        )
+
+        /**
+         * One line per mesh: which exist, which are running, how many peers.
+         *
+         * Read-only on purpose. Switching a mesh rebuilds the tunnel — the VPN
+         * interface carries the addresses and routes of every mesh and is built
+         * once at connect time — so a row that behaved like a light switch
+         * would drop every tunnel on the phone on a stray tap, which is the
+         * same accident the disconnect button was moved to avoid. Tapping opens
+         * the app, where the change is deliberate.
+         *
+         * Meshes that are switched off are listed too. "Which meshes does this
+         * device have, and which are up" is the question, and a list that
+         * silently omits the off ones answers half of it — that is what made a
+         * switched-off mesh look lost in the app before it listed them.
+         */
+        private fun renderMeshes(ctx: Context, views: RemoteViews, snap: Snapshot?) {
+            // From the config, so switched-off meshes appear. Guarded like
+            // everything else here: this can run in a process the launcher woke
+            // for a broadcast, where the native library has never been loaded,
+            // and a throw is the whole widget failing to appear.
+            val configured = runCatching {
+                val arr = org.json.JSONArray(Mobile.meshesJSON(ctx.filesDir.absolutePath))
+                (0 until arr.length()).map { i ->
+                    val o = arr.getJSONObject(i)
+                    o.optString("label") to o.optBoolean("disabled", false)
+                }
+            }.getOrDefault(emptyList())
+
+            val peersBy = snap?.meshes?.associate { it.label to it.peers } ?: emptyMap()
+
+            for (i in rowIds.indices) {
+                val (rowId, dotId, nameId) = rowIds[i]
+                val mesh = configured.getOrNull(i)
+                if (mesh == null) {
+                    views.setViewVisibility(rowId, android.view.View.GONE)
+                    continue
+                }
+                val (label, disabled) = mesh
+                val up = !disabled && snap?.connected == true && peersBy.containsKey(label)
+
+                views.setViewVisibility(rowId, android.view.View.VISIBLE)
+                views.setImageViewResource(
+                    dotId,
+                    if (up) R.drawable.widget_dot_on else R.drawable.widget_dot_off,
+                )
+                views.setTextViewText(nameId, label)
+                views.setTextViewText(
+                    rowStateIds[i],
+                    when {
+                        disabled -> "off"
+                        !up -> "—"
+                        else -> {
+                            val n = peersBy[label] ?: 0
+                            if (n == 1) "1 peer" else "$n peers"
+                        }
+                    },
+                )
+                views.setOnClickPendingIntent(rowId, openPending(ctx))
+            }
         }
 
         /**
