@@ -221,8 +221,11 @@ jobs:
       - name: Check the QML
         run: make basecamp-check
 
-      - uses: DeterminateSystems/nix-installer-action@main
-      - uses: DeterminateSystems/magic-nix-cache-action@main
+      # Pinned by commit, not by branch. These run in the job that builds the
+      # published .lgx, so whoever can move that branch can run code in it.
+      # Tag names are equally movable; a SHA is not.
+      - uses: DeterminateSystems/nix-installer-action@33c9ab3ef95cd57c164d9d6eb1f9a46338538d41 # v22
+      - uses: DeterminateSystems/magic-nix-cache-action@55718cd9ebf1737a061487d5ada21abf31e99a98 # v14
 
       # lgx-portable, not lgx: the plain one can reference paths in the nix
       # store of the machine that built it, which is fine for a dev loop and

@@ -770,7 +770,19 @@ func listenControl(ctx context.Context, log *slog.Logger, path string, h http.Ha
 	}
 	_ = os.Remove(path) // a stale socket from an unclean exit would block bind
 
+	// Created unreachable, then opened to the group.
+	//
+	// Bind-then-chmod leaves a window in which the socket exists at whatever
+	// the umask allows. Under the usual 022 that is 0755 — no write bit for
+	// others, and connecting to a unix socket needs write, so the window was
+	// closed by luck rather than by design. A permissive umask, which a service
+	// manager or a container entrypoint is entitled to set, opens it.
+	//
+	// 0177 masks everything but owner read/write, so the socket is never more
+	// permissive than 0600 before the Chmod below widens it deliberately.
+	old := syscall.Umask(0o177)
 	ln, err := net.Listen("unix", path)
+	syscall.Umask(old)
 	if err != nil {
 		return nil, fmt.Errorf("listen on %s: %w", path, err)
 	}

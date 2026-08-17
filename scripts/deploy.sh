@@ -40,7 +40,10 @@ while [ $# -gt 0 ]; do
         --force)     FORCE=1; shift ;;
         --advertise) ADVERTISE=$2; shift 2 ;;
         --name)      NAME=$2; shift 2 ;;
-        --key)       KEY=$2; shift 2 ;;
+        # Kept because scripts use it, and warned about below: an argument is
+        # visible in `ps` to every user on the machine and lands in the shell
+        # history of whoever ran it. LOGOS_VPN_KEY, or an invite, avoids both.
+        --key)       KEY=$2; KEY_ON_ARGV=1; shift 2 ;;
         *) echo "unknown option $1"; exit 1 ;;
     esac
 done
@@ -99,7 +102,11 @@ else
     if [ $INIT -eq 1 ]; then
         ./bin/shrooms init "${ARGS[@]}"
     else
-        [ -n "$KEY" ] || { echo "need a network key: pass --key KEY, set LOGOS_VPN_KEY, or use --init"; exit 1; }
+        [ -n "$KEY" ] || { echo "need a network key: set LOGOS_VPN_KEY, pass --key KEY, or use --init"; exit 1; }
+        if [ "${KEY_ON_ARGV:-0}" = 1 ]; then
+            echo "warning: --key puts the network key in this machine's process list and shell history."
+            echo "         LOGOS_VPN_KEY=... $0 ... avoids both, and \`shrooms invite\` avoids the key entirely."
+        fi
         ./bin/shrooms join "$KEY" "${ARGS[@]}"
     fi
 

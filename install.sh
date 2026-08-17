@@ -101,12 +101,22 @@ if command -v getenforce >/dev/null && [ "$(getenforce 2>/dev/null)" = "Enforcin
     echo "  SELinux enforcing, relabelling mounts"
 fi
 
+# The image is :latest by default, and that is a trust decision worth naming
+# rather than dressing up. Pinning a digest here would look stronger and buy
+# little: this script is fetched from the same GitHub account that publishes the
+# image, so whoever could substitute one could substitute the other. What
+# genuinely helps is knowing WHICH image you got, so set IMAGE to a digest
+# (ghcr.io/vpavlin/shrooms@sha256:...) when you want a build that cannot move
+# under you, and read the digest printed below when you do not.
 echo "==> fetching $IMAGE"
 docker pull -q "$IMAGE" >/dev/null || {
     echo "could not pull $IMAGE"
     echo "if the package is private, either make it public or run: docker login ghcr.io"
     exit 1
 }
+
+digest=$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE" 2>/dev/null || true)
+[ -n "$digest" ] && echo "  running $digest"
 
 mkdir -p /etc/shrooms /var/lib/shrooms /run/shrooms
 chmod 700 /etc/shrooms /var/lib/shrooms
@@ -245,14 +255,19 @@ EOF
 # typed: the config is the source of truth, and a --relay that failed to take
 # effect should not produce advice implying it did.
 if [ "${SETUP[0]}" = "init" ]; then
-    KEY=$(docker run --rm -v "/etc/shrooms:/etc/shrooms$Z" "$IMAGE" \
-        key show --config /etc/shrooms/config.toml)
-    cat <<EOF
-This machine created the mesh. Add others with:
+    cat <<'EOF'
+This machine created the mesh. Add another device with an invite:
 
-  sudo bash install.sh join $KEY
+  sudo shrooms invite
 
-Treat that key as a password: anyone holding it is a member of the mesh.
+That prints a token good for fifteen minutes and a QR code for the phone.
+The token admits one device; the network key admits anybody who ever sees it,
+which is why this no longer prints it for you to paste.
+
+If you do need the key itself — recovery, or a machine that cannot be invited:
+
+  sudo shrooms key show          # read it deliberately
+  sudo bash install.sh join      # then paste it when asked, not on the command line
 EOF
 fi
 
