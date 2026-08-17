@@ -108,9 +108,23 @@ path selection, not read traffic.
 → Resolved by M5 credentials.
 
 **No forward secrecy on the control plane.** Compromising the network key
-decrypts any captured announce for the epoch. Per-epoch derivation limits the
-window to one hour, but the key itself is long-lived.
-→ Follows the network key's lifecycle; revisit with M5.
+decrypts every captured announce — past, present and future, not one epoch's
+worth. Each epoch key is derived from the network key by HKDF, nothing is
+deleted, and every node holds that key permanently, so anyone with it
+recomputes them all. Per-epoch rotation buys unlinkability between epochs, not
+forward secrecy; an earlier version of this note claimed a one-hour window,
+which was wrong.
+
+Two things bound what that costs. Only control-plane metadata is under this key
+— announces, revocations, grants, service lists — and the traffic itself is
+forward-secret already, because WireGuard does ephemeral ECDH per handshake and
+rekeys every couple of minutes without touching the network key. And an
+adversary holding the network key can decrypt everything current and join the
+mesh regardless, so the marginal gain is historical metadata against somebody
+who already has the present.
+→ Deliberate (ADR-020). Revisit if credentials become the whole of membership
+and the network key is demoted to rendezvous only, which removes the reason a
+ratchet cannot be used: rejoining would stop depending on key derivation.
 
 **Pairwise rendezvous is not implemented.** A single group secret means one
 leaked key exposes the whole mesh's rendezvous. DESIGN §7 documents the
@@ -225,9 +239,13 @@ member could steer path selection, not read traffic.
 - **Pairwise rendezvous** (per-pair topics from a DH secret, no group secret at
   all — DESIGN §7). Removes the last shared secret, at the cost of N² topics.
   Worth it only if metadata privacy becomes a priority over simplicity.
-- **Forward secrecy on the control plane.** Per-epoch derivation limits exposure
-  to one hour; the underlying key is long-lived. Follows the network key's
-  lifecycle.
+- **Forward secrecy on the control plane.** Not provided, and not by accident:
+  epoch keys are derived from the long-lived network key, so rotation gives
+  unlinkability rather than forward secrecy. Providing it means a ratchet, which
+  replaces a derived key with held state — a device that lost it could not
+  rejoin from the network key alone. The condition for revisiting is credentials
+  becoming the whole of membership, at which point rejoining no longer depends
+  on deriving anything.
 - **Hardware-backed device keys.** The architecture already permits it — this is
   exactly why the device key is separate from the WireGuard key (ADR-007) — but
   nothing uses a TPM or Secure Enclave yet.

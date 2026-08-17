@@ -26,8 +26,27 @@ What MLS would give us is real, and better than what ADR-018 describes:
 
 That last line is the prize. [SECURITY.md](../../SECURITY.md) concedes there is
 no forward secrecy on the control plane: compromising the network key decrypts
-any captured announce for the epoch. MLS would make a removed device unable to
+every captured announce, not one epoch's worth — the epoch key is derived from
+the network key and nothing is deleted, so rotation gives unlinkability and not
+forward secrecy. (Both documents used to say "for the epoch", which read as a
+one-hour bound that does not exist.) MLS would make a removed device unable to
 read *future* traffic even holding every key it ever had.
+
+**Why a plain hash ratchet is not the cheap version of this.** `k(n+1) = H(k(n))`
+with `k(n)` destroyed would give forward secrecy without any of MLS. It also
+turns a derived key into held state, and that is the property this whole design
+rests on: a device rejoins from the network key alone, because addresses,
+topics and keys are all derived rather than allocated. With a ratchet, a device
+that lost its position — a reinstall, a restored backup, a re-flashed phone —
+could no longer catch up from the key it holds; enrolment would have to carry a
+ratchet position; and two nodes at different positions would fail in the way
+this project has learned to fear most, where everything looks healthy and
+nothing arrives.
+
+So the revisit condition is not "when we have time". It is when credentials
+become the whole of membership and the network key is demoted to a
+rendezvous-only secret, because then rejoining is a credential operation and no
+longer depends on deriving a payload key from something everyone keeps forever.
 
 ## Why not now
 

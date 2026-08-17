@@ -116,8 +116,29 @@ type envelope struct {
 	Sig  []byte `json:"s"` // ed25519 over Body
 }
 
-// epochKey derives the payload key for an epoch. Rotating per epoch means a
-// key compromise does not retroactively decrypt older traffic on the bus.
+// epochKey derives the payload key for an epoch.
+//
+// Rotation buys unlinkability, not forward secrecy, and the two are easy to
+// confuse — this comment used to claim the second. It is a pure function of the
+// long-lived network key, nothing is deleted, and every node holds that key
+// permanently, so anyone who obtains it recomputes every epoch key that has
+// ever existed or ever will. What rotation does give is that a captured
+// ciphertext cannot be tied to an epoch's topic without the key, and that each
+// epoch's traffic is a separate keystream.
+//
+// Real forward secrecy here would mean a ratchet — k(n+1) = H(k(n)) with k(n)
+// destroyed — which turns a derived key into held state: a device that loses it
+// could no longer rejoin from the network key alone, enrolment would have to
+// carry the ratchet position, and two nodes at different positions would fail
+// to talk in the way that looks exactly like a healthy mesh delivering nothing.
+// ADR-020 accepts that trade deliberately.
+//
+// Worth keeping in proportion: what is under this key is control-plane
+// metadata — announces, revocations, grants, service lists. The traffic itself
+// already has forward secrecy from WireGuard, which does ephemeral ECDH per
+// handshake and rekeys every couple of minutes without involving this key at
+// all. The gap is retrospective metadata, against somebody who by then can
+// decrypt everything current and join the mesh outright.
 func epochKey(nk identity.NetworkKey, epoch int64) []byte {
 	var b [8]byte
 	binary.BigEndian.PutUint64(b[:], uint64(epoch))
