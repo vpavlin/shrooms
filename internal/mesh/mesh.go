@@ -235,6 +235,10 @@ func New(log *slog.Logger, cfg state.Config, st *state.State, node *waku.Node, d
 	}
 	m.networkID = state.NetworkID(nk)
 	m.loadRevocations()
+	// The receiver's replay marks, which used to be rebuilt empty on every
+	// start — reopening the rollback window at exactly the moment an observer
+	// would try it. See state.SeqMarks.
+	m.guard.Load(m.st.SeqMarks(m.networkID))
 	if cfg.Relay {
 		m.relaySrv = relay.NewServer(m.relayKey)
 		log.Info("acting as a relay for this mesh")
@@ -496,6 +500,11 @@ func (m *Mesh) Run(ctx context.Context) error {
 			if err := m.announce(now); err != nil {
 				m.log.Warn("announce failed", "err", err)
 			}
+			// On the announce tick rather than per accepted announce: this is
+			// already the cadence at which the sequence number is written, and
+			// losing the last 45 seconds of marks to a crash costs one replay
+			// window, which is what the situation was before any of this.
+			m.saveSeqMarks()
 		}
 	}
 }
@@ -775,6 +784,17 @@ func (m *Mesh) noteExpired(id string) bool {
 	}
 	m.expiredDropped[id] = true
 	return true
+}
+
+// saveSeqMarks writes the replay high-water marks.
+//
+// Best effort and quiet: this is a hardening measure, and a node that cannot
+// write them still enforces everything it holds in memory. Failing an announce
+// over it would trade a working mesh for a smaller replay window.
+func (m *Mesh) saveSeqMarks() {
+	if err := m.st.SetSeqMarks(m.networkID, m.guard.Snapshot()); err != nil {
+		m.log.Debug("could not persist replay marks", "err", err)
+	}
 }
 
 // loadRevocations re-reads what this node had already been told is withdrawn.

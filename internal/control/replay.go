@@ -51,6 +51,35 @@ func (g *ReplayGuard) Seq(devicePub []byte) (uint64, bool) {
 	return v, ok
 }
 
+// Load seeds the guard from marks kept across a restart.
+//
+// Merged rather than replacing, and only upwards: whatever this process has
+// already accepted in its own lifetime is at least as new as anything on disk,
+// and taking a lower number from a file would reopen the window this closes.
+func (g *ReplayGuard) Load(marks map[string]uint64) {
+	if len(marks) == 0 {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for k, v := range marks {
+		if cur, ok := g.seen[k]; !ok || v > cur {
+			g.seen[k] = v
+		}
+	}
+}
+
+// Snapshot copies the marks out, for persisting them.
+func (g *ReplayGuard) Snapshot() map[string]uint64 {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	out := make(map[string]uint64, len(g.seen))
+	for k, v := range g.seen {
+		out[k] = v
+	}
+	return out
+}
+
 // Forget drops a device's state, e.g. on revocation.
 func (g *ReplayGuard) Forget(devicePub []byte) {
 	g.mu.Lock()
