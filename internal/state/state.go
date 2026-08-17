@@ -271,6 +271,14 @@ type Config struct {
 	//
 	// Loopback-only when set. The payload names every device and address on
 	// the mesh, so it is not something to bind widely by accident.
+	//
+	// Read-only, and now actually so: it serves /status and nothing else. It
+	// used to be handed the control socket's whole handler set, which put every
+	// mutating endpoint on a TCP port where SO_PEERCRED does not exist — so
+	// anything that could reach the port could rewrite this config, leave a
+	// mesh or restart the daemon, including a browser, since it is plain HTTP
+	// and a text/plain POST needs no preflight. Changing anything still means
+	// the unix socket, where the file mode decides who may ask.
 	UIListen string
 
 	// ManageHosts lets the daemon keep /etc/hosts current as the roster

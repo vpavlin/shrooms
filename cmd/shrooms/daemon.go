@@ -606,6 +606,18 @@ type peerStatus struct {
 // Refuses anything but a loopback address. The payload names every device and
 // address on the mesh, and "0.0.0.0:8787" in a config file is an easy way to
 // publish that to the network without meaning to.
+// readOnlyMux is what the loopback port is allowed to answer.
+//
+// A whole mux rather than a check inside each handler, because a split is a
+// property somebody can see: the next endpoint added to the control mux does
+// not silently appear here, which is exactly how every mutating endpoint ended
+// up on a TCP port in the first place.
+func readOnlyMux(status http.HandlerFunc) *http.ServeMux {
+	m := http.NewServeMux()
+	m.HandleFunc("/status", status)
+	return m
+}
+
 func serveUI(ctx context.Context, log *slog.Logger, addr string, h http.Handler) error {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -1286,10 +1298,36 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 		return out
 	}
 
-	mux.HandleFunc("/status", func(w http.ResponseWriter, _ *http.Request) {
+	status := func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "read-only", http.StatusMethodNotAllowed)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(snapshot())
-	})
+	}
+	mux.HandleFunc("/status", status)
+
+	// A second, read-only mux for the loopback port (ADR-025).
+	//
+	// The port used to be handed the same mux as the unix socket, which put
+	// every mutating endpoint on it: /config/*, /join, /leave, /reload,
+	// /restart. The socket decides who may call those by file permissions and
+	// SO_PEERCRED, and neither exists over TCP — no ConnContext is set, so
+	// peer-cred is unavailable and only the root-gated handlers failed closed.
+	// The group-tier ones were not gated at all.
+	//
+	// That is reachable by any local user on a shared machine, and by a
+	// browser: it is plain HTTP with no Origin check, and a text/plain POST
+	// does not trigger a preflight, so a page in a tab could rewrite the
+	// config, leave a mesh or restart the daemon. It is off by default, which
+	// is the only reason this was not worse.
+	//
+	// So the port gets what the config says it is for and nothing else — the
+	// status JSON. Serving a separate mux rather than checking the verb per
+	// handler, because a split is a property somebody can see, while a check
+	// is one that has to be remembered by whoever adds the next endpoint.
+	uiMux := readOnlyMux(status)
 
 	// The log tail and the restart button, both of which exist because a UI
 	// cannot reach the journal or a terminal (ADR-025).
@@ -1450,7 +1488,7 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 	}
 
 	if cfg.UIListen != "" {
-		if err := serveUI(ctx, log, cfg.UIListen, mux); err != nil {
+		if err := serveUI(ctx, log, cfg.UIListen, uiMux); err != nil {
 			log.Warn("monitoring endpoint unavailable", "listen", cfg.UIListen, "err", err)
 		}
 	}
