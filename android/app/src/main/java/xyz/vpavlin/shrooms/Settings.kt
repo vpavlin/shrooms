@@ -57,35 +57,15 @@ fun SettingsScreen(
         Spacer(Modifier.height(28.dp))
         ModeSetting(dir, connected = connected)
 
-        Spacer(Modifier.height(28.dp))
-        Column(Modifier.padding(horizontal = 24.dp)) {
-            Label("SERVICES")
-            Spacer(Modifier.height(8.dp))
-            // A disclosure decision, so it belongs somewhere a person can find
-            // it rather than in a config file nobody can edit from a phone. The
-            // wording says what it actually changes: a member can already reach
-            // whatever this device publishes, and this is about whether the
-            // names are listed for them (ADR-023).
-            var announce by remember {
-                mutableStateOf(runCatching { Mobile.announceServices(dir) }.getOrDefault(false))
-            }
-            ToggleRow(
-                title = "Tell peers what this device offers",
-                detail = if (announce) "peers see the names of services published here"
-                else "peers see nothing about what is published here",
-                checked = announce,
-                onChange = { want ->
-                    runCatching { Mobile.setAnnounceServices(dir, want) }
-                        .onSuccess { announce = want }
-                },
-            )
-            Text(
-                "a member can already reach them; this is only about the names",
-                style = MaterialTheme.typography.labelSmall,
-                color = Palette.Ash,
-            )
-        }
-
+        // No SERVICES section here, deliberately.
+        //
+        // It controlled whether peers are told the names of services this
+        // device publishes — and a phone publishes none. The toggle asked
+        // about a disclosure that does not exist, and every setting nobody
+        // needs is one more thing to read past to reach the ones they do. The
+        // capability is untouched: announce_services is still in the config,
+        // still honoured by the daemon, and still on the desktop where devices
+        // actually publish things.
         Spacer(Modifier.height(28.dp))
         Column(Modifier.padding(horizontal = 24.dp)) {
             Label("GRAPH")
@@ -243,7 +223,11 @@ private fun ModeSetting(dir: String, connected: Boolean) {
         Label("THIS NODE")
         Spacer(Modifier.height(8.dp))
         ToggleRow(
-            title = if (edge) "Light node" else "Relay node",
+            // "Edge", not "Light": it is the word the config takes, the word
+            // the daemon logs, and the word every document uses. A phone
+            // showing a fourth name for the same thing is how somebody ends up
+            // searching for a setting that does not exist.
+            title = if (edge) "Edge node" else "Core node (relay)",
             detail = if (edge) "subscribes only  ~3 MB/h" else "relays for the network  ~20 MB/h",
             detailColour = if (edge) Palette.Ash else Palette.Amber,
             checked = edge,

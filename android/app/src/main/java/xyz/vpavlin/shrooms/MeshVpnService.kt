@@ -62,6 +62,9 @@ class MeshVpnService : VpnService() {
     // when its resolvers change. See watchNetworks.
     private var netCallback: ConnectivityManager.NetworkCallback? = null
 
+    /** When the watchdog last said it was holding off because the device is offline. */
+    private var offlineNoted = 0L
+
     /**
      * Whether this process has already rebuilt the tunnel to recover names.
      *
@@ -90,6 +93,14 @@ class MeshVpnService : VpnService() {
 
         /** And how long to leave it alone afterwards. */
         private const val REVIVE_COOLDOWN = 15 * 60_000L
+
+        /**
+         * How often to say "still offline" while the watchdog holds off.
+         *
+         * Said at all because the alternative is a log that goes silent for
+         * hours and gives no way to tell "waiting for a network" from "hung".
+         */
+        private const val OFFLINE_LOG_EVERY = 10 * 60_000L
         private const val CHANNEL = "mesh"
         private const val NOTIFICATION_ID = 1
         private const val TAG = "shrooms"
@@ -393,6 +404,34 @@ class MeshVpnService : VpnService() {
                 val now = SystemClock.elapsedRealtime()
                 when {
                     !s.connected || s.rendezvous.ok -> healthy = now
+
+                    // Offline is not a fault, and the cure for a fault makes it
+                    // worse.
+                    //
+                    // With both radios off, rendezvous reports Disconnected —
+                    // correctly, there is nothing to connect to — and the
+                    // branch below read that as a wedged delivery node and
+                    // killed the process. START_STICKY brought it back, still
+                    // offline, still Disconnected, and it killed itself again.
+                    // Android backs off a service that keeps dying and
+                    // eventually stops restarting it, so the app was gone until
+                    // somebody opened it by hand. Observed while testing with
+                    // everything switched off.
+                    //
+                    // So while the device has no usable network, hold the
+                    // timer: there is no repair to attempt, and staying alive
+                    // is what keeps the network callback registered — the thing
+                    // that notices the network coming back. The comment below
+                    // already said a network that is genuinely gone will not be
+                    // fixed by another restart; this is that sentence enforced.
+                    !hasUsableNetwork() -> {
+                        if (now - offlineNoted > OFFLINE_LOG_EVERY) {
+                            offlineNoted = now
+                            Log.i(TAG, "no usable network; not restarting anything until one returns")
+                        }
+                        healthy = now
+                    }
+
                     now - healthy > STALL_BEFORE_RECONNECT &&
                         now - revived > REVIVE_COOLDOWN -> {
                         revived = now
@@ -513,6 +552,27 @@ class MeshVpnService : VpnService() {
      * does: once our own VpnService is up, it is a network too, and its
      * resolver is us.
      */
+    /**
+     * Whether this device has a network the delivery node could actually use.
+     *
+     * Non-VPN deliberately: our own tunnel has INTERNET capability, so counting
+     * it would make the answer "yes" the moment the tunnel is up, which is
+     * precisely when it is least true.
+     *
+     * VALIDATED is not required. A captive portal or a network that Android has
+     * not finished probing is still a network the node may reach peers over,
+     * and a false "offline" here would restore exactly the kill loop this
+     * exists to stop. When in doubt, say there is a network and let the
+     * watchdog do its job.
+     */
+    private fun hasUsableNetwork(): Boolean {
+        val cm = getSystemService(ConnectivityManager::class.java) ?: return true
+        val caps = runCatching { cm.getNetworkCapabilities(cm.activeNetwork) }.getOrNull()
+            ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+    }
+
     private fun watchNetworks() {
         if (netCallback != null) return
         val cm = getSystemService(ConnectivityManager::class.java) ?: return

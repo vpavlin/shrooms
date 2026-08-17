@@ -925,12 +925,43 @@ private fun MeshScreen(
             color = Palette.Ash,
             modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 4.dp),
         )
-        Box(Modifier.padding(start = 24.dp, end = 24.dp, top = 4.dp, bottom = 24.dp)) {
+        // Two things keep this out of the way of the system gesture.
+        //
+        // A swipe up from the bottom edge starts inside the last few
+        // millimetres of the screen, and safeDrawingPadding only clears the
+        // navigation bar — which in gesture mode is a thin handle, not the
+        // area the gesture actually claims. So the button sits well above it.
+        //
+        // And disconnecting takes two taps. Spacing makes a stray hit less
+        // likely; it cannot make it impossible, and the cost of being wrong is
+        // asymmetric — connecting by accident is a moment's confusion, while
+        // disconnecting by accident drops every tunnel on the phone and,
+        // if you are away from home, the way back into the machines you were
+        // reaching. Connect stays one tap, because nothing about it is
+        // destructive.
+        var confirming by remember { mutableStateOf(false) }
+        LaunchedEffect(confirming) {
+            if (confirming) {
+                kotlinx.coroutines.delay(3_000)
+                confirming = false
+            }
+        }
+        Box(Modifier.padding(start = 24.dp, end = 24.dp, top = 4.dp, bottom = 48.dp)) {
             Action(
-                if (snap.connected) "DISCONNECT" else "CONNECT",
+                when {
+                    !snap.connected -> "CONNECT"
+                    confirming -> "TAP AGAIN TO DISCONNECT"
+                    else -> "DISCONNECT"
+                },
                 enabled = true,
                 danger = snap.connected,
-            ) { if (snap.connected) onDisconnect() else onConnect() }
+            ) {
+                when {
+                    !snap.connected -> onConnect()
+                    confirming -> { confirming = false; onDisconnect() }
+                    else -> confirming = true
+                }
+            }
         }
     }
 }
