@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -344,6 +345,25 @@ func joinHere(ctx context.Context, log *slog.Logger, tr invite.Transport, cfgPat
 		// naming another, and every peer then refuses this device — correctly,
 		// and silently.
 		legacy := label == "" || label == state.DefaultLabel
+
+		// And that it names THIS device.
+		//
+		// Verifying the signature only proves the mesh's admin signed it for
+		// somebody. A credential for another device is caught later, by every
+		// peer refusing our announces — which presents as a mesh that ignores
+		// us, with nothing local to look at. Better to refuse it here, where
+		// the answer is one line rather than an afternoon.
+		if ms, err := st.MeshState(state.NetworkID(nk), legacy); err == nil && ms.Identity != nil {
+			if !bytes.Equal(c.DevicePub, ms.Identity.DevicePub) {
+				return nil, fmt.Errorf("that credential is for another device: it names %s, this device is %s",
+					hex.EncodeToString(c.DevicePub)[:16],
+					hex.EncodeToString(ms.Identity.DevicePub)[:16])
+			}
+			if !bytes.Equal(c.WGPub, ms.Identity.WGPub[:]) {
+				return nil, errors.New("that credential names a different tunnel key than this device holds")
+			}
+		}
+
 		if err := st.SetMeshCredentialFor(state.NetworkID(nk), legacy, credRaw); err != nil {
 			return nil, err
 		}

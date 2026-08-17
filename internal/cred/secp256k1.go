@@ -57,7 +57,11 @@ func verifyKey(pub ed25519.PublicKey, digest, sig []byte) bool {
 // package covers `SHA-256(domain ‖ body)` already, which is what let the card
 // be considered at all: a smartcard signs a fixed-size input and nothing else.
 func verifySecp256k1(pub, digest, sig []byte) bool {
-	if len(pub) != secp256k1PubKeySize || len(sig) < secp256k1SigSize || len(digest) != 32 {
+	// Exactly 64, not at least. `<` read sig[:64] and ignored anything after
+	// it, so a signature with junk appended verified as readily as the real
+	// one — two encodings of the same signature, which the comment on
+	// SetByteSlice below argues against three lines later.
+	if len(pub) != secp256k1PubKeySize || len(sig) != secp256k1SigSize || len(digest) != 32 {
 		return false
 	}
 	p, err := secp256k1.ParsePubKey(pub)
@@ -71,6 +75,23 @@ func verifySecp256k1(pub, digest, sig []byte) bool {
 	if r.SetByteSlice(sig[:32]) || s.SetByteSlice(sig[32:64]) {
 		return false
 	}
+	// Deliberately NOT requiring low-S, though the malleability is real:
+	// (r, n-s) verifies wherever (r, s) does, so a credential has two valid
+	// encodings. Bitcoin and Ethereum both refuse the high half for exactly
+	// that reason.
+	//
+	// It is refused here for a better one: keycard-go does not canonicalise s,
+	// so a Keycard emits the high half about half the time. Rejecting it would
+	// turn signing with the card — the entire point of accepting secp256k1 at
+	// all (ADR-022) — into a coin flip, failing in a way indistinguishable
+	// from the wrong key being used.
+	//
+	// Safe to allow because nothing here authorises on the bytes of a
+	// signature: a credential is identified by device and serial, and the
+	// replay guard counts sequence numbers, so a second encoding of the same
+	// statement says the same thing. If anything ever keys off a signature —
+	// deduplicating by hash, say — this must change, and the signer must
+	// canonicalise rather than the verifier refuse.
 	return ecdsa.NewSignature(&r, &s).Verify(digest, p)
 }
 

@@ -13,10 +13,22 @@ import (
 // un-revoke a device by staying quiet, because its peers already hold the
 // statement and verified the admin signature themselves.
 //
-// Entries are dropped once the credential they withdraw would have expired
-// anyway. After that expiry does the same job, and keeping them forever would
-// grow without bound on exactly the input an attacker controls — the number of
-// distinct device keys they can invent.
+// Entries are NOT dropped, despite what this comment used to say and what Prune
+// below implements. Nothing calls Prune, so a revocation is kept for as long as
+// the process — and now the state dir — holds it.
+//
+// That is the safe direction, and it is worth being explicit about why the tidy
+// version is not obviously right. Prune drops an entry once `until` passes, and
+// Add sets `until` to now+DefaultLife because a revocation does not say what it
+// withdraws. Wire it up as written and a revocation for a credential issued
+// with a longer --life would be forgotten while that credential still verifies,
+// and the device would walk back onto the mesh. Growth, meanwhile, is bounded
+// by what an admin has signed: an attacker cannot add entries here at all, only
+// the holder of the admin key can.
+//
+// Fixing it properly means the revocation carrying the withdrawn credential's
+// NotAfter, which changes a signed wire format — see
+// docs/audit-open-questions.md.
 type List struct {
 	mu sync.RWMutex
 	// by device key, keeping the highest serial seen. A revocation withdraws
@@ -86,6 +98,12 @@ func (l *List) All() [][]byte {
 }
 
 // Prune drops entries whose credentials would have expired anyway.
+//
+// Deliberately not called. See the note on List: `until` is a guess
+// (now+DefaultLife), not the withdrawn credential's real expiry, so pruning on
+// it can forget a revocation that still matters. Kept rather than deleted
+// because the tests below pin the behaviour, and because deleting it would
+// leave the next person to re-derive the same trap from scratch.
 func (l *List) Prune(now time.Time) int {
 	if l == nil {
 		return 0
