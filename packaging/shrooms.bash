@@ -16,6 +16,13 @@ _shrooms_mesh_labels() {
     shrooms mesh list 2>/dev/null | awk 'NR>1 && NF {print $1}'
 }
 
+# What `config set` accepts, asked of the binary rather than duplicated here:
+# a second list drifts the first time a setting is added, and is wrong exactly
+# where somebody looks to find out what exists.
+_shrooms_settings() {
+    shrooms config settings --names 2>/dev/null
+}
+
 _shrooms_peers() {
     local out
     # --json rather than parsing the table: the table is for people and is
@@ -53,7 +60,7 @@ _shrooms() {
         cword=$COMP_CWORD
     fi
 
-    local commands="init join invite prepare set-key daemon status mesh reload bound paths hosts key keys credential admin version help"
+    local commands="init join invite prepare set-key daemon status mesh config reload bound paths hosts key keys credential admin version help"
     local common="--config --state"
 
     # A path-valued flag completes as a path, whichever command it belongs to.
@@ -101,6 +108,41 @@ _shrooms() {
             else
                 COMPREPLY=($(compgen -W "$(_shrooms_mesh_labels)" -- "$cur"))
             fi
+            ;;
+        config)
+            # The setting names come from the binary rather than a list kept
+            # here: a second copy would drift the first time one is added, and
+            # be wrong in the place people find out what exists.
+            case $cword in
+                2) COMPREPLY=($(compgen -W "validate set settings" -- "$cur")) ;;
+                3)
+                    if [ "${words[2]}" = set ]; then
+                        COMPREPLY=($(compgen -W "$(_shrooms_settings)" -- "$cur"))
+                    else
+                        COMPREPLY=($(compgen -W "$common" -- "$cur"))
+                    fi
+                    ;;
+                *)
+                    if [ "${words[2]}" = set ]; then
+                        # A value, and for the on/off ones there is a right
+                        # answer worth offering. --mesh completes labels for
+                        # the settings that are per mesh.
+                        case $prev in
+                            --mesh) COMPREPLY=($(compgen -W "$(_shrooms_mesh_labels)" -- "$cur")); return ;;
+                        esac
+                        case ${words[3]} in
+                            relay|portmap|announce-services|announce-bound|mesh)
+                                COMPREPLY=($(compgen -W "on off --mesh --socket" -- "$cur")) ;;
+                            mode)
+                                COMPREPLY=($(compgen -W "Core Edge --socket" -- "$cur")) ;;
+                            *)
+                                COMPREPLY=($(compgen -W "--mesh --socket" -- "$cur")) ;;
+                        esac
+                    else
+                        COMPREPLY=($(compgen -W "$common" -- "$cur"))
+                    fi
+                    ;;
+            esac
             ;;
         paths)
             # Takes an optional peer name. Offer names first, flags after a dash,

@@ -31,6 +31,21 @@ func cmdConfig(args []string) error {
 	switch args[0] {
 	case "validate", "check":
 		return cmdConfigValidate(args[1:])
+	case "set":
+		return cmdConfigSet(args[1:])
+	case "settings", "list":
+		// --names prints one setting per line and nothing else, for shell
+		// completion. Parsing the human list instead means completion breaks
+		// the day somebody rewords the help — and breaks quietly, by offering
+		// the wrong words.
+		if len(args) > 1 && args[1] == "--names" {
+			for _, st := range settings() {
+				fmt.Println(st.name)
+			}
+			return nil
+		}
+		configSetUsage()
+		return nil
 	case "-h", "--help", "help":
 		configUsage()
 		return nil
@@ -42,7 +57,9 @@ func cmdConfig(args []string) error {
 
 func configUsage() {
 	fmt.Fprint(os.Stderr, `Usage:
-  shrooms config validate    check the config file the daemon would read
+  shrooms config validate           check the config the daemon would read
+  shrooms config set <k> <v>        change one setting, through the daemon
+  shrooms config settings           what can be set
 
 `)
 }
