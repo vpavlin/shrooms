@@ -38,3 +38,4 @@ number appears, its source is named.
 | [026](026-announce-what-is-bound.md) | Announce what is bound to the mesh address | accepted; built, off by default |
 | [027](027-punching-through-the-relay.md) | Punch through the relay we already have | proposed; every part exists except the coordination |
 | [028](028-when-the-fleet-turns-on-rln.md) | When the fleet turns on RLN | proposed; nothing to build yet, two questions to ask |
+| [029](029-disco-proves-the-device.md) | Disco proves the device, not just the mesh | accepted; the first half of Phase 4 |
