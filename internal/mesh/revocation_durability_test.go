@@ -185,3 +185,70 @@ func TestRevocationRoundTripThroughTheStateDir(t *testing.T) {
 		t.Error("one mesh's revocations leaked into another's")
 	}
 }
+
+// A revocation only means something if it reaches a node that was offline when
+// it was published, so a peer appearing is a reason to say it again. These pin
+// the decision — the switch, the empty list, and the cooldown — rather than the
+// publish, which needs a live rendezvous node.
+func TestAPeerAppearingEarnsOneRepetition(t *testing.T) {
+	admin, err := cred.NewAdmin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev, _ := identity.New()
+	r, err := admin.Revoke(dev.DevicePub, 1, time.Time{}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := r.MarshalBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m := &Mesh{revoked: cred.NewList()}
+	now := time.Now()
+
+	// Nothing withdrawn, nothing to say — however many peers turn up.
+	if m.shouldRepeatRevocations(now) {
+		t.Error("repeated an empty revocation list")
+	}
+
+	m.revoked.Add(r, raw)
+	if !m.shouldRepeatRevocations(now) {
+		t.Fatal("the first peer to appear did not earn a repetition")
+	}
+
+	// A restart discovers every peer at once. Each publish goes to the mesh
+	// topic, not to the peer that arrived, so repeating per arrival would send
+	// the same list to the same audience N times.
+	for i := 0; i < 20; i++ {
+		if m.shouldRepeatRevocations(now.Add(time.Duration(i) * time.Second)) {
+			t.Fatalf("a wave of arrivals repeated again after %ds", i)
+		}
+	}
+
+	if !m.shouldRepeatRevocations(now.Add(RevocationRepublishCooldown + time.Second)) {
+		t.Error("a peer appearing after the cooldown did not earn a repetition")
+	}
+}
+
+// Off means off: a node on a metered uplink says nothing, and relies on another
+// node that does. There is no designated repeater to fall back on — the admin
+// key is not on any daemon — so this is the setting that trades a guarantee for
+// bytes, and it must actually be honoured.
+func TestQuietRevocationsSaysNothing(t *testing.T) {
+	admin, err := cred.NewAdmin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev, _ := identity.New()
+	r, _ := admin.Revoke(dev.DevicePub, 1, time.Time{}, time.Now())
+	raw, _ := r.MarshalBinary()
+
+	m := &Mesh{revoked: cred.NewList(), cfg: state.Config{QuietRevocations: true}}
+	m.revoked.Add(r, raw)
+
+	if m.shouldRepeatRevocations(time.Now()) {
+		t.Error("a node set to stay quiet repeated a revocation")
+	}
+}

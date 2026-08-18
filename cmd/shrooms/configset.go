@@ -128,6 +128,12 @@ func settings() []setting {
 			body:    boolBody("enabled"),
 		},
 		{
+			name: "announce-revocations", path: "/config/announce-revocations", value: "on|off",
+			choices: []string{"on", "off"},
+			help:    "repeat what this mesh has revoked, so a peer that was offline learns it",
+			body:    boolBody("enabled"),
+		},
+		{
 			name: "mesh", path: "/config/mesh", value: "on|off",
 			choices: []string{"on", "off"},
 			help:    "run this mesh, or leave it configured and switched off (needs --mesh)",

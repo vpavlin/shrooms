@@ -267,6 +267,31 @@ func controlHandlers(mux *http.ServeMux, log *slog.Logger, cfgPath string, rl *r
 			return "peers will see nothing about what is bound here", nil
 		}))
 
+	// Whether this node repeats what the mesh's admin has withdrawn.
+	//
+	// Inverted on the wire: the request says "announce revocations", the config
+	// stores "quiet". On by default, because a revocation only means something
+	// if it reaches nodes that were offline when it was published, and no node
+	// is the designated repeater — the admin key is deliberately not on any
+	// daemon (ADR-018), so every holder is equally the failover.
+	//
+	// Takes effect immediately in the sense that matters: the next epoch and
+	// the next peer to appear.
+	mux.HandleFunc("/config/announce-revocations", writeSetting(log, cfgPath,
+		func(cfg *state.Config, in settingRequest) (string, error) {
+			quiet := !in.Enabled
+			if err := setMeshBool(cfg, in.Label,
+				&cfg.QuietRevocations,
+				func(m *state.Mesh) *bool { return &m.QuietRevocations },
+				quiet); err != nil {
+				return "", err
+			}
+			if in.Enabled {
+				return "this node will repeat what has been revoked, so a peer that was offline learns it", nil
+			}
+			return "this node will not repeat revocations; another node that does must be reachable", nil
+		}))
+
 	// Whether a mesh runs, without leaving it. Being a member and using it are
 	// different things (ADR-015).
 	mux.HandleFunc("/config/mesh", writeSetting(log, cfgPath,

@@ -135,6 +135,7 @@ func startInstance(ctx context.Context, log *slog.Logger, cfg state.Config, st *
 	meshCfg.Services = m.Services
 	meshCfg.AnnounceServices = m.AnnounceServices
 	meshCfg.AnnounceBound = m.AnnounceBound
+	meshCfg.QuietRevocations = m.QuietRevocations
 
 	in.mesh, err = mesh.New(log.With("mesh", m.Label), meshCfg, stateFor(st, ms), node, in.dev)
 	if err != nil {

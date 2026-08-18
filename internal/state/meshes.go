@@ -55,6 +55,23 @@ type Mesh struct {
 	// mesh (ADR-026), for the same reason and with the same default.
 	AnnounceBound bool
 
+	// QuietRevocations stops this node repeating what it knows is withdrawn.
+	// Written as announce_revocations = "false", inverted for the same reason
+	// as Disabled: the useful default is on, and an absent line must mean on.
+	//
+	// Repeating is on by default because a revocation is the one control
+	// message where saying it again is always safe — every receiver verifies
+	// the admin signature itself — and because the alternative is that a
+	// withdrawal reaches only whoever happened to be listening in the instant
+	// it was published. There is no "the admin node does it": the admin key is
+	// deliberately not on any daemon (ADR-018), so every node that holds a
+	// revocation is equally able to repeat it, and equally the failover.
+	//
+	// Turn it off on a node whose uplink you are counting bytes on. The cost is
+	// one small message per revoked device per epoch, plus one when a peer
+	// appears.
+	QuietRevocations bool
+
 	// Disabled keeps a mesh in the config without running it. Written as
 	// enabled = "false".
 	//
@@ -128,6 +145,7 @@ func (c Config) Meshes() []Mesh {
 			Services:         c.Services,
 			AnnounceServices: c.AnnounceServices,
 			AnnounceBound:    c.AnnounceBound,
+			QuietRevocations: c.QuietRevocations,
 		})
 	}
 	for label, m := range c.MeshSet {
@@ -202,6 +220,8 @@ func (c *Config) setMeshField(label, field, val string, line int) error {
 		m.AnnounceServices = unquote(val) == "true"
 	case "announce_bound":
 		m.AnnounceBound = unquote(val) == "true"
+	case "announce_revocations":
+		m.QuietRevocations = unquote(val) == "false"
 	default:
 		return fmt.Errorf("line %d: unknown mesh option %q", line, field)
 	}

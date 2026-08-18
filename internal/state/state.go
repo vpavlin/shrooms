@@ -135,6 +135,11 @@ type Config struct {
 	// changes is whether they are listed.
 	AnnounceBound bool
 
+	// QuietRevocations stops this node repeating what it knows is withdrawn.
+	// See the field of the same name on Mesh; inverted so an absent line means
+	// the useful default, which is to repeat.
+	QuietRevocations bool
+
 	// PortMapping asks the local router to open this node's port, so a machine
 	// behind a home NAT can be dialled without anyone editing a router page
 	// (ADR-024). On by default: it is best effort, a refusal costs one request
@@ -832,6 +837,8 @@ func parseConfig(text string) (Config, error) {
 			c.AnnounceServices = unquote(val) == "true"
 		case "announce_bound":
 			c.AnnounceBound = unquote(val) == "true"
+		case "announce_revocations":
+			c.QuietRevocations = unquote(val) == "false"
 		case "port_mapping":
 			c.PortMapping = unquote(val) == "true"
 		case "advertise":
@@ -954,6 +961,16 @@ func WriteConfig(path string, c Config) error {
 		b.WriteString("announce_bound = \"true\"\n")
 	} else {
 		b.WriteString("# announce_bound = \"true\"\n")
+	}
+	b.WriteString("\n# Repeat what this mesh's admin has withdrawn: once an epoch, and once when\n")
+	b.WriteString("# a peer appears. Every receiver checks the admin signature itself, so\n")
+	b.WriteString("# repeating is always safe, and it is what makes a revocation reach a node\n")
+	b.WriteString("# that was offline when it was published. Turn it off to save a few small\n")
+	b.WriteString("# messages on a metered uplink.\n")
+	if c.QuietRevocations {
+		b.WriteString("announce_revocations = \"false\"\n")
+	} else {
+		b.WriteString("# announce_revocations = \"false\"\n")
 	}
 	b.WriteString("\n# Ask the router (PCP, NAT-PMP) to open this node's port, so a machine\n")
 	b.WriteString("# behind a home NAT can be dialled without a forwarding rule. Best effort:\n")

@@ -141,6 +141,12 @@ type Mesh struct {
 	// restart (see loadRevocations).
 	networkID string
 
+	// revMu guards lastRevAnnounce, which is touched from the receive path
+	// (a peer appearing) and read on the same path — the epoch republish runs
+	// on the ticker goroutine and does not consult it.
+	revMu           sync.Mutex
+	lastRevAnnounce time.Time
+
 	// lastEpoch is the rendezvous epoch the last announce went out under. A
 	// change is the moment to re-publish what we know has been withdrawn.
 	lastEpoch int64
@@ -898,6 +904,48 @@ func (m *Mesh) republishRevocations(now time.Time) {
 	m.log.Debug("re-published revocations", "count", len(all))
 }
 
+// RevocationRepublishCooldown bounds how often a burst of arrivals can make
+// this node repeat itself.
+const RevocationRepublishCooldown = 2 * time.Minute
+
+// revocationsOnDiscovery repeats the withdrawal list when a peer appears.
+//
+// Published to the mesh topic rather than to the peer that arrived, because
+// that is the only way a revocation travels — which means N arrivals in one
+// restart would otherwise publish the same list N times to the same audience.
+// The cooldown makes a wave of reconnections cost one repetition.
+//
+// Not gated on being an admin, because no daemon holds the admin key: the
+// authority is deliberately off the devices (ADR-018), so "the admin node"
+// is not a thing that exists at runtime. Every node holding a revocation can
+// repeat it, every receiver verifies the signature itself, and that is the
+// failover — no node's absence stops a withdrawal propagating.
+func (m *Mesh) revocationsOnDiscovery(now time.Time) {
+	if m.shouldRepeatRevocations(now) {
+		m.republishRevocations(now)
+	}
+}
+
+// shouldRepeatRevocations answers whether this arrival earns a repetition, and
+// records it if so.
+//
+// Split from the publish because this is the part with a decision in it: the
+// switch, the empty list, and the cooldown. The publish itself needs a live
+// rendezvous node, and a test that had to stand one up to check a two-minute
+// timer would be testing the wrong thing.
+func (m *Mesh) shouldRepeatRevocations(now time.Time) bool {
+	if m.cfg.QuietRevocations || m.revoked.Len() == 0 {
+		return false
+	}
+	m.revMu.Lock()
+	defer m.revMu.Unlock()
+	if !m.lastRevAnnounce.IsZero() && now.Sub(m.lastRevAnnounce) < RevocationRepublishCooldown {
+		return false
+	}
+	m.lastRevAnnounce = now
+	return true
+}
+
 // publishRevocation puts a withdrawal on the bus.
 //
 // Re-published by every node that learns one, not only by the admin: an admin
@@ -1519,6 +1567,11 @@ func (m *Mesh) handle(ev waku.Event) {
 		// every five minutes, so without this it sees nothing for most of
 		// that — which is every reconnect (ADR-023).
 		m.offerServices(now)
+		// And tell it what has been withdrawn, for the same reason and a
+		// worse consequence: a node that joined after a revocation was
+		// published would otherwise admit that device until its credential
+		// expired, which is up to a month.
+		m.revocationsOnDiscovery(now)
 	}
 
 	// Introduce ourselves when asked, or when this peer plainly cannot reach us.
