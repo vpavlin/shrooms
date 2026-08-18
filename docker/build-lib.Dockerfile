@@ -42,9 +42,45 @@ RUN git clone https://github.com/logos-messaging/logos-delivery.git . \
     && git checkout "$LD_REF" \
     && git rev-parse HEAD > /src/.ld-rev
 
+# Two patches to the pinned tree, both reported and verified in issue #11.
+#
+# Carried here rather than by pinning a different revision because this rev is
+# the one the Android bindings use, and building the library from a different
+# source than the phone runs is a worse problem than two sed lines. Both are
+# fixed upstream on master; when the pin moves forward, delete this.
+#
+# Each is checked after it is applied. A patch that silently stops matching —
+# because the pin moved, or upstream reformatted the line — would otherwise
+# reappear as the original build failure with nothing pointing at this block.
+RUN set -eux; \
+    # 1. nimble re-resolves taskpools past the lockfile pin (0.2.1 instead of
+    #    0.1.0), and 0.2.1 dropped taskpools/channels_spsc_single.nim, so the
+    #    build dies on a missing import. Naming the commit leaves nothing to
+    #    resolve. `nimble setup --localdeps` re-runs on every make, so fixing
+    #    the staged tree by hand is undone; the requirement is the durable fix.
+    sed -i 's|^\( *\)"taskpools",|\1"https://github.com/status-im/nim-taskpools#9e8ccc754631ac55ac2fd495e167e74e86293edb",|' logos_delivery.nimble; \
+    grep -q 'nim-taskpools#9e8ccc75' logos_delivery.nimble; \
+    # 2. chronos 4.4.0 refuses `waitFor` inside an async handler — NestedPoll —
+    #    and this call site is already inside one that awaits eight lines up.
+    #    Upstream master uses the await form.
+    #    The path and the exact line differ from the report — it is
+    #    logos_delivery/waku/..., and the call is inside `if not (...)`, not a
+    #    `let _ =` — which is why each patch is verified below rather than
+    #    trusted.
+    sed -i 's|waitFor node\.publish(some(pubSubTopic), message)\.withTimeout(futTimeout)|await node.publish(some(pubSubTopic), message).withTimeout(futTimeout)|' \
+        logos_delivery/waku/rest_api/endpoint/relay/handlers.nim; \
+    grep -q 'await node.publish(some(pubSubTopic), message).withTimeout' \
+        logos_delivery/waku/rest_api/endpoint/relay/handlers.nim; \
+    ! grep -q 'waitFor node.publish' logos_delivery/waku/rest_api/endpoint/relay/handlers.nim
+
 # The Makefile bootstraps its own pinned nim/nimble via install-nim/install-nimble.
 # Build serially: with -j, a real error surfaces as a 14000-line bogus
 # "Couldn't find a solution for the packages" solver dump.
+# bash with pipefail, because the pipe below otherwise reports the exit status
+# of `tail` and a Nim compile error becomes invisible: make fails, tail
+# succeeds, the build carries on, and the next COPY reports a missing file with
+# no sign of the real cause.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN echo "building liblogosdelivery from $(cat /src/.ld-rev)" \
     && make liblogosdelivery 2>&1 | tail -40
 

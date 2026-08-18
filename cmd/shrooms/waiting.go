@@ -165,7 +165,27 @@ func runWaiting(ctx context.Context, log *slog.Logger, cfgPath, stateDir, sock s
 		}()
 	}))
 
-	srv, err := listenControl(ctx, log, sock, mux, state.Config{})
+	// The real config, so socket_group is honoured while waiting.
+	//
+	// This passed state.Config{}, so the group was always empty here and the
+	// socket stayed root-only until the daemon joined a mesh — which makes the
+	// very first `shrooms status` anybody runs fail with permission denied.
+	// Cosmetic in that nothing is broken underneath, and the first impression
+	// of a tool that has not been given a mesh yet is exactly where it matters.
+	//
+	// Unvalidated, deliberately: this path exists BECAUSE the config has no
+	// network key yet, so state.LoadConfig — which daemon.go uses and which
+	// requires one — would refuse to read it. Everything listenControl wants
+	// from a config is present long before the key is.
+	waitCfg, err := state.LoadConfigUnvalidated(cfgPath)
+	if err != nil {
+		// Not fatal. A config that cannot be read at all is what this daemon is
+		// waiting to be given; running root-only is worse than not running.
+		log.Debug("could not read the config for socket_group while waiting", "err", err)
+		waitCfg = state.Config{}
+	}
+
+	srv, err := listenControl(ctx, log, sock, mux, waitCfg)
 	if err != nil {
 		return err
 	}
