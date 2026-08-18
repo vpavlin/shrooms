@@ -193,3 +193,42 @@ plugin that lacks a method also lacks any way to be asked what it has.
 - The socket group can now end the daemon's process. Under a service manager
   that is a few seconds of downtime; without one the endpoint refuses, so the
   worst case is a restart nobody asked for rather than a mesh that stays down.
+
+## Amendment, 2026-08-18: the socket is the only interface, and there is no port
+
+An external application talks to this daemon over the **unix control socket**,
+or it reads the **status file**. There is no HTTP port, and there will not be
+one.
+
+There was: `ui_listen` served the status JSON over loopback HTTP, added on the
+assumption that a Basecamp view could not open a unix socket. That was wrong one
+layer up — QML cannot, but the `basecamp/core` module it runs beside can, and
+that is what it actually uses. So the port shipped with no user, and it cost
+something anyway: it was handed the same handler set as the socket, which put
+every mutating endpoint on a TCP port where `SO_PEERCRED` does not exist. Any
+local user on a shared machine, or a browser via CSRF — it was plain HTTP with
+no Origin check, and a `text/plain` POST needs no preflight — could rewrite the
+config, leave a mesh, or restart the daemon. The audit found it; the endpoint
+has been removed.
+
+The rule that replaces it: **access to this daemon is decided by file
+permissions, not by being able to reach an address.** A unix socket has an owner,
+a group and a mode, and `SO_PEERCRED` tells the daemon who is on the other end. A
+port has none of those, so every question it raises — who may call this, is this
+request from the page the user thinks it is, does the loopback interface mean
+what we assume on this host — has to be re-answered in application code, which
+is where it will eventually be answered wrongly.
+
+The status file covers the case the port was invented for, and covers it better:
+a viewer that can only read files gets the same JSON, with no listener at all
+and access decided by the same mechanism as everything else here.
+
+Consequences:
+
+- A UI that cannot open a unix socket reads the status file instead. If a future
+  one can do neither, the answer is a small helper that owns the socket — not a
+  port on the VPN daemon.
+- `ui_listen` remains a config key that parses and does nothing, because unknown
+  keys are fatal and a removed setting must not stop a daemon starting.
+- Anything added to the control mux is reachable only by whoever the socket's
+  mode allows, which is a property somebody can check with `ls`.
