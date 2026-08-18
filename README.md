@@ -1020,7 +1020,7 @@ sandbox (Basecamp's spec, *QML App Sandboxing*): a deny-all network manager
 blocks every outgoing HTTP request, and `XMLHttpRequest` refuses local files
 unless the host sets `QML_XHR_ALLOW_FILE_READ`, which Basecamp does not. So
 neither a status file nor a port is reachable from the view, whatever their
-permissions — a status file with the right group, `ui_listen`, and a file
+permissions — a status file with the right group and a file
 beside the view were all proposed here before anyone read the log that says so.
 
 A Logos module runs in its own process and is not sandboxed, which is the route

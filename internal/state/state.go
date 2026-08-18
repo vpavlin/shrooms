@@ -238,7 +238,8 @@ type Config struct {
 	// view that can read a file but not open a unix socket — QML can do the
 	// first and not the second.
 	//
-	// Preferred over UIListen: no port is opened at all, and access is decided
+	// Preferred over the HTTP endpoint that used to exist: no port is opened
+	// at all, and access is decided
 	// by file permissions, which is a mechanism the operating system already
 	// has and everyone already understands.
 	StatusFile string
@@ -264,22 +265,6 @@ type Config struct {
 	//	status_file       = "/run/logos-vpn/status.json"
 	//	status_file_group = "vpavlin"
 	StatusFileGroup string
-
-	// UIListen optionally serves the status JSON over HTTP, for a viewer that
-	// can do neither. A fallback, not the default: it opens a port on a VPN
-	// daemon, which wants a better reason than convenience.
-	//
-	// Loopback-only when set. The payload names every device and address on
-	// the mesh, so it is not something to bind widely by accident.
-	//
-	// Read-only, and now actually so: it serves /status and nothing else. It
-	// used to be handed the control socket's whole handler set, which put every
-	// mutating endpoint on a TCP port where SO_PEERCRED does not exist — so
-	// anything that could reach the port could rewrite this config, leave a
-	// mesh or restart the daemon, including a browser, since it is plain HTTP
-	// and a text/plain POST needs no preflight. Changing anything still means
-	// the unix socket, where the file mode decides who may ask.
-	UIListen string
 
 	// ManageHosts lets the daemon keep /etc/hosts current as the roster
 	// changes, so peers stay reachable by name without re-running anything.
@@ -823,7 +808,16 @@ func parseConfig(text string) (Config, error) {
 		case "status_file":
 			c.StatusFile = unquote(val)
 		case "ui_listen":
-			c.UIListen = unquote(val)
+			// Removed. Kept as a case that ignores its value, because an
+			// unknown key is fatal here — deleting it outright would stop the
+			// daemon starting on any config that still names it, which is a
+			// worse outcome than a setting that quietly does nothing.
+			//
+			// It served the status JSON over a loopback HTTP port for a viewer
+			// that could use neither the unix socket nor the status file.
+			// Nothing ever did: Basecamp reads the socket and the phone reads
+			// neither. What it did produce was a port on a VPN daemon carrying
+			// every mutating endpoint until that was noticed.
 		case "manage_hosts":
 			c.ManageHosts = unquote(val) == "true"
 		case "hosts_suffix":
@@ -934,10 +928,6 @@ func WriteConfig(path string, c Config) error {
 		} else {
 			b.WriteString("# status_file_group = \"your-username\"\n")
 		}
-	}
-	if c.UIListen != "" {
-		b.WriteString("\n# Serve the status JSON over HTTP for a monitoring view.\n")
-		fmt.Fprintf(&b, "ui_listen   = %q\n", c.UIListen)
 	}
 	b.WriteString("\n# Keep /etc/hosts current as peers come and go, so `ssh vps.mesh` works\n")
 	b.WriteString("# without re-running anything. Off by default: this edits a system file.\n")

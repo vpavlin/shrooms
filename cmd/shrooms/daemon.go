@@ -601,51 +601,6 @@ type peerStatus struct {
 	TxBytes       uint64 `json:"tx_bytes"`
 }
 
-// serveUI serves the same handler over loopback HTTP.
-//
-// Refuses anything but a loopback address. The payload names every device and
-// address on the mesh, and "0.0.0.0:8787" in a config file is an easy way to
-// publish that to the network without meaning to.
-// readOnlyMux is what the loopback port is allowed to answer.
-//
-// A whole mux rather than a check inside each handler, because a split is a
-// property somebody can see: the next endpoint added to the control mux does
-// not silently appear here, which is exactly how every mutating endpoint ended
-// up on a TCP port in the first place.
-func readOnlyMux(status http.HandlerFunc) *http.ServeMux {
-	m := http.NewServeMux()
-	m.HandleFunc("/status", status)
-	return m
-}
-
-func serveUI(ctx context.Context, log *slog.Logger, addr string, h http.Handler) error {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return fmt.Errorf("ui_listen must be host:port: %w", err)
-	}
-	ip, err := netip.ParseAddr(host)
-	if err != nil || !ip.IsLoopback() {
-		return fmt.Errorf("ui_listen must be a loopback address, got %q", host)
-	}
-
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		return err
-	}
-	srv := &http.Server{Handler: h}
-	go func() {
-		<-ctx.Done()
-		srv.Close()
-	}()
-	go func() {
-		if err := srv.Serve(ln); err != nil && ctx.Err() == nil {
-			log.Error("monitoring endpoint stopped", "err", err)
-		}
-	}()
-	log.Info("monitoring endpoint up", "url", "http://"+addr+"/status")
-	return nil
-}
-
 // inviteHolder is the part of the mesh the enrolment endpoints need. An
 // interface so the handlers can be tested without a rendezvous node, which is
 // otherwise the only way to reach them.
@@ -1339,7 +1294,6 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 	// status JSON. Serving a separate mux rather than checking the verb per
 	// handler, because a split is a property somebody can see, while a check
 	// is one that has to be remembered by whoever adds the next endpoint.
-	uiMux := readOnlyMux(status)
 
 	// The log tail and the restart button, both of which exist because a UI
 	// cannot reach the journal or a terminal (ADR-025).
@@ -1496,12 +1450,6 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 			log.Warn("could not write the status file", "path", cfg.StatusFile, "err", err)
 		} else {
 			log.Info("status file up", "path", cfg.StatusFile)
-		}
-	}
-
-	if cfg.UIListen != "" {
-		if err := serveUI(ctx, log, cfg.UIListen, uiMux); err != nil {
-			log.Warn("monitoring endpoint unavailable", "listen", cfg.UIListen, "err", err)
 		}
 	}
 

@@ -107,7 +107,7 @@ func writeStatusFile(ctx context.Context, log *slog.Logger, path string, group s
 		//
 		// The group is what makes it readable by a dashboard that is not root,
 		// which is the same mechanism and the same decision as the socket —
-		// see ui_listen's loopback-only rule for the other half of this.
+		// the same reasoning that kept the removed HTTP endpoint loopback-only.
 		if err := os.Chmod(tmp.Name(), 0o640); err != nil {
 			return err
 		}
