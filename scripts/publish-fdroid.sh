@@ -198,7 +198,19 @@ echo "==> published $APP_ID versionCode $VERSION_CODE ($VERSION_NAME)"
 # Derived from the directory rather than hardcoded: the served name is a
 # symlink under ~/vpavlin-home and does not always match the directory, so a
 # fixed URL here would send somebody to a repo that does not hold this build.
-SERVED=$(ssh "$HOST" "for l in \$HOME/vpavlin-home/*; do [ -L \"\$l\" ] && [ \"\$(readlink -f \"\$l\")\" = \"\$(eval echo $FDROID_DIR)\" ] && basename \"\$l\"; done" | head -1)
+# Best effort, and never fatal: this runs after the publish has succeeded, so
+# failing here would report an error for work that is already done — which is
+# exactly what it did the first time.
+SERVED=$(ssh "$HOST" "FD='$FDROID_DIR' bash -s" <<'REMOTE' 2>/dev/null || true
+eval FD="$FD"
+for l in "$HOME"/vpavlin-home/*; do
+    [ -L "$l" ] || continue
+    [ "$(readlink -f "$l")" = "$(readlink -f "$FD")" ] || continue
+    basename "$l"
+    break
+done
+REMOTE
+)
 SERVED=${SERVED:-fdroid}
 echo "    https://$HOST:8444/$SERVED/repo"
 echo "    signed with the key from $SIGN_DIR"
