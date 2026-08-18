@@ -96,6 +96,23 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# The mode the gateways actually came up in, not the one we asked for. The
+# compose file passed no environment at all for a long time, so gateway.sh fell
+# back to its own default and every edm run quietly tested eim — a spike
+# reporting on a case it never set up.
+for gw in gw-a gw-b; do
+    for _ in $(seq 1 20); do
+        docker logs "shrooms-$gw" 2>&1 | grep -q "gateway starting" && break
+        sleep 1
+    done
+    if ! docker logs "shrooms-$gw" 2>&1 | grep -q "mode=$NAT_MODE"; then
+        echo "FAIL: $gw did not come up in $NAT_MODE:"
+        docker logs "shrooms-$gw" 2>&1 | head -3
+        exit 1
+    fi
+done
+echo "    gateways confirmed in $NAT_MODE"
+
 # peerState <container> <peer-name> -> "online live"
 #
 # `live`, not `handshaked`: the latter is true forever once a handshake has ever
