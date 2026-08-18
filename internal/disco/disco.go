@@ -171,12 +171,18 @@ func seal(k Key, t Type, priv ed25519.PrivateKey, tx TxID, observed netip.AddrPo
 	return sealInner(k, inner)
 }
 
-// sealInner encrypts a finished plaintext.
+// sealInner encrypts a finished plaintext, and openInner below reverses it.
 //
-// Split out of seal so a test can build a packet the encoder would never
-// produce — one signed by the wrong key, or edited after signing — which is
-// exactly the thing the signature exists to refuse, and cannot be exercised
-// through an API that always signs correctly.
+// The pair exists because encryption and interpretation are separate concerns:
+// seal builds and signs a body then hands it here, Decode takes a packet from
+// here and then interprets it. Neither half duplicates the other, which is the
+// state this was briefly in.
+//
+// A test also uses them, to build a packet the encoder would never produce —
+// signed by the wrong key, or edited after signing. That is worth noting and is
+// not the justification: a helper that existed only for a test, beside an inline
+// copy of the same logic in production, would be two implementations of one
+// thing with the untested one shipping.
 func sealInner(k Key, inner []byte) ([]byte, error) {
 	if len(inner) != innerLen {
 		return nil, fmt.Errorf("plaintext is %d bytes, want %d", len(inner), innerLen)
@@ -221,14 +227,7 @@ func Decode(k Key, pkt []byte) (*Message, error) {
 		return nil, fmt.Errorf("unsupported disco version %d", pkt[0])
 	}
 
-	aead, err := chacha20poly1305.NewX(k[:])
-	if err != nil {
-		return nil, fmt.Errorf("aead: %w", err)
-	}
-	nonce := pkt[1 : 1+aead.NonceSize()]
-	ct := pkt[1+aead.NonceSize():]
-
-	inner, err := aead.Open(nil, nonce, ct, []byte{version})
+	inner, err := openInner(k, pkt)
 	if err != nil {
 		return nil, errors.New("decryption failed")
 	}
