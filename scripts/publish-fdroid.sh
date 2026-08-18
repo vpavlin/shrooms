@@ -18,6 +18,21 @@ cd "$(dirname "$0")/.."
 
 HOST=${FDROID_HOST:-192.168.0.152}
 FDROID_DIR=${FDROID_DIR:-'~/fdroid'}
+# Where the SIGNING key comes from, which is not always where the app is
+# published. An APK's signature is its identity forever — Android refuses an
+# update signed by a different key, and the only way past that is uninstalling,
+# which for this app means losing the device's mesh identity and its
+# credentials. The repo's index key is a separate thing and may differ freely.
+#
+# So publishing into a second repo means: sign with the key this app has always
+# had, place the file in the other repo, and let `fdroid update` sign that
+# repo's index with its own key.
+SIGN_DIR=${SIGN_DIR:-$FDROID_DIR}
+# Repos to consider when picking the next versionCode. The target alone is not
+# enough: publishing into a repo that has never held this app would start again
+# from 1, and a device that already has a higher code installed treats that as a
+# downgrade and never offers it.
+CODE_DIRS=${CODE_DIRS:-"$FDROID_DIR $SIGN_DIR"}
 FDROID_BIN=${FDROID_BIN:-'~/fdroid-venv/bin/fdroid'}
 APP_ID=${APP_ID:-xyz.vpavlin.shrooms}
 # Derived, the way the daemon and the portable build already derive theirs.
@@ -40,11 +55,12 @@ ssh "$HOST" "test -f $FDROID_DIR/config.yml" || { echo "no fdroid config on $HOS
 # through ssh mangled $BT into an empty string, which produced "/zipalign: No
 # such file" — a confusing way to say "your quoting is wrong".
 echo "==> working out the next versionCode"
-LAST=$(ssh "$HOST" "APP_ID='$APP_ID' FDROID_DIR='$FDROID_DIR' bash -s" <<'REMOTE'
+LAST=$(ssh "$HOST" "APP_ID='$APP_ID' CODE_DIRS='$CODE_DIRS' bash -s" <<'REMOTE'
 set -eu
 BT=$(ls -d "$HOME"/Android/Sdk/build-tools/* | sort -V | tail -1)
-eval FD="$FDROID_DIR"
 highest=0
+for d in $CODE_DIRS; do
+eval FD="$d"
 for apk in "$FD"/repo/*.apk; do
     [ -e "$apk" ] || continue
     info=$("$BT/aapt2" dump badging "$apk" 2>/dev/null | head -1) || continue
@@ -53,6 +69,7 @@ for apk in "$FD"/repo/*.apk; do
             vc=$(printf '%s' "$info" | grep -oE "versionCode='[0-9]+'" | grep -oE '[0-9]+')
             [ -n "$vc" ] && [ "$vc" -gt "$highest" ] && highest=$vc ;;
     esac
+done
 done
 printf '%s' "$highest"
 REMOTE
@@ -83,10 +100,11 @@ STAGE=$(ssh "$HOST" 'd=$(mktemp -d); chmod 700 "$d"; printf %s "$d"')
 scp -q "$APK" "$HOST:$STAGE/unsigned.apk"
 
 echo "==> signing with the repo key (the password never leaves that host)"
-ssh "$HOST" "FDROID_DIR='$FDROID_DIR' VERSION_CODE='$VERSION_CODE' STAGE='$STAGE' bash -s" <<'REMOTE'
+ssh "$HOST" "SIGN_DIR='$SIGN_DIR' VERSION_CODE='$VERSION_CODE' STAGE='$STAGE' bash -s" <<'REMOTE'
 set -eu
 BT=$(ls -d "$HOME"/Android/Sdk/build-tools/* | sort -V | tail -1)
-eval FD="$FDROID_DIR"
+# The signing repo, which may not be the publishing one. See SIGN_DIR.
+eval FD="$SIGN_DIR"
 cfg="$FD/config.yml"
 
 # Read from fdroid's own config so there is one source of truth. Kept in shell
@@ -115,11 +133,16 @@ echo "==> metadata"
 # first publish logged "Cannot fetch icon". The fastlane layout is the
 # documented way to supply one directly.
 # A relative destination is home-relative; scp does not expand $HOME remotely.
-ssh "$HOST" "mkdir -p fdroid/metadata/$APP_ID/en-US"
+# Into the repo being published to. This said `fdroid/...` outright, so a
+# publish aimed anywhere else wrote metadata to the wrong repo and left the
+# APK in the right one with none — and `fdroid update` drops an APK with no
+# metadata without saying so.
+MD=$(ssh "$HOST" "eval echo $FDROID_DIR")
+ssh "$HOST" "mkdir -p '$MD/metadata/$APP_ID/en-US'"
 scp -q android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png \
-    "$HOST:fdroid/metadata/$APP_ID/en-US/icon.png"
+    "$HOST:$MD/metadata/$APP_ID/en-US/icon.png"
 
-ssh "$HOST" "cat > fdroid/metadata/$APP_ID.yml" <<'META'
+ssh "$HOST" "cat > '$MD/metadata/$APP_ID.yml'" <<'META'
 Categories:
   - Internet
   - Security
@@ -172,6 +195,11 @@ REMOTE
 
 echo
 echo "==> published $APP_ID versionCode $VERSION_CODE ($VERSION_NAME)"
-echo "    http://192.168.0.152:8090/fdroid/repo"
-echo "    https://192.168.0.152:8444/fdroid/repo"
+# Derived from the directory rather than hardcoded: the served name is a
+# symlink under ~/vpavlin-home and does not always match the directory, so a
+# fixed URL here would send somebody to a repo that does not hold this build.
+SERVED=$(ssh "$HOST" "for l in \$HOME/vpavlin-home/*; do [ -L \"\$l\" ] && [ \"\$(readlink -f \"\$l\")\" = \"\$(eval echo $FDROID_DIR)\" ] && basename \"\$l\"; done" | head -1)
+SERVED=${SERVED:-fdroid}
+echo "    https://$HOST:8444/$SERVED/repo"
+echo "    signed with the key from $SIGN_DIR"
 echo "    refresh the repo in the F-Droid app to see it"
