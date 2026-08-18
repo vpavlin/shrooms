@@ -1,12 +1,35 @@
 # Open questions from the 2026-08-15 security audit
 
+**Status: decided 2026-08-18 unless marked otherwise.** Each section keeps the
+question as it was asked, with the answer and its reasoning underneath, because
+the reasoning is the part that stops the question being reopened from scratch.
+
 Decisions I did not want to take alone while working through
 `SECURITY_AUDIT.md`. Each one is skipped in the code for now, with the item it
 belongs to. Nothing here is blocking: the security gap each finding names is
 closed by the part that *was* built, and these are the choices about how far to
 go beyond that.
 
-## H1 — should a revocation also be re-published when a peer joins?
+## H1 — should a revocation also be re-published when a peer joins? — DECIDED: yes
+
+**Decision.** The admin's node re-publishes the list when a new peer appears,
+and any node may be configured to do the same, so the guarantee does not rest on
+one machine being awake.
+
+Two parts, and the second is the interesting one. Re-publishing on discovery
+makes a revocation prompt rather than eventually-within-an-hour, which is the
+difference between a lost laptop losing access now and losing it after somebody
+notices. Letting other nodes opt in makes it survive the admin being off — a
+mesh whose only durable machine is a laptop in a bag is exactly the mesh where
+this matters, and the relay or a VPS is usually the node that is always up.
+
+Optional rather than universal, deliberately: every node re-publishing on every
+discovery is N× the traffic for a statement that is already re-sent each epoch,
+and the cost falls on the phone. A setting — announce_revocations, off by
+default, on for a relay — puts it where somebody has decided it is worth it.
+
+Still needs the per-peer cooldown announces already use, or a newcomer draws one
+publish per node simultaneously.
 
 **Built:** revocations are persisted per mesh in the state dir, verified again
 against the authority on load, and re-published on every epoch rotation.
@@ -31,7 +54,25 @@ appears":
 
 Worth noting the epoch is an hour, and `EpochSeconds` is ours to change.
 
-## H1 — retention: revocations are kept for a fixed 30 days
+## H1 — retention: revocations are kept for a fixed 30 days — DECIDED: match the credential
+
+**Decision.** The revocation carries the expiry of what it withdraws, so
+retention matches the credential's real life instead of a fixed 30 days.
+
+This is the wire change flagged below, and it is cheap now and expensive later:
+the format is versioned, nobody outside this house runs a mesh yet, and a
+revocation that outlives the thing it revokes is only wasteful while one that
+dies first re-admits a device.
+
+Where the value comes from without asking anybody: the daemon already knows
+every peer's expiry — it records NotAfter from each announce it verifies
+(m.expiry) — so `admin revoke` can fill it in from the roster. When the device
+has never been seen, fall back to now + the default life, which is exactly
+today's behaviour and no worse.
+
+Note this also makes List.Prune safe to wire up, which is the dead code the
+audit flagged: it can drop an entry once the credential it names has expired,
+because it will finally know when that is.
 
 `List.Add` hard-codes `keepUntil = now + DefaultLife`, and `--life` is a
 supported flag on `admin issue` and `invite`. A revocation for a credential
@@ -49,7 +90,19 @@ the 30-day retention and refuse `--life` beyond it (no wire change, removes a
 feature); or delete `Prune` and keep revocations forever, accepting unbounded
 growth on admin-signed input only.
 
-## M9 — how promptly should an expired credential drop a live tunnel?
+## M9 — how promptly should an expired credential drop a live tunnel? — DECIDED: immediately
+
+**Decision.** No grace window. A device whose credential has expired stops being
+carried at once, which is what is already built.
+
+The reasoning that settles it: a machine that has been offline long enough to
+miss a renewal sweep — which starts well before expiry, by design — is more
+likely lost than merely asleep. A grace period protects the asleep case and
+extends access for the lost one, and those are the same window. Expiry is the
+backstop that cannot be suppressed; softening it makes it a suggestion.
+
+Nothing to build. The strict behaviour is in syncPeers with a probe-tick check
+to make it prompt.
 
 The audit's fix is to drop the peer in `syncPeers` as soon as its newest
 credential has expired, rather than waiting the ~6h `ForgetAfter`. That is
@@ -67,7 +120,21 @@ immediately but keep announcing to the expired peer so it can pick up a renewal
 (which is what the grant path already does, and may make the grace window
 unnecessary).
 
-## M1 — what should `ui_listen` actually serve?
+## M1 — what should `ui_listen` actually serve? — DECIDED: /status only
+
+**Decision.** It stays as built: `/status` and nothing else. `/logs` is not
+added.
+
+The question was whether logs belong there too, since both carry the same peer
+names and addresses. What settled it is that nothing uses this listener:
+Basecamp reads the unix socket, the phone reads neither, and the setting was
+unrecognised by the person who owns every mesh in it. An HTTP port on a VPN
+daemon with no user is surface without a reason.
+
+**Worth revisiting as deletion rather than extension.** If nothing has needed it
+by the time there is a release, removing it is one fewer thing to get wrong —
+the mutating-endpoints bug it caused is the kind of mistake that only exists
+because the port exists.
 
 Making it read-only is agreed. The question is what "read" includes: `/status`
 alone, or `/status` and `/logs`. Logs carry peer names, addresses and mesh
