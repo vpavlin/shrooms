@@ -65,11 +65,13 @@ RUN set -eux; \
     # 2. chronos 4.4.0 refuses `waitFor` inside an async handler — NestedPoll —
     #    and this call site is already inside one that awaits eight lines up.
     #    Upstream master uses the await form.
-    #    The path and the exact line differ from the report — it is
-    #    logos_delivery/waku/..., and the call is inside `if not (...)`, not a
-    #    `let _ =` — which is why each patch is verified below rather than
-    #    trusted.
-    sed -i 's|waitFor node\.publish(some(pubSubTopic), message)\.withTimeout(futTimeout)|await node.publish(some(pubSubTopic), message).withTimeout(futTimeout)|' \
+    #    Matched on the construct, not on one spelling of its arguments. The
+    #    report quoted `let _ = waitFor node.publish(some(...))`; the pinned
+    #    tree has it inside `if not (...)`, and master has `Opt.some(...)`
+    #    after an API change. A pattern tied to the argument list matched one
+    #    of the three and silently skipped the others — which is how this
+    #    reached CI. `waitFor node.publish` is the part that is actually wrong.
+    sed -i 's|waitFor node\.publish|await node.publish|g' \
         logos_delivery/waku/rest_api/endpoint/relay/handlers.nim; \
     ! grep -rq 'waitFor node.publish' logos_delivery/waku/rest_api/endpoint/relay/
 
