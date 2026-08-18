@@ -1,6 +1,7 @@
 package mesh
 
 import (
+	"crypto/ed25519"
 	"encoding/hex"
 	"log/slog"
 	"net/netip"
@@ -12,13 +13,23 @@ import (
 	"github.com/vpavlin/shrooms/internal/disco"
 )
 
+// testKey is a throwaway device key. The prober signs every packet it sends
+// (ADR-029), so it needs a real one even where nothing is sent.
+func testKey() ed25519.PrivateKey {
+	_, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		panic(err)
+	}
+	return priv
+}
+
 // forgettable is a Mesh with just enough wired up for forget() to run: the
 // per-peer stores it reclaims, and the two it delegates to.
 func forgettable() *Mesh {
 	return &Mesh{
 		log:       slog.New(slog.DiscardHandler),
 		guard:     control.NewReplayGuard(),
-		prober:    disco.NewProber(disco.Key{}, []byte{1, 2, 3}, func([]byte, netip.AddrPort) error { return nil }),
+		prober:    disco.NewProber(disco.Key{}, testKey(), func([]byte, netip.AddrPort) error { return nil }),
 		timing:    newTimings(time.Now()),
 		rates:     newRates(),
 		repliedTo: make(map[string]time.Time),

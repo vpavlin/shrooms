@@ -27,7 +27,7 @@ func confirmPath(t *testing.T, pr *disco.Prober, key disco.Key, sent *[][]byte, 
 	if err != nil {
 		t.Fatalf("decode ping: %v", err)
 	}
-	raw, err := disco.EncodePong(key, peer.DevicePub, ping.TxID, addr)
+	raw, err := disco.EncodePong(key, peer.DevicePriv, ping.TxID, addr)
 	if err != nil {
 		t.Fatalf("encode pong: %v", err)
 	}
@@ -58,7 +58,7 @@ func newRelayFixture(t *testing.T) *relayFixture {
 	now := time.Now()
 
 	var sent [][]byte
-	pr := disco.NewProber(key, self.DevicePub, func(pkt []byte, _ netip.AddrPort) error {
+	pr := disco.NewProber(key, self.DevicePriv, func(pkt []byte, _ netip.AddrPort) error {
 		sent = append(sent, pkt)
 		return nil
 	})
@@ -111,7 +111,7 @@ func TestSelectRelayIgnoresUnprobedRelay(t *testing.T) {
 	m := &Mesh{
 		nk:     nk,
 		roster: NewRoster(nk, self.DevicePub),
-		prober: disco.NewProber(disco.DeriveKey(nk), self.DevicePub, func([]byte, netip.AddrPort) error { return nil }),
+		prober: disco.NewProber(disco.DeriveKey(nk), self.DevicePriv, func([]byte, netip.AddrPort) error { return nil }),
 	}
 
 	rl, _ := identity.New()
@@ -143,7 +143,7 @@ func TestSelectRelayIsDeterministicAcrossNodes(t *testing.T) {
 	build := func(first, second *identity.Identity, firstAddr, secondAddr netip.AddrPort, delay time.Duration) relayChoice {
 		self, _ := identity.New()
 		var sent [][]byte
-		pr := disco.NewProber(key, self.DevicePub, func(pkt []byte, _ netip.AddrPort) error {
+		pr := disco.NewProber(key, self.DevicePriv, func(pkt []byte, _ netip.AddrPort) error {
 			sent = append(sent, pkt)
 			return nil
 		})
@@ -161,7 +161,7 @@ func TestSelectRelayIsDeterministicAcrossNodes(t *testing.T) {
 			sent = nil
 			pr.Probe(p.ID(), []netip.AddrPort{e.addr}, now)
 			ping, _ := disco.Decode(key, sent[0])
-			raw, _ := disco.EncodePong(key, e.id.DevicePub, ping.TxID, e.addr)
+			raw, _ := disco.EncodePong(key, e.id.DevicePriv, ping.TxID, e.addr)
 			pong, _ := disco.Decode(key, raw)
 			pr.HandlePong(pong, e.addr, now.Add(e.extra))
 		}

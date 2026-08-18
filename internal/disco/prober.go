@@ -1,6 +1,7 @@
 package disco
 
 import (
+	"crypto/ed25519"
 	"encoding/hex"
 	"net/netip"
 	"sort"
@@ -79,8 +80,12 @@ func (p Path) Fresh(now time.Time) bool {
 // usable once it has answered a probe, which is what distinguishes "the peer
 // says it is at this address" from "packets actually reach the peer there".
 type Prober struct {
-	key     Key
-	selfPub []byte
+	key Key
+	// selfPriv signs every probe and reply. The prober holds the private half
+	// rather than the public one now: a packet that names a device without
+	// proving it is what ADR-029 removed, so there is no path here that can
+	// send an unsigned one.
+	selfPriv ed25519.PrivateKey
 
 	// send delivers a disco packet to a raw address over the shared socket.
 	send func(pkt []byte, to netip.AddrPort) error
@@ -100,10 +105,10 @@ type Prober struct {
 }
 
 // NewProber returns a prober that sends via the given function.
-func NewProber(key Key, selfPub []byte, send func([]byte, netip.AddrPort) error) *Prober {
+func NewProber(key Key, selfPriv ed25519.PrivateKey, send func([]byte, netip.AddrPort) error) *Prober {
 	return &Prober{
 		key:       key,
-		selfPub:   selfPub,
+		selfPriv:  selfPriv,
 		send:      send,
 		pending:   make(map[TxID]probe),
 		paths:     make(map[string]map[netip.AddrPort]*Path),
@@ -156,7 +161,7 @@ func (p *Prober) Probe(peerID string, candidates []netip.AddrPort, now time.Time
 		if err != nil {
 			continue
 		}
-		pkt, err := EncodePing(p.key, p.selfPub, tx)
+		pkt, err := EncodePing(p.key, p.selfPriv, tx)
 		if err != nil {
 			continue
 		}
@@ -180,7 +185,7 @@ func (p *Prober) Probe(peerID string, candidates []netip.AddrPort, now time.Time
 // only address that can reach it is the one we observed. Replying to an
 // announced address silently breaks exactly the case punching exists for.
 func (p *Prober) HandlePing(m *Message, from netip.AddrPort) {
-	pkt, err := EncodePong(p.key, p.selfPub, m.TxID, from)
+	pkt, err := EncodePong(p.key, p.selfPriv, m.TxID, from)
 	if err != nil {
 		return
 	}

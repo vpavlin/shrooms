@@ -32,6 +32,7 @@
 package disco
 
 import (
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
@@ -63,16 +64,41 @@ const (
 	// v4 is stored as v4-in-v6 so the plaintext is a fixed size.
 	addrLen = 18
 
-	// innerLen is the padded plaintext: type, sender, txid and an address slot
-	// that a ping leaves zeroed. Padding a ping out to a pong's length is what
-	// makes the two indistinguishable on the wire.
-	innerLen = 1 + devicePubLen + TxIDLen + addrLen
+	// sigLen is an ed25519 signature over everything above it.
+	//
+	// The packet already names its sender and, until this existed, nothing
+	// proved the name: every member holds the same disco key, so any member
+	// could compose a packet claiming to be any device — enough to steer
+	// another node's path selection and to seed its reflexive addresses
+	// (ADR-029). Signing with the device key the packet already names needs no
+	// credential and no authority, because the claim is about the key alone.
+	sigLen = ed25519.SignatureSize
+
+	// bodyLen is what the signature covers: type, sender, txid and an address
+	// slot that a ping leaves zeroed. Padding a ping out to a pong's length is
+	// what makes the two indistinguishable on the wire.
+	bodyLen = 1 + devicePubLen + TxIDLen + addrLen
+
+	// innerLen is the padded plaintext: the body and its signature.
+	innerLen = bodyLen + sigLen
 
 	// PacketLen is the fixed on-wire size: version, nonce, ciphertext, tag.
 	PacketLen = 1 + chacha20poly1305.NonceSizeX + innerLen + chacha20poly1305.Overhead
 )
 
-const version byte = 1
+// version 2 carries the signature. Bumped rather than relying on the length
+// change, so a node meeting an older one gets "unsupported disco version" —
+// which says what happened — instead of a size mismatch, which says nothing.
+// Both directions fail: this is a flag day, and ADR-029 takes that deliberately
+// while every mesh in existence belongs to the people making the change.
+const version byte = 2
+
+// ErrSignature is a packet whose contents do not match the device it names.
+//
+// Distinct so a caller can count it apart from the ordinary undecryptable
+// traffic of a shared shard: one is somebody else's application, the other is a
+// member of this mesh writing a name that is not theirs.
+var ErrSignature = errors.New("disco packet is not signed by the device it names")
 
 // TxID correlates a Pong with the Ping that caused it.
 type TxID [TxIDLen]byte
@@ -111,20 +137,24 @@ type Message struct {
 }
 
 // EncodePing builds an encrypted ping.
-func EncodePing(k Key, senderPub []byte, tx TxID) ([]byte, error) {
-	return seal(k, TypePing, senderPub, tx, netip.AddrPort{})
+func EncodePing(k Key, priv ed25519.PrivateKey, tx TxID) ([]byte, error) {
+	return seal(k, TypePing, priv, tx, netip.AddrPort{})
 }
 
 // EncodePong builds an encrypted pong echoing the observed source address.
-func EncodePong(k Key, senderPub []byte, tx TxID, observed netip.AddrPort) ([]byte, error) {
-	return seal(k, TypePong, senderPub, tx, observed)
+func EncodePong(k Key, priv ed25519.PrivateKey, tx TxID, observed netip.AddrPort) ([]byte, error) {
+	return seal(k, TypePong, priv, tx, observed)
 }
 
 // seal builds the fixed-size encrypted packet. A ping and a pong differ only
 // in plaintext, so they are indistinguishable on the wire.
-func seal(k Key, t Type, senderPub []byte, tx TxID, observed netip.AddrPort) ([]byte, error) {
-	if len(senderPub) != devicePubLen {
-		return nil, errors.New("sender public key must be 32 bytes")
+func seal(k Key, t Type, priv ed25519.PrivateKey, tx TxID, observed netip.AddrPort) ([]byte, error) {
+	if len(priv) != ed25519.PrivateKeySize {
+		return nil, errors.New("device private key is the wrong size")
+	}
+	senderPub, ok := priv.Public().(ed25519.PublicKey)
+	if !ok || len(senderPub) != devicePubLen {
+		return nil, errors.New("device key has no usable public half")
 	}
 
 	inner := make([]byte, 0, innerLen)
@@ -133,6 +163,24 @@ func seal(k Key, t Type, senderPub []byte, tx TxID, observed netip.AddrPort) ([]
 	inner = append(inner, tx[:]...)
 	inner = append(inner, encodeAddr(observed)...) // zeroed for a ping
 
+	// Signed inside the ciphertext, like the announce signature: the signature
+	// is not visible to anyone who cannot already decrypt, so it adds nothing
+	// for a bystander to correlate.
+	inner = append(inner, ed25519.Sign(priv, inner)...)
+
+	return sealInner(k, inner)
+}
+
+// sealInner encrypts a finished plaintext.
+//
+// Split out of seal so a test can build a packet the encoder would never
+// produce — one signed by the wrong key, or edited after signing — which is
+// exactly the thing the signature exists to refuse, and cannot be exercised
+// through an API that always signs correctly.
+func sealInner(k Key, inner []byte) ([]byte, error) {
+	if len(inner) != innerLen {
+		return nil, fmt.Errorf("plaintext is %d bytes, want %d", len(inner), innerLen)
+	}
 	aead, err := chacha20poly1305.NewX(k[:])
 	if err != nil {
 		return nil, fmt.Errorf("aead: %w", err)
@@ -148,6 +196,20 @@ func seal(k Key, t Type, senderPub []byte, tx TxID, observed netip.AddrPort) ([]
 	out = append(out, version)
 	out = append(out, nonce...)
 	return aead.Seal(out, nonce, inner, []byte{version}), nil
+}
+
+// openInner decrypts a packet without interpreting it. The counterpart of
+// sealInner, and used for the same reason.
+func openInner(k Key, pkt []byte) ([]byte, error) {
+	if len(pkt) != PacketLen {
+		return nil, fmt.Errorf("packet is %d bytes, want %d", len(pkt), PacketLen)
+	}
+	aead, err := chacha20poly1305.NewX(k[:])
+	if err != nil {
+		return nil, fmt.Errorf("aead: %w", err)
+	}
+	nonce := pkt[1 : 1+aead.NonceSize()]
+	return aead.Open(nil, nonce, pkt[1+aead.NonceSize():], []byte{version})
 }
 
 // Decode decrypts and validates a disco packet.
@@ -178,11 +240,22 @@ func Decode(k Key, pkt []byte) (*Message, error) {
 	copy(m.SenderPub[:], inner[1:1+devicePubLen])
 	copy(m.TxID[:], inner[1+devicePubLen:1+devicePubLen+TxIDLen])
 
+	// Before anything in it is believed. Holding the disco key proves only
+	// membership, which every member has; this is what proves the packet came
+	// from the device it names, and it is the whole point of ADR-029. Checked
+	// here rather than by the caller so there is no path that reads a field
+	// without it.
+	if !ed25519.Verify(ed25519.PublicKey(m.SenderPub[:]), inner[:bodyLen], inner[bodyLen:]) {
+		return nil, ErrSignature
+	}
+
 	switch m.Type {
 	case TypePing:
 		// The address slot is padding on a ping; ignore whatever it holds.
 	case TypePong:
-		ap, err := decodeAddr(inner[1+devicePubLen+TxIDLen:])
+		// Bounded at bodyLen: the signature follows the address, and slicing to
+		// the end handed decodeAddr 82 bytes where it wanted 18.
+		ap, err := decodeAddr(inner[1+devicePubLen+TxIDLen : bodyLen])
 		if err != nil {
 			return nil, err
 		}

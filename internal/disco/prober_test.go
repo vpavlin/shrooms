@@ -77,11 +77,11 @@ func (f *fakeNet) sendFrom(src netip.AddrPort) func([]byte, netip.AddrPort) erro
 // hid it.
 func newTestProber(t *testing.T, key Key, f *fakeNet, at netip.AddrPort) (*Prober, string) {
 	t.Helper()
-	pub, _, err := ed25519.GenerateKey(nil)
+	pub, priv, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		t.Fatalf("keygen: %v", err)
 	}
-	p := NewProber(key, pub, f.sendFrom(at))
+	p := NewProber(key, priv, f.sendFrom(at))
 	id := hex.EncodeToString(pub)
 
 	f.mu.Lock()
@@ -207,12 +207,23 @@ func TestStalePathExpires(t *testing.T) {
 	}
 }
 
+// newDeviceKey is a throwaway signing key. Every disco packet is signed by the
+// device it names (ADR-029), so a zero-filled placeholder no longer stands in.
+func newDeviceKey(t *testing.T) ed25519.PrivateKey {
+	t.Helper()
+	_, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return priv
+}
+
 func TestUnsolicitedPongIgnored(t *testing.T) {
 	key := testKey(t)
-	p := NewProber(key, make([]byte, 32), func([]byte, netip.AddrPort) error { return nil })
+	p := NewProber(key, newDeviceKey(t), func([]byte, netip.AddrPort) error { return nil })
 
 	tx, _ := NewTxID()
-	pkt, _ := EncodePong(key, make([]byte, 32), tx, netip.MustParseAddrPort("1.2.3.4:1"))
+	pkt, _ := EncodePong(key, newDeviceKey(t), tx, netip.MustParseAddrPort("1.2.3.4:1"))
 	m, err := Decode(key, pkt)
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
@@ -253,7 +264,7 @@ func TestLowerRTTPreferredWithinFamily(t *testing.T) {
 func TestProbeExpiry(t *testing.T) {
 	key := testKey(t)
 	sent := 0
-	p := NewProber(key, make([]byte, 32), func([]byte, netip.AddrPort) error { sent++; return nil })
+	p := NewProber(key, newDeviceKey(t), func([]byte, netip.AddrPort) error { sent++; return nil })
 
 	start := time.Now()
 	p.Probe(unprobed, []netip.AddrPort{netip.MustParseAddrPort("10.0.0.9:1")}, start)
@@ -312,7 +323,7 @@ func TestPathIsRefreshedBeforeItExpires(t *testing.T) {
 // A peer with no path at all must always be probed, or it is never found.
 func TestUnknownPeerAlwaysNeedsProbe(t *testing.T) {
 	key := testKey(t)
-	p := NewProber(key, make([]byte, 32), func([]byte, netip.AddrPort) error { return nil })
+	p := NewProber(key, newDeviceKey(t), func([]byte, netip.AddrPort) error { return nil })
 	if !p.NeedsProbe("nobody", time.Now()) {
 		t.Error("a peer with no known path was not due for probing")
 	}

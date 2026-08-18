@@ -251,7 +251,7 @@ func New(log *slog.Logger, cfg state.Config, st *state.State, node *waku.Node, d
 			log.Warn("ignoring unparseable relay_addr", "value", cfg.RelayAddr, "err", err)
 		}
 	}
-	m.prober = disco.NewProber(m.discoKey, st.Identity.DevicePub, m.sendDisco)
+	m.prober = disco.NewProber(m.discoKey, st.Identity.DevicePriv, m.sendDisco)
 
 	// Control packets share the WireGuard socket; this is what makes NAT
 	// traversal possible at all.
