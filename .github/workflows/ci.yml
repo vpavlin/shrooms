@@ -68,9 +68,30 @@ jobs:
   #
   # Built against the release tarball rather than a source build, for the same
   # reason test-cgo is: this job has to be able to gate.
+  # One job per architecture, on native runners.
+  #
+  # Not QEMU. This image carries a Go binary and liblogosdelivery, and the arm64
+  # side has to build that library from source — Nim plus Rust — which under
+  # emulation is hours rather than minutes. GitHub's arm64 runners are free for
+  # public repositories, which this is.
+  #
+  # The two halves are deliberately asymmetric about where the library comes
+  # from. amd64 fetches the checksum-pinned release tarball, which is what
+  # gates the rest of the repo; arm64 builds it from the pinned upstream
+  # revision, because no arm64 asset has been published yet. Publishing one
+  # would make both paths identical and this job faster — worth doing once the
+  # arm64 build has been green for a while.
   image:
-    name: publish image
-    runs-on: ubuntu-latest
+    name: publish image (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     # Only from the canonical branch and tags. A pull request must not be able
     # to publish an image under this repository's name.
     if: github.event_name == 'push'
@@ -83,8 +104,24 @@ jobs:
         with:
           go-version: '1.24'
 
-      - name: Fetch liblogosdelivery
+      - name: Fetch liblogosdelivery (prebuilt, amd64)
+        if: matrix.arch == 'amd64'
         run: make deps-release
+
+      # No published arm64 tarball yet, so build it from the same revision the
+      # amd64 asset was repackaged from. Cached on that revision and on this
+      # Dockerfile, since the patches it applies are part of what is built.
+      - name: Cache liblogosdelivery (arm64)
+        if: matrix.arch == 'arm64'
+        id: libcache
+        uses: actions/cache@v4
+        with:
+          path: docker/build/lib
+          key: liblogosdelivery-arm64-${{ hashFiles('docker/build-lib.Dockerfile') }}
+
+      - name: Build liblogosdelivery (arm64)
+        if: matrix.arch == 'arm64' && steps.libcache.outputs.cache-hit != 'true'
+        run: docker build -f docker/build-lib.Dockerfile --target lib -o docker/build/lib .
 
       - name: Log in to ghcr.io
         uses: docker/login-action@v3
@@ -100,29 +137,64 @@ jobs:
         run: echo "name=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
       - name: Build
-        run: make image IMAGE=${{ steps.img.outputs.name }} TAG=${{ github.sha }}
+        run: make image IMAGE=${{ steps.img.outputs.name }} TAG=${{ github.sha }}-${{ matrix.arch }}
 
-      - name: Tag and push
+      # Per-architecture tags only. The names anybody actually pulls — :latest,
+      # :<sha>, :v1.2 — are manifest lists assembled once both arches exist, in
+      # the job below. Pushing a single-arch image to :latest first would give
+      # every arm64 host an amd64 image for as long as the other build takes.
+      - name: Push
+        run: docker push ${{ steps.img.outputs.name }}:${{ github.sha }}-${{ matrix.arch }}
+
+      - name: Report
+        run: echo "pushed ${{ steps.img.outputs.name }}:${{ github.sha }}-${{ matrix.arch }}"
+
+  # The tags people pull, pointing at both architectures.
+  #
+  # A separate job so it runs only when every arch has been pushed: a manifest
+  # naming an image that does not exist is a pull that fails on exactly the
+  # platform the manifest was meant to serve.
+  image-manifest:
+    name: publish image manifest
+    needs: image
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve image name
+        id: img
+        run: echo "name=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Assemble
         run: |
           set -eux
           IMG=${{ steps.img.outputs.name }}
-          docker push "$IMG:${{ github.sha }}"
-          # A moving tag for deployments, and the version for tagged builds.
+          SHA=${{ github.sha }}
+          manifest() {
+            docker manifest create "$IMG:$1" "$IMG:$SHA-amd64" "$IMG:$SHA-arm64"
+            docker manifest push "$IMG:$1"
+          }
+          manifest "$SHA"
           if [ "${{ github.ref }}" = "refs/heads/master" ] || [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            docker tag "$IMG:${{ github.sha }}" "$IMG:latest"
-            docker push "$IMG:latest"
+            manifest latest
           fi
           case "${{ github.ref }}" in
-            refs/tags/v*)
-              docker tag "$IMG:${{ github.sha }}" "$IMG:${GITHUB_REF_NAME}"
-              docker push "$IMG:${GITHUB_REF_NAME}"
-              ;;
+            refs/tags/v*) manifest "${GITHUB_REF_NAME}" ;;
           esac
 
       - name: Report
         run: |
-          echo "pushed ${{ steps.img.outputs.name }}:${{ github.sha }}"
-          echo "hosts can now: docker pull ${{ steps.img.outputs.name }}:latest"
+          echo "pushed ${{ steps.img.outputs.name }}:${{ github.sha }} for amd64 and arm64"
+          echo "arm64 hosts can now: docker pull ${{ steps.img.outputs.name }}:latest"
           echo "NOTE: the package is private until made public in the repo's package settings."
 
   # Build liblogosdelivery from source in a pinned container, then build

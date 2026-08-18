@@ -49,9 +49,11 @@ RUN git clone https://github.com/logos-messaging/logos-delivery.git . \
 # source than the phone runs is a worse problem than two sed lines. Both are
 # fixed upstream on master; when the pin moves forward, delete this.
 #
-# Each is checked after it is applied. A patch that silently stops matching —
-# because the pin moved, or upstream reformatted the line — would otherwise
-# reappear as the original build failure with nothing pointing at this block.
+# Verified by outcome, not by whether the patch matched. Upstream master has
+# already fixed both, and this same file builds master in the build-from-source
+# job — so "the sed changed something" is the wrong test: it would fail on the
+# tree that needs no patching. What must hold either way is that the bad
+# construct is absent by the time make runs.
 RUN set -eux; \
     # 1. nimble re-resolves taskpools past the lockfile pin (0.2.1 instead of
     #    0.1.0), and 0.2.1 dropped taskpools/channels_spsc_single.nim, so the
@@ -59,7 +61,7 @@ RUN set -eux; \
     #    resolve. `nimble setup --localdeps` re-runs on every make, so fixing
     #    the staged tree by hand is undone; the requirement is the durable fix.
     sed -i 's|^\( *\)"taskpools",|\1"https://github.com/status-im/nim-taskpools#9e8ccc754631ac55ac2fd495e167e74e86293edb",|' logos_delivery.nimble; \
-    grep -q 'nim-taskpools#9e8ccc75' logos_delivery.nimble; \
+    ! grep -qE '^ *"taskpools",' logos_delivery.nimble; \
     # 2. chronos 4.4.0 refuses `waitFor` inside an async handler — NestedPoll —
     #    and this call site is already inside one that awaits eight lines up.
     #    Upstream master uses the await form.
@@ -69,9 +71,7 @@ RUN set -eux; \
     #    trusted.
     sed -i 's|waitFor node\.publish(some(pubSubTopic), message)\.withTimeout(futTimeout)|await node.publish(some(pubSubTopic), message).withTimeout(futTimeout)|' \
         logos_delivery/waku/rest_api/endpoint/relay/handlers.nim; \
-    grep -q 'await node.publish(some(pubSubTopic), message).withTimeout' \
-        logos_delivery/waku/rest_api/endpoint/relay/handlers.nim; \
-    ! grep -q 'waitFor node.publish' logos_delivery/waku/rest_api/endpoint/relay/handlers.nim
+    ! grep -rq 'waitFor node.publish' logos_delivery/waku/rest_api/endpoint/relay/
 
 # The Makefile bootstraps its own pinned nim/nimble via install-nim/install-nimble.
 # Build serially: with -j, a real error surfaces as a 14000-line bogus
