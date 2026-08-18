@@ -138,7 +138,7 @@ func TestRevocation(t *testing.T) {
 
 	c, _ := admin.Issue(dev, wg, "phone", 4, now, time.Hour)
 
-	r, err := admin.Revoke(dev, 4, now)
+	r, err := admin.Revoke(dev, 4, time.Time{}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestRevocation(t *testing.T) {
 	}
 
 	// Only the admin may revoke; otherwise any member could eject any other.
-	fake, _ := impostor.Revoke(dev, 4, now)
+	fake, _ := impostor.Revoke(dev, 4, time.Time{}, now)
 	if err := VerifyRevocation(admin.Pub, fake); !errors.Is(err, ErrBadSignature) {
 		t.Errorf("a revocation from another authority verified as %v", err)
 	}
@@ -165,7 +165,7 @@ func TestAnOldRevocationDoesNotWithdrawAReissuedCredential(t *testing.T) {
 	now := time.Now()
 
 	old, _ := admin.Issue(dev, wg, "phone", 4, now, time.Hour)
-	r, _ := admin.Revoke(dev, 4, now)
+	r, _ := admin.Revoke(dev, 4, time.Time{}, now)
 	if !r.Revokes(old) {
 		t.Fatal("the revocation does not withdraw the credential it was made for")
 	}
@@ -284,7 +284,7 @@ func TestUnmarshalRejectsMalformedInput(t *testing.T) {
 func TestRevocationRoundTrip(t *testing.T) {
 	admin, _ := NewAdmin()
 	dev, _ := device(t)
-	r, err := admin.Revoke(dev, 7, time.Now())
+	r, err := admin.Revoke(dev, 7, time.Time{}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

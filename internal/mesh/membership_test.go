@@ -129,7 +129,7 @@ func TestRevokeRefusesWhatThisMeshDidNotSign(t *testing.T) {
 		t.Error("accepted rubbish as a revocation")
 	}
 
-	r, err := theirs.Revoke(id.DevicePub, 1, time.Now())
+	r, err := theirs.Revoke(id.DevicePub, 1, time.Time{}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

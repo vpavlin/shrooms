@@ -849,7 +849,7 @@ func (m *Mesh) loadRevocations() {
 			m.log.Warn("dropping a stored revocation this mesh did not sign", "err", err)
 			continue
 		}
-		if m.revoked.Add(r, raw, time.Now().Add(cred.DefaultLife)) {
+		if m.revoked.Add(r, raw) {
 			kept++
 		}
 	}
@@ -966,7 +966,7 @@ func (m *Mesh) applyRevocation(raw []byte, now time.Time) (bool, error) {
 	if err := cred.VerifyRevocationBy(m.authority, r); err != nil {
 		return false, fmt.Errorf("this mesh did not sign that revocation: %w", err)
 	}
-	if !m.revoked.Add(r, raw, now.Add(cred.DefaultLife)) {
+	if !m.revoked.Add(r, raw) {
 		return false, nil
 	}
 	// To disk before anything else: the rest of this function drops the peer
@@ -1278,6 +1278,15 @@ func (m *Mesh) announceWith(now time.Time, fresh bool) error {
 // Runs on the probe ticker, so anything also touched from the receive path is
 // reclaimed under the lock that guards it there.
 func (m *Mesh) pruneForgotten(now time.Time) {
+	// Revocations whose credentials have provably expired, which only version 2
+	// revocations can say. Done here rather than on its own timer because it is
+	// the same kind of work, and it must persist: a list that shrank in memory
+	// and not on disk would grow back at the next restart.
+	if n := m.revoked.Prune(now); n > 0 {
+		m.log.Info("forgot revocations whose credentials expired anyway", "count", n)
+		m.saveRevocations()
+	}
+
 	gone := m.roster.Prune(now)
 	if len(gone) == 0 {
 		return

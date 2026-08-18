@@ -442,23 +442,54 @@ type Revocation struct {
 	DevicePub []byte
 	Serial    uint64
 	Issued    int64 // signed, carried, not currently consulted
-	Sig       []byte
+	// NotAfter is when this revocation stops mattering: the latest moment any
+	// credential it withdraws could still have verified. Past it, the device is
+	// out because its credential expired, and holding the revocation adds
+	// nothing.
+	//
+	// Signed, because a node that could shorten it could make a revocation
+	// expire early and walk a removed device back on. Zero means "no bound
+	// given" and every holder keeps it forever, which is what version 1 said by
+	// having no field at all.
+	NotAfter int64
+	Sig      []byte
+
+	// ver is the format this was parsed from, so a version 1 revocation still
+	// verifies against the bytes and the domain separator it was signed with.
+	// Zero means "built here", which signs as the current version.
+	ver byte
 }
 
-// Wire format, version 1: version, mesh id, device key, serial, issued,
-// signature. Binary for the same reasons as the credential.
-const revFixed = 1 + MeshIDLen + 32 + 8 + 8
+// Wire format. Version 1: version, mesh id, device key, serial, issued,
+// signature. Version 2 adds NotAfter before the signature. Binary for the same
+// reasons as the credential.
+const (
+	revVersion byte = 2
+	revFixedV1      = 1 + MeshIDLen + 32 + 8 + 8
+	revFixedV2      = revFixedV1 + 8
+)
+
+// wire is the version this revocation speaks.
+func (r *Revocation) wire() byte {
+	if r.ver == 1 {
+		return 1
+	}
+	return revVersion
+}
 
 func (r *Revocation) signedBytes() ([]byte, error) {
 	if len(r.DevicePub) != ed25519.PublicKeySize {
 		return nil, fmt.Errorf("device key is %d bytes, want %d", len(r.DevicePub), ed25519.PublicKeySize)
 	}
-	b := make([]byte, 0, revFixed)
-	b = append(b, credVersion)
+	b := make([]byte, 0, revFixedV2)
+	b = append(b, r.wire())
 	b = append(b, r.MeshID[:]...)
 	b = append(b, r.DevicePub...)
 	b = binary.BigEndian.AppendUint64(b, r.Serial)
 	b = binary.BigEndian.AppendUint64(b, uint64(r.Issued))
+	if r.wire() >= 2 {
+		b = binary.BigEndian.AppendUint64(b, uint64(r.NotAfter))
+	}
 	return b, nil
 }
 
@@ -468,7 +499,14 @@ func (r *Revocation) Digest() ([32]byte, error) {
 	if err != nil {
 		return [32]byte{}, err
 	}
-	return sha256.Sum256(append([]byte("shrooms/revoke/v1"), body...)), nil
+	// The separator carries the version, so a version 1 signature cannot be
+	// replayed as a version 2 body with a NotAfter bolted on — which would let
+	// anyone holding an old revocation choose when it expires.
+	sep := []byte("shrooms/revoke/v1")
+	if r.wire() >= 2 {
+		sep = []byte("shrooms/revoke/v2")
+	}
+	return sha256.Sum256(append(sep, body...)), nil
 }
 
 // MarshalBinary renders a revocation for the wire.
@@ -485,13 +523,26 @@ func (r *Revocation) MarshalBinary() ([]byte, error) {
 
 // UnmarshalRevocation reads one, checking every length first.
 func UnmarshalRevocation(b []byte) (*Revocation, error) {
-	if len(b) != revFixed+sigLen {
-		return nil, fmt.Errorf("revocation is %d bytes, want %d", len(b), revFixed+sigLen)
+	if len(b) == 0 {
+		return nil, errors.New("empty revocation")
 	}
-	if b[0] != credVersion {
+	// Version 1 is still read, and never written. Refusing it would drop every
+	// revocation already on disk at the moment a node upgrades, which un-revokes
+	// exactly the devices somebody deliberately removed — the failure this whole
+	// field exists to avoid.
+	var want int
+	switch b[0] {
+	case 1:
+		want = revFixedV1 + sigLen
+	case 2:
+		want = revFixedV2 + sigLen
+	default:
 		return nil, fmt.Errorf("revocation version %d is not supported", b[0])
 	}
-	r := &Revocation{}
+	if len(b) != want {
+		return nil, fmt.Errorf("version %d revocation is %d bytes, want %d", b[0], len(b), want)
+	}
+	r := &Revocation{ver: b[0]}
 	i := 1
 	copy(r.MeshID[:], b[i:i+MeshIDLen])
 	i += MeshIDLen
@@ -501,17 +552,26 @@ func UnmarshalRevocation(b []byte) (*Revocation, error) {
 	i += 8
 	r.Issued = int64(binary.BigEndian.Uint64(b[i : i+8]))
 	i += 8
+	if b[0] >= 2 {
+		r.NotAfter = int64(binary.BigEndian.Uint64(b[i : i+8]))
+		i += 8
+	}
 	r.Sig = append([]byte(nil), b[i:]...)
 	return r, nil
 }
 
 // Revoke signs a withdrawal of one credential.
-func (a *Admin) Revoke(devicePub []byte, serial uint64, now time.Time) (*Revocation, error) {
+// notAfter is when holders may forget it: pass the latest expiry of any
+// credential this withdraws, or the zero time to have it kept forever.
+func (a *Admin) Revoke(devicePub []byte, serial uint64, notAfter, now time.Time) (*Revocation, error) {
 	r := &Revocation{
 		MeshID:    MeshOf(a.Pub),
 		DevicePub: append([]byte(nil), devicePub...),
 		Serial:    serial,
 		Issued:    now.Unix(),
+	}
+	if !notAfter.IsZero() {
+		r.NotAfter = notAfter.Unix()
 	}
 	d, err := r.Digest()
 	if err != nil {
@@ -519,6 +579,16 @@ func (a *Admin) Revoke(devicePub []byte, serial uint64, now time.Time) (*Revocat
 	}
 	r.Sig = ed25519.Sign(a.Priv, d[:])
 	return r, nil
+}
+
+// Forgettable is when a holder may drop this revocation: the moment the
+// credentials it withdraws have expired on their own. The zero time means the
+// revocation gave no bound and must be kept indefinitely.
+func (r *Revocation) Forgettable() time.Time {
+	if r == nil || r.NotAfter == 0 {
+		return time.Time{}
+	}
+	return time.Unix(r.NotAfter, 0)
 }
 
 // VerifyRevocationBy checks a revocation against every key a mesh trusts.

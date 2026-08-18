@@ -31,7 +31,7 @@ func TestRevocationSurvivesARestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := admin.Revoke(gone.DevicePub, 1, now)
+	r, err := admin.Revoke(gone.DevicePub, 1, time.Time{}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestRevocationSurvivesARestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	list := cred.NewList()
-	if !list.Add(r, raw, now.Add(cred.DefaultLife)) {
+	if !list.Add(r, raw) {
 		t.Fatal("the list refused a fresh revocation")
 	}
 	if !list.Revoked(c) {
@@ -85,7 +85,7 @@ func TestStoredRevocationsAreVerifiedOnLoad(t *testing.T) {
 	now := time.Now()
 
 	// A withdrawal signed by somebody else's admin, sitting in our state dir.
-	r, err := theirs.Revoke(victim.DevicePub, 1, now)
+	r, err := theirs.Revoke(victim.DevicePub, 1, time.Time{}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestRevocationRoundTripThroughTheStateDir(t *testing.T) {
 
 	var raws [][]byte
 	for _, id := range []*identity.Identity{a, b} {
-		r, err := admin.Revoke(id.DevicePub, 7, now)
+		r, err := admin.Revoke(id.DevicePub, 7, time.Time{}, now)
 		if err != nil {
 			t.Fatal(err)
 		}

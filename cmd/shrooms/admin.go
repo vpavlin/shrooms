@@ -539,6 +539,18 @@ func cmdAdminRevoke(args []string) error {
 	// timestamp covers every credential that device has and none it cannot yet
 	// have been given.
 	serial := fs.Uint64("serial", 0, "revoke this serial and everything below it (default: now)")
+	// How long peers must keep this. Past it, the credentials it withdraws have
+	// expired on their own and the revocation withdraws nothing, so holders may
+	// drop it and the list stops growing forever.
+	//
+	// Zero means "keep it indefinitely", which is what every revocation issued
+	// before this flag existed means, and it is the safe direction: too long
+	// wastes a few hundred bytes, too short walks a removed device back on.
+	// Default is the credential life plus a day of slack, which is right unless
+	// this device was issued something longer than the default --life.
+	keep := fs.Duration("keep-for", cred.DefaultLife+24*time.Hour,
+		"how long peers keep this revocation; 0 keeps it forever. Must outlast "+
+			"the longest credential this device holds")
 	sock := fs.String("socket", DefaultSocket, "control socket of the local daemon")
 	publish := fs.Bool("publish", true, "hand it to the local daemon to put on the mesh")
 	if err := fs.Parse(args); err != nil {
@@ -569,6 +581,9 @@ func cmdAdminRevoke(args []string) error {
 	}
 	r := &cred.Revocation{DevicePub: append([]byte(nil), dev...), Serial: serialOf}
 	r.MeshID = auth.ID()
+	if *keep > 0 {
+		r.NotAfter = time.Now().Add(*keep).Unix()
+	}
 	if err := cred.SignRevocationWith(admin, r); err != nil {
 		return err
 	}
@@ -577,7 +592,18 @@ func cmdAdminRevoke(args []string) error {
 		return err
 	}
 
-	fmt.Printf("Revoked %x, serial %d and below.\n\n", dev[:8], *serial)
+	fmt.Printf("Revoked %x, serial %d and below.\n", dev[:8], *serial)
+	if r.NotAfter > 0 {
+		// Said out loud because it is the one way to get this wrong: a device
+		// holding a credential issued with a longer --life would come back when
+		// peers forget the revocation.
+		fmt.Printf("Peers keep this until %s (--keep-for %s).\n",
+			time.Unix(r.NotAfter, 0).Format("2006-01-02 15:04"), *keep)
+		fmt.Println("Pass --keep-for 0 if this device was ever issued a longer credential.")
+	} else {
+		fmt.Println("Peers keep this indefinitely (--keep-for 0).")
+	}
+	fmt.Println()
 
 	if *publish {
 		if err := publishRevocation(*sock, raw); err != nil {
