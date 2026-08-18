@@ -32,8 +32,27 @@ const MaxRegistrations = 512
 // Pure soft state: it is rebuilt from registrations within one refresh interval,
 // so a restarted relay costs a brief outage and nothing else. There is
 // deliberately no persistence.
+// RegisterSkew bounds how stale a registration may be.
+//
+// A captured register frame is replayable for exactly this long, so it wants to
+// be short — and it must comfortably exceed the clock difference between two
+// machines that are otherwise fine, or a relay starts refusing honest peers for
+// a reason nobody will guess.
+const RegisterSkew = 2 * time.Minute
+
 type Server struct {
 	key Key
+
+	// owns answers "does this device hold that tunnel key", which is the
+	// question a registration has to pass and the one a relay cannot answer by
+	// itself. The mesh supplies it from the roster, where the pairing is
+	// carried by each device's own signed announce and, on a mesh with an
+	// authority, checked against the credential that names both keys.
+	//
+	// Nil means unchecked, which is what a relay had before this existed. Kept
+	// possible rather than impossible because a relay for a mesh with no
+	// roster — a test, a standalone forwarder — should still work.
+	owns func(devicePub []byte, wg identity.WGKey) bool
 
 	mu    sync.RWMutex
 	peers map[identity.WGKey]registration
@@ -56,9 +75,13 @@ type Server struct {
 }
 
 // NewServer returns an empty relay.
-func NewServer(key Key) *Server {
+//
+// owns may be nil, in which case registrations are accepted from any member —
+// the behaviour before ADR-029, kept for a relay with no roster to ask.
+func NewServer(key Key, owns func(devicePub []byte, wg identity.WGKey) bool) *Server {
 	return &Server{
 		key:    key,
+		owns:   owns,
 		peers:  make(map[identity.WGKey]registration),
 		byAddr: make(map[netip.AddrPort]identity.WGKey),
 	}
@@ -80,6 +103,26 @@ func (s *Server) Handle(pkt []byte, from netip.AddrPort, now time.Time) (out []b
 
 	switch f.Type {
 	case TypeRegister:
+		// Recent, and by the device that owns the key.
+		//
+		// The frame's own signature is checked in Decode, so by here we know
+		// the named device asked for this. What is left is whether that device
+		// may claim this tunnel key, and whether the claim is fresh.
+		if skew := now.Sub(time.Unix(f.At, 0)); skew > RegisterSkew || skew < -RegisterSkew {
+			s.mu.Lock()
+			s.refused++
+			s.mu.Unlock()
+			return nil, netip.AddrPort{}, false
+		}
+		if s.owns != nil && !s.owns(f.DevicePub, f.Key) {
+			// A member registering somebody else's key: the hijack this exists
+			// to stop. Counted rather than logged — the server has no logger,
+			// and a counter is what makes it visible in status.
+			s.mu.Lock()
+			s.refused++
+			s.mu.Unlock()
+			return nil, netip.AddrPort{}, false
+		}
 		s.mu.Lock()
 		s.registerLocked(f.Key, from, now)
 		s.expireLocked(now)

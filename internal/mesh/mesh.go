@@ -240,7 +240,7 @@ func New(log *slog.Logger, cfg state.Config, st *state.State, node *waku.Node, d
 	// would try it. See state.SeqMarks.
 	m.guard.Load(m.st.SeqMarks(m.networkID))
 	if cfg.Relay {
-		m.relaySrv = relay.NewServer(m.relayKey)
+		m.relaySrv = relay.NewServer(m.relayKey, m.ownsWGKey)
 		log.Info("acting as a relay for this mesh")
 	}
 	if cfg.RelayAddr != "" {
@@ -795,6 +795,34 @@ func (m *Mesh) saveSeqMarks() {
 	if err := m.st.SetSeqMarks(m.networkID, m.guard.Snapshot()); err != nil {
 		m.log.Debug("could not persist replay marks", "err", err)
 	}
+}
+
+// ownsWGKey answers whether a device may register a tunnel key, which is the
+// question a relay cannot answer alone (ADR-029).
+//
+// The roster is the source, and it is a good one: every entry comes from an
+// announce the device signed, which names both of its keys — so the pairing is
+// asserted by the only party entitled to assert it. On a mesh with an authority
+// it is stronger still, because checkMembership refuses an announce whose
+// tunnel key disagrees with the credential that names it.
+//
+// A device we have never heard announce is refused. That is a real cost — a
+// peer registering with a relay that has not yet seen it waits for the next
+// refresh — and the alternative is accepting a claim from anybody, which is the
+// hijack itself.
+func (m *Mesh) ownsWGKey(devicePub []byte, wg identity.WGKey) bool {
+	if len(devicePub) == 0 {
+		return false
+	}
+	if bytes.Equal(devicePub, m.st.Identity.DevicePub) {
+		return wg == m.st.Identity.WGPub
+	}
+	for _, p := range m.roster.Peers() {
+		if bytes.Equal(p.DevicePub, devicePub) {
+			return p.WGPub == wg
+		}
+	}
+	return false
 }
 
 // loadRevocations re-reads what this node had already been told is withdrawn.

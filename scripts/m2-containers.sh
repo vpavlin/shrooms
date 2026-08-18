@@ -39,7 +39,9 @@ cp "$D"/gateway.sh "$D"/entrypoint-nat.sh "$BUILD/ctx/"
 cp "$LD_LIB"/*.so "$LD_LIB"/*.so.* "$BUILD/ctx/lib/" 2>/dev/null || true
 
 echo "==> generating configs (one network, three devices)"
-./bin/shrooms init --config "$RUN/pub/etc/config.toml" --state "$RUN/pub/state" \
+# --no-admin, for the reason in m1-containers.sh: minting an authority asks for
+# a passphrase, and there is no terminal here.
+./bin/shrooms init --no-admin --config "$RUN/pub/etc/config.toml" --state "$RUN/pub/state" \
     --name node-pub --advertise 10.90.0.10:51820 >/dev/null
 KEY=$(./bin/shrooms key show --config "$RUN/pub/etc/config.toml")
 for n in a b; do

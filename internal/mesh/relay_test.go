@@ -183,7 +183,7 @@ func TestSelectRelayIsDeterministicAcrossNodes(t *testing.T) {
 // importantly it must never select itself, which would loop.
 func TestSelectRelaySkippedWhenActingAsRelay(t *testing.T) {
 	f := newRelayFixture(t)
-	f.m.relaySrv = relay.NewServer(f.m.relayKey)
+	f.m.relaySrv = relay.NewServer(f.m.relayKey, nil)
 
 	if got := f.m.selectRelay(f.now); got.ok {
 		t.Errorf("a relay selected an upstream relay %v", got.addr)

@@ -2,6 +2,7 @@ package relay
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"net/netip"
 	"testing"
 	"time"
@@ -26,11 +27,22 @@ func wgKey(b byte) identity.WGKey {
 	return k
 }
 
+// regKey is a throwaway device key. A registration is signed by the device
+// that owns the tunnel key (ADR-029), so a frame cannot be built without one.
+func regKey(t *testing.T) ed25519.PrivateKey {
+	t.Helper()
+	_, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return priv
+}
+
 func TestRegisterRoundTrip(t *testing.T) {
 	k := testKey(t)
 	self := wgKey(1)
 
-	f, err := Decode(k, EncodeRegister(k, self))
+	f, err := Decode(k, EncodeRegister(k, self, regKey(t), time.Now()))
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
@@ -96,15 +108,15 @@ func TestTruncatedRejected(t *testing.T) {
 
 func TestServerForwardsBetweenRegisteredPeers(t *testing.T) {
 	k := testKey(t)
-	s := NewServer(k)
+	s := NewServer(k, nil)
 	now := time.Now()
 
 	a, b := wgKey(0xaa), wgKey(0xbb)
 	addrA := netip.MustParseAddrPort("203.0.113.1:51820")
 	addrB := netip.MustParseAddrPort("203.0.113.2:51820")
 
-	s.Handle(EncodeRegister(k, a), addrA, now)
-	s.Handle(EncodeRegister(k, b), addrB, now)
+	s.Handle(EncodeRegister(k, a, regKey(t), time.Now()), addrA, now)
+	s.Handle(EncodeRegister(k, b, regKey(t), time.Now()), addrB, now)
 
 	payload := []byte("wireguard bytes")
 	frame, _ := EncodeForward(k, b, identity.WGKey{}, payload)
@@ -136,11 +148,11 @@ func TestServerForwardsBetweenRegisteredPeers(t *testing.T) {
 // packets attributed to an arbitrary peer.
 func TestUnregisteredSenderDropped(t *testing.T) {
 	k := testKey(t)
-	s := NewServer(k)
+	s := NewServer(k, nil)
 	now := time.Now()
 
 	b := wgKey(0xbb)
-	s.Handle(EncodeRegister(k, b), netip.MustParseAddrPort("203.0.113.2:51820"), now)
+	s.Handle(EncodeRegister(k, b, regKey(t), time.Now()), netip.MustParseAddrPort("203.0.113.2:51820"), now)
 
 	frame, _ := EncodeForward(k, b, identity.WGKey{}, []byte("x"))
 	if _, _, ok := s.Handle(frame, netip.MustParseAddrPort("198.51.100.9:1234"), now); ok {
@@ -150,12 +162,12 @@ func TestUnregisteredSenderDropped(t *testing.T) {
 
 func TestUnknownDestinationDropped(t *testing.T) {
 	k := testKey(t)
-	s := NewServer(k)
+	s := NewServer(k, nil)
 	now := time.Now()
 
 	a := wgKey(0xaa)
 	addrA := netip.MustParseAddrPort("203.0.113.1:51820")
-	s.Handle(EncodeRegister(k, a), addrA, now)
+	s.Handle(EncodeRegister(k, a, regKey(t), time.Now()), addrA, now)
 
 	frame, _ := EncodeForward(k, wgKey(0xcc), identity.WGKey{}, []byte("x"))
 	if _, _, ok := s.Handle(frame, addrA, now); ok {
@@ -167,13 +179,13 @@ func TestUnknownDestinationDropped(t *testing.T) {
 // rather than black-hole traffic.
 func TestStaleRegistrationExpires(t *testing.T) {
 	k := testKey(t)
-	s := NewServer(k)
+	s := NewServer(k, nil)
 	start := time.Now()
 
 	a, b := wgKey(0xaa), wgKey(0xbb)
 	addrA := netip.MustParseAddrPort("203.0.113.1:51820")
-	s.Handle(EncodeRegister(k, a), addrA, start)
-	s.Handle(EncodeRegister(k, b), netip.MustParseAddrPort("203.0.113.2:51820"), start)
+	s.Handle(EncodeRegister(k, a, regKey(t), time.Now()), addrA, start)
+	s.Handle(EncodeRegister(k, b, regKey(t), time.Now()), netip.MustParseAddrPort("203.0.113.2:51820"), start)
 
 	frame, _ := EncodeForward(k, b, identity.WGKey{}, []byte("x"))
 	if _, _, ok := s.Handle(frame, addrA, start.Add(RegistrationTTL+time.Second)); ok {
@@ -186,14 +198,14 @@ func TestStaleRegistrationExpires(t *testing.T) {
 // that lied could redirect another peer's traffic to itself.
 func TestRegistrationUsesObservedAddress(t *testing.T) {
 	k := testKey(t)
-	s := NewServer(k)
+	s := NewServer(k, nil)
 	now := time.Now()
 
 	a, b := wgKey(0xaa), wgKey(0xbb)
 	observed := netip.MustParseAddrPort("203.0.113.77:40000")
 
-	s.Handle(EncodeRegister(k, a), netip.MustParseAddrPort("203.0.113.1:51820"), now)
-	s.Handle(EncodeRegister(k, b), observed, now)
+	s.Handle(EncodeRegister(k, a, regKey(t), time.Now()), netip.MustParseAddrPort("203.0.113.1:51820"), now)
+	s.Handle(EncodeRegister(k, b, regKey(t), time.Now()), observed, now)
 
 	frame, _ := EncodeForward(k, b, identity.WGKey{}, []byte("x"))
 	_, to, ok := s.Handle(frame, netip.MustParseAddrPort("203.0.113.1:51820"), now)
@@ -204,10 +216,10 @@ func TestRegistrationUsesObservedAddress(t *testing.T) {
 
 func TestServerStats(t *testing.T) {
 	k := testKey(t)
-	s := NewServer(k)
+	s := NewServer(k, nil)
 	now := time.Now()
 
-	s.Handle(EncodeRegister(k, wgKey(1)), netip.MustParseAddrPort("203.0.113.1:1"), now)
+	s.Handle(EncodeRegister(k, wgKey(1), regKey(t), time.Now()), netip.MustParseAddrPort("203.0.113.1:1"), now)
 	s.Handle([]byte("garbage"), netip.MustParseAddrPort("203.0.113.9:1"), now)
 
 	peers, registered, _, dropped := s.Stats()

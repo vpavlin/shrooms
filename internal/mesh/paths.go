@@ -213,7 +213,7 @@ func (m *Mesh) registerWithRelay() {
 	if err != nil {
 		return
 	}
-	frame := relay.EncodeRegister(m.relayKey, m.st.Identity.WGPub)
+	frame := relay.EncodeRegister(m.relayKey, m.st.Identity.WGPub, m.st.Identity.DevicePriv, now)
 	if err := m.dev.Bind.SendControl(wg.SubRelay, frame, ep); err != nil {
 		m.log.Debug("relay registration failed", "relay", rl.addr, "err", err)
 	}

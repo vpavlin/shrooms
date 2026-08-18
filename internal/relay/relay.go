@@ -27,10 +27,13 @@
 package relay
 
 import (
+	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"time"
 
 	"golang.org/x/crypto/hkdf"
 
@@ -52,7 +55,21 @@ const (
 	keyLen = 32
 	macLen = 16
 
-	registerLen = 1 + keyLen + macLen
+	// devicePubLen and sigLen carry the proof that the registrant owns the
+	// tunnel key it is registering (ADR-029, the relay half).
+	//
+	// Without them the frame was authenticated only by the mesh-wide MAC, which
+	// every member can compute, and nothing tied the key inside to the sender —
+	// so a member could tell a relay that somebody else's key was reachable at
+	// its own address, and every peer relaying to that victim delivered to the
+	// attacker instead.
+	devicePubLen = 32
+	sigLen       = 64
+	// stampLen bounds replay: a captured registration is only useful for as
+	// long as the relay will accept its timestamp.
+	stampLen = 8
+
+	registerLen = 1 + keyLen + stampLen + devicePubLen + sigLen + macLen
 	// A forward frame carries both keys so the receiver knows the sender
 	// without the relay having to be trusted to tell the truth separately.
 	forwardHeaderLen = 1 + keyLen + keyLen + macLen
@@ -82,13 +99,32 @@ type Frame struct {
 	Key     identity.WGKey // register: sender. forward: destination.
 	Src     identity.WGKey // forward only
 	Payload []byte
+
+	// DevicePub and At are register only: who asked, and when. The server
+	// checks that the device owns Key and that the frame is recent.
+	DevicePub []byte
+	At        int64
 }
 
+// ErrNotSignedByDevice is a registration whose signature does not match the
+// device key it carries.
+var ErrNotSignedByDevice = errors.New("registration is not signed by the device it names")
+
 // EncodeRegister builds a registration frame.
-func EncodeRegister(k Key, self identity.WGKey) []byte {
+// EncodeRegister builds a registration proving the sender owns the key it
+// registers.
+//
+// Two layers, doing different jobs. The MAC says "a member of this mesh sent
+// this", which keeps outsiders out and is all it ever said. The signature says
+// "the device named here asked for it", which is what stops one member
+// registering another's key.
+func EncodeRegister(k Key, self identity.WGKey, priv ed25519.PrivateKey, now time.Time) []byte {
 	buf := make([]byte, 0, registerLen)
 	buf = append(buf, byte(TypeRegister))
 	buf = append(buf, self[:]...)
+	buf = binary.BigEndian.AppendUint64(buf, uint64(now.Unix()))
+	buf = append(buf, priv.Public().(ed25519.PublicKey)...)
+	buf = append(buf, ed25519.Sign(priv, buf)...)
 	return append(buf, mac(k, buf)...)
 }
 
@@ -118,11 +154,19 @@ func Decode(k Key, pkt []byte) (*Frame, error) {
 		if len(pkt) != registerLen {
 			return nil, fmt.Errorf("register frame is %d bytes, want %d", len(pkt), registerLen)
 		}
-		if !verify(k, pkt[:1+keyLen], pkt[1+keyLen:]) {
+		signed := 1 + keyLen + stampLen + devicePubLen
+		if !verify(k, pkt[:signed+sigLen], pkt[signed+sigLen:]) {
 			return nil, errors.New("authentication failed")
 		}
 		f := &Frame{Type: TypeRegister}
 		copy(f.Key[:], pkt[1:1+keyLen])
+		f.At = int64(binary.BigEndian.Uint64(pkt[1+keyLen : 1+keyLen+stampLen]))
+		f.DevicePub = append([]byte(nil), pkt[1+keyLen+stampLen:signed]...)
+		// The device's own signature over everything it is claiming. Checked
+		// here so no caller can read Key without it having been proven.
+		if !ed25519.Verify(ed25519.PublicKey(f.DevicePub), pkt[:signed], pkt[signed:signed+sigLen]) {
+			return nil, ErrNotSignedByDevice
+		}
 		return f, nil
 
 	case TypeForward:

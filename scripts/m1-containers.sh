@@ -44,7 +44,11 @@ echo "    staged $(ls "$CTX/lib" | wc -l) libraries"
 echo "==> generating configs"
 # Generated on the host so both containers share one network key. State dirs
 # are per-node, so each gets its own device identity.
-./bin/shrooms init \
+# --no-admin: this spike proves discovery and the data plane, and minting an
+# authority prompts for a passphrase that a script has no terminal to type into
+# — which is what broke these spikes silently when credentials landed. A mesh
+# whose membership is the network key is also exactly what M1 was written for.
+./bin/shrooms init --no-admin \
     --config "$RUN/a/etc/config.toml" --state "$RUN/a/state" \
     --name node-a >/dev/null
 KEY=$(./bin/shrooms key show --config "$RUN/a/etc/config.toml")

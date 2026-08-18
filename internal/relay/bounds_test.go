@@ -24,7 +24,7 @@ func addr(n int) netip.AddrPort {
 // relay ran out of memory. Registering a key the table already has must still
 // work, or a cap would lock out the devices the relay exists to carry.
 func TestRegistrationsAreCapped(t *testing.T) {
-	s := NewServer(Key{})
+	s := NewServer(Key{}, nil)
 	now := time.Now()
 
 	s.mu.Lock()
@@ -43,7 +43,7 @@ func TestRegistrationsAreCapped(t *testing.T) {
 // accumulate entries without limit, which is what made the table unbounded in
 // the first place.
 func TestOneAddressHoldsOneKey(t *testing.T) {
-	s := NewServer(Key{})
+	s := NewServer(Key{}, nil)
 	now := time.Now()
 	from := addr(1)
 
@@ -66,7 +66,7 @@ func TestOneAddressHoldsOneKey(t *testing.T) {
 // the same key from a new address. The old reverse entry must go with it, or a
 // later forward resolves a source that has moved away.
 func TestReRegisteringFromANewAddressLeavesNothingBehind(t *testing.T) {
-	s := NewServer(Key{})
+	s := NewServer(Key{}, nil)
 	now := time.Now()
 	old, new_ := addr(1), addr(2)
 
@@ -92,7 +92,7 @@ func TestReRegisteringFromANewAddressLeavesNothingBehind(t *testing.T) {
 // Expiry has to clear both directions, or byAddr keeps naming a key that no
 // longer exists and a forward resolves a source that is gone.
 func TestExpiryClearsBothDirections(t *testing.T) {
-	s := NewServer(Key{})
+	s := NewServer(Key{}, nil)
 	now := time.Now()
 
 	s.mu.Lock()
@@ -111,7 +111,7 @@ func TestExpiryClearsBothDirections(t *testing.T) {
 // the reverse index makes it a lookup, and this asserts it answers correctly
 // rather than that it is fast.
 func TestSourceLookupUsesTheReverseIndex(t *testing.T) {
-	s := NewServer(Key{})
+	s := NewServer(Key{}, nil)
 	now := time.Now()
 
 	s.mu.Lock()
