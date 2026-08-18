@@ -20,7 +20,10 @@ BUILD=$D/build
 CTX=$BUILD/ctx
 
 LD_LIB=${LD_LIB:-$BUILD/lib}
-WAIT=${WAIT:-90}
+# Discovery is the slow half and it is somebody else's network: a passing run
+# has taken 2m18s to see the first announce. Ninety seconds reported that as a
+# failure, which teaches you to distrust the spike rather than the fleet.
+WAIT=${WAIT:-240}
 
 echo "==> checking prerequisites"
 [ -e /dev/net/tun ] || { echo "no /dev/net/tun on the host"; exit 1; }
@@ -56,6 +59,20 @@ KEY=$(./bin/shrooms key show --config "$RUN/a/etc/config.toml")
     --config "$RUN/b/etc/config.toml" --state "$RUN/b/state" \
     --name node-b >/dev/null
 echo "    network key: $KEY"
+
+# Edge, not the Core default.
+#
+# Two Core nodes on one machine is a lot: each maintains its own gossip mesh
+# with the fleet, and they compete for the same uplink to prove something that
+# has nothing to do with relaying for anybody else. Edge subscribes and
+# forwards nothing, which is what these spikes are actually testing around, and
+# it is also what a laptop and a phone run.
+sed -i 's/^mode *=.*/mode        = "Edge"/' "$RUN"/*/etc/config.toml
+# A sed that matches nothing exits 0. Without this the spike would quietly go
+# on testing two Core nodes while claiming to test Edge.
+if grep -l '^mode.*"Core"' "$RUN"/*/etc/config.toml; then
+    echo "FAIL: the mode rewrite matched nothing (config format changed?)"; exit 1
+fi
 
 echo "==> building image"
 docker build -q -t shrooms:test -f "$D/Dockerfile" "$CTX" >/dev/null

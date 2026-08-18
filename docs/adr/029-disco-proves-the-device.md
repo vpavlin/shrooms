@@ -1,7 +1,8 @@
 # 029. Disco proves the device, not just the mesh
 
-**Status:** accepted; this is the first half of what SECURITY.md calls Phase 4.
-The relay half is separate and larger — see "What this does not close".
+**Status:** accepted and built, both halves. Written as the first half of what
+SECURITY.md calls Phase 4, with the relay half deferred as "separate and
+larger"; it turned out to be neither. See the amendment at the end.
 
 ## Context
 
@@ -89,17 +90,45 @@ we have no reason to answer.
 
 ## What this does not close
 
-**The relay registration hijack** (audit M5). A member can still tell a relay
-that another device's WireGuard key is reachable at its own address, blackholing
-that peer's relayed traffic and learning who was trying to reach it. Fixing that
-needs the relay to check a binding between a WireGuard key and a device, which
-lives in the credential — so the register frame must carry one, the relay must
-hold the authority, and a mesh with no admin keys cannot have the check at all.
-Separate ADR, separate wire change, and the larger of the two.
-
 **Anything about traffic.** Disco has never been able to read or redirect
 traffic; WireGuard's handshake is what authenticates a peer. This closes an
 influence on path *selection*, not a hole in the data plane.
+
+## Amendment: the relay half, and why it cost almost nothing
+
+*Added after building it — the estimate above was wrong in a useful direction.*
+
+This ADR predicted that closing the relay registration hijack needed a
+credential on the register frame, an authority held by the relay, and that a
+mesh with no admin keys could not have the check at all. Built, it needed none
+of those.
+
+The register frame carries the device's public key, a timestamp, and an ed25519
+signature over both — the same shape as the disco change, one layer down. The
+relay then asks a question it can already answer: **does this device own this
+WireGuard key?** The roster knows, because every member learned that binding
+from a signed announce long before any relay registration arrived. So ownership
+is checked against state the relay already holds, not against a credential the
+frame carries.
+
+What that buys, beyond the smaller diff:
+
+- **It works on a mesh with no admin.** The check reads the roster, and the
+  roster exists whether or not anybody ever minted an authority. The predicted
+  design would have left exactly the meshes with the least ceremony — a couple
+  of machines sharing a network key — with no protection.
+- **The relay stays a forwarder.** It verifies a signature and consults
+  membership it already tracks. Had it needed to hold an authority and validate
+  credentials, a relay would have become a thing with opinions about who is a
+  member, which is the coordinator this project exists to avoid.
+- **The timestamp does the rest.** `RegisterSkew` (two minutes) means a captured
+  register frame cannot be replayed later to point a key somewhere stale.
+
+The general lesson, which is why this is written down rather than quietly fixed:
+the credential was reached for because the question sounded like an
+authorisation question. It was an *identity* question, and identity was already
+established by the announce. Reach for the roster before reaching for a
+credential.
 
 ## Consequences
 
@@ -113,4 +142,6 @@ influence on path *selection*, not a hole in the data plane.
   currently concedes.
 - SECURITY.md's "Disco authenticates mesh membership, not device identity" moves
   from deferred to closed, and its "resolved by M5 credentials" note is wrong in
-  an instructive way: this needed no credentials at all.
+  an instructive way: neither half needed credentials at all.
+- Audit M5 (relay registration hijack) is closed by the amendment above, on
+  every mesh rather than only on meshes with an admin.

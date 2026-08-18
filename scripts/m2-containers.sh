@@ -17,7 +17,9 @@ RUN=$D/run
 BUILD=$D/build
 
 LD_LIB=${LD_LIB:-$D/build/lib}
-WAIT=${WAIT:-150}
+# See m1-containers.sh: discovery has taken over two minutes on a slow fleet,
+# and a window shorter than that reports the fleet as a code failure.
+WAIT=${WAIT:-240}
 NAT_MODE=${NAT_MODE:-eim}
 # RELAY=1 configures node-pub as a relay. The NATed nodes discover it from its
 # announce, so the test measures relay discovery and the relay path rather than
@@ -59,6 +61,17 @@ if [ "$RELAY" = "1" ]; then
     echo 'relay = "true"' >> "$RUN/pub/etc/config.toml"
     echo "    relay: node-pub, to be discovered by node-a and node-b"
 fi
+# Edge rather than the Core default, for the reason in m1-containers.sh. Being
+# a shrooms relay is a separate thing from being a Core fleet node: node-pub
+# still forwards WireGuard for the NATed pair, it just does not also carry
+# gossip for strangers.
+sed -i 's/^mode *=.*/mode        = "Edge"/' "$RUN"/*/etc/config.toml
+# A sed that matches nothing exits 0. Without this the spike would quietly go
+# on testing two Core nodes while claiming to test Edge.
+if grep -l '^mode.*"Core"' "$RUN"/*/etc/config.toml; then
+    echo "FAIL: the mode rewrite matched nothing (config format changed?)"; exit 1
+fi
+
 echo "    network key: $KEY"
 
 docker build -q -t shrooms:test -f "$D/Dockerfile" "$BUILD/ctx" >/dev/null

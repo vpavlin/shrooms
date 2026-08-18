@@ -105,12 +105,13 @@ missing is authentication in the application.
 becomes revocable. Nothing here makes an unauthenticated application safe to
 publish.
 
-**Disco authenticates mesh membership, not device identity.** Any mesh member
-can send a probe claiming any sender key. The consequence is bounded: disco only
-selects a *candidate path*, and WireGuard's own handshake is what actually
-authenticates the peer and encrypts traffic. A hostile mesh member could steer
-path selection, not read traffic.
-→ Resolved by M5 credentials.
+**~~Disco authenticates mesh membership, not device identity.~~** Closed
+(ADR-029). Disco packets and relay registrations both carry an ed25519 signature
+from the device that sent them, so a member can no longer send a probe claiming
+another device's key, nor tell a relay that another device's WireGuard key is
+reachable at its own address.
+→ Resolved, and not by credentials: the announce already binds a device to its
+WireGuard key, so both checks read the roster instead.
 
 **No forward secrecy on the control plane.** Compromising the network key
 decrypts every captured announce — past, present and future, not one epoch's
@@ -253,18 +254,26 @@ choosing their weakness deliberately.
 
 **Effort:** small once phase 2 exists. **Depends on:** phase 2.
 
-### Phase 4 — per-device disco authentication
+### Phase 4 — per-device disco authentication — **done** (ADR-029)
 
-**Problem:** disco probes authenticate mesh *membership*, not device *identity*,
-so any member can send a probe claiming any sender key.
+**Problem:** disco probes authenticated mesh *membership*, not device
+*identity*, so any member could send a probe claiming any sender key — and the
+same gap let a member register another device's WireGuard key at a relay.
 
-**Bounded today:** disco only selects a candidate path. WireGuard's own
-handshake is what authenticates the peer and encrypts traffic, so a hostile
-member could steer path selection, not read traffic.
+**Change, as built:** disco packets and relay register frames each carry the
+sender's device key and an ed25519 signature over the body. The receiver checks
+the signature, then checks the roster: the announce already bound that device to
+that WireGuard key, so ownership is a lookup rather than a credential check.
 
-**Change:** key disco off per-device credentials from phase 2.
+**Not** keyed off phase-2 credentials, which is what this section used to say.
+The relay would have had to hold an authority, the register frame would have had
+to carry a credential, and a mesh with no admin keys would have had no check at
+all. Reading the roster instead is smaller and protects every mesh. ADR-029's
+amendment records why the credential was the wrong reach.
 
-**Effort:** small. **Depends on:** phase 2.
+**Cost:** a disco wire-format change (104 → 168 bytes, version 2) and a longer
+register frame. A flag day for a mesh mid-upgrade, spent while every mesh in
+existence belonged to the people making the change.
 
 ### Deliberately not planned
 
@@ -288,9 +297,9 @@ The milestone order is M2 (traversal) → M3 (relay) → M4 (seamless) → M5
 (security). That ordering assumes a mesh that does not reliably connect is not
 worth securing.
 
-**Phase 1 jumped the queue, as planned, and phases 2 and 3 followed it.** What
-is left of the plan is the part ADR-020 argues should wait: removing the shared
-key itself, which is a control-plane encryption redesign rather than a
+**Phase 1 jumped the queue, as planned, and phases 2, 3 and 4 followed it.**
+What is left of the plan is the part ADR-020 argues should wait: removing the
+shared key itself, which is a control-plane encryption redesign rather than a
 membership change.
 
 ## Before running this in anger
