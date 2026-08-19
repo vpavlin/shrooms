@@ -226,6 +226,16 @@ test     <span class="p">k11</span> (relay)  online    up 1m   192.168.0.125:518
     is the long version, including what leaks and what is deliberately deferred.
 </p>
 
+<p>
+    There is also no new protocol here. WireGuard carries the traffic, path
+    selection is ICE's idea, reflexive addresses are STUN's, relays are the TURN
+    pattern. What is unusual is a piece that is <em>missing</em> rather than one
+    that is new: nobody runs a coordination service, and the machine holding the
+    authority is not the machine that is always on.
+    <a href="comparison.html">How it compares →</a> sets that against Tailscale,
+    Nebula, ZeroTier and Yggdrasil, including where shrooms loses.
+</p>
+
 <h2 id="start">Start here</h2>
 
 <div class="grid">
@@ -243,6 +253,11 @@ test     <span class="p">k11</span> (relay)  online    up 1m   192.168.0.125:518
         <h3><a href="dev.html">Dev notes →</a></h3>
         <p>The architecture, every design decision with its reasoning, and how
         to build and test it.</p>
+    </div>
+    <div class="card t4">
+        <h3><a href="comparison.html">How it compares →</a></h3>
+        <p>Against Tailscale, Nebula, ZeroTier and Yggdrasil — what is actually
+        different, and where shrooms loses.</p>
     </div>
 </div>
 

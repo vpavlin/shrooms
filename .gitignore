@@ -24,6 +24,11 @@ android/.kotlin/
 # renderer.
 site/adr/
 
+# Prose rendered from docs/*.md by the same script, into site/ rather than
+# site/adr/. Same reason: the markdown is the source and a checked-in copy goes
+# stale the moment somebody edits the markdown without running the renderer.
+site/comparison.html
+
 # nix build outputs: symlinks into /nix/store, valid on exactly one machine.
 # They were committed by accident and are pure churn — every rebuild changes
 # them, and the target does not exist for anybody who clones this.

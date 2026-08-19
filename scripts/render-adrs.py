@@ -36,8 +36,16 @@ OUT = ROOT / "site" / "adr"
 REPO_BLOB = "https://github.com/vpavlin/shrooms/blob/master/"
 
 # The path the markdown is written relative to, used to resolve `../../` out of
-# a link before deciding what it points at.
+# a link before deciding what it points at, and how to reach a rendered record
+# from the page being written.
+#
+# Module state rather than parameters because rewrite_link is reached through
+# inline() from every block function; threading two more arguments through all
+# of them to serve two call sites would cost more than it buys. main() sets
+# them per group and nothing else touches them.
 SRC_REL = "docs/adr"
+ADR_DIR = "docs/adr"
+ADR_HREF = ""  # from site/adr/*.html a sibling record is right here
 
 ADR_FILE = re.compile(r"^\d{3}-[a-z0-9.-]+\.md$")
 
@@ -61,9 +69,11 @@ def rewrite_link(target):
     resolved = posixpath.normpath(posixpath.join(SRC_REL, path))
     base = posixpath.basename(resolved)
 
-    if posixpath.dirname(resolved) == SRC_REL and ADR_FILE.match(base):
-        # A sibling record, rendered right next to this page.
-        out = base[:-3] + ".html"
+    if posixpath.dirname(resolved) == ADR_DIR and ADR_FILE.match(base):
+        # A record we also render. ADR_HREF is "" for a page in site/adr/ and
+        # "adr/" for one in site/, so a link from either lands on the rendered
+        # page rather than being sent to GitHub.
+        out = ADR_HREF + base[:-3] + ".html"
     else:
         out = REPO_BLOB + resolved
 
@@ -448,8 +458,8 @@ PAGE = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
 <meta name="description" content="{description}">
-<link rel="icon" href="../favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="{up}favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="{up}style.css">
 <meta property="og:title" content="{title}">
 <meta property="og:description" content="{description}">
 <meta name="theme-color" content="#07090b">
@@ -462,11 +472,11 @@ PAGE = """<!doctype html>
 
 <div class="page">
 <nav>
-    <a class="mark" href="../index.html"><img class="nav-logo" src="../logo.svg" alt="" width="24" height="24">shrooms</a>
-    <a href="../index.html">what &amp; why</a>
-    <a href="../install.html">install</a>
-    <a href="../guides.html">guides</a>
-    <a href="../dev.html" class="here">dev notes</a>
+    <a class="mark" href="{up}index.html"><img class="nav-logo" src="{up}logo.svg" alt="" width="24" height="24">shrooms</a>
+    <a href="{up}index.html">what &amp; why</a>
+    <a href="{up}install.html">install</a>
+    <a href="{up}guides.html">guides</a>
+    <a href="{up}dev.html" class="here">dev notes</a>
     <span class="spacer"></span>
     <a href="https://github.com/vpavlin/shrooms">github</a>
 </nav>
@@ -491,15 +501,20 @@ PAGE = """<!doctype html>
 </footer>
 </div>
 
-<script src="../field.js"></script>
-<script src="../copy.js"></script>
+<script src="{up}field.js"></script>
+<script src="{up}copy.js"></script>
 </body>
 </html>
 """
 
 
-def page(title, heading, description, lead, cta, body):
+def page(title, heading, description, lead, cta, body, up="../"):
+    # up is how far the page sits below site/: "../" for a record in site/adr/,
+    # "" for prose rendered straight into site/. The template was written for
+    # the first case and hardcoded it, which sent a page in site/ looking for
+    # its stylesheet above the site root.
     return PAGE.format(
+        up=up,
         title=html.escape(title, quote=True),
         description=html.escape(description, quote=True),
         heading=heading,
@@ -547,6 +562,62 @@ def render_index(path):
     )
 
 
+# Prose from docs/ that belongs on the site as much as the records do, rendered
+# into site/ rather than site/adr/.
+#
+# Same rule as the ADRs and for the same reason: the markdown stays the source,
+# so a reader of the repository and a reader of the website see one document.
+# Committing a second copy in HTML would mean remembering to regenerate it,
+# which is the thing nobody remembers.
+PAGES = [
+    {
+        "src": ROOT / "docs" / "comparison.md",
+        "out": "comparison.html",
+        "cta": ['<a href="index.html">← home</a>',
+                '<a href="adr/index.html">every decision</a>'],
+    },
+]
+
+
+def render_page(path, cta):
+    title, status, lines, description = read(path)
+    seen = {}
+    lead = ""
+    if status:
+        lead = '<div class="note">\n<p>%s</p>\n</div>\n' % inline(status)
+    return page(
+        title="shrooms — %s" % title,
+        heading=inline(title),
+        description=description,
+        lead=lead,
+        cta=cta,
+        body=blocks(lines, seen),
+        up="",
+    )
+
+
+def render_extra_pages():
+    """Render PAGES into site/, returning how many changed."""
+    global SRC_REL, ADR_HREF
+    changed = 0
+    for spec in PAGES:
+        src = spec["src"]
+        if not src.is_file():
+            sys.exit("no %s" % src)
+        # These live one directory up from the records, and reach them by name.
+        SRC_REL, ADR_HREF = "docs", "adr/"
+        text = render_page(src, spec["cta"])
+        target = ROOT / "site" / spec["out"]
+        if target.exists() and target.read_text(encoding="utf-8") == text:
+            print("  unchanged  site/%s" % spec["out"])
+            continue
+        target.write_text(text, encoding="utf-8")
+        print("  wrote      site/%s" % spec["out"])
+        changed += 1
+    SRC_REL, ADR_HREF = "docs/adr", ""
+    return changed
+
+
 def main():
     if not SRC.is_dir():
         sys.exit("no %s — run this from the repository" % SRC)
@@ -579,6 +650,8 @@ def main():
 
     print("%d pages in site/adr/ (%d records and the index)"
           % (len(written), len(written) - 1))
+
+    render_extra_pages()
 
 
 if __name__ == "__main__":

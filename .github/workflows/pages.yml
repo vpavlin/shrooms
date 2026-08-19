@@ -21,6 +21,10 @@ on:
       # it. Without this an edited record would sit unpublished until somebody
       # happened to touch a page.
       - 'docs/adr/**'
+      # Prose the same script renders into site/. Without this, editing the
+      # comparison would leave the published page stale — the same trap the
+      # ADR line above exists to close.
+      - 'docs/comparison.md'
       - 'scripts/render-adrs.py'
       - '.github/workflows/pages.yml'
   # So the site can be republished without a commit, after a Pages setting
