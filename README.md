@@ -64,6 +64,14 @@ would remove it is deliberately not built.
 [Status](#status) for exactly what is proven and what is not, and
 [SECURITY.md](SECURITY.md) for what is deliberately deferred.
 
+**There is no new protocol here.** WireGuard carries the traffic, path
+selection is ICE's idea, reflexive addresses are STUN's, relays are the TURN
+pattern. What is unusual is a component that is *absent* rather than one that
+is new: nobody runs a coordination service, and the machine holding the
+authority is not the machine that is always on.
+[docs/comparison.md](docs/comparison.md) sets this against Tailscale, Nebula,
+ZeroTier and Yggdrasil, including where Shrooms loses.
+
 **Migrating from `logos-vpn`?** Nothing breaks. The daemon prefers
 `/etc/shrooms` and `/var/lib/shrooms` but keeps using the pre-rename paths when
 only those exist — which matters, because `/var/lib/logos-vpn` holds the device
