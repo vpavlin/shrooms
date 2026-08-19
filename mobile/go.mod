@@ -18,13 +18,18 @@ require (
 )
 
 require (
+	github.com/btcsuite/btcd/btcec/v2 v2.3.6 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 // indirect
+	github.com/ethereum/go-ethereum v1.10.26 // indirect
+	github.com/go-stack/stack v1.8.1 // indirect
+	github.com/keycard-tech/keycard-go/v4 v4.0.1 // indirect
 	golang.org/x/crypto v0.54.0 // indirect
 	golang.org/x/mobile v0.0.0-20260803200217-62cee1672c8e // indirect
 	golang.org/x/mod v0.38.0 // indirect
 	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/text v0.40.0 // indirect
 	golang.org/x/tools v0.48.0 // indirect
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
 )
