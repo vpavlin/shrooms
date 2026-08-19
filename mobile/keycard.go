@@ -210,3 +210,38 @@ func (c *cardSigner) SignDigest(d [32]byte) ([]byte, error) {
 }
 
 var _ cred.Signer = (*cardSigner)(nil)
+
+// CardSelfTest proves the whole signing path against a real card: pairing,
+// PIN, the card's signature, and the two conversions on the way back.
+//
+// It signs a digest and checks the result with the same function a peer uses on
+// a credential. That is the point — a card that returns something plausible and
+// unverifiable is the failure this is looking for, and it cannot be found
+// without hardware. Nothing is published and no credential is issued.
+//
+// Returns the authority key on success, so the caller can see which card it
+// just proved.
+func CardSelfTest(t CardTransport, configDir, pin string) (string, error) {
+	s, err := newCardSigner(t, configDir, pin)
+	if err != nil {
+		return "", err
+	}
+	// A fixed digest rather than a random one: this is a self-test, and a
+	// failure that only happens for some inputs is worth being able to repeat.
+	var d [32]byte
+	for i := range d {
+		d[i] = byte(i)
+	}
+	sig, err := s.SignDigest(d)
+	if err != nil {
+		return "", err
+	}
+	if len(sig) != 64 {
+		return "", fmt.Errorf("the card produced a %d-byte signature, want 64", len(sig))
+	}
+	if !cred.VerifyDigest(s.Public(), d, sig) {
+		return "", errors.New("the card signed, but the signature does not verify against its own key — " +
+			"the conversion between what the card returns and what this project checks is wrong")
+	}
+	return hex.EncodeToString(s.pub), nil
+}

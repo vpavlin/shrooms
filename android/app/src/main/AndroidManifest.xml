@@ -8,6 +8,13 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Only to scan a network key from another device's screen. -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Reading a Keycard, so the mesh's admin key can live on a card rather
+         than on a device (ADR-022). Foreground only: Android reads NFC while a
+         screen is in front, which is why signing is a deliberate tap. -->
+    <uses-permission android:name="android.permission.NFC" />
+    <!-- required="false": a phone without NFC is still a perfectly good mesh
+         member, it just cannot be the admin. -->
+    <uses-feature android:name="android.hardware.nfc" android:required="false" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <!-- There is no VPN-specific foreground service type; specialUse is the
          documented fallback for one that does not fit the listed categories. -->

@@ -57,6 +57,9 @@ fun SettingsScreen(
         Spacer(Modifier.height(28.dp))
         ModeSetting(dir, connected = connected)
 
+        Spacer(Modifier.height(28.dp))
+        KeycardSetting(dir)
+
         // No SERVICES section here, deliberately.
         //
         // It controlled whether peers are told the names of services this

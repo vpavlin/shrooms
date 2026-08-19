@@ -1141,7 +1141,7 @@ internal fun KeyField(value: String, singleLine: Boolean = false, onChange: (Str
 }
 
 @Composable
-private fun Action(text: String, enabled: Boolean, danger: Boolean = false, onClick: () -> Unit) {
+internal fun Action(text: String, enabled: Boolean, danger: Boolean = false, onClick: () -> Unit) {
     val colour = if (danger) Palette.Rust else Palette.Phosphor
     Box(
         Modifier.fillMaxWidth()
