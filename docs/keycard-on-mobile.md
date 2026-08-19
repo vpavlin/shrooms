@@ -50,15 +50,46 @@ So the format work is done. What is left is runtime.
 
 ## The three gaps
 
-**1. The phone cannot issue invites at all.** This is the real work, and it is
-not about Keycard. The mobile API has `JoinWithInvite`, `InviteToken`,
-`InviteKey`, `InviteMeshName` — all *redemption*. There is no minting.
+**1. The phone cannot issue invites at all.** The mobile API has
+`JoinWithInvite`, `InviteToken`, `InviteKey`, `InviteMeshName` — all
+*redemption*. There is no minting.
 
-`shrooms invite` mints a token and then **waits** for somebody to redeem it,
-answering over the rendezvous plane and issuing a credential at that moment. So
-a phone that issues invites has to stay reachable for the fifteen-minute window.
-That is plausible — the app already runs a foreground service for the VPN — but
-it is a real design point, not a wrapper around an existing call.
+An earlier draft of this document called holding the fifteen-minute window the
+hard part. That was wrong, and the correction matters because it makes the
+feature much cheaper than it looked. **The daemon already hosts invite windows.**
+`shrooms invite` is a UI over the control socket: the daemon does the waiting and
+reports a redemption. On a phone the Go core *is* that daemon, inside a
+foreground service that already holds the rendezvous connection. Hosting is not
+an extra task; it is exposing one that already runs.
+
+What is left is minting and plumbing: a mobile call that registers a pending
+invite and returns the token, and a way to hand the redemption back up for
+signing.
+
+**The real constraint is when the tap has to happen**, and it is an interaction
+problem rather than a resource one.
+
+The credential names the invitee's *per-mesh* device key, which the inviter
+cannot know in advance — `Deferred` above exists precisely because the invitee
+cannot derive that key until it learns which mesh it is joining. So there is
+nothing to pre-sign: the card has to be tapped at the moment the other person
+redeems.
+
+And on Android, **NFC reader mode is foreground-only**. The window can sit in
+the background indefinitely, but the tap needs the app open and on screen. So
+the flow is: window waits in the background, redemption arrives, the app pulls
+the user back with a high-priority notification, they tap, the credential goes
+out.
+
+In person that is a good ceremony — they scan, the phone says "hold your card",
+you tap, they are in. Remotely it means both people are present at the same
+time, which an invite already implies.
+
+The alternative, if that proves annoying, is a short-lived delegated signing key
+issued by the card so the phone can answer unattended for the window. It buys
+convenience by putting a signing key on the phone, which is the property the
+card exists to avoid, so it should be a deliberate decision rather than a
+default.
 
 **2. No way to inject a signer into the mobile binding.** The daemon builds its
 Signer from a key file. Mobile needs one that calls back out to the phone.
@@ -119,8 +150,8 @@ the authority should not live on the always-on node.
 1. **Intent or Kotlin driver** — A or B above. A reuses working code and keeps
    card handling out of Shrooms; B is self-contained but duplicates the hard
    part.
-2. **Does the phone issue invites, or approve them?** A smaller first step is
-   for the phone to sign a credential for an invite that a laptop is hosting,
-   rather than the phone hosting the fifteen-minute window itself. That gets the
-   card into the loop without making the phone a server, and it is most of the
-   value for a fraction of gap 1.
+2. **Unattended or co-present?** The default is co-present: the card is tapped
+   when the invitee redeems, so the key never leaves it. A delegated short-lived
+   key would let the phone answer unattended, at the cost of the guarantee the
+   card is there for. Co-present looks right for invites, which are a moment
+   between two people anyway.
