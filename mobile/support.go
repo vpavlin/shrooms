@@ -43,6 +43,25 @@ func load(configDir string) (state.Config, *state.State, error) {
 	return cfg, st, nil
 }
 
+// phoneDefaults is DefaultConfig with the one value a phone must not inherit
+// from a server.
+//
+// Core carries gossip for the whole network — roughly 20 MB/h, which on a phone
+// is somebody's mobile data — and holding a gossip mesh needs stable
+// connectivity, which is the one thing a phone does not have. A phone that woke
+// up as Core did not merely cost data: it failed to form a mesh at all behind a
+// carrier NAT and its discovery stalled, which presents as "the app does not
+// work" a long way from the cause.
+//
+// Deliberately not changed in state.DefaultConfig, because a server should keep
+// defaulting to Core. A network where everything is Edge has nobody left to
+// carry it.
+func phoneDefaults() state.Config {
+	cfg := state.DefaultConfig()
+	cfg.Mode = state.ModeEdge
+	return cfg
+}
+
 // setup writes a config, creating a network key when none is given.
 //
 // The device identity is created by LoadOrCreateState and never replaced here:
@@ -51,7 +70,7 @@ func load(configDir string) (state.Config, *state.State, error) {
 func setup(configDir, name, key string) (state.Config, *state.State, error) {
 	cfgPath, stateDir := paths(configDir)
 
-	cfg := state.DefaultConfig()
+	cfg := phoneDefaults()
 	if name != "" {
 		cfg.Name = name
 	}

@@ -202,7 +202,7 @@ func joinInvite(token, name, label, configDir string, timeoutSeconds int) error 
 		defer detach()
 		tr = tapTransport{node: live, msgs: msgs}
 	} else {
-		fleet := state.DefaultConfig()
+		fleet := phoneDefaults()
 		if onDisk, err := state.LoadConfigUnvalidated(cfgPath); err == nil {
 			if onDisk.Preset != "" {
 				fleet.Preset = onDisk.Preset
@@ -273,7 +273,7 @@ func joinInvite(token, name, label, configDir string, timeoutSeconds int) error 
 	}
 	// An additional mesh keeps everything already configured and adds itself;
 	// a first one writes the single-mesh form every config in the field uses.
-	cfg := state.DefaultConfig()
+	cfg := phoneDefaults()
 	if existing, err := state.LoadConfig(cfgPath); err == nil {
 		cfg = existing
 	}
