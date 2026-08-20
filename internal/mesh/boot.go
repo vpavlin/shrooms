@@ -68,11 +68,7 @@ func (m *Mesh) bootAddrFor(cfg state.Config, now time.Time) string {
 	if bootID == "" {
 		return ""
 	}
-	host := "ip4"
-	if ip.Is6() {
-		host = "ip6"
-	}
-	return "/" + host + "/" + ip.String() +
+	return "/ip4/" + ip.String() +
 		"/tcp/" + strconv.Itoa(int(cfg.DeliveryPort)) +
 		"/p2p/" + bootID
 }
@@ -99,8 +95,25 @@ func (m *Mesh) publicIPFrom(cfg state.Config, now time.Time) netip.Addr {
 	return netip.Addr{}
 }
 
+// routable reports whether an address is one another member could dial for
+// bootstrap.
+//
+// IPv4 only, which is not a simplification. The delivery library listens on
+// /ip4/0.0.0.0 and nothing else, and the fleet's own entry nodes are /dns4/
+// multiaddrs — A records by construction. So a /ip6/ bootstrap address is one
+// the library cannot use, and publishing it would cost every peer that stored
+// it a wasted dial at startup, in the order ahead of addresses that work.
+//
+// The *data plane* has no such limit: the WireGuard socket binds [::], disco
+// carries 16-byte addresses with v4 mapped into v6, and two members with IPv6
+// reach each other directly with nothing to punch. This function is about
+// bootstrap, which is the one place that asymmetry bites.
+//
+// Revisit when delivery listens on v6 and the fleet publishes /dns6/ or /ip6/
+// entries. Until then an IPv6-only machine can be a fine mesh member and cannot
+// be a bootstrap node.
 func routable(a netip.Addr) bool {
 	a = a.Unmap()
-	return a.IsValid() && !a.IsPrivate() && !a.IsLoopback() &&
+	return a.IsValid() && a.Is4() && !a.IsPrivate() && !a.IsLoopback() &&
 		!a.IsLinkLocalUnicast() && !a.IsUnspecified() && !a.IsMulticast()
 }

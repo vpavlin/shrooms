@@ -60,3 +60,25 @@ func TestOnlyRoutableAddressesAreOffered(t *testing.T) {
 		}
 	}
 }
+
+// A bootstrap address must be one the delivery library can dial, and it listens
+// on /ip4 only — the fleet's own entry nodes are /dns4/ multiaddrs. Publishing
+// a v6 address would cost every peer that stored it a wasted startup dial.
+//
+// This is only true of bootstrap. The data plane reaches IPv6 peers directly.
+func TestBootstrapAddressesAreIPv4(t *testing.T) {
+	for _, tc := range []struct {
+		addr string
+		want bool
+	}{
+		{"128.140.55.128:51820", true},
+		{"[2a01:4f8:c015:d234::1]:51820", false},
+		{"[fd3b:ffe9:f81::1]:51820", false},
+	} {
+		cfg := state.Config{Mode: "Core", Relay: true, DeliveryPort: 1, Advertise: []string{tc.addr}}
+		m := &Mesh{cfg: cfg}
+		if got := m.publicIPFrom(cfg, time.Time{}).IsValid(); got != tc.want {
+			t.Errorf("%s: offered=%v, want %v", tc.addr, got, tc.want)
+		}
+	}
+}
