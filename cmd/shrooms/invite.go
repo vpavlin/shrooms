@@ -84,9 +84,24 @@ func cmdInvite(args []string) error {
 	// Checked before the passphrase prompt. Typing a passphrase and then being
 	// told the daemon is down is the wrong order to learn it in.
 	client := socketClient(*sock, *ttl+time.Minute)
-	if _, err := fetchStatus(*sock); err != nil {
+	st, err := fetchStatus(*sock)
+	if err != nil {
 		return fmt.Errorf("%w\n\nThe daemon holds the invite open, since it is the node already "+
 			"connected to the fleet", err)
+	}
+	// A daemon with no mesh serves a smaller set of endpoints and /invite/hold
+	// is not among them, so without this check the failure arrives as a bare
+	// "404 page not found" after the passphrase prompt and the printed token —
+	// which says nothing about what is wrong or what to do.
+	//
+	// It is a reachable state rather than a silly one: `init` writes the config
+	// and nudges the daemon, and a nudge that does not land leaves a daemon
+	// still waiting on a machine whose mesh plainly exists.
+	if st.Waiting {
+		return errors.New("this daemon has not joined a mesh yet, so it has nothing to invite anybody to.\n\n" +
+			"If you have just created or joined one, the daemon has not picked it up:\n" +
+			"  sudo systemctl restart shrooms\n\n" +
+			"Then `shrooms status` should name the mesh rather than saying it is waiting.")
 	}
 
 	// The admin key only if this mesh has an authority. A mesh minted with

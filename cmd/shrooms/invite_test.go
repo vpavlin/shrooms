@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -204,4 +205,44 @@ func TestInviteWithoutACredential(t *testing.T) {
 	if len(h.gotCredential) != 0 {
 		t.Errorf("sent %d bytes of credential for a mesh with no admin keys", len(h.gotCredential))
 	}
+}
+
+// A daemon with no mesh does not serve /invite/hold, so inviting from one used
+// to fail with a bare "404 page not found" — after the passphrase prompt and
+// after printing a token that could never be redeemed.
+//
+// Reachable rather than silly: `init` writes the config and nudges the daemon,
+// and a nudge that does not land leaves a waiting daemon on a machine whose
+// mesh plainly exists. That is what a first-time user hits.
+func TestWaitingDaemonServesNoInviteHold(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/status", func(w http.ResponseWriter, _ *http.Request) {
+		json.NewEncoder(w).Encode(statusPayload{Waiting: true})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	// The shape the CLI sees: status answers, /invite/hold does not exist.
+	resp, err := http.Get(srv.URL + "/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var st statusPayload
+	if err := json.NewDecoder(resp.Body).Decode(&st); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if !st.Waiting {
+		t.Fatal("a waiting daemon did not report itself as waiting")
+	}
+
+	hold, err := http.Post(srv.URL+"/invite/hold", "application/json", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hold.Body.Close()
+	if hold.StatusCode != http.StatusNotFound {
+		t.Fatalf("/invite/hold returned %d; this test exists because it 404s", hold.StatusCode)
+	}
+	// So the CLI must decide from the status, before it prompts for anything.
 }
