@@ -290,6 +290,16 @@ func (m *Mesh) BestPath(peerID string, now time.Time) (disco.Path, bool) {
 // Reflexive returns the self-addresses peers have reported observing.
 func (m *Mesh) Reflexive() []netip.AddrPort { return m.prober.Reflexive(time.Now()) }
 
+// Announced is what this node currently puts in its announce as the places it
+// can be reached.
+//
+// Exposed because it was the one fact nobody could see. `paths` shows what
+// peers announce and where peers observe us, and a node with an empty list of
+// its own looks identical to a node with a full one — while being undialable by
+// everybody. Diagnosing that took three rounds of asking somebody to read a
+// journal, which is three rounds too many for a question the daemon can answer.
+func (m *Mesh) Announced() []string { return m.candidates() }
+
 // requestResync asks the main loop to reconfigure the data plane.
 //
 // Non-blocking and coalescing: a full channel already means a resync is pending,

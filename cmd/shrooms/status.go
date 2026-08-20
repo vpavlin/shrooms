@@ -380,6 +380,23 @@ func cmdPaths(args []string) error {
 		return err
 	}
 
+	// First, because it decides whether anybody can reach this node at all and
+	// is visible nowhere else. Skipped entirely when the daemon predates the
+	// field, rather than reported as "nothing" — that would be a false
+	// diagnosis pointing at the opposite of the real problem.
+	if st.Announced != nil {
+		fmt.Printf("we announce (where peers are told to reach us):\n")
+		if len(*st.Announced) == 0 {
+			fmt.Printf("  nothing — no peer can dial this node\n")
+			fmt.Printf("  it becomes reachable once some peer reaches it first and reports\n")
+			fmt.Printf("  the address back, which needs a relay or a peer with a public one\n")
+		}
+		for _, a := range *st.Announced {
+			fmt.Printf("  %s\n", a)
+		}
+		fmt.Println()
+	}
+
 	if len(st.Reflexive) > 0 {
 		fmt.Printf("reflexive addresses (as peers observe us):\n")
 		for _, r := range st.Reflexive {

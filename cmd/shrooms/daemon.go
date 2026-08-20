@@ -484,6 +484,16 @@ type statusPayload struct {
 	// case where punching fails and a relay is required.
 	Reflexive []string `json:"reflexive,omitempty"`
 
+	// Announced is where this node tells peers it can be reached. An empty
+	// list means nobody can dial it, which is invisible from any other output.
+	//
+	// A pointer so that "this daemon does not report it" and "this node
+	// announces nothing" stay different answers. They are opposite diagnoses —
+	// one is an old daemon, the other is a node no peer can reach — and a
+	// reader that conflates them sends somebody looking for a fault that is not
+	// there. An older daemon omits the field entirely.
+	Announced *[]string `json:"announced,omitempty"`
+
 	// Services are the local ports this device publishes on the mesh. Only
 	// this device's own: services are not announced, so no node knows what any
 	// other one publishes.
@@ -1291,6 +1301,11 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 		for _, ap := range m.Reflexive() {
 			out.Reflexive = append(out.Reflexive, ap.String())
 		}
+		announced := m.Announced()
+		if announced == nil {
+			announced = []string{}
+		}
+		out.Announced = &announced
 		if services := primary.services; services != nil {
 			for _, sv := range services.Status() {
 				out.Services = append(out.Services, serviceStatus{
