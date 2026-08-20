@@ -609,3 +609,62 @@ footer a { color: var(--ash); }
 ::-webkit-scrollbar-track { background: transparent; }
 
 ::selection { background: rgba(154, 123, 255, 0.35); color: var(--bone); }
+
+/* Expandable detail.
+ *
+ * The install page had grown to 4,600 words: four targets, each with its
+ * reasoning inline, so somebody who wanted three commands read an essay to find
+ * them. The prose is worth keeping — it explains choices that look arbitrary
+ * otherwise — but it should be opened by a reader who wants it rather than
+ * scrolled past by one who does not.
+ *
+ * <details> rather than a script: this site has no build step and no framework,
+ * and a disclosure widget is not the place to acquire one. It also degrades to
+ * "everything visible" with CSS off, which is the right failure. */
+details {
+    border-left: 2px solid var(--line);
+    margin: 1rem 0;
+    padding-left: 1rem;
+}
+
+details > summary {
+    color: var(--ash);
+    cursor: pointer;
+    font-size: 0.94rem;
+    list-style: none;
+    padding: 0.15rem 0;
+}
+
+/* The marker is drawn rather than inherited, because the default triangle
+ * differs per browser and sits at a different baseline in each. */
+details > summary::-webkit-details-marker { display: none; }
+details > summary::before {
+    content: "▸";
+    display: inline-block;
+    margin-right: 0.5rem;
+    transition: transform 0.12s ease;
+}
+details[open] > summary::before { transform: rotate(90deg); }
+details > summary:hover { color: var(--bone); }
+details[open] > summary { color: var(--bone); margin-bottom: 0.5rem; }
+
+/* The first paragraph inside carries the top margin the summary already
+ * supplies, which reads as a gap twice as large as intended. */
+details > *:first-of-type:not(summary) { margin-top: 0; }
+
+/* A step list: the minimum somebody has to do, before any explanation. */
+.steps { counter-reset: step; list-style: none; padding-left: 0; }
+.steps > li { counter-increment: step; margin: 0 0 1.1rem 0; padding-left: 2rem; position: relative; }
+.steps > li::before {
+    content: counter(step);
+    position: absolute;
+    left: 0; top: 0.1rem;
+    width: 1.35rem; height: 1.35rem;
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    color: var(--ash);
+    font-size: 0.8rem;
+    line-height: 1.35rem;
+    text-align: center;
+}
+.steps > li > :first-child { margin-top: 0; }

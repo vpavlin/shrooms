@@ -69,36 +69,61 @@
 
 <h2 id="linux">A Linux machine</h2>
 
+<ol class="steps">
+<li>
+<pre><code><span class="cmd">curl -fsSLO https://raw.githubusercontent.com/vpavlin/shrooms/master/scripts/install.sh</span>
+<span class="cmd">sudo bash install.sh prepare --name nas</span></code></pre>
+</li>
+<li>
+<p>If a firewall is running, open the port — on laptops too, not only servers:</p>
+<pre><code><span class="cmd">sudo ufw allow 51820/udp</span>                          <span class="c"># Ubuntu, Debian</span>
+<span class="cmd">sudo firewall-cmd --add-port=51820/udp --permanent &amp;&amp; sudo firewall-cmd --reload</span>  <span class="c"># Fedora, RHEL</span></code></pre>
+</li>
+<li>
+<p>
+    You now have a daemon running with no mesh.
+    <a href="#first">Create one</a> if this is your first device, or
+    <a href="#second">redeem an invite</a> if it is not.
+</p>
+</li>
+</ol>
+
 <div class="warn">
     <p>
-        <strong>You are about to pipe somebody else's script into a root
-        shell.</strong> It installs a container, writes a systemd unit and
-        hands a network interface to a daemon — which is what you want it to
-        do, and is also indistinguishable from what you would not want it to
-        do until you have read it.
-    </p>
-    <p>
-        So read it, or have your AI overlords read it for you. It is 343 lines
-        and there is nothing clever in it:
+        <strong>That pipes somebody else's script into a root shell.</strong>
+        It installs a container, writes a systemd unit and hands a network
+        interface to a daemon — which is what you want, and is
+        indistinguishable from what you would not want until you have read it.
+        It is 343 lines with nothing clever in it:
         <a href="https://github.com/vpavlin/shrooms/blob/master/scripts/install.sh">scripts/install.sh</a>.
-        The same goes for every other install-by-curl on the internet, most of
-        which will not say so on the page.
     </p>
 </div>
 
-<p><strong>Prerequisites</strong></p>
-
+<details>
+<summary>What you need first</summary>
 <ul>
     <li><code>docker</code> or <code>podman</code>, and systemd</li>
     <li><code>/dev/net/tun</code> present</li>
     <li>root on the machine</li>
 </ul>
+</details>
 
-<pre><code><span class="cmd">curl -fsSLO https://raw.githubusercontent.com/vpavlin/shrooms/master/scripts/install.sh</span>
-<span class="cmd">sudo bash install.sh prepare --name nas    <span class="c"># install, start, wait for a mesh</span></code></pre></span>
+<details>
+<summary>Why the port matters, even on a laptop</summary>
+<p>
+    Two peers need at least one of them reachable. A laptop with a default-deny
+    firewall cannot be reached by a phone on the same wifi, so both ends
+    announce perfectly good addresses, see each other as online, and fail every
+    handshake — which looks like almost anything except a closed port.
+</p>
+<p>
+    The installer prints the right command for whichever firewall it finds
+    running, and says nothing when none is.
+</p>
+</details>
 
-<p><strong>What you should see</strong></p>
-
+<details>
+<summary>What you should see</summary>
 <pre><code>==&gt; checking this machine
 ==&gt; fetching ghcr.io/vpavlin/shrooms:latest
 ==&gt; generating config (prepare)
@@ -111,32 +136,10 @@ On a machine already on one:
 
 and back here:
   sudo shrooms join --invite &lt;TOKEN&gt; --name nas</code></pre>
+</details>
 
-<p>
-    The machine is now a running daemon with no mesh. <a href="#first">Create
-    one</a> if this is your first device, or <a href="#second">redeem an
-    invite</a> if it is not.
-</p>
-
-<div class="note">
-    <p>
-        <strong>If this machine runs a firewall, open UDP 51820 inbound.</strong>
-        Not only on a relay or a server — on anything you want other devices to
-        reach, including a laptop talking to a phone on the same wifi.
-    </p>
-<pre><code><span class="cmd">sudo ufw allow 51820/udp</span>                                    <span class="c"># Ubuntu, Debian</span>
-<span class="cmd">sudo firewall-cmd --add-port=51820/udp --permanent</span>           <span class="c"># Fedora, RHEL</span>
-<span class="cmd">sudo firewall-cmd --reload</span></code></pre>
-    <p>
-        Without it the node still reaches others, and nothing reaches it. Both
-        sides then announce addresses, see each other as online, and every
-        handshake fails — which looks like almost anything except a closed port.
-        The installer prints the right command for whatever firewall it finds
-        running.
-    </p>
-</div>
-
-<h3>What the installer does</h3>
+<details>
+<summary>What the installer does</summary>
 
 <p>
     Three verbs. <code>init</code> creates a mesh, <code>join &lt;NETWORK-KEY&gt;</code>
@@ -189,7 +192,9 @@ and back here:
     before running it as root, as you should with anything fetched this way.
 </p>
 
-<h3>Building from source instead</h3>
+</details>
+<details>
+<summary>Building from source instead</summary>
 
 <p>
     Worth it when you want the binary on the host rather than in a container —
@@ -213,32 +218,44 @@ and back here:
     the one you want.
 </p>
 
+</details>
 <h2 id="android">An Android phone</h2>
 
-<p><strong>Prerequisites</strong></p>
+<ol class="steps">
+<li>
+<p>In F-Droid: Settings → Repositories → add</p>
+<pre><code>https://apps.vpavlin.xyz/fdroid/repo</code></pre>
+</li>
+<li><p>Install <strong>Shrooms</strong> from that repository's app list.</p></li>
+<li>
+<p>
+    Open it and scan the QR from <code>shrooms invite</code>, or paste the
+    token into the single field — it takes an invite or a network key and tells
+    them apart itself.
+</p>
+</li>
+</ol>
 
+<details>
+<summary>What you need first</summary>
 <ul>
     <li>an Android 8 or newer phone, arm64</li>
     <li>an F-Droid client installed</li>
     <li>an invite from a machine already on the mesh, or its network key</li>
 </ul>
+</details>
 
-<pre><code><span class="c"># F-Droid, Settings, Repositories, add:</span>
-https://apps.vpavlin.xyz/fdroid/repo
-
-<span class="c"># then install "Shrooms" from the repository's app list</span></code></pre>
-
-<p><strong>What you should see</strong></p>
-
+<details>
+<summary>What you should see</summary>
 <p>
-    The app on the launcher, opening on a single join screen with one field. Put
-    an invite token or a network key into it — it takes either and tells them
-    apart itself — or scan the QR that <code>shrooms invite</code> prints. After
-    joining, the roster fills with the same peers the daemon reports, and
+    The app on the launcher, opening on a single join screen with one field.
+    After joining, the roster fills with the same peers the daemon reports, and
     Android's VPN key appears in the status bar.
 </p>
+</details>
 
-<h3>Where it comes from, and why not the Play Store</h3>
+<details>
+<summary>Where it comes from, and why not the Play Store</summary>
 
 <p>
     That F-Droid repository is <strong>self-hosted</strong>. There is no Google
@@ -265,7 +282,9 @@ https://apps.vpavlin.xyz/fdroid/repo
     is why it reuses the core rather than reimplementing it.
 </p>
 
-<h3>Building the APK yourself</h3>
+</details>
+<details>
+<summary>Building the APK yourself</summary>
 
 <pre><code><span class="cmd">make apk                       <span class="c"># android/shrooms.apk, debug-signed</span></span>
 <span class="cmd">adb install -r android/shrooms.apk</span>
@@ -281,32 +300,35 @@ https://apps.vpavlin.xyz/fdroid/repo
     unsigned and signed there.
 </p>
 
+</details>
 <h2 id="desktop">A desktop, in Logos Basecamp</h2>
 
-<p><strong>Prerequisites</strong></p>
+<ol class="steps">
+<li>
+<pre><code><span class="cmd">curl -fsSLO https://github.com/vpavlin/shrooms/releases/download/shrooms-v0.3.0/shrooms-0.3.0.lgx</span>
+<span class="cmd">curl -LO https://github.com/vpavlin/shrooms/releases/download/shrooms_core-v0.2.0/shrooms_core-0.2.0.lgx</span></code></pre>
+</li>
+<li><p>In Basecamp: Package Manager → Install from file → pick each <code>.lgx</code>.</p></li>
+</ol>
 
+<details>
+<summary>What you need first</summary>
 <ul>
     <li>Logos Basecamp installed</li>
     <li>a shrooms daemon already running on this same machine</li>
     <li><code>socket_group</code> set in <code>/etc/shrooms/config.toml</code> to
     a group you are in</li>
 </ul>
+</details>
 
-<pre><code><span class="cmd">curl -fsSLO https://github.com/vpavlin/shrooms/releases/download/shrooms-v0.3.0/shrooms-0.3.0.lgx</span>
-<span class="c"># and the core module it depends on</span>
-<span class="cmd">curl -LO https://github.com/vpavlin/shrooms/releases/download/shrooms_core-v0.2.0/shrooms_core-0.2.0.lgx</span>
-
-<span class="c"># then in Basecamp: Package Manager, Install from file, pick the .lgx</span></code></pre>
-
-<p><strong>What you should see</strong></p>
-
+<details>
+<summary>What you should see</summary>
 <p>
     Shrooms in Basecamp's app list, and opening it shows the same roster
     <code>shrooms status</code> prints in a terminal: peers, whether each is
     direct or relayed, throughput, and how long each took to connect. If the
     socket group is not set it says so, rather than showing an empty mesh.
 </p>
-
 <p>
     It also <em>changes</em> things, which is the part that removes the
     terminal: this device's name, whether it runs the rendezvous plane as edge
@@ -318,16 +340,10 @@ https://apps.vpavlin.xyz/fdroid/repo
     each credential expires, and the daemon's own log, because Basecamp cannot
     read the journal.
 </p>
+</details>
 
-<p>
-    <strong>What it cannot do is admit anybody.</strong> On a mesh with admin
-    keys, membership is a credential signed by a key the daemon has never held,
-    so nothing reachable through this socket can make a device a member or
-    remove one. That is the line the design draws, and it is why handing the
-    socket to a group is a bounded grant rather than a way to admit anybody.
-</p>
-
-<h3>Why it needs a companion module</h3>
+<details>
+<summary>Why it needs a companion module</summary>
                 <p>
                     Two packages, versioned separately:
                     <code>shrooms</code> is the view and <code>shrooms_core</code>
@@ -379,7 +395,9 @@ https://apps.vpavlin.xyz/fdroid/repo
     </p>
 </div>
 
-<h3>Building the package yourself</h3>
+</details>
+<details>
+<summary>Building the package yourself</summary>
 
 <pre><code><span class="cmd">make basecamp-check     <span class="c"># load the real view offscreen against a fixture</span></span>
 <span class="cmd">make basecamp-lgx       <span class="c"># build the installable package</span></span>
@@ -394,29 +412,35 @@ https://apps.vpavlin.xyz/fdroid/repo
     stable one linked above.
 </p>
 
+</details>
 <h2 id="cloud">A cloud server</h2>
 
-<p><strong>Prerequisites</strong></p>
+<ol class="steps">
+<li>
+<pre><code><span class="cmd">ssh root@VPS_IP</span>
+<span class="cmd">curl -fsSLO https://raw.githubusercontent.com/vpavlin/shrooms/master/scripts/install.sh</span>
+<span class="cmd">sudo bash install.sh prepare --name vps --relay</span>
+<span class="cmd">sudo ufw allow 51820/udp</span></code></pre>
+</li>
+<li><p><a href="#second">Redeem an invite</a> from a machine already on the mesh.</p></li>
+</ol>
 
+<details>
+<summary>What you need first</summary>
 <ul>
     <li>a KVM VPS — OpenVZ and LXC hosts often have no <code>/dev/net/tun</code>,
     and it is worth checking before you pay</li>
     <li><code>docker</code> or <code>podman</code>, and root</li>
     <li>one inbound UDP port, 51820 by default</li>
 </ul>
+</details>
 
-<pre><code><span class="cmd">ssh root@VPS_IP</span>
-<span class="cmd">curl -fsSLO https://raw.githubusercontent.com/vpavlin/shrooms/master/scripts/install.sh</span>
-<span class="cmd">sudo bash install.sh prepare --name vps --relay</span>
-<span class="cmd">ufw allow 51820/udp                        <span class="c"># or your firewall's equivalent</span></code></pre></span>
-
-<p><strong>What you should see</strong></p>
-
+<details>
+<summary>What you should see, and what it costs</summary>
 <pre><code><span class="p">Installed and running, waiting for a mesh.</span>
 
 A firewall is running here. Peers reach this node on UDP 51820, so open it:
   sudo ufw allow 51820/udp</code></pre>
-
 <p>
     Then <a href="#second">redeem an invite</a> from a machine already on the
     mesh. Resource use is negligible — a measured node acting as a relay sits at
@@ -424,8 +448,10 @@ A firewall is running here. Peers reach this node on UDP 51820, so open it:
     VPS is bandwidth allowance and latency, since relayed traffic takes a detour
     through it.
 </p>
+</details>
 
-<h3>Why a reachable member matters</h3>
+<details>
+<summary>Why a reachable member matters</summary>
 
 <p>
     A node behind NAT learns its own public address by <em>reflection</em>: a
@@ -465,7 +491,9 @@ A firewall is running here. Peers reach this node on UDP 51820, so open it:
     <a href="adr/012-relay-hosting.html">ADR-012</a> covers who should host one.
 </p>
 
-<h3>Driving the install from your own machine</h3>
+</details>
+<details>
+<summary>Driving the install from your own machine</summary>
 
 <p>
     <code>scripts/deploy.sh</code> is the alternative when you have the
@@ -490,6 +518,7 @@ A firewall is running here. Peers reach this node on UDP 51820, so open it:
     <code>BUILD_IMAGE=1</code>.
 </p>
 
+</details>
 <h2 id="first">The first mesh</h2>
 
 <p>
