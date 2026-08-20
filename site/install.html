@@ -592,10 +592,17 @@ Asking to join as "nas"...
 <h2 id="prepared">A machine set up by somebody who never sees the key</h2>
 
 <p>
-    Handing the network key to a colleague, a script or an agent so they can
-    install a node hands them membership of the mesh. The two-step version
-    avoids that: prepare the machine without the key, and put the key in
-    yourself afterwards.
+    Somebody else — a colleague, a script, an agent — can install and configure
+    a node without ever holding your network key. Prepare the machine without
+    it, and put the key in yourself afterwards.
+</p>
+
+<p>
+    The key is worth withholding even though, on a mesh with admin keys, it no
+    longer admits anybody: it still decrypts the control plane, so whoever has
+    it can read who is on the mesh and what is announced. Withholding it is
+    about that, not about membership — see the note below for how the device
+    actually becomes a member.
 </p>
 
 <pre><code><span class="c"># on the machine being set up, by whoever is doing the setup</span>
@@ -622,20 +629,36 @@ The daemon was waiting for this and is bringing the mesh up now.</code></pre>
 </p>
 
 <p>
-    Get the key from a machine that is already a member with
-    <code>shrooms key show</code>, or <code>shrooms key show --qr</code> to scan
-    it. If a daemon was waiting, <code>set-key</code> nudges it and the mesh
-    comes up without a restart; otherwise
+    If a daemon was waiting, <code>set-key</code> nudges it and the mesh comes
+    up without a restart; otherwise
     <code>sudo systemctl start shrooms</code>.
 </p>
 
 <div class="note">
     <p>
-        An invite does the same job and moves no key at all, so prefer it when
-        somebody can stand in front of both machines within fifteen minutes.
-        <code>prepare</code> plus <code>set-key</code> is for when there is no
-        invite to redeem — a scripted rollout, or a machine built ahead of the
-        person who will admit it.
+        <strong>On a mesh with admin keys, the network key is not
+        membership.</strong> Peers refuse a device that cannot show a credential
+        signed by the mesh's authority, so <code>set-key</code> alone leaves a
+        node that connects to the fleet and is turned away by every peer —
+        <code>status</code> says <code>!! no credential</code>. The key still
+        decrypts the control plane, so it is worth protecting; it just no longer
+        admits anybody.
+    </p>
+    <p>
+        So this flow finishes one of two ways. Either the device redeems an
+        invite, which is the whole of it in one step and moves no key at all —
+        or, for a rollout with nobody present, the admin issues a credential for
+        that device's keys and hands over the one line it prints:
+    </p>
+    <pre><code><span class="c"># wherever the admin key lives</span>
+<span class="cmd">shrooms admin issue --device &lt;hex&gt; --wg &lt;hex&gt; --name nas</span>
+Install it on that machine:
+
+  <span class="p">shrooms credential set &lt;credential&gt;</span></code></pre>
+    <p>
+        A mesh created with <code>--no-admin</code> has no authority, and there
+        the network key alone is still membership. That is the case
+        <code>prepare</code> plus <code>set-key</code> was written for.
     </p>
 </div>
 
