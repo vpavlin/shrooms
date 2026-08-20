@@ -238,7 +238,25 @@ func (m *Mesh) probeAll(now time.Time) {
 			continue
 		}
 		cands := parseCandidates(p.Endpoints)
-		m.log.Debug("probing", "peer", p.Name, "candidates", p.Endpoints, "parsed", len(cands))
+		// Where this peer's own packets have arrived from, which is all we have
+		// about one that announces nothing — a phone whose OS will not let it
+		// list its own addresses, most often. Appended rather than preferred:
+		// an announced address is a peer's considered answer, this is an
+		// observation, and both are confirmed by probing before use.
+		if a, ok := m.prober.Heard(p.ID()); ok {
+			seen := false
+			for _, c := range cands {
+				if c == a {
+					seen = true
+					break
+				}
+			}
+			if !seen {
+				cands = append(cands, a)
+			}
+		}
+		m.log.Debug("probing", "peer", p.Name, "candidates", p.Endpoints,
+			"parsed", len(cands))
 		m.prober.Probe(p.ID(), cands, now)
 	}
 }

@@ -99,6 +99,22 @@ type Prober struct {
 	// rather than re-racing near-equal candidates on every call.
 	selected map[string]netip.AddrPort
 
+	// heard is where each peer's packets have actually arrived from, which is
+	// the only evidence available about a peer that announces no address at
+	// all.
+	//
+	// A phone is the case that matters. Android restricts interface
+	// enumeration for untrusted apps, so a phone frequently cannot list its own
+	// addresses and announces none — and a peer with no announced endpoint used
+	// to be undialable *forever*, even while it sat there sending us signed
+	// pings from a perfectly good address on the same wifi. We answered every
+	// one of them and threw the return address away.
+	//
+	// Kept as a candidate rather than a path: it goes through the ordinary
+	// probe and pong like any other, so nothing is used before it is confirmed
+	// working in both directions.
+	heard map[string]netip.AddrPort
+
 	// selfAddrs are this machine's own addresses, so a candidate that is
 	// really us can be recognised. Set by SetSelfAddrs as interfaces change.
 	selfAddrs map[netip.Addr]bool
@@ -185,11 +201,35 @@ func (p *Prober) Probe(peerID string, candidates []netip.AddrPort, now time.Time
 // only address that can reach it is the one we observed. Replying to an
 // announced address silently breaks exactly the case punching exists for.
 func (p *Prober) HandlePing(m *Message, from netip.AddrPort) {
+	// Where this came from is worth keeping. The packet is signed by the device
+	// it names (ADR-029), so this is not an address anybody can assert about
+	// somebody else — it is where that device's own traffic demonstrably
+	// arrives from.
+	if from.IsValid() {
+		p.mu.Lock()
+		if p.heard == nil {
+			p.heard = make(map[string]netip.AddrPort)
+		}
+		p.heard[hex.EncodeToString(m.SenderPub[:])] = from
+		p.mu.Unlock()
+	}
+
 	pkt, err := EncodePong(p.key, p.selfPriv, m.TxID, from)
 	if err != nil {
 		return
 	}
 	_ = p.send(pkt, from)
+}
+
+// Heard is where a peer's packets have arrived from, if anywhere.
+//
+// Offered alongside the addresses a peer announces, so a peer that announces
+// none is still reachable once it has said anything at all.
+func (p *Prober) Heard(peerID string) (netip.AddrPort, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	a, ok := p.heard[peerID]
+	return a, ok
 }
 
 // HandlePong records a working path and our reflexive address.

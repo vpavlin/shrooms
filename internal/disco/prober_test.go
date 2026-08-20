@@ -497,3 +497,47 @@ func TestPongFromTheWrongDeviceIsRejected(t *testing.T) {
 		t.Error("rejected a pong from the device actually probed")
 	}
 }
+
+// A peer that announces no address at all must still become reachable, because
+// its packets carry one.
+//
+// This is the case that stranded a first-time user: Android restricts interface
+// enumeration for untrusted apps, so a phone often cannot list its own
+// addresses and announces none. Its pings arrived from a perfectly good address
+// on the same wifi, we answered every one, and threw the return address away —
+// so the laptop could never dial it and WireGuard logged "no known endpoint for
+// peer" forever.
+func TestAPingTellsUsWhereAPeerIs(t *testing.T) {
+	var sent []netip.AddrPort
+	themPub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var them [32]byte
+	copy(them[:], themPub)
+
+	us := NewProber(testKey(t), newDeviceKey(t), func(_ []byte, to netip.AddrPort) error {
+		sent = append(sent, to)
+		return nil
+	})
+
+	peer := hex.EncodeToString(them[:])
+	if _, ok := us.Heard(peer); ok {
+		t.Fatal("a peer we have never heard from already had an address")
+	}
+
+	from := netip.MustParseAddrPort("192.168.1.44:51820")
+	us.HandlePing(&Message{Type: TypePing, SenderPub: them, TxID: TxID{9}}, from)
+
+	got, ok := us.Heard(peer)
+	if !ok {
+		t.Fatal("a ping did not teach us where the peer is")
+	}
+	if got != from {
+		t.Errorf("heard %v, want %v", got, from)
+	}
+	// And it still answered, which is what it did before.
+	if len(sent) != 1 || sent[0] != from {
+		t.Errorf("pong went to %v", sent)
+	}
+}
