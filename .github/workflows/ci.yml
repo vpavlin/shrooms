@@ -232,13 +232,18 @@ jobs:
   # Build liblogosdelivery from source in a pinned container, then build
   # logos-vpn against it. The library build is slow, so it is cached by the
   # upstream revision it was built from.
-  # Building liblogosdelivery from source is currently blocked upstream: the Nim
-  # build fails with "illegal effect: NestedPoll" in rest_api at both master and
-  # the revision the Android bindings pin. This job is kept so we notice when
-  # that is fixed, but it must not gate the repo — a red badge for someone
-  # else's breakage teaches you to ignore the badge.
+  # Building liblogosdelivery from source, against upstream MASTER rather than
+  # the pinned revision everything else uses.
+  #
+  # Non-gating deliberately: master moves under us, and a red badge for somebody
+  # else's breakage teaches you to ignore the badge. But non-gating is not the
+  # same as ignored — this job caught its own name being wrong. It was called
+  # "blocked upstream" for the NestedPoll error, that error is now patched, and
+  # what remained was ours: the public header includes a generated header the
+  # Dockerfile never copied out. A job nobody reads because its name explains
+  # the failure in advance is worse than no job at all.
   build-from-source:
-    name: build from source (blocked upstream)
+    name: build from source (upstream master)
     continue-on-error: true
     runs-on: ubuntu-latest
     steps:

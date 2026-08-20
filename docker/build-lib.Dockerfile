@@ -86,8 +86,27 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN echo "building liblogosdelivery from $(cat /src/.ld-rev)" \
     && make liblogosdelivery 2>&1 | tail -40
 
+# The public header includes "generated/logosdelivery.h", which upstream says
+# plainly is "a build artifact, not checked in" — written by the build we just
+# ran. Only the public header used to be copied out, so every include of it
+# died at:
+#
+#   liblogosdelivery.h:15: fatal error: generated/logosdelivery.h: No such file
+#
+# The prebuilt release tarball ships a self-contained header and does not need
+# this, which is why only the from-source path was broken — and why it looked
+# like the upstream breakage it was filed under rather than a missing COPY here.
+#
+# Staged into one directory rather than copied straight out of the tree: mkdir
+# -p means a revision that does not generate the header exports an empty
+# directory instead of failing the COPY, so this file keeps working across a
+# moving upstream.
+RUN mkdir -p /out/generated \
+    && cp build/liblogosdelivery.so /out/ \
+    && cp library/liblogosdelivery.h /out/ \
+    && cp .ld-rev /out/ \
+    && { cp -a library/generated/. /out/generated/ 2>/dev/null || true; }
+
 # Collect the artifacts.
 FROM scratch AS lib
-COPY --from=builder /src/build/liblogosdelivery.so /
-COPY --from=builder /src/library/liblogosdelivery.h /
-COPY --from=builder /src/.ld-rev /
+COPY --from=builder /out/ /
