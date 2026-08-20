@@ -39,6 +39,10 @@ func (m *Mesh) handleControl(sub wg.Sub, payload []byte, ep conn.Endpoint) ([]by
 		return nil, nil, false
 	}
 
+	// Anything decodable from a peer proves the door is open. Recorded before
+	// the type switch so a pong counts as much as a ping.
+	m.heardAnything = true
+
 	switch msg.Type {
 	case disco.TypePing:
 		m.log.Debug("ping received", "from", from)

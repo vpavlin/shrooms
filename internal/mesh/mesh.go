@@ -156,6 +156,24 @@ type Mesh struct {
 	// so it is said once per spell rather than every 45 seconds.
 	noEndpoints bool
 
+	// heardAnything is set the first time any packet arrives on the data-plane
+	// socket from any peer — a disco ping, a pong, a relay frame.
+	//
+	// Nothing recorded this, and it is the fact that separates "the network is
+	// hard" from "nothing can reach this machine". A node whose inbound port is
+	// blocked announces good addresses, sees every peer come online over the
+	// rendezvous plane, and fails every handshake forever. The evidence that it
+	// is a closed door rather than a difficult NAT is that *not one packet* has
+	// ever arrived, and that was invisible.
+	heardAnything bool
+
+	// saidUnreachable stops the diagnosis repeating on every probe tick.
+	saidUnreachable bool
+
+	// started is when Run began, so "nothing has ever reached us" can be
+	// distinguished from "we only just started".
+	started time.Time
+
 	// lastEpoch is the rendezvous epoch the last announce went out under. A
 	// change is the moment to re-publish what we know has been withdrawn.
 	lastEpoch int64
@@ -438,6 +456,7 @@ func (m *Mesh) Self() netip.Addr { return m.self }
 
 // Run drives the mesh until ctx is cancelled.
 func (m *Mesh) Run(ctx context.Context) error {
+	m.started = time.Now()
 	// Unless somebody else is feeding us. Several meshes share one rendezvous
 	// node, and a channel delivers each event to exactly one reader — so two
 	// meshes reading the node directly would take it in turns, each dropping
@@ -498,6 +517,7 @@ func (m *Mesh) Run(ctx context.Context) error {
 			m.probeAll(now)
 			m.registerWithRelay()
 			m.reportUnknown()
+			m.reportUnreachable(now)
 			m.checkTunnels(now)
 			m.checkExpiries(now)
 			m.sampleRates(now)
@@ -1167,6 +1187,73 @@ func (m *Mesh) relayGrant(raw []byte, now time.Time) {
 // wireguard-go logs these itself but without a source, which is what made them
 // impossible to attribute when they appeared on both ends of a failing tunnel.
 // Logged only when the count changes, so a healthy node stays quiet.
+// unreachableFor is how long a node must be visibly online, announcing an
+// address, and receiving nothing at all before that combination is called what
+// it is.
+//
+// Long enough to clear an ordinary slow start — discovery alone takes about a
+// minute, and a peer that has just woken is not evidence of anything. Short
+// enough to be seen in the session where somebody is trying to make it work,
+// rather than the one after they gave up.
+const unreachableFor = 3 * time.Minute
+
+// unreachable is the decision, separated from gathering the facts so it can be
+// exercised without a prober, a roster or a socket. Those are what the
+// surrounding code is for; this is the part with a judgement in it.
+func (m *Mesh) unreachable(now time.Time, announced []string, anyPeerOnline bool) bool {
+	switch {
+	case m.saidUnreachable:
+		return false // said once; the probe ticker runs every few seconds
+	case m.heardAnything:
+		return false // somebody got through; whatever is wrong, it is not this
+	case now.Sub(m.started) < unreachableFor:
+		return false // too early to tell an outage from a slow start
+	case len(announced) == 0:
+		return false // a different fault, and announceWith already reports it
+	case !anyPeerOnline:
+		return false // nobody was there to reach us
+	}
+	return true
+}
+
+// reportUnreachable says so when nothing can reach this node.
+//
+// The three facts together are conclusive, and each is useless alone:
+//
+//   - we announce at least one address, so peers know where to try
+//   - a peer is online, so the rendezvous plane works and somebody is there
+//   - not one packet has ever arrived on our socket
+//
+// A hard NAT still lets replies back. An offline peer would not be announcing.
+// A wrong address would not be announced. What is left is a closed door: a host
+// firewall, or a network that forbids clients talking to each other.
+//
+// This cost somebody an entire day, with every symptom pointing elsewhere —
+// peers appearing normally, handshakes retrying forever, and a laptop happily
+// announcing two perfectly good addresses that nothing was allowed to reach.
+func (m *Mesh) reportUnreachable(now time.Time) {
+	if m.saidUnreachable || m.heardAnything {
+		return // cheap exits before walking the roster
+	}
+	var online bool
+	for _, p := range m.roster.Peers() {
+		if p.Online(now) {
+			online = true
+			break
+		}
+	}
+	if !m.unreachable(now, m.candidates(), online) {
+		return
+	}
+	m.saidUnreachable = true
+	m.log.Warn("nothing has ever reached this node",
+		"for", now.Sub(m.started).Round(time.Second),
+		"we_announce", m.candidates(),
+		"means", "peers can see this device and no packet from any of them arrives",
+		"likely", "a host firewall, or a network that blocks client-to-client traffic",
+		"fix", "allow inbound UDP "+strconv.Itoa(int(m.cfg.ListenPort)))
+}
+
 func (m *Mesh) reportUnknown() {
 	n, last := m.dev.Bind.Unknown()
 	if n == m.unknownSeen {
