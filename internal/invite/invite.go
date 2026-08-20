@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -136,7 +137,53 @@ const Scheme = "shrooms"
 const LegacyScheme = "logosvpn"
 
 // URI renders a token as something scannable.
-func (s Secret) URI() string { return Scheme + "://enrol?token=" + s.String() }
+func (s Secret) URI() string { return s.URIWithBoot("") }
+
+// URIWithBoot renders a token that also carries somewhere to bootstrap from
+// (ADR-031).
+//
+// One address, not a list. The device needs somewhere to start exactly once:
+// the moment it is on the mesh, it learns every Core relay's address from
+// announces and keeps them. Carrying three would buy redundancy the mesh
+// supplies for free thirty seconds later, and each one costs about ninety
+// characters of a QR code somebody has to scan across a table.
+//
+// A query parameter because the token already is a URI, so a reader that does
+// not know the key ignores it and falls back to the public fleet — which is
+// what every reader did before this existed.
+func (s Secret) URIWithBoot(boot string) string {
+	u := Scheme + "://enrol?token=" + s.String()
+	if boot != "" {
+		u += "&boot=" + url.QueryEscape(boot)
+	}
+	return u
+}
+
+// BootFromToken returns the bootstrap address a token carries, or "".
+//
+// Never an error: a token that carries nothing readable here is still a valid
+// token, and refusing to enrol because a hint was malformed would trade the
+// whole feature for a garbled one.
+func BootFromToken(text string) string {
+	text = strings.TrimSpace(text)
+	for _, scheme := range []string{Scheme, LegacyScheme} {
+		rest, ok := strings.CutPrefix(text, scheme+"://")
+		if !ok {
+			continue
+		}
+		_, query, _ := strings.Cut(rest, "?")
+		for _, kv := range strings.Split(query, "&") {
+			if v, ok := strings.CutPrefix(kv, "boot="); ok {
+				dec, err := url.QueryUnescape(v)
+				if err != nil {
+					return ""
+				}
+				return dec
+			}
+		}
+	}
+	return ""
+}
 
 // ParseToken accepts either URI form, the grouped form, or a bare token.
 //

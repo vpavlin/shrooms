@@ -43,7 +43,7 @@ import (
 
 func cmdInvite(args []string) error {
 	fs := flag.NewFlagSet("invite", flag.ExitOnError)
-	cfgPath, _ := commonFlags(fs)
+	cfgPath, stateDir := commonFlags(fs)
 	dir := fs.String("admin-dir", defaultAdminDir(), "where the admin key is kept")
 	signWith := fs.String("sign-with", "", "a command that signs a digest, instead of the admin key file")
 	external := fs.Bool("external-signer", false, "print the digest and read the signature back (ADR-022)")
@@ -116,8 +116,16 @@ func cmdInvite(args []string) error {
 	}
 	fmt.Printf("Invite valid for %s. On the joining device:\n\n", *ttl)
 	fmt.Printf("  shrooms join --invite %s\n\n", groupToken(secret.String()))
+	// Somewhere for the joining device to reach the rendezvous plane, so it
+	// does not depend on the public fleet answering (ADR-031). Best effort: an
+	// invite without one still works exactly as it did.
+	boot := inviteBootAddr(cfg, *stateDir)
+	if boot != "" {
+		fmt.Printf("  (the QR also carries %s to bootstrap from)\n\n", boot)
+	}
+
 	if *asQR {
-		art, err := renderQR(secret.URI())
+		art, err := renderQR(secret.URIWithBoot(boot))
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "(no QR: %v)\n", err)
 		} else {
@@ -341,11 +349,28 @@ func cmdJoinInvite(token string, args []string) error {
 		}
 	}
 
-	// No config yet, so the defaults: preset, cluster and mode as shipped. The
-	// invite says nothing about which fleet to use because a device that could
-	// be told that could be told to use somebody else's.
-	fmt.Fprintln(out, "Connecting to the fleet...")
-	node, err := startNode(nodeConfig(state.DefaultConfig()))
+	// No config yet, so the defaults: preset, cluster and mode as shipped.
+	//
+	// The invite still says nothing about which *fleet* to use — the preset and
+	// cluster are ours, because a device that could be told those could be told
+	// to use somebody else's network entirely, permanently.
+	//
+	// It may carry one bootstrap address (ADR-031), which is narrower: a way in
+	// to the same fleet, for this enrolment. Worth accepting because the
+	// alternative is that a device cannot enrol at all when the public entry
+	// nodes are refusing, which happened on 2026-08-20 and is the reason this
+	// exists. And the trust it adds is small next to the trust already given:
+	// whoever minted this token decides the mesh, hands over the network key,
+	// and signs the credential. Somebody able to hand you a hostile invite has
+	// no need of a hostile bootstrap address.
+	fleet := state.DefaultConfig()
+	if boot := invite.BootFromToken(token); boot != "" {
+		fleet.EntryNodes = append(fleet.EntryNodes, boot)
+		fmt.Fprintf(out, "Connecting to the fleet via %s...\n", boot)
+	} else {
+		fmt.Fprintln(out, "Connecting to the fleet...")
+	}
+	node, err := startNode(nodeConfig(fleet))
 	if err != nil {
 		return err
 	}
@@ -600,4 +625,28 @@ func perMeshRequest(st *state.State, r *invite.Response, name string) (*invite.R
 		WGPub:     ms.Identity.WGPub[:],
 		Name:      name,
 	}, nil
+}
+
+// inviteBootAddr picks the bootstrap address to put in an invite.
+//
+// The freshest address this node would itself bootstrap from, which is the
+// best evidence available that it answers. The daemon records its own
+// published address alongside the ones it hears, so this works whether the
+// inviter is the bootstrap node or merely knows one.
+//
+// Read from the state directory rather than asked of the daemon: the CLI
+// cannot build a multiaddr for itself, because the peer id needs a running
+// delivery node and this process does not have one.
+//
+// One, not a list: the device needs somewhere to start exactly once, and learns
+// the rest from announces the moment it is on the mesh.
+func inviteBootAddr(cfg state.Config, stateDir string) string {
+	st, err := state.LoadOrCreateState(stateDir)
+	if err != nil {
+		return ""
+	}
+	if peers := st.BootPeers(time.Now()); len(peers) > 0 {
+		return peers[0]
+	}
+	return ""
 }

@@ -306,3 +306,63 @@ func TestWeEmitTheNewScheme(t *testing.T) {
 		t.Errorf("URI() emits %q, want the shrooms scheme", got)
 	}
 }
+
+// The token can carry somewhere to bootstrap from, and a reader that does not
+// know about it must still find the token (ADR-031).
+func TestTokenCarriesABootstrapAddress(t *testing.T) {
+	s, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const boot = "/ip4/128.140.55.128/tcp/39777/p2p/16Uiu2HAmPxQP7XcHXaJrx3KfYEuXKWyiARCwAVPXGvmfY5awHpXx"
+
+	uri := s.URIWithBoot(boot)
+	got, err := ParseToken(uri)
+	if err != nil {
+		t.Fatalf("a token with a boot hint did not parse: %v", err)
+	}
+	if got != s {
+		t.Error("the token changed when a boot hint was added")
+	}
+	if back := BootFromToken(uri); back != boot {
+		t.Errorf("boot came back as %q", back)
+	}
+
+	// Without one, nothing is added and nothing is found.
+	if u := s.URI(); BootFromToken(u) != "" {
+		t.Error("a plain token reported a bootstrap address")
+	}
+
+	// A malformed hint must not cost somebody their enrolment: the token still
+	// parses and the hint is simply absent.
+	bad := Scheme + "://enrol?token=" + s.String() + "&boot=%zz"
+	if _, err := ParseToken(bad); err != nil {
+		t.Errorf("a malformed boot hint broke the token: %v", err)
+	}
+	if BootFromToken(bad) != "" {
+		t.Error("a malformed boot hint was returned anyway")
+	}
+}
+
+// An old reader ignores what it does not know. This is what lets the feature
+// ship without waiting for every device to update.
+func TestAnOlderReaderIgnoresTheHint(t *testing.T) {
+	s, _ := New()
+	uri := s.URIWithBoot("/ip4/1.2.3.4/tcp/1/p2p/abc")
+
+	// The pre-ADR-031 parser: find token=, ignore everything else.
+	rest, ok := strings.CutPrefix(uri, Scheme+"://")
+	if !ok {
+		t.Fatal("scheme changed")
+	}
+	_, query, _ := strings.Cut(rest, "?")
+	var found string
+	for _, kv := range strings.Split(query, "&") {
+		if v, ok := strings.CutPrefix(kv, "token="); ok {
+			found = v
+		}
+	}
+	if found != s.String() {
+		t.Errorf("an older reader extracted %q", found)
+	}
+}

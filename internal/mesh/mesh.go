@@ -147,6 +147,10 @@ type Mesh struct {
 	revMu           sync.Mutex
 	lastRevAnnounce time.Time
 
+	// lastBoot is the bootstrap address we last wrote down for ourselves, so
+	// an unchanged one is not rewritten every announce.
+	lastBoot string
+
 	// lastEpoch is the rendezvous epoch the last announce went out under. A
 	// change is the moment to re-publish what we know has been withdrawn.
 	lastEpoch int64
@@ -1263,6 +1267,19 @@ func (m *Mesh) announceWith(now time.Time, fresh bool) error {
 		return fmt.Errorf("advance sequence: %w", err)
 	}
 
+	// Computed once: it is also recorded below, and calling it twice would
+	// take the peer-id lock twice for one announce.
+	boot := m.bootAddr(now)
+	// Our own address is worth writing down too. A node never sees its own
+	// announce, so without this an invite minted on the bootstrap node itself
+	// could not offer the one address it is certain of. Only on change, since
+	// announces go out every 45 seconds and this is a file write.
+	if boot != "" && boot != m.lastBoot {
+		m.lastBoot = boot
+		if err := m.st.NoteBootPeer(boot, now); err != nil {
+			m.log.Debug("could not record our own bootstrap address", "err", err)
+		}
+	}
 	a := &control.Announce{
 		Kind:       control.KindAnnounce,
 		DevicePub:  m.st.Identity.DevicePub,
@@ -1274,7 +1291,7 @@ func (m *Mesh) announceWith(now time.Time, fresh bool) error {
 		Relay:      m.cfg.Relay,
 		Fresh:      fresh,
 		Credential: m.st.Credential,
-		Boot:       m.bootAddr(now),
+		Boot:       boot,
 	}
 
 	// Trim until it fits. The announce is padded to a fixed size and Seal
