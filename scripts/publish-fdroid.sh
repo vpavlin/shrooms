@@ -216,18 +216,63 @@ if [ -n "${PUBLISH_GIT:-}" ]; then
 set -eu
 eval GITDIR="$PUBLISH_GIT"
 eval FD="$FDROID_DIR"
-# Mirror rather than copy: a pruned APK has to disappear from the published
-# repo too, or the index and the files disagree.
-rsync -a --delete "$FD/repo/" "$GITDIR/$SUB/repo/"
+# Mirrored rather than copied, inside mirror_and_commit below: a pruned APK has
+# to disappear from the published repo too, or the index and the files disagree.
 cd "$GITDIR"
-if git diff --quiet && git diff --cached --quiet; then
-    echo "    nothing changed"
-else
-    git add -A "$SUB"
-    git commit -q -m "shrooms $VERSION_CODE"
-    git push -q
-    echo "    pushed $(git rev-parse --short HEAD)"
+
+# This repository has more than one publisher: other applications are released
+# into it, sometimes while this is running. Kith 0.1.0 landed between a fetch
+# and a push on 2026-08-20.
+#
+# So the push can be rejected as non-fast-forward through nobody's fault, and
+# the recovery must never discard work that is not ours. A mirror commit is
+# regenerable — the tree we want is whatever is in the staging repo — so the
+# safe repair is to rewind *our own* commit, re-mirror on top of theirs, and
+# try again. Anything else present and unpushed belongs to somebody else and
+# this stops rather than guessing.
+branch=$(git rev-parse --abbrev-ref HEAD)
+if [ "$branch" = "HEAD" ]; then
+    echo "    detached HEAD in $GITDIR; not publishing from it" >&2
+    exit 1
 fi
+
+mirror_and_commit() {
+    rsync -a --delete "$FD/repo/" "$GITDIR/$SUB/repo/"
+    git add -A "$SUB"
+    if git diff --cached --quiet; then
+        return 1
+    fi
+    git commit -q -m "shrooms $VERSION_CODE"
+    return 0
+}
+
+if ! mirror_and_commit; then
+    echo "    nothing changed"
+    exit 0
+fi
+
+for attempt in 1 2 3; do
+    if git push -q origin "$branch" 2>/dev/null; then
+        echo "    pushed $(git rev-parse --short HEAD)"
+        exit 0
+    fi
+    echo "    push rejected (attempt $attempt); somebody else published first"
+    git fetch -q
+
+    # Only our own commit may be rewound. If anything else is ahead of the
+    # remote, it is unpushed work belonging to another publisher and losing it
+    # would be worse than failing to publish.
+    ahead=$(git rev-list --count "origin/$branch..$branch")
+    if [ "$ahead" != "1" ]; then
+        echo "    $GITDIR has $ahead unpushed commits, not just ours — stopping" >&2
+        echo "    resolve by hand; nothing here will discard somebody else's work" >&2
+        exit 1
+    fi
+    git reset --hard -q "origin/$branch"
+    mirror_and_commit || { echo "    nothing left to publish"; exit 0; }
+done
+echo "    still rejected after three attempts" >&2
+exit 1
 REMOTE
     echo "    Pages takes a minute or two to serve it"
 fi
