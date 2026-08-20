@@ -184,6 +184,48 @@ Note it composes with TOFU rather than fighting it: the relay is binding a
 device key to a tag rather than to a tunnel key, and it can check that signature
 either way.
 
+## One relay, many meshes: two keys doing two jobs
+
+An obstacle this note missed, found while scoping it, and the way round is
+better than what was here before.
+
+**Today a relay serves exactly one mesh.** Each mesh runs on its own port
+(`ListenPort + i`), and every frame is authenticated with a key derived from
+*that mesh's* network key — `Decode(k Key, pkt)` cannot verify a frame without
+knowing which key to use. So a volunteer forwarding for five friends' meshes
+needs five ports and five keys, and the port count leaks how many meshes they
+carry.
+
+The earlier suggestion here — hand out the derived relay key — works but
+inherits that structure. The cleaner split is to notice that the one key is
+doing two unrelated jobs:
+
+**"May I use this relay?"** belongs to the relay, not to a mesh. The operator
+issues a **relay token**; anyone holding it may register and forward. It is what
+stops the relay being an open reflector for bouncing traffic at third parties,
+and it says nothing about who anybody is. One token, one port, any number of
+meshes.
+
+**"Which device is this?"** belongs to the mesh, and never needs to reach the
+relay at all. Devices register under
+
+    tag = HKDF(mesh_relay_key, wg_pub)
+
+as described above. Only members of that mesh can compute its tags, because only
+they hold the key it derives from — so a token holder from another mesh cannot
+address, or claim, a device they have somehow learned the tunnel key of.
+
+Two keys, two questions, and the relay's forwarding table becomes flat:
+`tag → address`. It never learns that meshes exist, let alone how many it
+serves or which devices belong together.
+
+The operator gets something out of this too: a token they can rotate or withdraw
+without touching anybody's mesh, and which cannot be used to read anything.
+
+Configuration on the client side is then two lines rather than one — an address
+and a token — and both come from the same place, which is whoever offered you
+the relay.
+
 ## What it would cost the operator
 
 Three things to bound, none of them new but all of them sharper when the users
@@ -215,8 +257,8 @@ moment there is one everybody depends on.
 **Is a blind relay for a stranger you trust a little, or for the public?**
 
 - *A stranger you trust a little* — a friend with a VPS, someone in a group
-  chat. They get the derived relay key, first-claim-wins is plenty, and this is
-  a small feature: a config line, a key to hand over, and the TOFU rule.
+  chat. They issue a relay token, first-claim-wins is plenty, and this is a
+  small feature: two config lines, a token to hand over, and the TOFU rule.
 - *The public* — anyone can point at it. Then it needs rate limiting, abuse
   handling, probably per-mesh quotas and some way to publish a list, and the
   traffic-analysis surface is being offered to people you know nothing about.
