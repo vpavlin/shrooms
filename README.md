@@ -1071,9 +1071,20 @@ $ make basecamp-publish    # and put it where a device can install it
 ```
 
 `basecamp-publish` copies the package next to the F-Droid repo on the same
-machine — a stable name and a versioned one — because an `.lgx` is a package
-rather than a repository and has no update mechanism of its own. Installing a
-newer one means downloading it again.
+machine — a stable name and a versioned one.
+
+For installing it, point Basecamp at the repository rather than handing anybody
+a file:
+
+```
+https://apps.vpavlin.xyz/basecamp/logos-repo.json
+```
+
+Package Manager → Repositories → add, then install **Shrooms** from the list;
+`shrooms_core` is a declared dependency and comes with it. A bare `.lgx` is a
+package rather than a repository and has no update mechanism of its own, so a
+file installed by hand is the version you have until somebody remembers to look
+for a newer one.
 
 Packaged as an **LGX**: a gzipped tar of `manifest.json` plus
 `variants/<platform>/`, with a content hash per directory. The build comes from

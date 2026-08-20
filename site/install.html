@@ -305,10 +305,16 @@ and back here:
 
 <ol class="steps">
 <li>
-<pre><code><span class="cmd">curl -fsSLO https://github.com/vpavlin/shrooms/releases/download/shrooms-v0.3.0/shrooms-0.3.0.lgx</span>
-<span class="cmd">curl -LO https://github.com/vpavlin/shrooms/releases/download/shrooms_core-v0.2.0/shrooms_core-0.2.0.lgx</span></code></pre>
+<p>In Basecamp: Package Manager → Repositories → add</p>
+<pre><code>https://apps.vpavlin.xyz/basecamp/logos-repo.json</code></pre>
 </li>
-<li><p>In Basecamp: Package Manager → Install from file → pick each <code>.lgx</code>.</p></li>
+<li>
+<p>
+    Install <strong>Shrooms</strong> from the list. It pulls in
+    <code>shrooms_core</code> itself — that is a declared dependency, not
+    something to fetch by hand.
+</p>
+</li>
 </ol>
 
 <details>
@@ -348,9 +354,9 @@ and back here:
                     Two packages, versioned separately:
                     <code>shrooms</code> is the view and <code>shrooms_core</code>
                     is the part that talks to the daemon. The view declares the
-                    dependency, so a repository installs both — but if you are
-                    fetching <code>.lgx</code> files by hand, fetch both, or you
-                    get an interface whose buttons do nothing.
+                    dependency, so installing from the repository brings both.
+                    Fetching files by hand means fetching both, or you get an
+                    interface whose buttons do nothing.
                 </p>
 
 <p>
@@ -388,10 +394,18 @@ and back here:
 
 <div class="note">
     <p>
-        <strong>An <code>.lgx</code> is a package, not a repository.</strong> It
-        has no update mechanism of its own, so there is nothing to check for a
-        newer version and nothing to notify you. Upgrading means downloading the
-        file again and installing it over the top.
+        <strong>This is why the repository is the way in.</strong> An
+        <code>.lgx</code> on its own is a package, not a repository: it has no
+        update mechanism, nothing checks for a newer version, and nothing
+        notifies you. A file installed by hand is the version you have until you
+        remember to go and look.
+    </p>
+    <p>
+        Installing from
+        <code>apps.vpavlin.xyz/basecamp/logos-repo.json</code> gives Basecamp
+        something to check, and resolves <code>shrooms_core</code> for you.
+        Fetching the files directly still works and is what
+        <a href="#desktop">Building the package yourself</a> produces.
     </p>
 </div>
 
