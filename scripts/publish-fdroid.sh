@@ -33,6 +33,10 @@ SIGN_DIR=${SIGN_DIR:-$FDROID_DIR}
 # from 1, and a device that already has a higher code installed treats that as a
 # downgrade and never offers it.
 CODE_DIRS=${CODE_DIRS:-"$FDROID_DIR $SIGN_DIR"}
+# Where the repo is served from, when that is a git checkout rather than the
+# directory fdroid writes to. See the push step near the end.
+PUBLISH_GIT=${PUBLISH_GIT:-}
+PUBLISH_SUBDIR=${PUBLISH_SUBDIR:-fdroid}
 FDROID_BIN=${FDROID_BIN:-'~/fdroid-venv/bin/fdroid'}
 APP_ID=${APP_ID:-xyz.vpavlin.shrooms}
 # Derived, the way the daemon and the portable build already derive theirs.
@@ -192,6 +196,41 @@ ls -1 "$FD"/repo/shrooms-*.apk 2>/dev/null \
 
 cd "$FD" && "$BIN" update --pretty 2>&1 | tail -8
 REMOTE
+
+# Some repos are served from a git checkout rather than from the directory
+# fdroid writes to. GitHub Pages is the case here: apps.vpavlin.xyz is served
+# from the vpavlin/logos-apps repository, so `fdroid update` produces a
+# perfectly correct repo on the build host that nobody can reach until it is
+# committed and pushed.
+#
+# This was missing, and it hid two releases. Versions 34 and 35 sat on disk with
+# a valid index while the site served 33, and checking the index *on that host*
+# confirmed nothing — the only honest check is what the site returns.
+#
+# PUBLISH_GIT names the working copy; unset means the repo is served straight
+# from disk and there is nothing to push.
+if [ -n "${PUBLISH_GIT:-}" ]; then
+    echo "==> pushing to the repository the site is served from"
+    ssh "$HOST" "PUBLISH_GIT='$PUBLISH_GIT' FDROID_DIR='$FDROID_DIR' \
+        SUB='${PUBLISH_SUBDIR:-fdroid}' VERSION_CODE='$VERSION_CODE' bash -s" <<'REMOTE'
+set -eu
+eval GITDIR="$PUBLISH_GIT"
+eval FD="$FDROID_DIR"
+# Mirror rather than copy: a pruned APK has to disappear from the published
+# repo too, or the index and the files disagree.
+rsync -a --delete "$FD/repo/" "$GITDIR/$SUB/repo/"
+cd "$GITDIR"
+if git diff --quiet && git diff --cached --quiet; then
+    echo "    nothing changed"
+else
+    git add -A "$SUB"
+    git commit -q -m "shrooms $VERSION_CODE"
+    git push -q
+    echo "    pushed $(git rev-parse --short HEAD)"
+fi
+REMOTE
+    echo "    Pages takes a minute or two to serve it"
+fi
 
 echo
 echo "==> published $APP_ID versionCode $VERSION_CODE ($VERSION_NAME)"
