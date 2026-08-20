@@ -318,6 +318,86 @@ So the architectural advice is: **do not build payments. Build the thing
 payments would buy**, and make it expirable and transferable. If incentives
 later want a settlement layer, it sells tokens; nothing in the relay changes.
 
+### RLN memberships as the capability
+
+Vaclav's suggestion, and it fits better than expected — because a membership
+already *is* the thing the previous paragraph says to build.
+
+From [ADR-028](adr/028-when-the-fleet-turns-on-rln.md), read out of
+`logos-lez-rln` rather than documentation:
+
+```rust
+pub fn calculate_payment_amount(rate_limit: u64, price_per_unit: u128) -> u128 {
+    price_per_unit * (rate_limit as u128)
+}
+```
+
+with `active_duration` and `grace_period_duration` on the membership state. That
+is a bearer capability, bought by the unit, that expires — arrived at
+independently above as "the thing payments would buy", and already specified,
+already being built, and already carrying a payment rail whose wallet lives in
+Basecamp.
+
+Three things it does better than a bearer token:
+
+- **It is anonymous.** A proof shows membership, not identity. A shared token is
+  the same bytes every time, so a relay can link every session that used it;
+  an RLN proof cannot be linked to the last one. That composes with blinded tags
+  — the operator would learn neither who you are nor which device.
+- **The rate limit enforces itself.** The nullifier *is* Shamir sharing: exceed
+  your rate within an epoch and you publish two shares of your own secret. The
+  relay does not have to trust, track or adjudicate.
+- **Revocation is intrinsic.** Overuse is self-slashing rather than an operator
+  decision.
+
+And the objection that dominates ADR-028 is much weaker here. There, the
+decisive cost was that on-chain memberships create "a permanent, enumerable
+public record that a key publishes on a shard" — a registry the project
+deliberately does not have. For relay access the enumerable fact is *somebody
+bought relay capacity*. It names no mesh, no device address and no roster. That
+is a far smaller disclosure than the control-plane case that ADR-028 declined.
+
+### Where it does not fit, and it matters
+
+**RLN limits messages; a relay costs bytes.** `user_message_limit` is bounded
+100–600 *messages* per epoch. A relay forwards millions of packets, and there is
+no proving per packet — which is why "proofs on connection" is the right
+instinct and the only workable one.
+
+But then the limit bounds **how often you may register, not how much you may
+send.** A membership would gate access and meter nothing, while what actually
+costs the operator is bandwidth. So the ordinary counters above are still
+needed; RLN does the entitlement half and none of the metering half.
+
+That is survivable — counters are easy, entitlement was the hard part — but it
+means a membership cannot be priced against consumption without a second
+mechanism beside it.
+
+**A proof per registration is a proof per minute.** `RelayRefresh` is half the
+registration TTL, so registrations repeat about every 60s. Proving that often on
+a phone is heavier than ADR-028's control-plane case, not lighter. It wants a
+session: prove once, receive a short-lived symmetric credential, refresh with
+that.
+
+**It adds a liveness dependency to the component least able to carry one.**
+Verifying a proof needs the current membership root, so a relay would have to
+follow the registry, with cached roots and a staleness window when LEZ is
+unreachable. A relay today needs nothing but a socket.
+
+**And it only pays for itself in the public case.** For a friend with a VPS this
+is enormous overkill; the friend wants a config line, not a zero-knowledge
+proof.
+
+### What that implies for building order
+
+Make entitlement an **interface**, not a mechanism: the relay asks "may this
+registration proceed?" and the answer is a plain token today, an RLN proof later
+if the public case ever justifies the dependency. Nothing else in the relay
+changes between those, and the dependency is not taken until it earns itself.
+
+The session concept is worth having regardless, since a proof per minute is
+unreasonable whatever produces the proof.
+
 Two cautions worth recording:
 
 - **Metered micropayments are almost certainly not worth it.** Relaying a
