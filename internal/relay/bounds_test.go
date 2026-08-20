@@ -133,3 +133,24 @@ func TestSourceLookupUsesTheReverseIndex(t *testing.T) {
 		t.Error("a stale registration answered a source lookup")
 	}
 }
+
+// A refused registration must be countable, because "is this relay turning my
+// device away?" is the question asked of a relay that is up and carrying
+// nothing — and it had no answer: the counter existed and was reported nowhere.
+func TestRefusalsAreCounted(t *testing.T) {
+	// owns says no to everything, which is what a relay does for a device whose
+	// announce it has not seen (ADR-029).
+	s := NewServer(Key{}, func([]byte, identity.WGKey) bool { return false })
+	now := time.Now()
+
+	before := s.Stats().Refused
+	s.Handle(EncodeRegister(Key{}, key(1), regKey(t), now),
+		netip.MustParseAddrPort("203.0.113.1:1"), now)
+
+	if got := s.Stats().Refused; got != before+1 {
+		t.Errorf("refused went %d -> %d, want one more", before, got)
+	}
+	if s.Stats().Peers != 0 {
+		t.Error("a refused registration was installed anyway")
+	}
+}

@@ -384,6 +384,23 @@ func cmdPaths(args []string) error {
 	// is visible nowhere else. Skipped entirely when the daemon predates the
 	// field, rather than reported as "nothing" — that would be a false
 	// diagnosis pointing at the opposite of the real problem.
+	// A relay's own account of itself, on the node that is one.
+	if r := st.Relay; r != nil {
+		fmt.Printf("this node is a relay:\n")
+		fmt.Printf("  %d device(s) registered, %d forwarded\n", r.Peers, r.Forwarded)
+		if r.Refused > 0 {
+			// The number that answers "why is the relay not carrying my
+			// traffic": a device it will not accept a registration from.
+			fmt.Printf("  %d registration(s) refused — stale, or a device whose\n", r.Refused)
+			fmt.Printf("  announce this relay has not seen, so it cannot confirm\n")
+			fmt.Printf("  the tunnel key belongs to it\n")
+		}
+		if r.Dropped > 0 {
+			fmt.Printf("  %d frame(s) dropped as unreadable\n", r.Dropped)
+		}
+		fmt.Println()
+	}
+
 	if st.Announced != nil {
 		fmt.Printf("we announce (where peers are told to reach us):\n")
 		if len(*st.Announced) == 0 {

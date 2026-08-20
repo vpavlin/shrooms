@@ -427,6 +427,15 @@ type meshStatus struct {
 }
 
 // statusPayload is what the daemon reports over the control socket.
+// relayStatus is a relay's own account of itself.
+type relayStatus struct {
+	Peers      int    `json:"peers"`
+	Registered uint64 `json:"registered"`
+	Forwarded  uint64 `json:"forwarded"`
+	Dropped    uint64 `json:"dropped"`
+	Refused    uint64 `json:"refused"`
+}
+
 type statusPayload struct {
 	// Waiting means this daemon has no mesh yet and is holding the socket open
 	// until someone tells it which one it belongs to.
@@ -483,6 +492,9 @@ type statusPayload struct {
 	// distinct values means endpoint-dependent (symmetric) NAT, which is the
 	// case where punching fails and a relay is required.
 	Reflexive []string `json:"reflexive,omitempty"`
+
+	// Relay is what this node has done as a relay, present only when it is one.
+	Relay *relayStatus `json:"relay_stats,omitempty"`
 
 	// Announced is where this node tells peers it can be reached. An empty
 	// list means nobody can dial it, which is invisible from any other output.
@@ -1300,6 +1312,12 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 		}
 		for _, ap := range m.Reflexive() {
 			out.Reflexive = append(out.Reflexive, ap.String())
+		}
+		if rs, ok := m.RelayStats(); ok {
+			out.Relay = &relayStatus{
+				Peers: rs.Peers, Registered: rs.Registered,
+				Forwarded: rs.Forwarded, Dropped: rs.Dropped, Refused: rs.Refused,
+			}
 		}
 		announced := m.Announced()
 		if announced == nil {

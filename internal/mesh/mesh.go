@@ -305,6 +305,19 @@ func (m *Mesh) BestPath(peerID string, now time.Time) (disco.Path, bool) {
 	return m.prober.Best(peerID, now)
 }
 
+// RelayStats reports what this node has done as a relay, or false when it is
+// not one.
+//
+// Exposed because a relay was a black box: it either carried traffic or it did
+// not, and nothing said which devices it had registered or how many it had
+// turned away. "Is the relay broken?" then has no better answer than trying it.
+func (m *Mesh) RelayStats() (relay.Stat, bool) {
+	if m.relaySrv == nil {
+		return relay.Stat{}, false
+	}
+	return m.relaySrv.Stats(), true
+}
+
 // Reflexive returns the self-addresses peers have reported observing.
 func (m *Mesh) Reflexive() []netip.AddrPort { return m.prober.Reflexive(time.Now()) }
 

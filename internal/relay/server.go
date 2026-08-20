@@ -224,9 +224,30 @@ func (s *Server) expireLocked(now time.Time) {
 	}
 }
 
+// Stat is what a relay can say about itself.
+type Stat struct {
+	// Peers currently registered, i.e. devices this relay can forward to.
+	Peers int
+	// Registered, Forwarded and Dropped are cumulative since start.
+	Registered, Forwarded, Dropped uint64
+	// Refused is a registration this relay would not accept: stale, or from a
+	// device the roster does not agree owns that tunnel key (ADR-029).
+	//
+	// Counted since the ownership check existed and reported nowhere, which
+	// made "is the relay refusing my device?" a question with no answer — the
+	// exact question asked of a relay that looks up and carries nothing.
+	Refused uint64
+}
+
 // Stats reports counters for diagnostics.
-func (s *Server) Stats() (peers int, registered, forwarded, dropped uint64) {
+func (s *Server) Stats() Stat {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return len(s.peers), s.registered, s.forwarded, s.dropped
+	return Stat{
+		Peers:      len(s.peers),
+		Registered: s.registered,
+		Forwarded:  s.forwarded,
+		Dropped:    s.dropped,
+		Refused:    s.refused,
+	}
 }

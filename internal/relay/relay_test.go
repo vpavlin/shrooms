@@ -222,11 +222,11 @@ func TestServerStats(t *testing.T) {
 	s.Handle(EncodeRegister(k, wgKey(1), regKey(t), time.Now()), netip.MustParseAddrPort("203.0.113.1:1"), now)
 	s.Handle([]byte("garbage"), netip.MustParseAddrPort("203.0.113.9:1"), now)
 
-	peers, registered, _, dropped := s.Stats()
-	if peers != 1 || registered != 1 {
-		t.Errorf("peers=%d registered=%d, want 1/1", peers, registered)
+	st := s.Stats()
+	if st.Peers != 1 || st.Registered != 1 {
+		t.Errorf("peers=%d registered=%d, want 1/1", st.Peers, st.Registered)
 	}
-	if dropped != 1 {
-		t.Errorf("dropped=%d, want 1", dropped)
+	if st.Dropped != 1 {
+		t.Errorf("dropped=%d, want 1", st.Dropped)
 	}
 }
