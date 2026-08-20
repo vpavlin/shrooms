@@ -110,6 +110,14 @@ func cmdDaemon(args []string) error {
 	if len(cfg.EntryNodes) > 0 {
 		nodeCfg["entryNodes"] = cfg.EntryNodes
 	}
+	// tcpPort, confirmed against the library's own AvailableConfigs rather than
+	// guessed. The binary also contains "p2pTcpPort" and a withP2pTcpPort
+	// builder, which the FFI configuration layer rejects outright —
+	// "Unrecognized configuration option(s)" — so the strings in the shared
+	// object are not the list of keys this accepts.
+	if cfg.DeliveryPort != 0 {
+		nodeCfg["tcpPort"] = cfg.DeliveryPort
+	}
 	node, err := waku.New(nodeCfg)
 	if err != nil {
 		return fmt.Errorf("rendezvous plane: %w", err)

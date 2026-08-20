@@ -170,6 +170,19 @@ type Config struct {
 	// it is required even when ClusterID is set.
 	Preset string
 
+	// DeliveryPort pins the TCP port the rendezvous node listens on.
+	//
+	// Zero means "let the library choose", which is what every node did before
+	// this existed and remains right for a node nobody dials.
+	//
+	// It matters for a node other people bootstrap from (ADR-031). The library
+	// exposes no way to ask which port it picked — there is a PeerID call and
+	// nothing for listen addresses — so a node can only publish a dialable
+	// address for itself if it decided the port in the first place. A random
+	// port would also change on every restart, which is a published address
+	// that quietly stops working.
+	DeliveryPort uint16
+
 	// EntryNodes are explicit bootstrap addresses (enrtree:, enr:, or
 	// multiaddr), used instead of whatever the preset would supply.
 	//
@@ -788,6 +801,12 @@ func parseConfig(text string) (Config, error) {
 			c.Interface = unquote(val)
 		case "preset":
 			c.Preset = unquote(val)
+		case "delivery_port":
+			var p uint16
+			if _, err := fmt.Sscanf(unquote(val), "%d", &p); err != nil {
+				return c, fmt.Errorf("line %d: delivery_port: %w", n+1, err)
+			}
+			c.DeliveryPort = p
 		case "entry_nodes":
 			c.EntryNodes = parseArray(val)
 		case "cluster_id":
@@ -911,6 +930,15 @@ func WriteConfig(path string, c Config) error {
 	if len(c.EntryNodes) > 0 {
 		b.WriteString("\n# Explicit bootstrap addresses, used instead of the preset's.\n")
 		fmt.Fprintf(&b, "entry_nodes = %s\n", formatArray(c.EntryNodes))
+	}
+	b.WriteString("\n# Pin the rendezvous node's TCP port, so this node can publish a dialable\n")
+	b.WriteString("# address other members bootstrap from (ADR-031). Only useful on a Core\n")
+	b.WriteString("# node that is also a relay, and therefore publicly reachable. Unset means\n")
+	b.WriteString("# the library picks, which is right for anything nobody dials.\n")
+	if c.DeliveryPort != 0 {
+		fmt.Fprintf(&b, "delivery_port = %d\n", c.DeliveryPort)
+	} else {
+		b.WriteString("# delivery_port = 30304\n")
 	}
 	b.WriteString("\n# Core relays for the whole cluster (~20 MB/h measured idle, most of it\n")
 	b.WriteString("# other applications' traffic); Edge subscribes and forwards nothing\n")

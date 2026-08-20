@@ -108,6 +108,20 @@ type Announce struct {
 	// Credential is empty in v1. Reserved so that adding admin-signed
 	// credentials in M5 is a behaviour change rather than a wire-format break.
 	Credential []byte `json:"cred,omitempty"`
+
+	// Boot is this device's delivery multiaddr, published so peers can
+	// bootstrap their rendezvous connection from it later (ADR-031).
+	//
+	// Sent only by a Core node that is also a relay: relay already means
+	// publicly reachable, and Core means it carries gossip, so it is both
+	// dialable and worth dialing. An Edge node behind a NAT is neither.
+	//
+	// Carried on the ordinary announce for the same reason Relay is — this is
+	// a property of a peer, and peers are already found this way. The receiver
+	// keeps it for its *next* start rather than using it now: bootstrap
+	// addresses are consumed when the delivery node is constructed and there is
+	// no way to add one to a running node.
+	Boot string `json:"boot,omitempty"`
 }
 
 // envelope is what actually gets signed and encrypted.
