@@ -1487,7 +1487,11 @@ func HasGlobalAddr() bool {
 // localAddrsErr records why enumeration failed, for the one place that reports
 // it. Not a log call here: this runs every announce, and a permission error
 // does not stop being true.
-var localAddrsErr atomic.Value // error
+// Wrapped in a struct because atomic.Value panics on a nil interface, and
+// "no problem" is the common case that has to be storable.
+type addrsProblem struct{ err error }
+
+var localAddrsErr atomic.Value // addrsProblem
 
 // LocalAddrsProblem returns the last reason this node could not list its own
 // addresses, or nil.
@@ -1499,10 +1503,8 @@ var localAddrsErr atomic.Value // error
 // never be dialled. That reads as a broken network rather than a blocked
 // syscall.
 func LocalAddrsProblem() error {
-	if v := localAddrsErr.Load(); v != nil {
-		if err, _ := v.(error); err != nil {
-			return err
-		}
+	if v, ok := localAddrsErr.Load().(addrsProblem); ok {
+		return v.err
 	}
 	return nil
 }
@@ -1510,10 +1512,10 @@ func LocalAddrsProblem() error {
 func localAddrs() []netip.Addr {
 	ifaces, err := net.Interfaces()
 	if err != nil {
-		localAddrsErr.Store(err)
+		localAddrsErr.Store(addrsProblem{err})
 		return nil
 	}
-	localAddrsErr.Store(error(nil))
+	localAddrsErr.Store(addrsProblem{})
 	var out []netip.Addr
 	for _, ifc := range ifaces {
 		if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagLoopback != 0 {
