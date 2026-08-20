@@ -79,7 +79,7 @@ ecosystem, rather than a consumer of it.**
 
 Every Logos application that wants two users' devices to talk directly has the
 same problem this project already solved — NAT traversal, identity, addressing,
-relays. And the seam exists: [ADR-025](adr/025-the-socket-is-the-interface.md)
+relays. And the seam exists: [ADR-025](adr/025-control-from-a-desktop-app.md)
 made the control socket the interface, deliberately with no HTTP port, and the
 Basecamp module already uses it. An application could ask for a path to a peer
 instead of building its own.
