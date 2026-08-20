@@ -278,7 +278,7 @@ func cmdDaemon(args []string) error {
 		go func(in *instance) { errs <- in.mesh.Run(ctx) }(in)
 	}
 
-	go watchRendezvous(ctx, log, instances, errs)
+	go watchRendezvous(ctx, log, instances, *stateDir, errs)
 
 	// Ask the router for a way in, per mesh, unless told not to. Best effort
 	// by construction: a router that refuses leaves the node exactly where it
@@ -858,8 +858,11 @@ const silentCooldown = time.Hour
 // running process. The unit file says Restart=always, so this is a five-second
 // gap and a clean node; run by hand, it stops visibly, which is also better
 // than pretending.
-func watchRendezvous(ctx context.Context, log *slog.Logger, instances []*instance, errs chan<- error) {
+func watchRendezvous(ctx context.Context, log *slog.Logger, instances []*instance, stateDir string, errs chan<- error) {
 	started := time.Now()
+	// Restart history, which has to be read from disk because the last one
+	// exited this process. See restartlog.go.
+	restarts := loadRestartLog(stateDir)
 	healthy := started
 	// When we first noticed a peer we can reach but cannot hear. Zero when
 	// there is no such peer.
@@ -925,6 +928,19 @@ func watchRendezvous(ctx context.Context, log *slog.Logger, instances []*instanc
 				silentSince = now
 			}
 
+			// A plane that has been healthy since this process started, for
+			// longer than the fault would have taken to reappear, means
+			// whatever was wrong is over. Forget the restart history, or a
+			// node that had a bad hour last week starts its next real outage
+			// already penalised.
+			//
+			// Keyed on our own uptime rather than on the clock: a restart
+			// loop cannot reach this, because a looping node never stays up
+			// this long.
+			if now.Sub(healthy) < rendezvousStall && now.Sub(started) >= restartForgetAfter {
+				restarts.clear()
+			}
+
 			if now.Sub(started) < rendezvousGrace {
 				continue
 			}
@@ -988,7 +1004,19 @@ func watchRendezvous(ctx context.Context, log *slog.Logger, instances []*instanc
 				deafSince = time.Time{}
 				continue
 			}
-			log.Error("restarting to rebuild the rendezvous connection", "problem", problem)
+			// Backed off, because the last restart may not have worked and
+			// repeating it costs every tunnel on every mesh. See restartlog.go.
+			if ok, left := restarts.ready(now, rendezvousStall); !ok {
+				log.Warn("the rendezvous plane needs a restart, but the last one did not help",
+					"problem", problem,
+					"history", restarts.String(),
+					"retry_in", left.Round(time.Second),
+					"note", "established tunnels keep working while this waits")
+				continue
+			}
+			restarts.note(now)
+			log.Error("restarting to rebuild the rendezvous connection",
+				"problem", problem, "history", restarts.String())
 			errs <- errors.New(problem)
 			return
 		}
