@@ -132,6 +132,58 @@ they are, unless they can connect a key or an address to a person.
 Compared to what you have now, this is a real change: today the only machines
 seeing that are your own.
 
+## Could a mixnet hide who is using the relay?
+
+Asked directly, so answered directly: no, and mostly for a reason that has
+nothing to do with mixnets being good or bad.
+
+**The relay path is not libp2p.** Relay frames are raw UDP on the same socket
+WireGuard uses — that is what makes NAT traversal work at all. libp2p-mix
+carries libp2p messages, so there is nothing here for it to take hold of.
+Putting the data plane on libp2p to make it mixable is the rewrite ADR-001
+exists to refuse.
+
+[ADR-011](adr/011-no-mixnet.md) settles the rest and its findings still hold:
+`PathLength` is a compile-time constant, only two of three hops delay, and cover
+traffic is implemented but never wired up — the weak half of the Loopix trade,
+paying latency without buying unlinkability because there is nothing to mix
+with.
+
+One thing worth adding, because it is specific to this question rather than to
+ADR-011's: **the relay needs a destination to route to.** Even a perfect mixnet
+would hide where you are, not which device you are. The relay would still be
+accumulating a list of tunnel keys and who talks to whom.
+
+That last part is fixable without a mixnet, and cheaply.
+
+### Blinded registration
+
+The relay uses the tunnel key purely as a lookup handle — it does no
+cryptography with it. So it does not have to be the real key. Both ends could
+register and address under
+
+    tag = HKDF(relay_key, wg_pub)
+
+Both already hold the relay key and each other's tunnel keys, so both derive the
+same tag; the relay matches tags and never sees a real key.
+
+What it buys: the operator sees opaque per-relay tags. They cannot recognise a
+device on a second relay, cannot match one against a key observed anywhere else,
+and learn nothing about the mesh from the identifier itself. Two relay operators
+comparing notes see unrelated values.
+
+What it does not buy: the IP address, the pairing, the volume and the timing are
+all still visible. Hiding those is what a mixnet would be for, and per the above
+it is not on offer.
+
+Cost: another relay wire change, and therefore another flag day. Worth bundling
+with the trust-on-first-use rule above rather than paying twice — the two land
+in the same frame and are the same size.
+
+Note it composes with TOFU rather than fighting it: the relay is binding a
+device key to a tag rather than to a tunnel key, and it can check that signature
+either way.
+
 ## What it would cost the operator
 
 Three things to bound, none of them new but all of them sharper when the users
