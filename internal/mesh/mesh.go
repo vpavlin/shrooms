@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/vpavlin/shrooms/internal/control"
@@ -150,6 +151,10 @@ type Mesh struct {
 	// lastBoot is the bootstrap address we last wrote down for ourselves, so
 	// an unchanged one is not rewritten every announce.
 	lastBoot string
+
+	// noEndpoints is whether we have already said we have nothing to announce,
+	// so it is said once per spell rather than every 45 seconds.
+	noEndpoints bool
 
 	// lastEpoch is the rendezvous epoch the last announce went out under. A
 	// change is the moment to re-publish what we know has been withdrawn.
@@ -1335,6 +1340,25 @@ func (m *Mesh) announceWith(now time.Time, fresh bool) error {
 			"had", wanted, "name", m.cfg.Name,
 			"hint", "a shorter device name leaves more room")
 	}
+
+	// Nothing to offer at all. Peers will see this node as online and be unable
+	// to dial it, retrying handshakes against no endpoint until something
+	// changes — so say why, once per state rather than every 45 seconds.
+	if len(a.Endpoints) == 0 && wanted == 0 && !m.noEndpoints {
+		m.noEndpoints = true
+		if err := LocalAddrsProblem(); err != nil {
+			m.log.Warn("announcing no endpoints: cannot list this device's own addresses",
+				"err", err,
+				"effect", "peers can see this node but cannot dial it",
+				"fix", "it needs a peer that can reach it first — a relay, or a node with a public address")
+		} else {
+			m.log.Warn("announcing no endpoints: this node has no address worth giving",
+				"effect", "peers can see this node but cannot dial it",
+				"fix", "it learns one from the first peer that reaches it; with no relay and no reachable peer, nothing can")
+		}
+	} else if len(a.Endpoints) > 0 {
+		m.noEndpoints = false
+	}
 	if err != nil {
 		return fmt.Errorf("seal announce: %w", err)
 	}
@@ -1460,11 +1484,36 @@ func HasGlobalAddr() bool {
 	return false
 }
 
+// localAddrsErr records why enumeration failed, for the one place that reports
+// it. Not a log call here: this runs every announce, and a permission error
+// does not stop being true.
+var localAddrsErr atomic.Value // error
+
+// LocalAddrsProblem returns the last reason this node could not list its own
+// addresses, or nil.
+//
+// Worth surfacing because the failure is silent and total. Android restricts
+// netlink for untrusted apps, so net.Interfaces can return "permission denied"
+// on a phone — and a node that cannot see its own addresses announces none,
+// which peers experience as a device that is online, has no endpoint, and can
+// never be dialled. That reads as a broken network rather than a blocked
+// syscall.
+func LocalAddrsProblem() error {
+	if v := localAddrsErr.Load(); v != nil {
+		if err, _ := v.(error); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func localAddrs() []netip.Addr {
 	ifaces, err := net.Interfaces()
 	if err != nil {
+		localAddrsErr.Store(err)
 		return nil
 	}
+	localAddrsErr.Store(error(nil))
 	var out []netip.Addr
 	for _, ifc := range ifaces {
 		if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagLoopback != 0 {
