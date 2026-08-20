@@ -13,7 +13,11 @@ import (
 // A URI rather than a bare key so the phone can tell a mesh invitation from any
 // other text it might scan, and so a name hint can ride along. A bare key is
 // still accepted when pasted, because people will paste bare keys.
-const InviteScheme = "logosvpn"
+const InviteScheme = "shrooms"
+
+// LegacyInviteScheme is what these said before the rename. Read, never written
+// — see invite.LegacyScheme for the reasoning.
+const LegacyInviteScheme = "logosvpn"
 
 // InviteURI renders a network key as something scannable.
 func InviteURI(networkKey, meshName string) string {
@@ -33,7 +37,7 @@ func ParseInvite(s string) (key, meshName string, err error) {
 		return "", "", fmt.Errorf("empty invitation")
 	}
 
-	if !strings.HasPrefix(s, InviteScheme+"://") {
+	if !strings.HasPrefix(s, InviteScheme+"://") && !strings.HasPrefix(s, LegacyInviteScheme+"://") {
 		// A bare key. Validate it here rather than letting it fail later as
 		// "config invalid", which says nothing about what was actually typed.
 		if _, err := identity.ParseNetworkKey(s); err != nil {

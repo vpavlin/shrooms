@@ -2,6 +2,7 @@ package invite
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 	"time"
 
@@ -267,5 +268,41 @@ func TestParseToken(t *testing.T) {
 		if _, err := ParseToken(notAToken); err == nil {
 			t.Errorf("ParseToken(%q) accepted something that is not an invite token", notAToken)
 		}
+	}
+}
+
+// An invite minted after the rename must still be readable by a device that
+// has not been updated, and one minted before must stay readable forever.
+//
+// Both directions matter during a rename, and the second matters permanently:
+// an invite is redeemed by whatever the other person happens to have installed.
+func TestBothSchemesParse(t *testing.T) {
+	s, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok := s.String()
+
+	for _, text := range []string{
+		Scheme + "://enrol?token=" + tok,
+		LegacyScheme + "://enrol?token=" + tok,
+		tok, // bare, which people paste
+	} {
+		got, err := ParseToken(text)
+		if err != nil {
+			t.Errorf("%q did not parse: %v", text, err)
+			continue
+		}
+		if got != s {
+			t.Errorf("%q parsed to the wrong token", text)
+		}
+	}
+}
+
+// What we emit is the new one, so the old name stops spreading.
+func TestWeEmitTheNewScheme(t *testing.T) {
+	s, _ := New()
+	if got := s.URI(); !strings.HasPrefix(got, "shrooms://") {
+		t.Errorf("URI() emits %q, want the shrooms scheme", got)
 	}
 }

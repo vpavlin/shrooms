@@ -124,18 +124,31 @@ func (s Secret) payloadKey() []byte {
 //
 // Kept equal to state.InviteScheme by a test in that package rather than by
 // importing it, so this package stays free of config and file handling.
-const Scheme = "logosvpn"
+const Scheme = "shrooms"
+
+// LegacyScheme is what invites said before the project was renamed.
+//
+// Read forever, written never. An invite is redeemed by whatever the other
+// person happens to have installed, and a device a version behind is the normal
+// case rather than an edge one — during the rename it is *every* device. The
+// cost of accepting it is one string comparison; the cost of not is an invite
+// that fails with "that is not an invite" on a phone somebody updated last week.
+const LegacyScheme = "logosvpn"
 
 // URI renders a token as something scannable.
 func (s Secret) URI() string { return Scheme + "://enrol?token=" + s.String() }
 
-// ParseToken accepts the URI form, the grouped form, or a bare token.
+// ParseToken accepts either URI form, the grouped form, or a bare token.
 //
 // One implementation, because the CLI writes these and the phone reads them,
 // and a second parser is how the two drift.
 func ParseToken(text string) (Secret, error) {
 	text = strings.TrimSpace(text)
-	if rest, ok := strings.CutPrefix(text, Scheme+"://"); ok {
+	for _, scheme := range []string{Scheme, LegacyScheme} {
+		rest, ok := strings.CutPrefix(text, scheme+"://")
+		if !ok {
+			continue
+		}
 		_, query, _ := strings.Cut(rest, "?")
 		for _, kv := range strings.Split(query, "&") {
 			if tok, ok := strings.CutPrefix(kv, "token="); ok {
