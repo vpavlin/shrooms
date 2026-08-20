@@ -1304,11 +1304,36 @@ func (m *Mesh) announceWith(now time.Time, fresh bool) error {
 	// Dropping from the end is right because candidates() is ordered by
 	// usefulness: reflexive first, then configured, then local addresses.
 	raw, err := control.Seal(m.nk, topic.Epoch(now), m.st.Identity.DevicePriv, a)
+
+	// The bootstrap address goes first, before any endpoint. It is a
+	// convenience for somebody's *next* start (ADR-031); an endpoint is how
+	// anybody reaches this node at all, now. Losing an endpoint to keep it
+	// would be the wrong way round, and this field is new enough that the
+	// trimming below has never had to compete with it before.
+	if err != nil && a.Boot != "" && errors.Is(err, control.ErrTooLarge) {
+		a.Boot = ""
+		m.log.Debug("announce too large; dropping the bootstrap address")
+		raw, err = control.Seal(m.nk, topic.Epoch(now), m.st.Identity.DevicePriv, a)
+	}
+
+	wanted := len(a.Endpoints)
 	for err != nil && len(a.Endpoints) > 0 && errors.Is(err, control.ErrTooLarge) {
 		a.Endpoints = a.Endpoints[:len(a.Endpoints)-1]
 		m.log.Debug("announce too large; dropping the least useful endpoint",
 			"remaining", len(a.Endpoints))
 		raw, err = control.Seal(m.nk, topic.Epoch(now), m.st.Identity.DevicePriv, a)
+	}
+
+	// Announcing no endpoints at all is legitimate — a node behind NAT that has
+	// not yet been told where it appears has none to give, and it still needs
+	// to say it exists so a reachable peer can answer and teach it. But losing
+	// every endpoint to *trimming* is a different thing wearing the same
+	// clothes, and it is invisible: peers add a WireGuard peer they can never
+	// dial and retry handshakes forever, which reads as a network fault.
+	if wanted > 0 && len(a.Endpoints) == 0 {
+		m.log.Warn("announcing no endpoints: they did not fit",
+			"had", wanted, "name", m.cfg.Name,
+			"hint", "a shorter device name leaves more room")
 	}
 	if err != nil {
 		return fmt.Errorf("seal announce: %w", err)
