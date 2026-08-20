@@ -29,6 +29,77 @@ The claim is about a component that is **absent**, not one that is new.
 | **Mobile** | Android (full peer) | iOS + Android | iOS + Android | iOS + Android | Android | via app configs |
 | **Maturity** | **prototype** | production, large scale | production | production | mature | production |
 
+## The closest thing to this: Nostr VPN
+
+[mmalmi/nostr-vpn](https://github.com/mmalmi/nostr-vpn) deserves its own section
+rather than a column, because it is the same idea reached independently — and
+its author's stated motivation is ours almost word for word: *"Got annoyed by
+Tailscale requiring 3rd party accounts, so created Nostr VPN."*
+
+Read from its README and `docs/protocol.md` on 2026-08-20, not from summaries:
+
+| | Shrooms | Nostr VPN |
+|---|---|---|
+| coordination service | none | none |
+| signalling substrate | Logos Delivery (Waku) | Nostr relays |
+| how much rides it | continuous announces, every 45s | enrolment and roster delivery only |
+| data plane | wireguard-go, userspace | FIPS, a Rust WireGuard |
+| identity | ed25519 device key | Nostr keypair (npub) |
+| addressing | derived from the device key, IPv6 /48 | derived: `SHA256(network_id + "\n" + pubkey)` → `10.44.x.y/32` |
+| membership | admin-signed credential, expires | admin-signed roster, from a signed join request |
+| revocation | signed, gossiped, re-announced each epoch, survives restart | not documented |
+| relay fallback | a peer that announces itself as one | "through FIPS neighbors when direct UDP is blocked" |
+| platforms | Linux, Android | macOS, Linux, Windows, Android, **iOS**, StartOS/Umbrel |
+
+### Where they are ahead
+
+**iOS**, which we have declared out of scope
+([ADR-022](adr/022-keycard-for-the-admin-key.md)). The reason is worth understanding
+rather than resenting: our blocker was never WireGuard, it was fitting a libp2p
+node inside a Network Extension's memory limit. Nostr signalling is websockets
+to a relay, which costs almost nothing, so the constraint that stopped us does
+not apply to them. That is an argument about substrate, not effort.
+
+**Platform coverage generally**, and release cadence — eleven releases in seven
+days at one point.
+
+### Where the designs genuinely differ
+
+**How much depends on somebody else's infrastructure.** This is the one where a
+casual reading would get it backwards. We announce continuously over a public
+Waku fleet; they use Nostr relays for *enrolment and roster delivery only*, with
+peer discovery delegated to the FIPS layer. Their protocol document is explicit
+that it "should not publish or consume its old Nostr relay peer announcements."
+So in steady state they lean on third-party infrastructure less than we do, not
+more — and the outage on 2026-08-20, when five of six Waku entry nodes refused
+connections and a restarted node could not rejoin, is exactly the class of
+failure that buys.
+[ADR-031](adr/031-bootstrap-from-the-mesh-itself.md) is our answer to it.
+
+**Address space.** Both derive addresses from keys, which removes the allocator.
+Theirs lands in `10.44.0.0/16` through two modulo-254 bytes — about 64,500
+possible addresses, so collisions become likely somewhere in the low hundreds of
+devices by the birthday bound. Ours is a 64-bit interface identifier inside a
+derived /48, where a collision is not a thing that happens. For a personal mesh
+neither matters; it is a difference in what the design will tolerate later.
+
+**Revocation.** Ours is built and deliberate: signed by the authority, gossiped,
+repeated each epoch and when a peer appears, persisted across restarts, and
+bounded by an expiry the revocation itself carries
+([ADR-018](adr/018-credentials-instead-of-a-shared-key.md)). Theirs may exist;
+it is not in the README or the protocol document, and we have not read the
+source. "Not documented" is the honest claim, not "absent".
+
+### The honest summary
+
+Two projects, the same objection to Tailscale, the same shape of answer, and
+different substrates underneath. They are further along as a product. We have
+thought harder about what happens after somebody is admitted — expiry,
+revocation, per-device credentials — and they have thought harder about being
+installable on the machine somebody actually owns.
+
+Neither of those is a moat, and it would be silly to pretend otherwise.
+
 ## What is actually distinctive
 
 **Nobody runs a service.** Tailscale operates a coordination server; Nebula
