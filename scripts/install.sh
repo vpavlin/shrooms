@@ -336,8 +336,46 @@ Treat that key as a password: anyone holding it is a member of the mesh.
 EOF
 fi
 
-if "$RUNTIME" run --rm --entrypoint /bin/sh -v "/etc/shrooms:/etc/shrooms$Z" "$IMAGE" \
-       -c 'grep -q "^relay *= *\"true\"" /etc/shrooms/config.toml' 2>/dev/null; then
-    echo "This node relays. Open its UDP port if a firewall is in the way:"
-    echo "  ufw allow 51820/udp    # or the equivalent"
+# Every node needs its UDP port open, not only a relay.
+#
+# This used to print only for relays, on the reasoning that a relay is the node
+# others dial. That is wrong and it cost somebody a day: two peers need at least
+# one of them reachable, and a laptop with a default-deny firewall cannot be
+# reached even by a phone on the same wifi. Both ends then sit there announcing
+# addresses, visible to each other over the rendezvous plane, with every
+# handshake failing — which looks like anything except a closed port.
+#
+# The command is chosen by what is actually installed rather than guessed from
+# the distribution, because a Debian box can be running firewalld and a Fedora
+# box nftables directly.
+firewall_hint() {
+    local port="${1:-51820}"
+    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi "^Status: active"; then
+        echo "  sudo ufw allow $port/udp"
+        return
+    fi
+    if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+        echo "  sudo firewall-cmd --add-port=$port/udp --permanent && sudo firewall-cmd --reload"
+        return
+    fi
+    if command -v nft >/dev/null 2>&1 && nft list ruleset 2>/dev/null | grep -q 'policy drop'; then
+        echo "  sudo nft add rule inet filter input udp dport $port accept"
+        return
+    fi
+    if command -v iptables >/dev/null 2>&1 && iptables -S INPUT 2>/dev/null | grep -q '^-P INPUT DROP'; then
+        echo "  sudo iptables -I INPUT -p udp --dport $port -j ACCEPT"
+        return
+    fi
+    return 1
+}
+
+PORT=$(grep -oE '^listen_port *= *[0-9]+' /etc/shrooms/config.toml 2>/dev/null | grep -oE '[0-9]+' | head -1)
+PORT=${PORT:-51820}
+if hint=$(firewall_hint "$PORT"); then
+    echo
+    echo "A firewall is running here. Peers reach this node on UDP $PORT, so open it:"
+    echo "$hint"
+    echo
+    echo "Without it this node can still reach others, but nothing can reach it —"
+    echo "which presents as peers that appear and never connect."
 fi

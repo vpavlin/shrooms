@@ -147,7 +147,20 @@ authoritative behind it.
 | Linux | x86-64. Android is built and in daily use; iOS is out of scope |
 | glibc ≥ 2.38 | Ubuntu 24.04+ works, **Debian 12 does not** (2.36). Irrelevant if you deploy the container |
 | `/dev/net/tun` | **verify this on a cheap VPS** — OpenVZ/LXC hosts often disable it. Insist on KVM |
-| 1 UDP port | default 51820, inbound only needed on nodes you want reachable |
+| 1 UDP port | default 51820, **inbound**. At least one end of every pair needs it; a host firewall that drops it is the commonest reason two nodes see each other and never connect |
+
+If a firewall is running, open it — on laptops too, not only servers:
+
+```console
+$ sudo ufw allow 51820/udp                                   # Ubuntu, Debian
+$ sudo firewall-cmd --add-port=51820/udp --permanent          # Fedora, RHEL
+$ sudo firewall-cmd --reload
+```
+
+Without it a node still reaches others and nothing reaches it. Both ends then
+announce addresses, show each other as online, and every handshake fails —
+which looks like almost anything except a closed port. `install.sh` prints the
+right command for whichever firewall it finds running.
 
 **Resource use is negligible.** A measured Core-mode node acting as a relay sits
 at **~20 MiB RSS and 1–2% of one core**. Any VPS tier will do; what matters is

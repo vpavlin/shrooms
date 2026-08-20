@@ -118,6 +118,24 @@ and back here:
     invite</a> if it is not.
 </p>
 
+<div class="note">
+    <p>
+        <strong>If this machine runs a firewall, open UDP 51820 inbound.</strong>
+        Not only on a relay or a server — on anything you want other devices to
+        reach, including a laptop talking to a phone on the same wifi.
+    </p>
+<pre><code><span class="cmd">sudo ufw allow 51820/udp</span>                                    <span class="c"># Ubuntu, Debian</span>
+<span class="cmd">sudo firewall-cmd --add-port=51820/udp --permanent</span>           <span class="c"># Fedora, RHEL</span>
+<span class="cmd">sudo firewall-cmd --reload</span></code></pre>
+    <p>
+        Without it the node still reaches others, and nothing reaches it. Both
+        sides then announce addresses, see each other as online, and every
+        handshake fails — which looks like almost anything except a closed port.
+        The installer prints the right command for whatever firewall it finds
+        running.
+    </p>
+</div>
+
 <h3>What the installer does</h3>
 
 <p>
@@ -396,8 +414,8 @@ https://apps.vpavlin.xyz/fdroid/repo
 
 <pre><code><span class="p">Installed and running, waiting for a mesh.</span>
 
-This node relays. Open its UDP port if a firewall is in the way:
-  ufw allow 51820/udp    # or the equivalent</code></pre>
+A firewall is running here. Peers reach this node on UDP 51820, so open it:
+  sudo ufw allow 51820/udp</code></pre>
 
 <p>
     Then <a href="#second">redeem an invite</a> from a machine already on the
