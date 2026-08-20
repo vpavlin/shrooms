@@ -74,32 +74,45 @@ position too, and it is worth claiming honestly rather than overclaiming.
 
 ## The cheap half: nobody should have to run a relay
 
-A separate problem, with a much smaller answer.
+An earlier draft of this note recommended that invites carry a relay address,
+and called it "the single biggest reduction in how hard this is to start using".
+That was wrong, and Vaclav caught it: **a newly invited device discovers relays
+by itself.**
 
-Today a new person needs a reachable machine, or a friend who has one, and has
-to be told its address. That is the single hardest step in adopting this.
-
-**The invite could carry it.** An invite response already hands over everything
-else a device needs to function:
+It does. `selectRelay` walks the roster for any peer that announced
+`Relay: true`, is online, and has a probed path:
 
 ```go
-type Response struct {
-    NetworkKey []byte   `json:"nk"`
-    AdminKeys  [][]byte `json:"admin_keys"`
-    Credential []byte   `json:"cred,omitempty"`
-    Suffix     string   `json:"suffix,omitempty"`
+for _, p := range m.roster.Peers() {
+    if !p.Relay || !p.Online(now) {
+        continue
+    }
+    path, ok := m.prober.Best(p.ID(), now)
     ...
 }
 ```
 
-It is JSON with `omitempty`, sealed to the invitee — so adding a relay field is
-backward compatible, invisible to anyone but the recipient, and needs no wire
-break. Whoever invites you already knows a relay that works, because they are
-using it.
+Every one of those a new device gets on its own. The cost is one announce
+interval — 45s — plus a probe, which it is already spending on peer discovery
+anyway. So for a mesh whose relay is one of its own members, carrying the
+address in the invite saves under a minute of a wait that is happening
+regardless. That is not a feature worth a wire field.
 
-That is a small change with most of the "easy to start" benefit, and it composes
-with blind relays rather than depending on them: the relay handed over can be
-one of yours today and somebody else's later.
+**Where it does matter is precisely the blind-relay case**, and only there. A
+blind relay is not a member: it holds the derived relay key and not the network
+key, so it cannot encrypt an announce, and nothing it says would verify if it
+could. It can never appear in a roster, so it can never be discovered. It has to
+be configured — and the invite is the one channel that already carries
+configuration to a new device, sealed to that device.
+
+So this is not an onboarding improvement that stands alone. It is a dependency
+of blind relays, and it should be built when they are, if they are.
+
+There is one residual argument for it that is worth recording and not
+overselling: discovery runs over the rendezvous plane, so when rendezvous
+stalls — which happens — a node cannot learn about a relay it has never seen. A
+pinned relay keeps working. That is a robustness point rather than an
+onboarding one, and it is small.
 
 ## What "disappearing" would actually take
 
@@ -108,18 +121,19 @@ In order of cost, and each is useful alone:
 1. **Stop shipping `mvpn` in the clear** — see
    [obfuscation.md](obfuscation.md). We are currently more identifiable than
    plain WireGuard.
-2. **Invites carry a relay.** Removes the setup burden.
-3. **Blind relays.** Strangers can run them; the derived relay key already makes
-   this possible without handing over the network key.
-4. **Relay-always as a mode.** Give up direct paths, and a path observer sees you
+2. **Blind relays.** Strangers can run them; the derived relay key already
+   makes this possible without handing over the network key. This is the step
+   that removes the setup burden — not invite-carried addresses, which only
+   matter as a way to reach a relay that cannot announce itself.
+3. **Relay-always as a mode.** Give up direct paths, and a path observer sees you
    talking to one address rather than to your peers. Costs latency and the
    performance premise of ADR-001, which is why it must be a mode and not a
    default.
-5. **Two layered hops.** Neither relay knows both ends. Needs relay-to-relay
+4. **Two layered hops.** Neither relay knows both ends. Needs relay-to-relay
    forwarding, which does not exist.
-6. **Obfuscation on top**, so the flow to the relay does not look like WireGuard.
+5. **Obfuscation on top**, so the flow to the relay does not look like WireGuard.
 
-Note what happens at step 4: if traffic always relays, hole punching stops
+Note what happens at step 3: if traffic always relays, hole punching stops
 mattering. Much of the hardest code in this project exists to establish direct
 paths, and the private mode would not use it. That is not an argument against —
 it is an argument that this is a genuinely different mode, with different code
@@ -127,7 +141,7 @@ paths and a different performance story, rather than a setting.
 
 ## The fork in the road
 
-Steps 4–6 change what this project is. Today it is Tailscale-shaped: direct
+Steps 3–5 change what this project is. Today it is Tailscale-shaped: direct
 tunnels between your own machines, fast, with relays as a fallback. With
 always-on layered relaying it becomes Tor-shaped: slower, private against a
 local observer, dependent on volunteers carrying traffic.
@@ -144,11 +158,11 @@ projects that have shipped both find that the fast mode is what people use.
 ## Two decisions
 
 1. **Is "private mode" a goal, or is the goal to stop leaking gratuitously?**
-   Steps 1–3 are worth doing on their own merits and cost almost nothing. Steps
-   4–6 are a second product inside this one. It is possible to want only the
+   Steps 1–2 are worth doing on their own merits and cost almost nothing. Steps
+   3–5 are a second product inside this one. It is possible to want only the
    first group.
 
-2. **Do invites carry a relay?** This one is nearly free, is useful whatever the
-   answer to the first question, and is the single biggest reduction in how hard
-   this is to start using. It is the recommendation of this note regardless of
-   everything else in it.
+2. ~~Do invites carry a relay?~~ **Answered: only alongside blind relays.**
+   A member relay is discovered without help in about a minute. Carrying an
+   address only matters for a relay that cannot announce itself, which is a
+   blind one — so this is part of that feature rather than a standalone win.
