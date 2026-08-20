@@ -143,8 +143,31 @@ jobs:
       # :<sha>, :v1.2 — are manifest lists assembled once both arches exist, in
       # the job below. Pushing a single-arch image to :latest first would give
       # every arm64 host an amd64 image for as long as the other build takes.
+      # Retried, because ghcr fails this way and it is not our bug to fix.
+      #
+      # Observed: "unknown blob", exit 1, on amd64 while arm64 pushed the same
+      # base layers successfully seconds earlier. The two architecture jobs push
+      # to one repository at once and share layers, so the registry races its
+      # own deduplication; the push succeeds on a retry.
+      #
+      # This is worth a retry rather than a shrug because of what failure costs
+      # downstream: image-manifest needs BOTH arches, so one flake skips the
+      # manifest entirely and :latest silently keeps pointing at the previous
+      # commit. A green run that published nothing is worse than a red one.
       - name: Push
-        run: docker push ${{ steps.img.outputs.name }}:${{ github.sha }}-${{ matrix.arch }}
+        run: |
+          set -u
+          img=${{ steps.img.outputs.name }}:${{ github.sha }}-${{ matrix.arch }}
+          for attempt in 1 2 3 4 5; do
+              if docker push "$img"; then
+                  echo "pushed on attempt $attempt"
+                  exit 0
+              fi
+              echo "push failed (attempt $attempt); the registry is often transient here"
+              sleep $((attempt * 10))
+          done
+          echo "::error::push of $img failed five times — not a flake"
+          exit 1
 
       - name: Report
         run: echo "pushed ${{ steps.img.outputs.name }}:${{ github.sha }}-${{ matrix.arch }}"
@@ -179,9 +202,18 @@ jobs:
           set -eux
           IMG=${{ steps.img.outputs.name }}
           SHA=${{ github.sha }}
+          # Retried for the same reason as the per-arch push above: this
+          # writes to the same registry and fails the same transient way, and
+          # a manifest that did not land leaves :latest on the previous commit.
           manifest() {
             docker manifest create "$IMG:$1" "$IMG:$SHA-amd64" "$IMG:$SHA-arm64"
-            docker manifest push "$IMG:$1"
+            for attempt in 1 2 3 4 5; do
+              docker manifest push "$IMG:$1" && return 0
+              echo "manifest push $1 failed (attempt $attempt)"
+              sleep $((attempt * 10))
+            done
+            echo "::error::manifest push of $IMG:$1 failed five times"
+            return 1
           }
           manifest "$SHA"
           if [ "${{ github.ref }}" = "refs/heads/master" ] || [ "${{ github.ref }}" = "refs/heads/main" ]; then
