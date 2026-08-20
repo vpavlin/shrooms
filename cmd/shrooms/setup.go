@@ -57,7 +57,7 @@ func cmdInit(args []string) error {
 		return err
 	}
 	if *noAdmin {
-		nudgeDaemon(*sock)
+		reportNext(*sock)
 		return nil
 	}
 
@@ -67,7 +67,7 @@ func cmdInit(args []string) error {
 	if err := mintAuthority(*adminDir, *cfgPath, *stateDir, *name); err != nil {
 		return err
 	}
-	nudgeDaemon(*sock)
+	reportNext(*sock)
 	return nil
 }
 
@@ -95,6 +95,7 @@ func cmdJoin(args []string) error {
 	port := fs.Uint("port", 51820, "UDP listen port")
 	advertise := fs.String("advertise", "", "public endpoint, only if it is not on a local interface")
 	relay := fs.Bool("relay", false, "forward traffic for peers that cannot reach each other")
+	sock := fs.String("socket", DefaultSocket, "control socket, so a waiting daemon picks this up")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -106,7 +107,13 @@ func cmdJoin(args []string) error {
 	if _, err := os.Stat(*cfgPath); err == nil {
 		return fmt.Errorf("%s already exists — remove it or use a different --config", *cfgPath)
 	}
-	return setup(*cfgPath, *stateDir, nk, *name, uint16(*port), *advertise, *relay, false)
+	if err := setup(*cfgPath, *stateDir, nk, *name, uint16(*port), *advertise, *relay, false); err != nil {
+		return err
+	}
+	// `join <KEY>` never nudged at all, so a waiting daemon on this machine sat
+	// there while the config beside it named a mesh. Same fix as init's.
+	reportNext(*sock)
+	return nil
 }
 
 // addMesh appends a mesh to a config that already names one (ADR-015).
@@ -254,18 +261,57 @@ func setupMesh(cfgPath, stateDir string, nk identity.NetworkKey, name, label str
 		fmt.Printf("If it is reachable via a port forward, tell it so:\n")
 		fmt.Printf("  advertise = [\"<public-ip>:%d\"]   in %s\n", cfg.ListenPort, cfgPath)
 	}
-	// Only suggest systemd if the unit is actually installed. Telling someone
-	// to enable a service that does not exist is worse than saying nothing.
+	return nil
+}
+
+// reportNext nudges a waiting daemon and says what to do about the result.
+//
+// Printed after the nudge rather than before, and phrased from its outcome,
+// because the three cases need three different instructions and the wrong one
+// is worse than none:
+//
+//   - The nudge landed. Nothing to run; saying "enable --now" here invites
+//     somebody to go looking for a problem that does not exist.
+//   - A daemon is running and did not take it. It needs a *restart*, and this
+//     is the case that used to print "enable --now" — which on an
+//     already-running service does nothing at all. Somebody following that
+//     instruction to the letter is left with a config, a daemon still waiting,
+//     and no sign of which of the two is wrong. That is what happened to the
+//     first person outside this project to try it.
+//   - No daemon. Start one, which is the only case the old message fitted.
+func reportNext(sock string) {
+	if nudgeDaemon(sock) {
+		fmt.Printf("\nThe daemon was waiting for this and is bringing the mesh up now.\n")
+		fmt.Printf("Check it with:\n  shrooms status\n")
+		return
+	}
+
+	unit := false
 	if _, err := os.Stat("/etc/systemd/system/shrooms.service"); err == nil {
+		unit = true
+	}
+	// Running, but did not take the nudge. Distinguished from "not running" so
+	// the instruction matches: one needs starting, the other needs restarting.
+	if st, err := fetchStatus(sock); err == nil && st.Waiting {
+		fmt.Printf("\nA daemon is running but has not picked this up. Restart it:\n")
+		if unit {
+			fmt.Printf("  sudo systemctl restart shrooms\n")
+		} else {
+			fmt.Printf("  stop the running daemon and start it again\n")
+		}
+		fmt.Printf("\nThen `shrooms status` should name the mesh.\n")
+		return
+	}
+
+	if unit {
 		fmt.Printf("\nNext:\n")
 		fmt.Printf("  sudo systemctl enable --now shrooms\n")
-	} else {
-		fmt.Printf("\nNext, run it:\n")
-		fmt.Printf("  sudo shrooms daemon -v\n")
-		fmt.Printf("\nOr install it as a service first:\n")
-		fmt.Printf("  sudo make install && sudo systemctl enable --now shrooms\n")
+		return
 	}
-	return nil
+	fmt.Printf("\nNext, run it:\n")
+	fmt.Printf("  sudo shrooms daemon -v\n")
+	fmt.Printf("\nOr install it as a service first:\n")
+	fmt.Printf("  sudo make install && sudo systemctl enable --now shrooms\n")
 }
 
 // cmdPrepare writes everything except the key.

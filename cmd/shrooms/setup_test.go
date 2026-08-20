@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -146,4 +148,69 @@ func withStdin(t *testing.T, script string) {
 		r.Close()
 		os.Stdin, stdinReader = oldFile, oldReader
 	})
+}
+
+// The three outcomes of nudging a daemon need three different instructions, and
+// the wrong one is worse than none.
+//
+// This is the bug the first person outside the project hit: init wrote the
+// config, the nudge did not land, and the advice printed was
+// "sudo systemctl enable --now shrooms" — which on an already-running service
+// does nothing at all. Following it exactly left a config, a daemon still
+// waiting, and no sign of which was wrong. The invite then failed with
+// "404 page not found".
+//
+// Driven over a real unix socket, because that is what nudgeDaemon dials and a
+// TCP stand-in would exercise a path the daemon never uses.
+func TestNudgeOutcomesAreDistinguished(t *testing.T) {
+	t.Run("waiting daemon accepts the reload", func(t *testing.T) {
+		sock := serveWaiting(t, true)
+		if !nudgeDaemon(sock) {
+			t.Error("a daemon that accepted /reload was not treated as nudged")
+		}
+	})
+
+	t.Run("waiting daemon refuses the reload", func(t *testing.T) {
+		sock := serveWaiting(t, false)
+		if nudgeDaemon(sock) {
+			t.Error("a daemon that refused /reload was reported as nudged")
+		}
+		// And it is still reachable and still waiting, which is what tells
+		// reportNext to say "restart" rather than "enable --now".
+		st, err := fetchStatus(sock)
+		if err != nil || !st.Waiting {
+			t.Errorf("status after a refused reload: %+v, err %v", st, err)
+		}
+	})
+
+	t.Run("no daemon", func(t *testing.T) {
+		if nudgeDaemon(filepath.Join(t.TempDir(), "absent.sock")) {
+			t.Error("an absent daemon was reported as nudged")
+		}
+	})
+}
+
+// serveWaiting runs a daemon with no mesh on a unix socket and returns its path.
+func serveWaiting(t *testing.T, acceptReload bool) string {
+	t.Helper()
+	sock := filepath.Join(t.TempDir(), "d.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/status", func(w http.ResponseWriter, _ *http.Request) {
+		json.NewEncoder(w).Encode(statusPayload{Waiting: true})
+	})
+	mux.HandleFunc("/reload", func(w http.ResponseWriter, _ *http.Request) {
+		if !acceptReload {
+			http.Error(w, "not now", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	srv := &http.Server{Handler: mux}
+	go srv.Serve(ln)
+	t.Cleanup(func() { srv.Close() })
+	return sock
 }
