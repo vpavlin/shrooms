@@ -226,6 +226,108 @@ Configuration on the client side is then two lines rather than one — an addres
 and a token — and both come from the same place, which is whoever offered you
 the relay.
 
+## Does the operator hand out tokens by hand?
+
+"A token to hand over" was vague, and the honest answer is that the manual step
+is probably avoidable. It is worth separating two reasons a relay might want a
+secret, because only one of them is about safety.
+
+### Safety needs no token: prove you receive where you claim
+
+The reason an open forwarder is dangerous is reflection — someone points it at a
+third party and makes it send traffic there. That attack needs the relay to
+forward to an address the *attacker* chose.
+
+Registration can close it without any shared secret:
+
+1. A device registers "tag X, reach me at this address".
+2. The relay sends a random nonce **to that address**.
+3. The device echoes it back.
+4. Only then is the mapping installed.
+
+An attacker registering somebody else's address never receives the nonce and
+cannot echo it. This is the return-routability check ICE and QUIC already use,
+and it costs one round trip on registration and nothing afterwards.
+
+Note also that relay forwarding is one packet in, one packet out. There is no
+amplification, which is what makes reflectors worth building in the first place.
+
+So **a blind relay can be open to anyone, with zero manual work, and still not be
+usable as a reflector.** What is left to abuse is the operator's bandwidth, and
+that is what limits are for rather than what a token is for.
+
+### A token is for policy, not safety
+
+An operator who wants to choose *who* uses their relay still can, and then the
+unit is a **mesh**, not a device: one token, issued once, for everybody on that
+mesh. That is the same amount of work as agreeing to help a friend, not per
+device and not ongoing.
+
+Getting it to the devices is the case where invites carrying relay configuration
+finally earns its place (see [disappearing.md](disappearing.md), where it was
+withdrawn as an onboarding feature): a new device gets the address and the token
+sealed inside its invite, and existing devices get it the way they get any other
+mesh-wide setting.
+
+Recommendation: build the return-routability check, make tokens optional, and
+default to open-with-limits. An operator who wants a guest list can turn one on.
+
+## Limits an operator needs
+
+All three are straightforward, because `Server.Handle` is a single choke point
+that already sees every frame and already keeps counters
+(`registered`, `forwarded`, `dropped`).
+
+**Number of registrations** — exists as `MaxRegistrations = 512`, currently a
+constant. Wants to be configurable, and wants a second cap per token (or per
+source address when open) so one user cannot take the whole table.
+
+**Total bandwidth** — a byte counter and a ceiling. The relay sees every
+forwarded packet, so this is a counter increment on a path that already exists.
+
+**Per-registration bandwidth** — a token bucket per entry. Same mechanism, finer
+grain.
+
+One caveat on how throttling behaves. Dropping packets on a WireGuard tunnel
+presents as packet loss, and TCP inside the tunnel backs off — which is roughly
+the right behaviour and needs no cooperation. But a *hard* cutoff mid-session
+looks like the network dying, with no way for the user to know why. A gradual
+throttle is kinder than a cliff, and the relay should be able to say it is
+throttling somewhere the user can see.
+
+## Could relaying be paid for?
+
+Vaclav's question, and the instinct is sound: [ADR-012](adr/012-relay-hosting.md)
+already blames Tor's relay shortage on having no reciprocity to build on, and
+this is the shape of a fix.
+
+The hard part is not the payment. It is **proof of service**: how does the payer
+know the relay forwarded, and how does the relay prove it did? Bandwidth is not
+self-attesting, both sides can lie, and a relay can manufacture traffic to bill
+itself. This is the problem that has occupied every decentralised-bandwidth
+project and none has solved it cleanly.
+
+**The way out is to not solve it.** If a token is a bearer capability with an
+expiry and a quota, then the token *is* the thing being sold. How somebody
+obtained it — free from a friend, cash, a bank transfer, a Logos token — is
+outside the protocol entirely. Prepaid capacity needs no metering, no
+settlement, no chain, and no trust in either direction beyond the window the
+token covers.
+
+So the architectural advice is: **do not build payments. Build the thing
+payments would buy**, and make it expirable and transferable. If incentives
+later want a settlement layer, it sells tokens; nothing in the relay changes.
+
+Two cautions worth recording:
+
+- **Metered micropayments are almost certainly not worth it.** Relaying a
+  gigabyte is worth a fraction of a cent, which does not survive the overhead of
+  accounting for it.
+- **Taking payment changes the operator's position.** In many jurisdictions
+  being paid to carry traffic is what separates a person doing a favour from a
+  provider with obligations. That is a real consideration for whoever
+  volunteers, and it belongs in whatever documentation invites them to.
+
 ## What it would cost the operator
 
 Three things to bound, none of them new but all of them sharper when the users
