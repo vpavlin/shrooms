@@ -40,3 +40,4 @@ number appears, its source is named.
 | [028](028-when-the-fleet-turns-on-rln.md) | When the fleet turns on RLN | proposed; nothing to build yet, two questions to ask |
 | [029](029-disco-proves-the-device.md) | Disco proves the device, not just the mesh | accepted; the first half of Phase 4 |
 | [030](030-tailscale-shaped-not-tor-shaped.md) | Tailscale-shaped, not Tor-shaped | accepted; scopes four design notes |
+| [031](031-bootstrap-from-the-mesh-itself.md) | Bootstrap from the mesh itself | proposed; after five of six fleet entry nodes refused |
