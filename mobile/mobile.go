@@ -197,31 +197,42 @@ func joinInvite(token, name, label, configDir string, timeoutSeconds int) error 
 	mu.Unlock()
 
 	var tr invite.Transport
-	if live != nil && running {
+	switch {
+	case live != nil && running:
 		msgs, detach := tap.attach()
 		defer detach()
 		tr = tapTransport{node: live, msgs: msgs}
-	} else {
-		fleet := phoneDefaults()
-		if onDisk, err := state.LoadConfigUnvalidated(cfgPath); err == nil {
-			if onDisk.Preset != "" {
-				fleet.Preset = onDisk.Preset
-			}
-			if onDisk.Mode != "" {
-				fleet.Mode = onDisk.Mode
-			}
-			fleet.ClusterID = onDisk.ClusterID
-			fleet.EntryNodes = onDisk.EntryNodes
-		}
-		own, err := waku.New(nodeConfig(fleet))
+
+	default:
+		// One node per process, always. The library keeps process-global
+		// persistency that Close does not release, so a second node fails with
+		// "Persistency already initialised with rootDir ... cannot re-init" and
+		// the app is stuck until it is force-stopped.
+		//
+		// This used to create a throwaway node here and close it, which broke
+		// two ways: redeeming an invite before ever connecting poisoned the
+		// first connect, and redeeming after a disconnect hit it immediately,
+		// because the node deliberately outlives a disconnect and `running` is
+		// nil by then. The old condition required both, so the second case fell
+		// through to creating one anyway.
+		n, err := sharedNode(cfgPath)
 		if err != nil {
-			return fmt.Errorf("rendezvous plane: %w", err)
+			return err
 		}
-		defer own.Close()
-		if err := own.Start(); err != nil {
+		// Started here rather than at creation because a node kept from an
+		// earlier connect is already built and merely stopped.
+		if err := n.Start(); err != nil {
 			return fmt.Errorf("start rendezvous plane: %w", err)
 		}
-		tr = rendezvous.InviteTransport(own)
+		// Stopped, never closed, and only when nothing else wants it: an
+		// enrolment that does not go on to connect should not leave the radio
+		// busy.
+		defer func() {
+			if meshIdle() {
+				_ = n.Stop()
+			}
+		}()
+		tr = rendezvous.InviteTransport(n)
 	}
 	// Nothing arrives until the node has peers. The inviter is waiting at a
 	// prompt, so a few seconds here costs nothing and asking too early costs a
@@ -1130,4 +1141,57 @@ func InviteMeshName(scanned string) string {
 		return ""
 	}
 	return name
+}
+
+// meshIdle reports whether no mesh session is running.
+//
+// A function rather than an inline check because the invite path shadows
+// `running` with a bool of its own, and reading the package variable through
+// that shadow is exactly the kind of thing that compiles by accident.
+func meshIdle() bool {
+	mu.Lock()
+	defer mu.Unlock()
+	return running == nil
+}
+
+// sharedNode returns the one delivery node this process may have, creating it
+// on first use.
+//
+// The library's persistency is process-global and its destroy does not release
+// it, so "create a second one" is not a thing that can be made to work — it can
+// only be avoided.
+//
+// One consequence is worth stating rather than discovering: the fleet settings
+// are fixed for the life of the process by whichever path built the node. A
+// device that redeems an invite before it has ever connected builds the node
+// from the shipped defaults, and if the mesh it joins names a different preset
+// or cluster, this process keeps the old one until it is restarted. Nothing can
+// rebuild it in place. The defaults match the fleet every mesh currently uses,
+// so this is latent rather than live — and the fix, if it ever bites, is for
+// the app to restart its service after a join that changes those settings.
+func sharedNode(cfgPath string) (*waku.Node, error) {
+	mu.Lock()
+	defer mu.Unlock()
+	if node != nil {
+		return node, nil
+	}
+	// This device's own fleet settings when it has them, since the shipped
+	// defaults may name a different cluster than the mesh it is joining.
+	fleet := phoneDefaults()
+	if onDisk, err := state.LoadConfigUnvalidated(cfgPath); err == nil {
+		if onDisk.Preset != "" {
+			fleet.Preset = onDisk.Preset
+		}
+		if onDisk.Mode != "" {
+			fleet.Mode = onDisk.Mode
+		}
+		fleet.ClusterID = onDisk.ClusterID
+		fleet.EntryNodes = onDisk.EntryNodes
+	}
+	n, err := waku.New(nodeConfig(fleet))
+	if err != nil {
+		return nil, fmt.Errorf("rendezvous plane: %w", err)
+	}
+	node = n
+	return n, nil
 }
