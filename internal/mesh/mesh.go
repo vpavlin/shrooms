@@ -1274,6 +1274,7 @@ func (m *Mesh) announceWith(now time.Time, fresh bool) error {
 		Relay:      m.cfg.Relay,
 		Fresh:      fresh,
 		Credential: m.st.Credential,
+		Boot:       m.bootAddr(now),
 	}
 
 	// Trim until it fits. The announce is padded to a fixed size and Seal
@@ -1559,6 +1560,21 @@ func (m *Mesh) handle(ev waku.Event) {
 	peer, changed := m.roster.Apply(a, now)
 	if peer.DevicePub == nil {
 		return // our own announce
+	}
+
+	// Remember where this peer says its rendezvous node can be reached, for
+	// our next start (ADR-031). Written on the receive path because that is
+	// where the announce is, and cheap: the common case is an address we
+	// already hold, which is one timestamp refresh.
+	//
+	// After checkMembership above, so only a peer this mesh admits can put an
+	// address in our bootstrap list. That is the whole of the trust here: a
+	// member could still point us at a node that feeds selectively, which is
+	// why the configured addresses are never displaced by learned ones.
+	if a.Boot != "" {
+		if err := m.st.NoteBootPeer(a.Boot, now); err != nil {
+			m.log.Debug("could not record a peer's bootstrap address", "err", err)
+		}
 	}
 	if m.timing.mark(peer.ID(), func(x *Milestones) *time.Time { return &x.Discovered }, now) {
 		m.log.Info("peer discovered", "peer", peer.Name,

@@ -107,8 +107,23 @@ func cmdDaemon(args []string) error {
 	if cfg.Preset != "" {
 		nodeCfg["preset"] = cfg.Preset
 	}
-	if len(cfg.EntryNodes) > 0 {
-		nodeCfg["entryNodes"] = cfg.EntryNodes
+	// Configured addresses first, then ones peers published (ADR-031).
+	//
+	// Configured never displaced by learned: an operator who wrote an address
+	// down meant it, and learned ones come from members — who cannot forge an
+	// announce, but could offer a node that answers selectively. Order is the
+	// cheap defence.
+	//
+	// The preset still supplies its own when this is empty, so a node that has
+	// never met anybody behaves exactly as before.
+	entry := append([]string(nil), cfg.EntryNodes...)
+	if learned := st.BootPeers(time.Now()); len(learned) > 0 {
+		entry = append(entry, learned...)
+		log.Info("bootstrapping from addresses peers published",
+			"configured", len(cfg.EntryNodes), "learned", len(learned))
+	}
+	if len(entry) > 0 {
+		nodeCfg["entryNodes"] = entry
 	}
 	// tcpPort, confirmed against the library's own AvailableConfigs rather than
 	// guessed. The binary also contains "p2pTcpPort" and a withP2pTcpPort
