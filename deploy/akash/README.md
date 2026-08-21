@@ -125,10 +125,24 @@ deployment is recreated, so the address is not stable across redeploys. For a
 relay handed out alongside a token, that is a line in a message you were sending
 anyway.
 
-**Neither has been run against a live provider.** They are written from the SDL
-documentation. The part most worth checking is whether a given provider forwards
-UDP this way at all — Kubernetes NodePort supports it, but that is not a promise
-about every Akash provider.
+**Tried, and the no-lease path did not work on the first provider.** Deployed
+`relay-noip.yaml` on zencloud.eu (dseq 28269647), 2026-08-21. The container
+started and read its whole configuration correctly, so the image and the SDL are
+fine — but no forwarded port was ever allocated:
+
+- the console showed only the HTTP ingress URI, with no forwarded port at all;
+- sweeping the whole standard NodePort range (UDP 30000–32767) on the ingress
+  address found nothing answering the relay protocol.
+
+The second check is suggestive rather than conclusive, since a NodePort could
+live on a node address different from the one the ingress hostname resolves to.
+Taken with the empty console, the reading is that this provider does not map UDP
+without a lease.
+
+So **`relay.yaml` and its IP lease is the path that is expected to work**, and
+that is what Akash built leases for — their own announcement names VPNs as the
+motivating case. Whether other providers map UDP without one is still unknown;
+if you try, the sweep above is how to tell quickly.
 
 ### The console URL is not the relay's address
 

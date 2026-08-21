@@ -499,10 +499,12 @@ line in a message you were sending anyway.
   design — `x/deployment` allows AKT only as a top-up to a deployment that
   already exists. Deposits and pricing are `uact`, minted from AKT with
   `tx bme mint-act`. Both descriptors priced in `uakt` until this was hit.
-- **Neither descriptor has been run against a live provider.** Both are written
-  from documentation. The part most worth checking is whether a given provider
-  forwards UDP this way at all — Kubernetes NodePort supports it, but that is
-  not a promise about every Akash provider.
+- **The no-lease path failed on the first provider tried.** The relay ran and
+  read its configuration correctly, so image and descriptor are sound, but no
+  UDP forwarded port was ever allocated — nothing in the console, and nothing
+  answering across the whole standard NodePort range. So the lease may be
+  unavoidable in practice even though it is not required in principle, and
+  `relay.yaml` is the descriptor expected to work. See `deploy/akash/README.md`.
 - **`shrooms-relay -probe host:port` is how you check.** It is a client rather
   than an inspection: two throwaway devices, both registered the way a real one
   would, and a packet relayed between them. A pass means the whole path works,
