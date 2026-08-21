@@ -104,6 +104,15 @@ func cmdStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
 	sock := fs.String("socket", DefaultSocket, "control socket path")
 	asJSON := fs.Bool("json", false, "emit JSON")
+	// Not a second column, a different one.
+	//
+	// Every peer has a synthetic IPv4 alias (ADR-021) and some people work
+	// entirely in it, because a great deal of software still cannot take an
+	// IPv6 address in a server field. Showing both families at once costs
+	// fifteen characters on every row for a reader who wants one of them; this
+	// swaps the column instead, so the table stays the width it was and says
+	// which family it is showing.
+	asV4 := fs.Bool("ipv4", false, "show the synthetic IPv4 addresses instead of the overlay ones")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -142,7 +151,11 @@ func cmdStatus(args []string) error {
 	// hardcoded spaces line up for one mesh and not the next.
 	head := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintf(head, "network\t%s\tpeers %d (%d up)\n", st.Prefix, len(st.Peers), online)
-	fmt.Fprintf(head, "self\t%s  %s\t\n", st.Name, st.Overlay)
+	selfAddr := st.Overlay
+	if *asV4 && st.OverlayV4 != "" {
+		selfAddr = st.OverlayV4
+	}
+	fmt.Fprintf(head, "self\t%s  %s\t\n", st.Name, selfAddr)
 	// More than one mesh: show them before the roster, because "which network
 	// is this peer on" is the first question a split raises.
 	if len(st.Meshes) > 1 {
@@ -164,13 +177,20 @@ func cmdStatus(args []string) error {
 				time.Unix(st.Meshes[0].Expires, 0).Format("2006-01-02"))
 		}
 	}
-	if st.OverlayV4 != "" {
-		// Said plainly, because the second address is the one people ask about:
-		// it exists so browsers can use mesh names on a network with no IPv6.
-		// Said here because a reader who needs IPv4 at all needs to know it is
-		// not just this device: every peer has one, and finding them was
-		// impossible to guess from a line that only ever mentioned ourselves.
-		fmt.Fprintf(head, "ipv4\t%s\tevery peer has one too — `shrooms hosts` writes them all\n",
+	// Whichever family the table is showing, this line shows the other one, so
+	// the pair is always visible without either being repeated.
+	//
+	// Said at all because the second address is the one people ask about: it
+	// exists so that software which cannot take an IPv6 address — which is
+	// still a great deal of software — can use mesh names anyway. And said as a
+	// property of every peer rather than of this device, which was impossible
+	// to guess from a line that only ever mentioned ourselves.
+	switch {
+	case *asV4:
+		fmt.Fprintf(head, "overlay\t%s\tthe real address; the ipv4 ones are a local alias\n",
+			st.Overlay)
+	case st.OverlayV4 != "":
+		fmt.Fprintf(head, "ipv4\t%s\tevery peer has one too — `--ipv4`, or `shrooms hosts`\n",
 			st.OverlayV4)
 	}
 	// What this node has done as a relay, on the node that is one.
@@ -223,11 +243,19 @@ func cmdStatus(args []string) error {
 	// did rather than a column of the same word.
 	multi := len(st.Meshes) > 1
 
+	// Named rather than left to the reader: a column of 198.18 addresses under
+	// a heading that says OVERLAY IP would be a quiet lie about which address
+	// the peer actually holds.
+	addrCol := "OVERLAY IP"
+	if *asV4 {
+		addrCol = "IPV4"
+	}
+
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	if multi {
-		fmt.Fprintln(w, "MESH\tNAME\tOVERLAY IP\tANNOUNCE\tTUNNEL\tENDPOINT\tRX/TX\tCONNECTED IN")
+		fmt.Fprintln(w, "MESH\tNAME\t"+addrCol+"\tANNOUNCE\tTUNNEL\tENDPOINT\tRX/TX\tCONNECTED IN")
 	} else {
-		fmt.Fprintln(w, "NAME\tOVERLAY IP\tANNOUNCE\tTUNNEL\tENDPOINT\tRX/TX\tCONNECTED IN")
+		fmt.Fprintln(w, "NAME\t"+addrCol+"\tANNOUNCE\tTUNNEL\tENDPOINT\tRX/TX\tCONNECTED IN")
 	}
 	for _, p := range st.Peers {
 		ann := "offline"
@@ -272,12 +300,22 @@ func cmdStatus(args []string) error {
 		if p.TunnelAfterS > 0 {
 			took = shortDur(int64(p.TunnelAfterS))
 		}
+		// A peer with no alias shows nothing rather than falling back to its
+		// overlay address: an IPv6 address under a heading that says IPV4 is
+		// worse than an empty cell, because it looks like something you could
+		// paste somewhere.
+		addr := p.Overlay
+		if *asV4 {
+			if addr = p.OverlayV4; addr == "" {
+				addr = "-"
+			}
+		}
 		if multi {
 			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s/%s\t%s\n",
-				p.Mesh, name, p.Overlay, ann, tun, ep, human(p.RxBytes), human(p.TxBytes), took)
+				p.Mesh, name, addr, ann, tun, ep, human(p.RxBytes), human(p.TxBytes), took)
 		} else {
 			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s/%s\t%s\n",
-				name, p.Overlay, ann, tun, ep, human(p.RxBytes), human(p.TxBytes), took)
+				name, addr, ann, tun, ep, human(p.RxBytes), human(p.TxBytes), took)
 		}
 	}
 	if err := w.Flush(); err != nil {
