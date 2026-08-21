@@ -553,6 +553,67 @@ rule around it stay as they are. Offered alongside UDP rather than instead of
 it, and chosen only once UDP has failed — so nobody pays the head-of-line cost
 for a path that was working.
 
+## Making them discoverable
+
+Configuring `relay_addr` by hand on every device is the thing that stops anyone
+using this. Two ways out, and they answer different questions.
+
+### Within a mesh: a member says so
+
+The narrow one, and it needs nothing new. A device that knows a blind relay
+publishes it in its ordinary announce, exactly as `Boot` already carries a
+delivery multiaddr ([ADR-031](adr/031-bootstrap-from-the-mesh-itself.md)).
+Announces are sealed under the network key, so only members read it, and the
+relay never learns it is being advertised.
+
+Configure one device, and the mesh knows. That also solves the address moving:
+a node port changes on redeploy, and reconfiguring one machine beats
+reconfiguring five. Announces are JSON, so the field is additive — no flag day.
+
+What it does not solve is a device that has never been told about any relay.
+
+### Publicly: a well-known topic
+
+The broader one, and the one that makes relays a commons rather than a thing you
+must already know about. A well-known public content topic carries relay
+advertisements; a peer that cannot reach anybody directly subscribes, picks one,
+and uses it. No configuration at all.
+
+**The relay must not be what publishes.** A blind relay has no Delivery node —
+that is what makes it 2.5 MB, free of cgo, and cheap enough to run on the
+smallest tier there is. Giving it a Waku node to publish pings would cost the
+properties that made it worth running.
+
+It does not need one. Whoever runs a relay is already a shrooms user with a
+Delivery node, so **their node advertises it** and the relay stays a dumb
+forwarder that never knows it is listed. The advertisement is a signed record —
+address, whether a token is needed, an expiry — and it costs the operator
+nothing but a config line.
+
+**Verification is already built.** An advertisement is a claim, and the
+routability challenge is the answer: a peer probes before trusting, exactly as
+`shrooms-relay -probe` does, and a relay that does not forward is simply not
+used. So a poisoned listing costs a round trip, not a connection.
+
+**What it risks, stated plainly:**
+
+- **Anyone can advertise.** Including a relay run to watch who uses it. The
+  traffic-analysis surface is already documented above and does not change —
+  but a public list makes it easy to offer that surface to strangers at scale,
+  which is different from a friend offering it to you. Mitigations are ordinary:
+  prefer relays that work, keep several, and never make one sticky.
+- **It is a list, and lists are blockable.** A censor can take the topic. That
+  is true of the rendezvous plane already, so it adds a target rather than a
+  weakness.
+- **It will fill with junk.** Expired entries, dead hosts, optimistic
+  advertisements. Whatever consumes it has to treat every entry as a candidate
+  to be tested rather than a fact.
+
+**The decision to make:** whether relay advertisements ride the *existing*
+public rendezvous plane, or a topic of their own. Sharing means no new
+infrastructure and the anonymity of other traffic; a separate topic is easier to
+reason about and easier to block. Worth choosing before building.
+
 ## The decision
 
 **Is a blind relay for a stranger you trust a little, or for the public?**
