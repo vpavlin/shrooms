@@ -39,6 +39,18 @@ Build it yourself with:
 Check any relay, yours or somebody else's, with `shrooms-relay -probe` — see
 below.
 
+## Publish the image first
+
+The descriptors reference `ghcr.io/vpavlin/shrooms-relay:latest`, which does not
+exist until somebody pushes it. Akash providers are amd64, so build for that
+explicitly:
+
+    docker build --platform linux/amd64 \
+      -f docker/relay.Dockerfile -t ghcr.io/vpavlin/shrooms-relay:latest .
+    docker push ghcr.io/vpavlin/shrooms-relay:latest
+
+It has to be public — a provider pulls it with no credentials of yours.
+
 ## On Akash
 
 Two descriptors here. **Start with `relay-noip.yaml`.**

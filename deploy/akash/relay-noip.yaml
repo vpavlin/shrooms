@@ -29,6 +29,16 @@
 # That stands up two throwaway devices, registers both, and relays a packet
 # between them, so a pass means the path works end to end rather than that
 # something is listening.
+#
+# BEFORE THIS WILL DEPLOY: the image below does not exist yet. Publish it, or
+# point `image:` at wherever you put it. Akash providers are amd64, so build for
+# that explicitly even if you are not on it:
+#
+#     docker build --platform linux/amd64 \
+#       -f docker/relay.Dockerfile -t ghcr.io/vpavlin/shrooms-relay:latest .
+#     docker push ghcr.io/vpavlin/shrooms-relay:latest
+#
+# The image must be public, or the provider cannot pull it.
 version: "2.0"
 
 services:
