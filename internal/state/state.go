@@ -244,12 +244,24 @@ type Config struct {
 	// other directly. Only useful on a node with a reachable address.
 	Relay bool
 
-	// RelayAddr pins a specific relay, overriding discovery.
+	// RelayAddr pins relays, overriding discovery. One address, or several
+	// separated by commas.
 	//
-	// Normally empty. Relays announce themselves like any other peer and are
-	// picked up from the roster, so no node needs to be told where one is. Kept
-	// as an escape hatch: bringing up a mesh whose relay has not announced yet,
-	// or forcing a particular relay while debugging.
+	// A relay that is a member of this mesh announces itself and is picked up
+	// from the roster, so pinning one is only an escape hatch — bringing up a
+	// mesh whose relay has not announced yet, or forcing a particular one while
+	// debugging.
+	//
+	// A blind relay is different: it holds no network key and runs no delivery
+	// node, so it cannot announce itself and *must* be configured. Several are
+	// worth having, because a relay somebody else runs may be busy, redeployed
+	// at a new port, or simply gone.
+	//
+	// This device registers with all of them and sends through whichever is
+	// answering. That is deliberate and not merely redundant: a relay can only
+	// forward to a peer registered with it, so if each end chose its own
+	// favourite they would not meet. Registering everywhere makes any relay the
+	// sender picks one the destination is already known at.
 	RelayAddr string
 
 	// RelayToken authenticates us to a blind relay that wants one

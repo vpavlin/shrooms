@@ -35,6 +35,17 @@ Two lines of config, both from whoever offered you the relay:
     relay_addr  = "203.0.113.10:31760"
     relay_blind = "true"
 
+List several, separated by commas, and the device registers with all of them:
+
+    relay_addr = "203.0.113.10:31760, 198.51.100.7:32100"
+
+That is not only redundancy. A relay can forward only between peers that have
+both registered with it, so if two devices each picked their own favourite from
+a list they would never meet. Registering everywhere means whichever one the
+sender chooses already knows the destination. Traffic goes through the first
+that is answering, in the order you wrote them, so devices given the same list
+agree without negotiating.
+
 and, if the operator requires one:
 
     relay_token = "the token they gave you"

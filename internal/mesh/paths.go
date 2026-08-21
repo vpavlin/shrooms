@@ -100,15 +100,58 @@ func (m *Mesh) handleRelayFrame(payload []byte, from netip.AddrPort) ([]byte, co
 		return nil, nil, false
 	}
 
-	// Client role: unwrap and hand to WireGuard.
+	// Client role.
 	f, err := relay.Decode(m.frameKey, payload)
-	if err != nil || f.Type != relay.TypeForward {
+	if err != nil {
+		return nil, nil, false
+	}
+
+	// A blind relay installs nothing until we prove we receive at the address
+	// we registered from, so answering this is not optional — without it a
+	// registration is never completed and the relay looks like it is ignoring
+	// us (docs/blind-relays.md).
+	//
+	// The nonce is echoed straight back. It is not a secret and proves nothing
+	// on its own; what it proves is that it reached this socket, which is the
+	// entire point and is why an attacker registering somebody else's address
+	// cannot answer.
+	if f.Type == relay.TypeChallenge {
+		m.answerChallenge(f.Nonce, from)
+		return nil, nil, false
+	}
+	if f.Type != relay.TypeForward {
 		return nil, nil, false
 	}
 	// f.Src is already the handle the sender registered under — a tag on a
 	// blind relay — so it is exactly what we must address to reply.
 	ep := wg.NewRelayEndpoint(m.frameKey, from, m.relayHandle(m.st.Identity.WGPub), f.Src)
 	return f.Payload, ep, true
+}
+
+// answerChallenge completes a registration with a blind relay.
+//
+// Also the moment we learn a relay is alive: it answered, from the address we
+// sent to, which is more than a registration ever tells us on its own. A relay
+// that stops answering stops being chosen, which is what makes several
+// configured relays useful rather than merely redundant.
+func (m *Mesh) answerChallenge(nonce [relay.NonceLen]byte, from netip.AddrPort) {
+	ep, err := m.dev.Bind.ParseEndpoint(from.String())
+	if err != nil {
+		return
+	}
+	frame := relay.EncodeConfirm(m.frameKey, m.relayHandle(m.st.Identity.WGPub),
+		nonce, m.st.Identity.DevicePriv, time.Now())
+	if err := m.dev.Bind.SendControl(wg.SubRelay, frame, ep); err != nil {
+		m.log.Debug("could not answer a relay's routability challenge", "relay", from, "err", err)
+		return
+	}
+	m.relayMu.Lock()
+	if m.relayLive == nil {
+		m.relayLive = make(map[netip.AddrPort]time.Time)
+	}
+	m.relayLive[from] = time.Now()
+	m.relayMu.Unlock()
+	m.log.Debug("answered a relay's routability challenge", "relay", from)
 }
 
 // endpointAddrPort extracts the source address from a wireguard-go endpoint.
@@ -149,9 +192,21 @@ type relayChoice struct {
 // device ID wins — deliberately not lowest RTT, which each side measures
 // differently and would therefore disagree on.
 func (m *Mesh) selectRelay(now time.Time) relayChoice {
-	// An explicit relay_addr overrides discovery.
-	if m.relayPin.IsValid() {
-		return relayChoice{ok: true, addr: m.relayPin}
+	// Configured relays override discovery.
+	//
+	// The first that has answered a routability challenge recently, falling
+	// back to the first configured. Order is the operator's, so every device
+	// given the same list agrees on a preference without negotiating one —
+	// which matters because a relay can only forward between peers that have
+	// both registered with it.
+	//
+	// Liveness only ever *promotes* the same ordering, never reshuffles it: a
+	// relay that has gone quiet is skipped, and the rest keep their order.
+	if len(m.relayPins) > 0 {
+		if ap, ok := m.liveRelay(now); ok {
+			return relayChoice{ok: true, addr: ap}
+		}
+		return relayChoice{ok: true, addr: m.relayPins[0]}
 	}
 	// A relay is publicly reachable by definition, so it has no use for one.
 	if m.relaySrv != nil {
@@ -215,14 +270,46 @@ func (m *Mesh) registerWithRelay() {
 	}
 	m.relayRegistered = now
 
-	ep, err := m.dev.Bind.ParseEndpoint(rl.addr.String())
-	if err != nil {
-		return
+	// Registered with every configured relay, not only the one carrying
+	// traffic. A relay can only forward to a peer it knows, so being present
+	// everywhere is what lets the *sender* choose freely — otherwise two
+	// devices with the same list but different opinions about which is fastest
+	// would never meet.
+	//
+	// It costs one small packet per relay per RelayRefresh, which is nothing
+	// against being unreachable because the peer preferred a different one.
+	targets := m.relayPins
+	if len(targets) == 0 {
+		targets = []netip.AddrPort{rl.addr}
 	}
 	frame := relay.EncodeRegister(m.frameKey, m.relayHandle(m.st.Identity.WGPub), m.st.Identity.DevicePriv, now)
-	if err := m.dev.Bind.SendControl(wg.SubRelay, frame, ep); err != nil {
-		m.log.Debug("relay registration failed", "relay", rl.addr, "err", err)
+	for _, at := range targets {
+		ep, err := m.dev.Bind.ParseEndpoint(at.String())
+		if err != nil {
+			continue
+		}
+		if err := m.dev.Bind.SendControl(wg.SubRelay, frame, ep); err != nil {
+			m.log.Debug("relay registration failed", "relay", at, "err", err)
+		}
 	}
+}
+
+// RelayLiveFor is how long a relay counts as answering.
+//
+// Comfortably more than one refresh interval, so a single lost challenge does
+// not demote a relay that is fine.
+const RelayLiveFor = 3 * RelayRefresh
+
+// liveRelay is the first configured relay that has answered recently.
+func (m *Mesh) liveRelay(now time.Time) (netip.AddrPort, bool) {
+	m.relayMu.Lock()
+	defer m.relayMu.Unlock()
+	for _, at := range m.relayPins {
+		if seen, ok := m.relayLive[at]; ok && now.Sub(seen) < RelayLiveFor {
+			return at, true
+		}
+	}
+	return netip.AddrPort{}, false
 }
 
 // probeAll probes every known peer's candidates.

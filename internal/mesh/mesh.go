@@ -110,8 +110,19 @@ type Mesh struct {
 
 	// blind says the relay we use is not a member, so handles are tags.
 	blind bool
+
+	// relayLive records when each configured relay last answered a routability
+	// challenge, which is the only positive signal a client ever gets from one.
+	// A registration is unacknowledged; a challenge is not.
+	relayMu   sync.Mutex
+	relayLive map[netip.AddrPort]time.Time
 	// relaySrv is non-nil only when this node acts as a relay for others.
 	relaySrv *relay.Server
+	// relayPins are the hand-configured relays, in the order given. This
+	// device registers with all of them; see selectRelay for which one carries
+	// traffic.
+	relayPins []netip.AddrPort
+
 	// relayPin is a hand-configured relay_addr. Normally empty: relays are
 	// discovered from the roster instead. Kept as an escape hatch for a mesh
 	// whose relay has not announced yet, and for the container tests.
@@ -300,16 +311,24 @@ func New(log *slog.Logger, cfg state.Config, st *state.State, node *waku.Node, d
 			m.frameKey = relay.OpenKey()
 		}
 	}
-	if cfg.RelayAddr != "" {
-		if ap, err := netip.ParseAddrPort(cfg.RelayAddr); err == nil {
-			m.relayPin = ap
-			log.Info("relay pinned by config", "addr", ap, "blind", m.blind,
-				"token", cfg.RelayToken != "")
-		} else {
-			log.Warn("ignoring unparseable relay_addr", "value", cfg.RelayAddr, "err", err)
+	for _, one := range strings.Split(cfg.RelayAddr, ",") {
+		one = strings.TrimSpace(one)
+		if one == "" {
+			continue
 		}
+		ap, err := netip.ParseAddrPort(one)
+		if err != nil {
+			log.Warn("ignoring unparseable relay_addr", "value", one, "err", err)
+			continue
+		}
+		m.relayPins = append(m.relayPins, ap)
 	}
-	if m.blind && !m.relayPin.IsValid() {
+	if len(m.relayPins) > 0 {
+		m.relayPin = m.relayPins[0]
+		log.Info("relays pinned by config", "addrs", m.relayPins, "blind", m.blind,
+			"token", cfg.RelayToken != "")
+	}
+	if m.blind && len(m.relayPins) == 0 {
 		// A blind relay cannot announce itself — it holds no network key and
 		// has no delivery node — so there is nothing for discovery to find and
 		// the setting does nothing on its own.

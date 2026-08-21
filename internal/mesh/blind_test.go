@@ -189,3 +189,41 @@ func TestTwoMembersRelayThroughAStranger(t *testing.T) {
 		t.Error("a real tunnel key was exposed to the relay")
 	}
 }
+
+// Several relays are only useful if both ends can still meet. A relay forwards
+// between peers registered with it, so if each end picked its own favourite
+// they would never find each other — which is why registration goes to all of
+// them and only the *sender's* choice varies.
+func TestSelectionPrefersALiveRelayInConfiguredOrder(t *testing.T) {
+	first := netip.MustParseAddrPort("198.51.100.1:31000")
+	second := netip.MustParseAddrPort("198.51.100.2:31000")
+	third := netip.MustParseAddrPort("198.51.100.3:31000")
+	now := time.Now()
+
+	m := &Mesh{relayPins: []netip.AddrPort{first, second, third}}
+
+	// Nothing has answered: the operator's first choice stands, so a fresh
+	// device is not paralysed waiting for a signal it has never had.
+	if got := m.selectRelay(now); !got.ok || got.addr != first {
+		t.Fatalf("with nothing live, chose %v, want %v", got.addr, first)
+	}
+
+	// Only the third is answering. Order is preserved among the live, so every
+	// device given this list makes the same call.
+	m.relayLive = map[netip.AddrPort]time.Time{third: now}
+	if got := m.selectRelay(now); got.addr != third {
+		t.Errorf("chose %v, want the only live relay %v", got.addr, third)
+	}
+
+	// The second comes back; it is earlier in the operator's order, so it wins.
+	m.relayLive[second] = now
+	if got := m.selectRelay(now); got.addr != second {
+		t.Errorf("chose %v, want the earliest live relay %v", got.addr, second)
+	}
+
+	// And a relay that stopped answering is no longer live.
+	m.relayLive = map[netip.AddrPort]time.Time{second: now.Add(-RelayLiveFor - time.Minute)}
+	if got := m.selectRelay(now); got.addr != first {
+		t.Errorf("a stale relay was still chosen: %v", got.addr)
+	}
+}
