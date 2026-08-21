@@ -36,17 +36,57 @@ Build it yourself with:
 
     docker build -f docker/relay.Dockerfile -t shrooms-relay .
 
+Check any relay, yours or somebody else's, with `shrooms-relay -probe` — see
+below.
+
 ## On Akash
 
-`relay.yaml` here is a starting point, and is **not yet verified against a live
-provider** — it is written from the SDL documentation rather than from a
-deployment that has run. The IP lease is the part most likely to need
-adjustment.
+Two descriptors here. **Start with `relay-noip.yaml`.**
 
-The lease is also the cost that cannot be designed away. Akash's standard
-ingress terminates HTTP and HTTPS, and a relay is UDP, so it needs a dedicated
-public IPv4 — usually more than the compute underneath it. What Akash gives in
-return is unmetered traffic, which for a relay is the resource that matters.
+`relay.yaml` takes an IP lease, which is the expensive part — often more than
+the compute under it. What a lease actually buys is the ability to *choose* a
+port. Akash's own announcement puts the limitation it removed plainly:
+
+> some services (like a VPN, for example) must use standard ports in the 0-1024
+> range, which isn't possible unless you have a dedicated IP
+
+Before leases you were still exposed, on a port the provider picked; you just
+had no say in which. **A relay does not need a say.** It is reached at whatever
+address and port its users are configured with, and that is an arbitrary value
+either way. So `relay-noip.yaml` exposes UDP with no lease, the provider assigns
+a high port, and `provider lease-status` tells you which.
+
+The real cost of going without is that the assigned port can change when the
+deployment is recreated, so the address is not stable across redeploys. For a
+relay handed out alongside a token, that is a line in a message you were sending
+anyway.
+
+**Neither has been run against a live provider.** They are written from the SDL
+documentation. The part most worth checking is whether a given provider forwards
+UDP this way at all — Kubernetes NodePort supports it, but that is not a promise
+about every Akash provider.
+
+### Checking it works
+
+    shrooms-relay -probe <host>:<port>
+
+This is a client, not an inspection: it stands up two throwaway devices,
+registers both the way a real one would, and relays a packet between them. A
+pass means the whole path works — NAT, load balancer, forwarded port and all —
+rather than that something is listening.
+
+    probing relay.example.com:31234 (no token)
+      first   device registered in 41ms (challenge answered)
+      second  device registered in 39ms (challenge answered)
+      packet relayed in 42ms
+
+    OK — relay.example.com:31234 forwards, and cannot be pointed at an address
+    that does not answer
+
+A failure names the likely causes, since from outside they look identical:
+unreachable, port not forwarded, or the wrong token.
+
+Add `-token <t>` if the relay wants one.
 
 ## Settings
 

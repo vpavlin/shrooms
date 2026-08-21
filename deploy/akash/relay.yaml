@@ -12,10 +12,15 @@
 # one refresh interval. Redeploy it whenever you like — the cost is a few
 # seconds of relayed traffic, and nothing has to be restored.
 #
-# UNVERIFIED AGAINST A LIVE PROVIDER. This is written from the SDL
-# documentation, not from a deployment that has been accepted and run. The IP
-# lease section in particular is the part most likely to need adjusting, and
-# provider support for leases varies. Treat it as a starting point.
+# This variant takes an IP lease, which buys a *chosen* port. You probably do
+# not need it — see relay-noip.yaml, which is cheaper and is the one to try
+# first. A relay is reached by whatever address:port its users are told, and
+# nothing about it needs port 51820.
+#
+# UNVERIFIED AGAINST A LIVE PROVIDER. Written from the SDL documentation, not
+# from a deployment that has been accepted and run. Check it with:
+#
+#     shrooms-relay -probe <host>:<port>
 version: "2.0"
 
 endpoints:

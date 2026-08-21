@@ -475,24 +475,39 @@ So there is no volume, no env secret, and nothing to restore. `internal/relay`
 depends on nothing native either, which means the whole thing is a 2.5 MB
 scratch image running as an unprivileged user — see `deploy/akash/`.
 
-- **UDP needs an IP lease**, and it is the one cost that cannot be designed
-  away: Akash's standard ingress terminates HTTP and HTTPS, and a relay is UDP.
-  A dedicated public IPv4 usually costs more than the compute under it. What
-  Akash gives back is unmetered traffic, which for a relay is the resource that
-  matters. Not every provider offers leases.
-- **The SDL in `deploy/akash/relay.yaml` has not been run against a live
-  provider.** It is written from the documentation. The lease section is the
-  part most likely to need adjusting, and saying so is more useful than
-  implying it has been tested.
+**The IP lease turns out not to be needed**, which is worth correcting because
+an earlier version of this note treated it as the unavoidable cost. Checked
+against Akash's own announcement of leases rather than assumed: what a lease
+buys is the ability to *choose* a port —
 
-There is an escape from the lease, and it deserves naming because it arrives
-with a *different* justification from the one already refused. A relay speaking
-TCP on 443 would need no lease — standard ingress, any provider, cheapest tier.
-[ADR-030](adr/030-tailscale-shaped-not-tor-shaped.md) declined TLS-wrapping as
-censorship machinery and that refusal stands. "It makes a relay deployable on
-cheap ephemeral infrastructure" is a separate argument and a better one. It is
-also a second relay transport, so it is a real piece of work rather than a
-setting.
+> some services (like a VPN, for example) must use standard ports in the 0-1024
+> range, which isn't possible unless you have a dedicated IP
+
+Before leases a service was still exposed, on a port the provider picked; you
+simply had no say in which. **A relay does not need a say.** It is reached at
+whatever address and port its users are configured with, and that value is
+arbitrary either way. So `deploy/akash/relay-noip.yaml` takes no lease, and the
+cost drops to the compute — which for something that copies bytes between two
+sockets is close to nothing.
+
+What going without costs is a stable address: the assigned port can change when
+a deployment is recreated. For a relay handed out alongside a token, that is a
+line in a message you were sending anyway.
+
+- **Neither descriptor has been run against a live provider.** Both are written
+  from documentation. The part most worth checking is whether a given provider
+  forwards UDP this way at all — Kubernetes NodePort supports it, but that is
+  not a promise about every Akash provider.
+- **`shrooms-relay -probe host:port` is how you check.** It is a client rather
+  than an inspection: two throwaway devices, both registered the way a real one
+  would, and a packet relayed between them. A pass means the whole path works,
+  NAT and forwarded port included, rather than that something is listening.
+
+This also removes the argument for a TCP relay transport that was recorded here.
+That idea existed because port 443 was the way to avoid a lease; with no lease
+needed, the only remaining argument for it is the censorship one
+[ADR-030](adr/030-tailscale-shaped-not-tor-shaped.md) already refused. Dropping
+it.
 
 ## The decision
 

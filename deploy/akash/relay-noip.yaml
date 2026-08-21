@@ -1,0 +1,84 @@
+---
+# A blind relay on Akash without an IP lease (docs/blind-relays.md).
+#
+# Try this one first. The lease is the expensive part of the other file — often
+# more than the compute under it — and what it actually buys is the ability to
+# *choose* a port. Akash's own announcement of IP leases puts the limitation it
+# removed plainly: "some services (like a VPN, for example) must use standard
+# ports in the 0-1024 range, which isn't possible unless you have a dedicated
+# IP". Before leases you were still exposed, on a port the provider picked; you
+# just had no say in which.
+#
+# A relay does not need a say. It is reached at whatever address and port its
+# users are configured with, and that is an arbitrary value either way. So the
+# provider assigns a high port, `provider lease-status` tells you which, and
+# that host:port is the relay's address.
+#
+# The one real cost is that the assigned port can change when the deployment is
+# recreated, so the relay's address is not stable across redeploys. For a relay
+# handed out together with a token that is a line in the message you were
+# sending anyway.
+#
+# UNVERIFIED AGAINST A LIVE PROVIDER, and the part most worth checking is
+# whether a given provider forwards UDP this way at all — Kubernetes NodePort
+# supports it, but that is not a promise about every Akash provider. Check with
+# the address lease-status gives you:
+#
+#     shrooms-relay -probe <host>:<port>
+#
+# That stands up two throwaway devices, registers both, and relays a packet
+# between them, so a pass means the path works end to end rather than that
+# something is listening.
+version: "2.0"
+
+services:
+  relay:
+    image: ghcr.io/vpavlin/shrooms-relay:latest
+    env:
+      # Open to anyone, which is safe because a registration installs nothing
+      # until the registrant echoes a nonce sent to the address it claims — so
+      # this cannot be pointed at a third party. Set SHROOMS_RELAY_TOKEN if you
+      # would rather choose who uses it.
+      #
+      # The ceilings are the part worth thinking about: past this point what is
+      # being spent is your bandwidth. 12.5 MB/s is 100 Mbit, and the per-device
+      # figure stops the first heavy user taking all of it.
+      - SHROOMS_RELAY_BYTES_PER_SECOND=12500000
+      - SHROOMS_RELAY_PEER_BYTES_PER_SECOND=2500000
+      - SHROOMS_RELAY_MAX_REGISTRATIONS=512
+      - SHROOMS_RELAY_MAX_PER_SOURCE=8
+    expose:
+      - port: 51820
+        proto: udp
+        to:
+          - global: true
+        # No `as:` and no `ip:`. The provider assigns the external port; read it
+        # back from `provider lease-status` and give that to clients.
+
+profiles:
+  compute:
+    relay:
+      resources:
+        cpu:
+          # A relay copies bytes between two sockets. The work is per packet and
+          # trivial; what it needs is the network, not the processor.
+          units: 0.1
+        memory:
+          size: 128Mi
+        storage:
+          # Nothing is written. There is no identity to keep and no state to
+          # lose, so this is room to run rather than a place to keep anything.
+          size: 256Mi
+
+  placement:
+    dcloud:
+      pricing:
+        relay:
+          denom: uakt
+          amount: 1000
+
+deployment:
+  relay:
+    dcloud:
+      profile: relay
+      count: 1

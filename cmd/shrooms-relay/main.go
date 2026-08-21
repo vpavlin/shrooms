@@ -70,8 +70,15 @@ func run() error {
 		"total forwarding ceiling; 0 for unlimited")
 	peerRate := fs.Int64("peer-bytes-per-second", envInt64("SHROOMS_RELAY_PEER_BYTES_PER_SECOND", 0),
 		"per-device forwarding ceiling; 0 for unlimited")
+	// Checking a relay from outside is the same binary, because the thing you
+	// want to check is usually somewhere you cannot run a shell.
+	probeAt := fs.String("probe", "",
+		"do not serve; check that the relay at this host:port forwards, and exit")
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		return err
+	}
+	if *probeAt != "" {
+		return probe(*probeAt, *token)
 	}
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
