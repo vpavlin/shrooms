@@ -36,6 +36,37 @@ provider's network does not carry it.
 **So: try without a lease, and be ready to move providers.** One probe settles
 it, and a provider that will not forward UDP costs only the minutes to find out.
 
+### When the provider you want does not bid
+
+A relay asks for almost nothing — 0.1 CPU, 128Mi of memory — and some providers
+will not bid on a deployment that small. Observed 2026-08-21: seventeen
+providers bid on `relay-noip.yaml`, and digitalfrontier.so was not among them,
+though it had bid on and won the *same* deployment with an IP lease attached. A
+lease is separately billable, which is enough to carry a request the compute
+alone does not.
+
+The lever is the resource profile, not the price cap: the cap is a maximum you
+will pay, and bids came in at well under a thousandth of it. So if a particular
+provider will not bid, ask for more:
+
+    resources:
+      cpu:
+        units: 0.5
+      memory:
+        size: 512Mi
+      storage:
+        size: 1Gi
+
+That is buying bid eligibility rather than capacity — the relay does not need
+any of it — but it is still pennies, and a relay you can reach beats a cheaper
+one nobody will host. This is a hypothesis that fits the evidence rather than a
+confirmed rule; if raising it does not bring a provider in, the reason is
+something else.
+
+A GPU provider is a separate case and probably not worth chasing. Europlots
+advertises six GPU capability keys and thirteen active leases, so it is busy
+with work that pays far better than a relay.
+
 ### Choosing a provider that can do it
 
 Providers advertise IP-lease support under **two different attribute keys**, and
