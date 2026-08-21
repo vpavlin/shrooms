@@ -28,7 +28,19 @@ MOBILE_VER=$(awk '/golang.org\/x\/mobile v/ {print $2; exit}' mobile/go.mod)
 [ -n "$MOBILE_VER" ] || { echo "no golang.org/x/mobile version in mobile/go.mod"; exit 1; }
 
 echo "==> binding (container: JDK + Go 1.25 + gomobile $MOBILE_VER)"
+# A persistent module cache, because this container is --rm and without one
+# every build re-downloads x/mobile, x/tools, x/mod and x/sync and recompiles
+# gomobile from source. That was minutes of every build and every publish, paid
+# identically each time for bytes that had not changed — and publishing rebuilds
+# the binding unconditionally, so tonight it was paid twice in a row.
+#
+# Named volumes rather than a host path: docker owns them, so nothing here has
+# to reason about the uid mismatch the chown below exists to undo.
+docker volume create shrooms-gomod >/dev/null
+docker volume create shrooms-gocache >/dev/null
+
 docker run --rm \
+    -v shrooms-gomod:/go/pkg/mod -v shrooms-gocache:/root/.cache/go-build \
     -v "$PWD:/src" -v "$SDK:/sdk:ro" -w /src/mobile \
     -e ANDROID_HOME=/sdk -e ANDROID_NDK_HOME="/sdk/ndk/$NDK_VER" \
     -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
