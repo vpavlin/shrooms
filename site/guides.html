@@ -33,7 +33,8 @@
     <p class="lede">
         Eight things you will want once the mesh is up, each with the commands
         and the config that do it — and, where something is fiddly or unproven,
-        the sentence that says so.
+        the sentence that says so. Including how to use a relay somebody else
+        runs, which cannot read what it carries.
     </p>
     <p class="sub">
         Everything here is what the daemon does today. Anything planned and not
@@ -698,6 +699,109 @@ learns it from whoever is up.</code></pre>
 … port mapped by the router  mesh=default external=178.213.45.235:51821 proto=natpmp lifetime=2h0m0s</code></pre>
 
 <pre><code>port_mapping = "false"    <span class="c"># if you would rather it did not ask</span></code></pre>
+
+<h3>Relays run by other people</h3>
+
+<p>
+    Everything above assumes the relay is one of your own machines. It does not
+    have to be. A <strong>blind relay</strong> forwards for meshes it is not a
+    member of: it holds no network key, has no roster, and cannot read a byte of
+    what it carries. Two lines point a device at one:
+</p>
+
+<pre><code>relay_blind = ["203.0.113.10:31760"]
+relay_token = "…"     <span class="c"># only if its operator asks for one</span></code></pre>
+
+<p>
+    List several and the device takes them in the order you wrote them, using
+    the first that answers. It registers with at most two — these are machines
+    other people pay for, and a table slot on a relay carrying none of your
+    traffic is pure imposition.
+</p>
+
+<p>
+    <strong>A blind relay has to be configured, and cannot be discovered.</strong>
+    A relay of your own announces itself and every node picks it up; a stranger's
+    cannot, because announcing means holding the network key, which is exactly
+    what it must never have. That is the same property that makes it safe to
+    use, seen from the other side.
+</p>
+
+<h3>What the operator can and cannot see</h3>
+
+<p>
+    <strong>Cannot:</strong> message contents, your network key, who is on your
+    mesh, your device names, anything from the control plane. The traffic is
+    WireGuard, encrypted between two devices whose keys the relay does not hold.
+    That is arithmetic rather than a promise about anybody's good behaviour.
+</p>
+
+<p>
+    <strong>Can:</strong> opaque per-relay tags, the addresses they connect from,
+    which pairs exchange packets, how much, and when. Devices register under a
+    tag derived from your mesh's own key rather than under their tunnel key, so
+    the tags mean nothing on any other relay and two operators comparing notes
+    see unrelated numbers. It is still a traffic pattern. Compared with running
+    your own relay this is a real change: today the only machines seeing that
+    are yours.
+</p>
+
+<h3>Why an open one is not an open proxy</h3>
+
+<p>
+    A relay open to anyone sounds like something that could be pointed at a
+    third party. It cannot. A registration installs nothing until the registrant
+    echoes a nonce sent to the address it claims — the return-routability check
+    ICE and QUIC already use — so an attacker registering somebody else's
+    address never receives it. Relaying is also one packet in, one packet out,
+    so there is no amplification to be had. What is left to spend is the
+    operator's bandwidth, which is what the ceilings are for.
+</p>
+
+<h3>Running one</h3>
+
+<p>
+    It is a 2.5&nbsp;MB container with no state, no volume and no identity, so a
+    redeployed relay costs one refresh interval and nothing has to be restored:
+</p>
+
+<pre><code><span class="cmd">docker run -d -p 51820:51820/udp \
+  -e SHROOMS_RELAY_BYTES_PER_SECOND=12500000 \
+  ghcr.io/vpavlin/shrooms-relay:latest</span></code></pre>
+
+<p>
+    Set the bandwidth ceiling. Open with none is an unbounded claim on a machine
+    you pay for, and the relay says so at startup rather than letting you find
+    out from a bill. On a home connection add
+    <code>SHROOMS_RELAY_MAP_PORT=true</code> and it asks the router to forward
+    the port over PCP or NAT-PMP — not hole punching, which cannot work for a
+    relay, just the forward you would otherwise click into a web interface.
+</p>
+
+<p>
+    Check any relay, yours or somebody else's, before relying on it. This is a
+    client rather than an inspection: it registers two throwaway devices and
+    relays a packet between them, so a pass means the whole path works rather
+    than that something is listening.
+</p>
+
+<pre><code><span class="cmd">shrooms-relay -probe 203.0.113.10:31760</span>
+  first   device registered in 32ms (challenge answered)
+  second  device registered in 35ms (challenge answered)
+  packet relayed in 33ms
+
+OK — forwards, and cannot be pointed at an address that does not answer</code></pre>
+
+<p>
+    On ephemeral compute the whole thing costs a few tens of cents a month —
+    measured, on 2026-08-21, at fifteen cents. That number is the point rather
+    than a boast: at five dollars a relay is a subscription somebody decides to
+    keep, and at fifteen cents it is not a decision. See
+    <a href="https://github.com/vpavlin/shrooms/blob/master/RELAYS.md">RELAYS.md</a>
+    for a list people share, and
+    <a href="https://github.com/vpavlin/shrooms/blob/master/docs/blind-relays.md">docs/blind-relays.md</a>
+    for how it works and what it does not promise.
+</p>
 
 <p>
     A wrong answer is cheap, because every candidate is probed before it is
