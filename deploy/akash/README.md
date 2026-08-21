@@ -87,7 +87,21 @@ explicitly:
       -f docker/relay.Dockerfile -t ghcr.io/vpavlin/shrooms-relay:latest .
     docker push ghcr.io/vpavlin/shrooms-relay:latest
 
-It has to be public — a provider pulls it with no credentials of yours.
+**A newly pushed ghcr package is private, and the REST API cannot change that** —
+it is a web-UI setting. A provider pulls with no credentials of yours, so until
+it is flipped the deployment fails on the pull:
+
+    https://github.com/users/vpavlin/packages/container/shrooms-relay/settings
+    → Danger Zone → Change visibility → Public
+
+Check it from outside rather than trusting the setting:
+
+    TOKEN=$(curl -s "https://ghcr.io/token?scope=repository:vpavlin/shrooms-relay:pull&service=ghcr.io" \
+      | python3 -c "import json,sys;print(json.load(sys.stdin)['token'])")
+    curl -s -o /dev/null -w "%{http_code}\n" -H "Authorization: Bearer $TOKEN" \
+      https://ghcr.io/v2/vpavlin/shrooms-relay/manifests/latest
+
+`200` means a provider can pull it. `403` means it is still private.
 
 ## On Akash
 
