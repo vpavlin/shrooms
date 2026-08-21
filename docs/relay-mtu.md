@@ -31,6 +31,27 @@ tunnel packet 1098B  → arrives
 tunnel packet 1128B  → does not
 ```
 
+## This is not about blind relays
+
+The overhead is the relay protocol, not who runs the relay. A relay that is a
+member of your mesh adds exactly the same 86 bytes, so a phone relayed through
+your own VPS hits the same wall. Blind relays are simply where it surfaced,
+because they prompted the first deliberate bulk transfer over a relay.
+
+It was worse before this was found. At the previous tunnel MTU of 1420 a relayed
+packet was 1566 bytes on the wire — over the 1500 an ordinary Ethernet path
+carries — so **large relayed transfers failed on every path**, including through
+a relay of your own on a good network. Nobody noticed because bulk transfer over
+a relay is not a thing people do on purpose.
+
+| tunnel MTU | relayed, on the wire | 1500 path | a phone's ~1250 path |
+|---|---|---|---|
+| 1420 (before) | 1566 | no | no |
+| 1280 (now) | 1426 | yes | no |
+| with path MTU discovery | adapts | yes | yes |
+
+So dropping to 1280 fixed the ordinary case and left the one this was found on.
+
 ## Why lowering the MTU does not fix it
 
 The overlay is IPv6, and **1280 is the IPv6 minimum**. The kernel refuses to put
