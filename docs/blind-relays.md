@@ -500,10 +500,12 @@ line in a message you were sending anyway.
   already exists. Deposits and pricing are `uact`, minted from AKT with
   `tx bme mint-act`. Both descriptors priced in `uakt` until this was hit.
 - **It works without a lease, on a provider that forwards UDP.** Confirmed
-  2026-08-21 against digitalfrontier.so in `eu-se-1`: two devices registered
-  through the routability challenge and a packet relayed between them, on an
-  assigned node port, at roughly a tenth the price of the leased variant. That
-  is a blind relay on ephemeral compute with no lease, no volume and no state.
+  2026-08-21 against digitalfrontier.so: two devices registered through the
+  routability challenge and a packet relayed between them in 33ms, on the
+  deployment's `RANDOM_PORT` endpoint — the provider's hostname and an assigned
+  high port. The same deployment also held a `LEASED_IP` that was never touched,
+  so what is proven is the free path: a blind relay on ephemeral compute with no
+  lease, no volume and no state, at roughly a tenth the price.
 - **It is provider-dependent, and two others forwarded nothing.** Both ran the
   container correctly. On one this was measured: the provider's node address
   had TCP node ports wide open and nothing at all on UDP, so Kubernetes creates

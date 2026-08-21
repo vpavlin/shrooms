@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/ed25519"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"net"
@@ -29,6 +30,10 @@ import (
 // be far away, and a slow answer is still an answer.
 const probeTimeout = 5 * time.Second
 
+// forwardTimeout is shorter, because the forward is retried and four attempts
+// at the full timeout would be a diagnostic that takes twenty seconds to fail.
+const forwardTimeout = 2 * time.Second
+
 func probe(target, token string) error {
 	at, err := resolve(target)
 	if err != nil {
@@ -39,10 +44,22 @@ func probe(target, token string) error {
 	if token != "" {
 		key = relay.TokenKey(token)
 	}
-	// A tag is derived from a mesh's own relay key, and the probe is not a
-	// mesh. Any key does: the relay treats a tag as an opaque handle, so what
-	// this proves is exactly what a real mesh needs proved.
-	meshKey := relay.TokenKey("shrooms-relay probe")
+	// A fresh mesh key per run, so the tags are new every time.
+	//
+	// This has to be random rather than fixed, and the reason is the relay's own
+	// first-claim-wins rule. A tag derives from the mesh key, so a fixed one
+	// gives every probe the same two tags — while the device key signing for
+	// them is generated fresh each run. The second probe is therefore a
+	// different device claiming a tag the first one still holds, which is
+	// exactly what the relay is built to refuse.
+	//
+	// The symptom is a relay that answers once and then appears unreachable for
+	// two minutes, which is a maddening thing for a diagnostic to do.
+	var seed [32]byte
+	if _, err := rand.Read(seed[:]); err != nil {
+		return err
+	}
+	meshKey := relay.TokenKey(string(seed[:]))
 
 	fmt.Printf("probing %s (%s)\n", at, accessOf(token))
 
@@ -76,13 +93,33 @@ func probe(target, token string) error {
 	if err != nil {
 		return err
 	}
+	// Retried, because a confirm is fire-and-forget.
+	//
+	// The relay answers a registration with a challenge but says nothing about
+	// the confirm, so the only way to learn that a device is registered is for
+	// traffic to reach it. That leaves a race: the second device's confirm and
+	// the first device's forward leave back to back on different sockets, and a
+	// forward that arrives first is dropped for naming a destination the relay
+	// has not installed yet.
+	//
+	// Invisible over loopback, where the confirm is processed in microseconds,
+	// and reliably fatal over a link with any latency — which is exactly the
+	// case a probe exists for.
 	start := time.Now()
-	if err := a.send(at, frame); err != nil {
-		return err
+	var got *relay.Frame
+	var lastErr error
+	for attempt := 0; attempt < 4; attempt++ {
+		if err := a.send(at, frame); err != nil {
+			return err
+		}
+		got, lastErr = b.recvWithin(key, forwardTimeout)
+		if lastErr == nil {
+			break
+		}
 	}
-	got, err := b.recv(key)
-	if err != nil {
-		return fmt.Errorf("the relay accepted both registrations but forwarded nothing: %w", err)
+	if lastErr != nil {
+		return fmt.Errorf("the relay accepted both registrations but forwarded nothing "+
+			"after 4 attempts: %w", lastErr)
 	}
 	if got.Type != relay.TypeForward || string(got.Payload) != string(payload) {
 		return errors.New("what came back is not what was sent")
@@ -151,13 +188,17 @@ func (d *probeDevice) send(to netip.AddrPort, pkt []byte) error {
 }
 
 func (d *probeDevice) recv(k relay.Key) (*relay.Frame, error) {
-	if err := d.conn.SetReadDeadline(time.Now().Add(probeTimeout)); err != nil {
+	return d.recvWithin(k, probeTimeout)
+}
+
+func (d *probeDevice) recvWithin(k relay.Key, within time.Duration) (*relay.Frame, error) {
+	if err := d.conn.SetReadDeadline(time.Now().Add(within)); err != nil {
 		return nil, err
 	}
 	buf := make([]byte, readBuf)
 	n, _, err := d.conn.ReadFromUDPAddrPort(buf)
 	if err != nil {
-		return nil, fmt.Errorf("nothing came back within %v", probeTimeout)
+		return nil, fmt.Errorf("nothing came back within %v", within)
 	}
 	return relay.Decode(k, buf[:n])
 }
@@ -171,8 +212,9 @@ func (d *probeDevice) join(at netip.AddrPort, k relay.Key, tag identity.WGKey) (
 	}
 	f, err := d.recv(k)
 	if err != nil {
-		return 0, fmt.Errorf("no challenge — the relay is unreachable, the port is not forwarded, "+
-			"or it wants a different token: %w", err)
+		return 0, fmt.Errorf("no challenge — the relay is unreachable, the port is not "+
+			"forwarded, it wants a different token, or this address has hit its "+
+			"registration cap (try again in a couple of minutes): %w", err)
 	}
 	if f.Type != relay.TypeChallenge {
 		return 0, fmt.Errorf("expected a routability challenge, got frame type %d", f.Type)

@@ -1,137 +1,33 @@
-**It works without a lease — on the right provider.** Confirmed 2026-08-21 on
-digitalfrontier.so in `eu-se-1`, which forwarded UDP on an assigned node port:
+**It works without a lease — on the right provider.** Confirmed 2026-08-21
+against digitalfrontier.so in `eu-southeast`:
 
     $ shrooms-relay -probe provider.h6i-dedicated.eu-se-1.digitalfrontier.so:32684
-      first   device registered in 187ms (challenge answered)
-      second  device registered in 32ms (challenge answered)
+      first   device registered in 30ms (challenge answered)
+      second  device registered in 35ms (challenge answered)
       packet relayed in 33ms
 
     OK — forwards, and cannot be pointed at an address that does not answer
 
-That is a real blind relay on ephemeral compute, no IP lease, no volume, at
-roughly a tenth the price of the leased variant.
+Worth being exact about what that address is, because it was initially mistaken
+for a leased IP. The deployment's group spec asked for two endpoints —
 
-**But it is provider-dependent, and two providers did not do it.** zencloud.eu
-(dseq 28269647) and cpu.dal.aes.akash.pub (dseq 28269739) both ran the container
-correctly and forwarded nothing. On the Dallas one this was measured rather than
-guessed: sweeping the provider's node address — 209.135.147.17, which is *not*
-the 209.135.147.15 the ingress hostname resolves to — found TCP node ports wide
-open and the same range on UDP answering nothing. So Kubernetes creates the UDP
-mapping, as the provider code says it does, and that provider's network does not
-carry it.
+    {'kind': 'RANDOM_PORT', 'sequence_number': 0}
+    {'kind': 'LEASED_IP',   'sequence_number': 1}
 
-**So: try without a lease first, and be ready to move providers.** The probe
-settles it in one command, and a provider that does not forward UDP costs
-nothing but the time to find out.
+— and the address above is the **random port**: the provider's own hostname on
+an assigned high port. The leased IP was never touched. So what is proven here
+is the free path, on a provider that forwards UDP without one.
 
-# Running a blind relay
+**But it is provider-dependent, and two others forwarded nothing.** zencloud.eu
+and cpu.dal.aes.akash.pub both ran the container correctly and forwarded no UDP.
+On the Dallas one this was measured rather than guessed: sweeping the provider's
+*node* address — 209.135.147.17, not the 209.135.147.15 the ingress hostname
+resolves to — found TCP node ports wide open and the same range on UDP silent.
+Kubernetes creates the UDP mapping, as the provider code says it does, and that
+provider's network does not carry it.
 
-A blind relay forwards packets between devices that cannot reach each other
-directly, for meshes it is not a member of. It cannot read what it carries —
-the packets are WireGuard, encrypted between two devices whose keys it does not
-have — and it never learns which mesh anything belongs to.
-
-Read [docs/blind-relays.md](../../docs/blind-relays.md) before running one for
-strangers. In particular: **this is an experiment, offered with no guarantees of
-any kind.** It has not been audited, it may lose your traffic, and it may be
-withdrawn at any time. It is shared so people can poke at it.
-
-## What the operator can and cannot see
-
-**Cannot:** message contents, any network key, who is on a mesh, device names,
-or anything from a control plane.
-
-**Can:** opaque per-relay tags, the IP addresses those tags connect from, which
-pairs of tags exchange packets, how much, and when. That is a traffic-analysis
-surface. It is smaller than it sounds — the tags are meaningless off this
-particular relay, so two operators comparing notes see unrelated numbers — and
-it is not nothing.
-
-## Anywhere a container runs
-
-    docker run -d --name shrooms-relay \
-      -p 51820:51820/udp \
-      -e SHROOMS_RELAY_BYTES_PER_SECOND=12500000 \
-      ghcr.io/vpavlin/shrooms-relay:latest
-
-The image is about 2.5 MB and runs on scratch as an unprivileged user. It keeps
-no state, needs no volume, and holds no identity, so redeploying it costs one
-refresh interval of relayed traffic and nothing else.
-
-Build it yourself with:
-
-    docker build -f docker/relay.Dockerfile -t shrooms-relay .
-
-Check any relay, yours or somebody else's, with `shrooms-relay -probe` — see
-below.
-
-## Deployments are paid in ACT, not AKT
-
-Worth knowing before the first attempt, because the failure is opaque. Creating
-a deployment with an AKT deposit is refused by the chain outright:
-
-    Deposit invalid ... with gas used: '35786': unknown request
-
-That is not a configuration mistake. `x/deployment/handler/server.go` rejects it
-by design:
-
-```go
-// AKT deposits are only allowed via AccountDeposit (existing deployment)
-if msg.Deposit.Amount.Denom == sdkutil.DenomUakt {
-    return nil, v1.ErrInvalidDeposit
-}
-```
-
-So AKT can top up a deployment that already exists, and cannot create one.
-Deposits and pricing are both in **`uact`**, which you mint from AKT:
-
-    provider-services tx bme mint-act <amount>uakt --from <key> ...
-
-Mint **at least 10 ACT** — smaller amounts have been reported not to become
-spendable. There is an open issue where minted ACT does not appear in
-`query bank balances` at all
-([akash-network/support#445](https://github.com/akash-network/support/issues/445)),
-so if `deployment create` then fails with `insufficient balance` rather than
-`Deposit invalid`, that is a known problem with the chain rather than with
-anything here.
-
-The `pricing.denom` in both descriptors is `uact` for the same reason.
-
-## Where to deploy from
-
-**https://air.akash.network/** — Console Air, the console that takes **AKT** as
-payment. The one the docs send you to, `console.akash.network`, is not the same
-thing, which is easy to lose track of when you only do this occasionally.
-
-## Publish the image first
-
-The descriptors reference `ghcr.io/vpavlin/shrooms-relay:latest`, which does not
-exist until somebody pushes it. Akash providers are amd64, so build for that
-explicitly:
-
-    docker build --platform linux/amd64 \
-      -f docker/relay.Dockerfile -t ghcr.io/vpavlin/shrooms-relay:latest .
-    docker push ghcr.io/vpavlin/shrooms-relay:latest
-
-**A newly pushed ghcr package is private, and the REST API cannot change that** —
-it is a web-UI setting. A provider pulls with no credentials of yours, so until
-it is flipped the deployment fails on the pull:
-
-    https://github.com/users/vpavlin/packages/container/shrooms-relay/settings
-    → Danger Zone → Change visibility → Public
-
-Check it from outside rather than trusting the setting:
-
-    TOKEN=$(curl -s "https://ghcr.io/token?scope=repository:vpavlin/shrooms-relay:pull&service=ghcr.io" \
-      | python3 -c "import json,sys;print(json.load(sys.stdin)['token'])")
-    curl -s -o /dev/null -w "%{http_code}\n" -H "Authorization: Bearer $TOKEN" \
-      https://ghcr.io/v2/vpavlin/shrooms-relay/manifests/latest
-
-`200` means a provider can pull it. `403` means it is still private.
-
-## On Akash
-
-Two descriptors here. **Start with `relay-noip.yaml`.**
+**So: try without a lease, and be ready to move providers.** One probe settles
+it, and a provider that will not forward UDP costs only the minutes to find out.
 
 ### Choosing a provider that can do it
 
