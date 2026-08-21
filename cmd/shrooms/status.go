@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/vpavlin/shrooms/internal/hosts"
 	"io"
 	"io/fs"
 	"net"
@@ -193,6 +194,19 @@ func cmdStatus(args []string) error {
 		fmt.Fprintf(head, "ipv4\t%s\tevery peer has one too — `--ipv4`, or `shrooms hosts`\n",
 			st.OverlayV4)
 	}
+	// A stale /etc/hosts block beats a correct resolver, silently.
+	//
+	// systemd-resolved answers from that file synthetically, ahead of the
+	// resolver registered for the domain, so an entry left by an older build —
+	// or by a `shrooms hosts --write` run once and never repeated — keeps
+	// answering long after it stopped being true. It presents as one peer being
+	// unreachable for no visible reason, and nothing else in this output would
+	// ever mention it.
+	if bad := staleHosts(st); len(bad) > 0 {
+		fmt.Fprintf(head, "hosts\t!! %d stale entr%s\t/etc/hosts is answering ahead of the resolver — %s\n",
+			len(bad), plural(len(bad), "y", "ies"), "`sudo shrooms hosts --write` to correct it")
+	}
+
 	// What this node has done as a relay, on the node that is one.
 	//
 	// In `status` rather than `paths` because "is my relay working?" is a
@@ -585,4 +599,27 @@ func hostOf(p peerStatus) string {
 		return p.DNSName
 	}
 	return p.Name
+}
+
+// staleHosts reports managed /etc/hosts entries that no longer match the mesh.
+//
+// Built from the same status the rest of this command prints, so it compares
+// what the file claims against what this node currently believes rather than
+// against a second source that could itself be wrong.
+func staleHosts(st statusPayload) []hosts.Disagreement {
+	entries := []hosts.Entry{{Name: st.Name, Addr: st.Overlay, AddrV4: st.OverlayV4, Self: true}}
+	for _, p := range st.Peers {
+		entries = append(entries, hosts.Entry{Name: p.Name, Addr: p.Overlay, AddrV4: p.OverlayV4})
+	}
+	// The suffix the daemon would use. A block written under a different one
+	// shows up as unknown names, which is still worth reporting: it is the same
+	// file answering for names this mesh does not serve.
+	return hosts.Stale(hosts.DefaultFile, entries, "mesh")
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
