@@ -99,6 +99,12 @@ func run() error {
 	// want to check is usually somewhere you cannot run a shell.
 	probeAt := fs.String("probe", "",
 		"do not serve; check that the relay at this host:port forwards, and exit")
+	// Asking the router to forward the port, for a relay on a connection
+	// somebody already pays for. Off by default: hosted infrastructure has
+	// already forwarded it, and there the gateway is a container bridge that
+	// would map something meaningless.
+	mapPort := fs.Bool("map-port", os.Getenv("SHROOMS_RELAY_MAP_PORT") == "true",
+		"ask the router to forward this port over PCP or NAT-PMP (for running at home)")
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		return err
 	}
@@ -151,6 +157,9 @@ func run() error {
 	defer stop()
 	started := time.Now()
 	go report(ctx, log, srv, started)
+	if *mapPort {
+		go holdPortMapping(ctx, log, uint16(*port))
+	}
 	serve(ctx, log, pc, srv)
 	log.Info("stopped", "stats", fmt.Sprintf("%+v", srv.Stats()))
 	return nil

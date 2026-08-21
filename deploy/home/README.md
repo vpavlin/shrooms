@@ -8,7 +8,22 @@ laptops. You will not be able to read any of it.
 A relay has to be **dialable from outside**, which is the one requirement no
 amount of configuration replaces.
 
-- You need a public IP and a forwarded UDP port.
+`SHROOMS_RELAY_MAP_PORT=true` asks your router to forward the port over PCP or
+NAT-PMP, which most home routers speak, so usually there is nothing to configure
+by hand:
+
+    router is forwarding the relay port external=203.0.113.7:51820 via=natpmp for=2h0m0s
+    check it from outside this network probe="shrooms-relay -probe 203.0.113.7:51820"
+
+That is **not** NAT traversal, and it cannot be. Hole punching works because both
+ends reach for each other at the same moment while something coordinates them; a
+relay is contacted by strangers at arbitrary times and cannot send a packet to
+somebody it does not know exists. This simply asks the router for the forward
+you would otherwise click into a web interface.
+
+- You need a public IP. If the relay logs a mapping onto a **private** address,
+  your carrier is NATing above your router and no amount of asking will help —
+  the relay says so rather than letting you believe otherwise.
 - If your connection is behind **carrier-grade NAT**, you cannot run a relay on
   it. Most mobile connections are, and a growing number of fixed ones. The
   symptom is a public IP that does not match what your router thinks it has.

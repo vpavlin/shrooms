@@ -8,18 +8,32 @@
 # you throttle, firewall and restart it without touching your own connectivity.
 #
 # BEFORE THIS IS ANY USE: the port has to be reachable from the internet.
-# Forward UDP 51820 to this host on your router. If your connection is behind
-# carrier-grade NAT — most mobile and a growing number of fixed lines — you
-# cannot run a relay on it at all, and no configuration here changes that.
-# Check from outside with:
 #
-#     shrooms-relay -probe <your public address>:51820
+# SHROOMS_RELAY_MAP_PORT below asks the router to forward it over PCP or
+# NAT-PMP, which most home routers speak — so usually there is nothing to do by
+# hand. It is not NAT traversal and cannot be: hole punching needs both ends
+# reaching for each other at once, and a relay is contacted by strangers at
+# arbitrary times. This just asks the router for the same forward you would
+# otherwise click into a web interface.
+#
+# If the router refuses, forward UDP 51820 to this host by hand. And if your
+# connection is behind carrier-grade NAT — most mobile and a growing number of
+# fixed lines — you cannot run a relay on it at all, whatever the router says.
+# The relay notices that case and says so: a mapping onto a private address
+# means the carrier is NATing above your router.
+#
+# Check from outside your own network with:
+#
+#     shrooms-relay -probe <the external address it logs>
 services:
   relay:
     image: ghcr.io/vpavlin/shrooms-relay:latest
     restart: unless-stopped
     ports:
       - "51820:51820/udp"
+    # Port mapping talks to the router, which needs the host's network view.
+    # Without this the container asks its own bridge and maps nothing useful.
+    network_mode: host
     environment:
       # The number that matters. Everything else is a table size; this is your
       # upload, and an open relay without a ceiling is an unbounded claim on it.
@@ -37,6 +51,9 @@ services:
       # proves it receives at the address it gave, so this cannot be pointed at
       # a third party — but open means your bandwidth is offered to strangers.
       # SHROOMS_RELAY_TOKEN: "something you hand to friends"
+
+      # Ask the router to forward the port. Usually all that is needed.
+      SHROOMS_RELAY_MAP_PORT: "true"
 
       # How often it reports. Every five minutes by default; quiet windows are
       # skipped with an hourly heartbeat.
