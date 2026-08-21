@@ -130,6 +130,31 @@ documentation. The part most worth checking is whether a given provider forwards
 UDP this way at all — Kubernetes NodePort supports it, but that is not a promise
 about every Akash provider.
 
+### The console URL is not the relay's address
+
+A provider hands out an `https://<hash>.ingress.<provider>/` hostname for every
+deployment, and the console shows it as *the* URI. **It is not the relay.** That
+hostname is an HTTP ingress, and a relay speaks UDP, so fetching it returns
+`502` — which is the expected result rather than a fault.
+
+Akash only routes a service through ingress when it is TCP on port 80:
+
+```go
+func (s *ServiceExpose) IsIngress() bool {
+	return s.Proto == TCP && s.Global && uint32(80) == s.GetExternalPort()
+}
+```
+
+A UDP service gets a **forwarded port** instead: the provider's host and an
+assigned high port, listed under `forwarded_ports` in the lease status.
+
+    provider-services lease-status --dseq <DSEQ> --from <key> --provider <provider> \
+      | python3 -m json.tool | grep -A 10 forwarded_ports
+
+Look for `externalPort` together with `host`, and note the `proto` says `UDP`.
+That pair is the relay's address, and it is what goes in `relay_addr` and what
+you hand to anybody using it.
+
 ### Checking it works
 
     shrooms-relay -probe <host>:<port>
