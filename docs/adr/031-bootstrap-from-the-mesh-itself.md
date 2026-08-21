@@ -137,7 +137,7 @@ identity, and two real starts of a real node now produce the same peer id.
 Kept separate from the device key on purpose: this is a transport identity,
 visible to anybody the node meets on a public shard, and it authenticates
 nothing about membership — that is the device key's job
-([ADR-007](007-two-keys-per-device.md)).
+([ADR-007](007-separate-device-and-wireguard-keys.md)).
 
 So a published bootstrap address now survives its publisher restarting, which is
 what the feature claimed and did not yet do.
