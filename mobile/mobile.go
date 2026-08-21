@@ -221,7 +221,16 @@ func joinInvite(token, name, label, configDir string, timeoutSeconds int) error 
 		}
 		// Started here rather than at creation because a node kept from an
 		// earlier connect is already built and merely stopped.
-		if err := n.Start(); err != nil {
+		//
+		// Under the same lock that guards creating it, which it was not. Start
+		// holds mu across its own node.Start(); this path released mu when
+		// sharedNode returned and then started the node unguarded, so a connect
+		// arriving alongside an enrolment could start the one native node from
+		// two threads at once. The library's state is process-global, and its
+		// own comment above says a second one is not a thing that can be made
+		// to work — starting one twice is the same problem wearing a different
+		// hat.
+		if err := startNode(n); err != nil {
 			return fmt.Errorf("start rendezvous plane: %w", err)
 		}
 		// Stopped, never closed, and only when nothing else wants it: an
@@ -1152,6 +1161,17 @@ func meshIdle() bool {
 	mu.Lock()
 	defer mu.Unlock()
 	return running == nil
+}
+
+// startNode starts the shared node under the lock that guards it.
+//
+// Idempotent from the library's point of view — a node already running is
+// started again harmlessly — but not safe to call from two threads at once,
+// which is the only thing this exists to prevent.
+func startNode(n *waku.Node) error {
+	mu.Lock()
+	defer mu.Unlock()
+	return n.Start()
 }
 
 // sharedNode returns the one delivery node this process may have, creating it

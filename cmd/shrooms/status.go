@@ -510,7 +510,19 @@ func cmdPaths(args []string) error {
 			fmt.Printf("%s  %s\n", p.Name, p.Overlay)
 		}
 		if len(p.Paths) == 0 {
-			fmt.Printf("  no candidate has answered a probe yet\n")
+			// "No candidate has answered a probe" is true of a relayed peer
+			// and reads as a failure, which it is not: a relay is used exactly
+			// when no direct path exists, so the absence of one is the normal
+			// state rather than a fault. Seen in the field on a tunnel that was
+			// up and carrying traffic in both directions.
+			switch {
+			case p.Relayed && p.Live:
+				fmt.Printf("  no direct path — carrying traffic through the relay\n")
+			case p.Relayed:
+				fmt.Printf("  no direct path — trying the relay\n")
+			default:
+				fmt.Printf("  no candidate has answered a probe yet\n")
+			}
 			if len(p.Endpoints) > 0 {
 				fmt.Printf("  announced: %v\n", p.Endpoints)
 			}
