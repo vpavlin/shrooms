@@ -1074,6 +1074,10 @@ private fun PeerDetails(p: Peer) {
         // either off a phone screen is not a plan.
         if (p.dnsName.isNotEmpty()) CopyableDetail("name", p.dnsName)
         CopyableDetail("address", p.overlay)
+        // For everything that still cannot speak IPv6, which on a phone is a
+        // long list. Copyable for the same reason the others are: this exists
+        // to be pasted into another app's server field.
+        if (p.overlayV4.isNotEmpty()) CopyableDetail("ipv4", p.overlayV4)
         Detail("path", if (p.relayed) "through a relay" else p.how)
         if (p.handshakeAgeS > 0) Detail("handshake", "${shortDuration(p.handshakeAgeS)} ago")
         if (p.tunnelAfterS > 0) Detail("connected in", "%.1fs".format(p.tunnelAfterS))

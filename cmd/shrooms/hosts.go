@@ -23,9 +23,9 @@ func cmdHosts(args []string) error {
 		return err
 	}
 
-	entries := []hosts.Entry{{Name: st.Name, Addr: st.Overlay}}
+	entries := []hosts.Entry{{Name: st.Name, Addr: st.Overlay, AddrV4: st.OverlayV4}}
 	for _, p := range st.Peers {
-		entries = append(entries, hosts.Entry{Name: p.Name, Addr: p.Overlay})
+		entries = append(entries, hosts.Entry{Name: p.Name, Addr: p.Overlay, AddrV4: p.OverlayV4})
 	}
 	block := hosts.Render(entries, *suffix)
 	if !*write {

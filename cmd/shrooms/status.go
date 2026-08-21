@@ -167,7 +167,11 @@ func cmdStatus(args []string) error {
 	if st.OverlayV4 != "" {
 		// Said plainly, because the second address is the one people ask about:
 		// it exists so browsers can use mesh names on a network with no IPv6.
-		fmt.Fprintf(head, "ipv4\t%s\tfor clients that ask only for A records\n", st.OverlayV4)
+		// Said here because a reader who needs IPv4 at all needs to know it is
+		// not just this device: every peer has one, and finding them was
+		// impossible to guess from a line that only ever mentioned ourselves.
+		fmt.Fprintf(head, "ipv4\t%s\tevery peer has one too — `shrooms hosts` writes them all\n",
+			st.OverlayV4)
 	}
 	// What this node has done as a relay, on the node that is one.
 	//
@@ -434,7 +438,16 @@ func cmdPaths(args []string) error {
 			continue
 		}
 		shown++
-		fmt.Printf("%s  %s\n", p.Name, p.Overlay)
+		// The alias goes here rather than in the status table. It is the
+		// address to type into something that cannot speak IPv6, which is a
+		// thing you look up for one peer at a time — and a fifteen-character
+		// column on every row of the main table costs width that peers who
+		// will never need it still pay for.
+		if p.OverlayV4 != "" {
+			fmt.Printf("%s  %s  (ipv4 %s)\n", p.Name, p.Overlay, p.OverlayV4)
+		} else {
+			fmt.Printf("%s  %s\n", p.Name, p.Overlay)
+		}
 		if len(p.Paths) == 0 {
 			fmt.Printf("  no candidate has answered a probe yet\n")
 			if len(p.Endpoints) > 0 {

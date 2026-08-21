@@ -29,6 +29,17 @@ type Entry struct {
 	Name string
 	Addr string
 
+	// AddrV4 is the synthetic IPv4 alias for this device, if it has one
+	// (ADR-021). Written as a second line under the same names, which is what
+	// makes an IPv4-only program work by name with no resolver involved: the
+	// overlay is IPv6, and a great deal of software still cannot say so.
+	//
+	// A field rather than a second Entry on purpose. The duplicate-name logic
+	// below distinguishes devices, and two entries for one device would look
+	// to it exactly like two devices claiming one name — which it resolves by
+	// mangling both.
+	AddrV4 string
+
 	// Mesh is the local label for the mesh this peer belongs to. Empty means
 	// an unlabelled single-mesh node, which renders exactly as before.
 	Mesh string
@@ -78,6 +89,7 @@ func Render(entries []Entry, suffix string) string {
 	// the names that will actually be written.
 	type resolved struct {
 		name, mesh, addr string
+		v4               string
 		self             bool
 	}
 	var out []resolved
@@ -94,7 +106,9 @@ func Render(entries []Entry, suffix string) string {
 			}
 		}
 		seen[key] = true
-		out = append(out, resolved{name: name, mesh: sanitise(e.Mesh), addr: e.Addr, self: e.Self})
+		out = append(out, resolved{
+			name: name, mesh: sanitise(e.Mesh), addr: e.Addr, v4: e.AddrV4, self: e.Self,
+		})
 	}
 
 	// A bare name is only safe if exactly one entry claims it.
@@ -134,7 +148,15 @@ func Render(entries []Entry, suffix string) string {
 			// Ambiguous and unlabelled: nothing safe to write.
 			continue
 		}
-		fmt.Fprintf(&b, "%s  %s\n", r.addr, strings.Join(fields, " "))
+		joined := strings.Join(fields, " ")
+		fmt.Fprintf(&b, "%s  %s\n", r.addr, joined)
+		// The same names again on IPv4. Order matters less than it looks —
+		// resolution here is a file, not a resolver, and glibc returns both —
+		// but the overlay address goes first because it is the real one and
+		// the alias is a local convenience.
+		if r.v4 != "" {
+			fmt.Fprintf(&b, "%s  %s\n", r.v4, joined)
+		}
 	}
 	b.WriteString(End + "\n")
 	return b.String()

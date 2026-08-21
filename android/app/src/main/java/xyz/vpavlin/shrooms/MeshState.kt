@@ -17,6 +17,15 @@ data class Peer(
     /** What this peer answers to on the mesh, e.g. `laptop.mesh`. */
     val dnsName: String,
     val overlay: String,
+    /**
+     * The synthetic IPv4 alias this device uses for the peer (ADR-021).
+     *
+     * Worth showing next to the overlay address rather than instead of it: the
+     * overlay one is the real address, and this is the one you can paste into
+     * an app that still cannot speak IPv6 — which is most of the reason anyone
+     * asks for it.
+     */
+    val overlayV4: String,
     val online: Boolean,
     val live: Boolean,
     val relay: Boolean,
@@ -207,6 +216,7 @@ object MeshState {
                     name = p.optString("name"),
                     dnsName = p.optString("dns_name"),
                     overlay = p.optString("overlay"),
+                    overlayV4 = p.optString("overlay_v4"),
                     online = p.optBoolean("online"),
                     live = p.optBoolean("live"),
                     relay = p.optBoolean("relay"),

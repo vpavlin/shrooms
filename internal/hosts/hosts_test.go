@@ -258,3 +258,58 @@ func TestSelfDoesNotShadowTheHostname(t *testing.T) {
 		}
 	}
 }
+
+// The overlay is IPv6 and a great deal of software still cannot say so, so a
+// device's names have to resolve on both families (ADR-021). This is what makes
+// an IPv4-only program work by name with no resolver in the picture at all.
+func TestBothFamiliesUnderTheSameNames(t *testing.T) {
+	block := Render([]Entry{
+		{Name: "nas", Addr: "fd3b::1", AddrV4: "198.19.224.254"},
+	}, "mesh")
+
+	for _, want := range []string{
+		"fd3b::1  nas nas.mesh",
+		"198.19.224.254  nas nas.mesh",
+	} {
+		if !strings.Contains(block, want) {
+			t.Errorf("missing %q in:\n%s", want, block)
+		}
+	}
+}
+
+// A device with no alias must render exactly as it did before, since a peer on
+// an older build announces nothing to make one from.
+func TestNoAliasRendersOneLine(t *testing.T) {
+	block := Render([]Entry{{Name: "nas", Addr: "fd3b::1"}}, "mesh")
+	if n := strings.Count(block, "nas.mesh"); n != 1 {
+		t.Errorf("a peer with no alias produced %d lines:\n%s", n, block)
+	}
+}
+
+// The dangerous case: two devices claiming one name are disambiguated by a
+// piece of their overlay address, and each still has to get both of its own
+// lines. Getting this wrong sends an IPv4 connection to the other machine —
+// silently, which is the whole reason the duplicate logic exists.
+func TestDuplicateNamesKeepTheirOwnAliases(t *testing.T) {
+	block := Render([]Entry{
+		{Name: "nas", Addr: "fd3b::aaaa", AddrV4: "198.19.0.1"},
+		{Name: "nas", Addr: "fd3b::bbbb", AddrV4: "198.19.0.2"},
+	}, "mesh")
+
+	for _, line := range []string{
+		"fd3b::aaaa  nas nas.mesh",
+		"198.19.0.1  nas nas.mesh",
+		"fd3b::bbbb  nas-bbbb nas-bbbb.mesh",
+		"198.19.0.2  nas-bbbb nas-bbbb.mesh",
+	} {
+		if !strings.Contains(block, line) {
+			t.Errorf("missing %q in:\n%s", line, block)
+		}
+	}
+	// And neither alias may appear against the other's name.
+	for _, wrong := range []string{"198.19.0.2  nas nas.mesh", "198.19.0.1  nas-bbbb"} {
+		if strings.Contains(block, wrong) {
+			t.Errorf("an alias landed on the wrong device: %q in:\n%s", wrong, block)
+		}
+	}
+}
