@@ -125,24 +125,25 @@ deployment is recreated, so the address is not stable across redeploys. For a
 relay handed out alongside a token, that is a line in a message you were sending
 anyway.
 
-**Tried, and the no-lease path did not work on the first provider.** Deployed
-`relay-noip.yaml` on zencloud.eu (dseq 28269647), 2026-08-21. The container
-started and read its whole configuration correctly, so the image and the SDL are
-fine — but no forwarded port was ever allocated:
+**Tried on two providers, and not yet proven either way.** Deployed
+`relay-noip.yaml` on zencloud.eu (dseq 28269647) and on cpu.dal.aes.akash.pub,
+2026-08-21. In both cases the container started and logged its whole
+configuration correctly, so the image and the descriptor are sound. Neither
+console showed a forwarded port, and sweeping UDP 30000–32767 found nothing.
 
-- the console showed only the HTTP ingress URI, with no forwarded port at all;
-- sweeping the whole standard NodePort range (UDP 30000–32767) on the ingress
-  address found nothing answering the relay protocol.
+**That sweep was aimed at the wrong host, so it proves very little.** It used
+the address the ingress hostname resolves to, which is the ingress controller. A
+NodePort lives on the Kubernetes *node*, usually a different address entirely.
 
-The second check is suggestive rather than conclusive, since a NodePort could
-live on a node address different from the one the ingress hostname resolves to.
-Taken with the empty console, the reading is that this provider does not map UDP
-without a lease.
+And the provider does build UDP NodePorts — `cluster/kube/builder/service.go`
+maps `manitypes.UDP` to `corev1.ProtocolUDP` on a `ServiceTypeNodePort` service
+for any global, non-ingress expose. So the code path exists and a forwarded port
+probably does too; what is missing is the address it is on.
 
-So **`relay.yaml` and its IP lease is the path that is expected to work**, and
-that is what Akash built leases for — their own announcement names VPNs as the
-motivating case. Whether other providers map UDP without one is still unknown;
-if you try, the sweep above is how to tell quickly.
+Getting that address needs `lease-status`, which talks to the provider over mTLS
+and therefore needs the deployment's client certificate — not something the web
+console exposes. So the open question is unchanged and the way to settle it is
+to run `provider-services lease-status` and read `forwarded_ports.host`.
 
 ### The console URL is not the relay's address
 
