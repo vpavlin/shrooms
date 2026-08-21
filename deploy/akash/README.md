@@ -193,7 +193,16 @@ Add `-token <t>` if the relay wants one.
 | `SHROOMS_RELAY_BYTES_PER_SECOND` | 0 | total ceiling; 0 is unlimited |
 | `SHROOMS_RELAY_PEER_BYTES_PER_SECOND` | 0 | per-device ceiling |
 | `SHROOMS_RELAY_MAX_REGISTRATIONS` | 512 | table size |
-| `SHROOMS_RELAY_MAX_PER_SOURCE` | 8 | registrations one IP may hold |
+| `SHROOMS_RELAY_MAX_PER_SOURCE` | 64 | registrations one IP may hold |
+
+**A source address is not a user.** Every device behind one home router shares
+one, and every phone behind carrier-grade NAT shares one with thousands of
+strangers — and a phone on mobile data is exactly the device a relay exists for,
+because it is the one that cannot be dialled directly at all. So
+`MAX_PER_SOURCE` is a backstop against a single host taking the whole table, not
+a fair-share mechanism, and it should stay generous. The real protection against
+abuse is the bandwidth ceiling, which is measured in the thing that actually
+costs you money.
 
 Set a bandwidth ceiling. An open relay without one is an unbounded claim on a
 machine you are paying for, and the relay says so on startup rather than letting

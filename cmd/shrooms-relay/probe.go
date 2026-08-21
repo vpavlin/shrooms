@@ -2,11 +2,13 @@ package main
 
 import (
 	"crypto/ed25519"
-	"crypto/rand"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"net"
 	"net/netip"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/vpavlin/shrooms/internal/identity"
@@ -44,31 +46,32 @@ func probe(target, token string) error {
 	if token != "" {
 		key = relay.TokenKey(token)
 	}
-	// A fresh mesh key per run, so the tags are new every time.
+	// A stable identity per machine, so repeated probes refresh two
+	// registrations rather than adding two more.
 	//
-	// This has to be random rather than fixed, and the reason is the relay's own
-	// first-claim-wins rule. A tag derives from the mesh key, so a fixed one
-	// gives every probe the same two tags — while the device key signing for
-	// them is generated fresh each run. The second probe is therefore a
-	// different device claiming a tag the first one still holds, which is
-	// exactly what the relay is built to refuse.
+	// Both halves have to be stable together, and getting that wrong is how
+	// this was broken twice. A fixed tag with a fresh device key each run is a
+	// different device claiming a handle the last run still holds, which
+	// first-claim-wins correctly refuses. Random tags avoid that but leak a
+	// registration per run, so a loop of probes exhausts the source's quota and
+	// then looks exactly like an unreachable relay — which is precisely what a
+	// `while true` loop found.
 	//
-	// The symptom is a relay that answers once and then appears unreachable for
-	// two minutes, which is a maddening thing for a diagnostic to do.
-	var seed [32]byte
-	if _, err := rand.Read(seed[:]); err != nil {
-		return err
-	}
+	// Derived rather than stored, because a diagnostic should not leave files
+	// behind. Two machines probing one relay get different tags, so they do not
+	// collide; the same machine gets the same two every time, which is how a
+	// real client behaves.
+	seed := probeSeed()
 	meshKey := relay.TokenKey(string(seed[:]))
 
 	fmt.Printf("probing %s (%s)\n", at, accessOf(token))
 
-	a, err := newProbeDevice(1)
+	a, err := newProbeDevice(seed, 1)
 	if err != nil {
 		return err
 	}
 	defer a.close()
-	b, err := newProbeDevice(2)
+	b, err := newProbeDevice(seed, 2)
 	if err != nil {
 		return err
 	}
@@ -165,16 +168,25 @@ type probeDevice struct {
 	wg   identity.WGKey
 }
 
-func newProbeDevice(n byte) (*probeDevice, error) {
+// probeSeed is a value stable for this machine and unlikely to match another's.
+//
+// Hostname and user id, hashed. Neither is secret and neither needs to be: the
+// only thing riding on it is that two people probing the same relay do not land
+// on each other's handles, and that this machine lands on its own each time.
+func probeSeed() [32]byte {
+	host, _ := os.Hostname()
+	return sha256.Sum256([]byte("shrooms-relay/probe/v1|" + host + "|" + strconv.Itoa(os.Getuid())))
+}
+
+func newProbeDevice(seed [32]byte, n byte) (*probeDevice, error) {
 	c, err := net.ListenUDP("udp", nil)
 	if err != nil {
 		return nil, err
 	}
-	_, priv, err := ed25519.GenerateKey(nil)
-	if err != nil {
-		c.Close()
-		return nil, err
-	}
+	// Derived from the same seed, so this device is the same device across
+	// runs and the relay sees a refresh rather than a stranger.
+	ds := sha256.Sum256(append(seed[:], n))
+	priv := ed25519.NewKeyFromSeed(ds[:])
 	var wg identity.WGKey
 	wg[0] = n
 	return &probeDevice{conn: c, priv: priv, wg: wg}, nil

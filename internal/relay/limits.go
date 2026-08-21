@@ -28,12 +28,29 @@ type Options struct {
 	// MaxRegistrations bounds the whole table. Zero means MaxRegistrations.
 	MaxRegistrations int
 
-	// MaxPerSource bounds how many registrations one source IP may hold.
+	// MaxPerSource bounds how many registrations one source address may hold.
 	//
 	// The table cap alone is not enough once a relay is open: one host with a
 	// range of ports can fill it, and every entry it takes is a device the
 	// relay exists to carry and now cannot. Counted per IP rather than per
 	// address, since ports are free.
+	//
+	// **Set this generously, and understand what it counts.** A source address
+	// is not a user. Every device behind one home router shares one, and every
+	// phone behind carrier-grade NAT shares one with thousands of strangers —
+	// and a phone on mobile data is the case a relay exists for, because it is
+	// the one that cannot be dialled directly at all. A cap low enough to be a
+	// meaningful defence against one abusive host is also low enough to lock
+	// out a carrier.
+	//
+	// Found the obvious way: a loop of probes from a single laptop exhausted a
+	// cap of 8 after four runs and then looked exactly like an unreachable
+	// relay for two minutes.
+	//
+	// So this is a backstop against one host taking the whole table, not a
+	// fair-share mechanism. The real protection against a relay being abused is
+	// the bandwidth ceiling, which is measured in the thing that actually costs
+	// the operator money.
 	//
 	// Zero means unlimited, which is right for a mesh-member relay where every
 	// registrant is already known.

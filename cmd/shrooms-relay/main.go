@@ -81,7 +81,15 @@ func run() error {
 		"require this token; empty means open to anyone")
 	maxReg := fs.Int("max-registrations", envInt("SHROOMS_RELAY_MAX_REGISTRATIONS", relay.MaxRegistrations),
 		"how many devices may be registered at once")
-	maxSrc := fs.Int("max-per-source", envInt("SHROOMS_RELAY_MAX_PER_SOURCE", 8),
+	// An eighth of the table rather than a small number.
+	//
+	// A source address is not a user: a household shares one, and a carrier
+	// shares one between thousands. The cap is here so that no single host can
+	// take the whole table, and at an eighth it still takes eight distinct
+	// addresses to fill one — while leaving room for a carrier's worth of
+	// phones, which are the devices most likely to need a relay in the first
+	// place.
+	maxSrc := fs.Int("max-per-source", envInt("SHROOMS_RELAY_MAX_PER_SOURCE", relay.MaxRegistrations/8),
 		"how many registrations one source IP may hold; 0 for unlimited")
 	rate := fs.Int64("bytes-per-second", envInt64("SHROOMS_RELAY_BYTES_PER_SECOND", 0),
 		"total forwarding ceiling; 0 for unlimited")
