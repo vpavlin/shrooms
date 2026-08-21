@@ -140,10 +140,23 @@ maps `manitypes.UDP` to `corev1.ProtocolUDP` on a `ServiceTypeNodePort` service
 for any global, non-ingress expose. So the code path exists and a forwarded port
 probably does too; what is missing is the address it is on.
 
-Getting that address needs `lease-status`, which talks to the provider over mTLS
-and therefore needs the deployment's client certificate — not something the web
-console exposes. So the open question is unchanged and the way to settle it is
-to run `provider-services lease-status` and read `forwarded_ports.host`.
+Getting that address needs `lease-status`, and in practice that is the thing
+that sinks the no-lease path rather than anything technical. It talks to the
+provider over mTLS, so it needs a current `provider-services` and the
+deploying account's key in a local keyring — which, for a deployment made from a
+browser wallet, means putting a seed phrase on disk. A CLI old enough to predate
+the ACT upgrade is refused by the chain outright ("unknown client version"), so
+the toolchain has to be current too.
+
+**An IP lease removes the reason you wanted `lease-status` at all.** The only
+thing it was for is discovering a port somebody else picked. With a lease you
+choose the port, so the address is known the moment the lease is granted —
+nothing to query, nothing to import, and it stays put across redeploys rather
+than moving each time.
+
+That is the recommendation until there is a concrete reason to care about the
+difference: take the lease, and revisit the cheap path when the client side is
+wired and a running relay is worth optimising.
 
 ### The console URL is not the relay's address
 
