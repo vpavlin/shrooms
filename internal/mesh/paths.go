@@ -101,11 +101,13 @@ func (m *Mesh) handleRelayFrame(payload []byte, from netip.AddrPort) ([]byte, co
 	}
 
 	// Client role: unwrap and hand to WireGuard.
-	f, err := relay.Decode(m.relayKey, payload)
+	f, err := relay.Decode(m.frameKey, payload)
 	if err != nil || f.Type != relay.TypeForward {
 		return nil, nil, false
 	}
-	ep := wg.NewRelayEndpoint(m.relayKey, from, m.st.Identity.WGPub, f.Src)
+	// f.Src is already the handle the sender registered under — a tag on a
+	// blind relay — so it is exactly what we must address to reply.
+	ep := wg.NewRelayEndpoint(m.frameKey, from, m.relayHandle(m.st.Identity.WGPub), f.Src)
 	return f.Payload, ep, true
 }
 
@@ -217,7 +219,7 @@ func (m *Mesh) registerWithRelay() {
 	if err != nil {
 		return
 	}
-	frame := relay.EncodeRegister(m.relayKey, m.st.Identity.WGPub, m.st.Identity.DevicePriv, now)
+	frame := relay.EncodeRegister(m.frameKey, m.relayHandle(m.st.Identity.WGPub), m.st.Identity.DevicePriv, now)
 	if err := m.dev.Bind.SendControl(wg.SubRelay, frame, ep); err != nil {
 		m.log.Debug("relay registration failed", "relay", rl.addr, "err", err)
 	}

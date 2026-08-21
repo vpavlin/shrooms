@@ -396,6 +396,9 @@ $ sudo shrooms hosts --write       # once, into a marked block
 
 ```toml
 manage_hosts = "true"              # or let the daemon keep it current
+relay_addr  = "203.0.113.10:31760"  # a blind relay somebody else runs
+relay_blind = "true"                # it is not a member of this mesh
+relay_token = "..."                 # only if its operator asks for one
 ```
 
 Off by default: a VPN editing a file that cloud-init and NetworkManager also

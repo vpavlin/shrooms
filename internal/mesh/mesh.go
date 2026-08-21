@@ -98,6 +98,18 @@ type Mesh struct {
 	prober   *disco.Prober
 
 	relayKey relay.Key
+
+	// frameKey authenticates relay frames, and is not always relayKey.
+	//
+	// A relay that is a member of this mesh shares its network key, so the two
+	// are the same. A blind relay must never hold it, so frames authenticate
+	// under the relay's own token — or under a public key when it is open,
+	// where the MAC is a checksum and every real guarantee comes from the
+	// registrant's signature and the routability check instead.
+	frameKey relay.Key
+
+	// blind says the relay we use is not a member, so handles are tags.
+	blind bool
 	// relaySrv is non-nil only when this node acts as a relay for others.
 	relaySrv *relay.Server
 	// relayPin is a hand-configured relay_addr. Normally empty: relays are
@@ -276,13 +288,33 @@ func New(log *slog.Logger, cfg state.Config, st *state.State, node *waku.Node, d
 		m.relaySrv = relay.NewServer(m.relayKey, m.ownsWGKey)
 		log.Info("acting as a relay for this mesh")
 	}
+	// Frames are authenticated under the mesh's own key unless a blind relay
+	// is configured, in which case the stranger forwarding for us gets a key
+	// that reveals nothing about the mesh (docs/blind-relays.md).
+	m.frameKey = m.relayKey
+	m.blind = cfg.RelayBlind || cfg.RelayToken != ""
+	if m.blind {
+		if cfg.RelayToken != "" {
+			m.frameKey = relay.TokenKey(cfg.RelayToken)
+		} else {
+			m.frameKey = relay.OpenKey()
+		}
+	}
 	if cfg.RelayAddr != "" {
 		if ap, err := netip.ParseAddrPort(cfg.RelayAddr); err == nil {
 			m.relayPin = ap
-			log.Info("relay pinned by config", "addr", ap)
+			log.Info("relay pinned by config", "addr", ap, "blind", m.blind,
+				"token", cfg.RelayToken != "")
 		} else {
 			log.Warn("ignoring unparseable relay_addr", "value", cfg.RelayAddr, "err", err)
 		}
+	}
+	if m.blind && !m.relayPin.IsValid() {
+		// A blind relay cannot announce itself — it holds no network key and
+		// has no delivery node — so there is nothing for discovery to find and
+		// the setting does nothing on its own.
+		log.Warn("relay_blind or relay_token is set with no relay_addr; " +
+			"a blind relay has to be configured because it cannot be discovered")
 	}
 	m.prober = disco.NewProber(m.discoKey, st.Identity.DevicePriv, m.sendDisco)
 
@@ -292,7 +324,7 @@ func New(log *slog.Logger, cfg state.Config, st *state.State, node *waku.Node, d
 
 	// ParseEndpoint needs these to rebuild relay endpoints when WireGuard hands
 	// back an endpoint string over the UAPI.
-	dev.Bind.SetRelayIdentity(m.relayKey, st.Identity.WGPub)
+	dev.Bind.SetRelayIdentity(m.frameKey, m.relayHandle(st.Identity.WGPub))
 
 	return m, nil
 }
@@ -1919,7 +1951,8 @@ func (m *Mesh) syncPeers() error {
 			// No direct path. Route through the relay rather than leaving the
 			// peer unreachable — failing over is just an endpoint swap, with no
 			// tunnel teardown or rehandshake.
-			peer.RelayVia = wg.NewRelayEndpoint(m.relayKey, rl.addr, m.st.Identity.WGPub, p.WGPub)
+			peer.RelayVia = wg.NewRelayEndpoint(m.frameKey, rl.addr,
+				m.relayHandle(m.st.Identity.WGPub), m.relayHandle(p.WGPub))
 		case haveStats && st.Live(now):
 			// Nothing probed and no relay, but the tunnel is working. Leave the
 			// endpoint alone.

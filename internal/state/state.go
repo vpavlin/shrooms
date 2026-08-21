@@ -252,6 +252,27 @@ type Config struct {
 	// or forcing a particular relay while debugging.
 	RelayAddr string
 
+	// RelayToken authenticates us to a blind relay that wants one
+	// (docs/blind-relays.md). Setting it implies the pinned relay is blind.
+	//
+	// Not a secret that protects anything of ours: it says the operator agreed
+	// to carry our traffic, and it is shared by everyone they agreed to carry.
+	// A relay cannot read what it forwards whether it asks for a token or not.
+	RelayToken string
+
+	// RelayBlind says the pinned relay is not a member of this mesh.
+	//
+	// It changes two things and nothing else. Frames authenticate under a key
+	// derived from the token — or a public one when the relay is open — rather
+	// than from the network key, which a stranger must never hold. And devices
+	// register under a tag derived from the mesh relay key rather than under
+	// their tunnel key, so the operator sees opaque handles that mean nothing
+	// off their own relay.
+	//
+	// Implied by RelayToken, since a token is only ever handed out by somebody
+	// running a blind relay.
+	RelayBlind bool
+
 	// StatusFile optionally writes the status JSON to a file, for a monitoring
 	// view that can read a file but not open a unix socket — QML can do the
 	// first and not the second.
@@ -825,6 +846,10 @@ func parseConfig(text string) (Config, error) {
 			c.Relay = unquote(val) == "true"
 		case "relay_addr":
 			c.RelayAddr = unquote(val)
+		case "relay_token":
+			c.RelayToken = unquote(val)
+		case "relay_blind":
+			c.RelayBlind = unquote(val) == "true"
 		case "socket_group":
 			c.SocketGroup = unquote(val)
 		case "status_file_group":
