@@ -434,6 +434,37 @@ Which is also the answer to "does this make Shrooms less decentralised?" — no,
 as long as nobody has to use a *particular* relay. It becomes a coordinator the
 moment there is one everybody depends on.
 
+## Decided: open, with limits, and no promises
+
+Agreed 2026-08-21. Open by default with quotas, not a guest list — a relay is
+useful to a stranger or it is not useful at all, and the return-routability
+check means open costs nothing in safety.
+
+**The promise is that there is none**, and that has to be said where somebody
+would rely on it rather than buried here. A relay may vanish, throttle, refuse,
+or be switched off mid-session. It keeps no data and offers no uptime. This is a
+best-effort experiment published so other people can poke at it, and anybody
+building on it should assume it will be gone tomorrow.
+
+That is a design constraint, not a disclaimer. It means the relay advertises no
+capacity, a client treats losing one as ordinary rather than exceptional, and
+nothing in the protocol lets an operator make a commitment they would then be
+held to.
+
+### Running one on Akash
+
+Raised because Akash has no traffic limits, which is the right instinct for a
+relay. It works, with two caveats found by reading rather than assuming:
+
+- **UDP needs an IP lease** — a dedicated public IPv4, roughly $5–15/month on
+  top of compute. Standard Akash port exposure covers HTTP/HTTPS only, so the
+  relay port cannot be exposed without one. Not every provider offers them.
+- **It needs persistent storage**, which matters more than it looks. A relay's
+  libp2p identity lives in its state directory, and a redeploy without it mints
+  a new peer id — killing every bootstrap address the relay has published
+  ([ADR-031](adr/031-bootstrap-from-the-mesh-itself.md)). On ephemeral compute
+  that stops being a rare event.
+
 ## The decision
 
 **Is a blind relay for a stranger you trust a little, or for the public?**
