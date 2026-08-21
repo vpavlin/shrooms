@@ -1,29 +1,22 @@
-**It works without a lease — on the right provider.** Confirmed 2026-08-21
-against digitalfrontier.so in `eu-southeast`:
+**It works without a lease.** Confirmed 2026-08-21 on digitalfrontier.so in
+`eu-southeast`, node port only, no `endpoints:` block, ~$3.50/month:
 
-    $ shrooms-relay -probe provider.h6i-dedicated.eu-se-1.digitalfrontier.so:32684
-      first   device registered in 30ms (challenge answered)
-      second  device registered in 35ms (challenge answered)
-      packet relayed in 33ms
+    $ shrooms-relay -probe provider.h6i-dedicated.eu-se-1.digitalfrontier.so:30730
+      first   device registered in 32ms (challenge answered)
+      second  device registered in 33ms (challenge answered)
+      packet relayed in 31ms
 
     OK — forwards, and cannot be pointed at an address that does not answer
 
-Worth being exact about what that address is, because it was initially mistaken
-for a leased IP. The deployment's group spec asked for two endpoints —
+A blind relay on ephemeral compute: no dedicated address, no volume, no state,
+nothing to restore, and a 2.5 MB container that cannot read a byte of what it
+carries.
 
-    {'kind': 'RANDOM_PORT', 'sequence_number': 0}
-    {'kind': 'LEASED_IP',   'sequence_number': 1}
-
-— and the address above is the **random port**: the provider's own hostname on
-an assigned high port. The leased IP was never touched. So what is proven here
-is the free path, on a provider that forwards UDP without one.
-
-The same deployment's leased IP forwards too — `194.107.163.11:51820`, relaying
-in 31ms on the port the descriptor asked for. So on this provider **both
-endpoints work**, and the lease buys only a stable, chosen port. That is worth
-something for a relay whose address is written into other people's config, and
-it is not worth ten times the compute if the address is handed out with a token
-anyway.
+The price is the provider's compute rather than anything structural. That
+provider will not bid on the minimal profile at all, so this is the raised one
+(0.5 CPU / 512Mi / 1Gi); providers bidding on the minimal profile came in around
+a fifth of the price, and whether any of *those* forward UDP is the open
+question. Each is a few minutes and fractions of a cent to find out.
 
 **But it is provider-dependent, and two others forwarded nothing.** zencloud.eu
 and cpu.dal.aes.akash.pub both ran the container correctly and forwarded no UDP.
