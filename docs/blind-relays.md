@@ -499,13 +499,16 @@ line in a message you were sending anyway.
   design — `x/deployment` allows AKT only as a top-up to a deployment that
   already exists. Deposits and pricing are `uact`, minted from AKT with
   `tx bme mint-act`. Both descriptors priced in `uakt` until this was hit.
-- **The no-lease path does not work, and the reason is the provider's network.**
-  Deployed on two providers; the relay ran correctly both times. Sweeping the
-  *node* address — not the ingress address, which was the first attempt's
-  mistake — found TCP NodePorts wide open and nothing whatever on UDP. So
-  Kubernetes creates the UDP mapping, as the provider code says it does, and the
-  network in front of it does not carry UDP. No SDL can fix that, and the IP
-  lease becomes the path that works. See `deploy/akash/README.md`.
+- **It works without a lease, on a provider that forwards UDP.** Confirmed
+  2026-08-21 against digitalfrontier.so in `eu-se-1`: two devices registered
+  through the routability challenge and a packet relayed between them, on an
+  assigned node port, at roughly a tenth the price of the leased variant. That
+  is a blind relay on ephemeral compute with no lease, no volume and no state.
+- **It is provider-dependent, and two others forwarded nothing.** Both ran the
+  container correctly. On one this was measured: the provider's node address
+  had TCP node ports wide open and nothing at all on UDP, so Kubernetes creates
+  the mapping and that network does not carry it. Try without a lease and be
+  ready to move; the probe settles it in one command.
 - **`shrooms-relay -probe host:port` is how you check.** It is a client rather
   than an inspection: two throwaway devices, both registered the way a real one
   would, and a packet relayed between them. A pass means the whole path works,

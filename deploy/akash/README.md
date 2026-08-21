@@ -1,3 +1,29 @@
+**It works without a lease — on the right provider.** Confirmed 2026-08-21 on
+digitalfrontier.so in `eu-se-1`, which forwarded UDP on an assigned node port:
+
+    $ shrooms-relay -probe provider.h6i-dedicated.eu-se-1.digitalfrontier.so:32684
+      first   device registered in 187ms (challenge answered)
+      second  device registered in 32ms (challenge answered)
+      packet relayed in 33ms
+
+    OK — forwards, and cannot be pointed at an address that does not answer
+
+That is a real blind relay on ephemeral compute, no IP lease, no volume, at
+roughly a tenth the price of the leased variant.
+
+**But it is provider-dependent, and two providers did not do it.** zencloud.eu
+(dseq 28269647) and cpu.dal.aes.akash.pub (dseq 28269739) both ran the container
+correctly and forwarded nothing. On the Dallas one this was measured rather than
+guessed: sweeping the provider's node address — 209.135.147.17, which is *not*
+the 209.135.147.15 the ingress hostname resolves to — found TCP node ports wide
+open and the same range on UDP answering nothing. So Kubernetes creates the UDP
+mapping, as the provider code says it does, and that provider's network does not
+carry it.
+
+**So: try without a lease first, and be ready to move providers.** The probe
+settles it in one command, and a provider that does not forward UDP costs
+nothing but the time to find out.
+
 # Running a blind relay
 
 A blind relay forwards packets between devices that cannot reach each other
@@ -169,9 +195,6 @@ That is consistent with the provider code, which does build UDP NodePorts
 (`cluster/kube/builder/service.go` maps `manitypes.UDP` to `corev1.ProtocolUDP`
 for any global non-ingress expose). Kubernetes creates the mapping; the
 provider's network does not carry it. Nothing in an SDL can fix that.
-
-**So the IP lease is the path that works** — not because UDP needs one in
-principle, but because providers do not forward UDP NodePorts in practice.
 
 ### The console URL is not the relay's address
 
