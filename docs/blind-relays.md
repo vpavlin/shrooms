@@ -1,6 +1,13 @@
 # Blind relays: a stranger forwards for you without joining
 
-**Status:** design note, nothing built. One decision at the end.
+**Status:** built. The relay engine, the routability check, first-claim-wins,
+the operator's limits and a standalone `shrooms-relay` binary all exist and are
+tested; what is not yet wired is the client side, so nothing points at one of
+these yet. See `deploy/akash/` to run one.
+
+**No guarantees, of any kind.** This is a best-effort experiment shared so that
+people can poke at it. It has not been audited, a relay may lose your traffic,
+and one you do not run yourself may vanish without notice.
 
 The idea: somebody runs a public node, you point your mesh at it, and it
 forwards packets between your devices without being a member of your mesh —
@@ -456,29 +463,31 @@ held to.
 Raised because Akash has no traffic limits, which is the right instinct for a
 relay. It works, with two caveats found by reading rather than assuming:
 
-- **UDP needs an IP lease** — a dedicated public IPv4. Not every provider offers
-  them, and it is the one cost here that cannot be designed away; see below.
-- **It needs two secrets to survive a redeploy**, which is smaller than it first
-  looks. Of the six files in a relay's state directory only two matter:
-  `state.json`, the device identity, without which the node has a new overlay
-  address and is a stranger to every peer; and `nodekey`, the libp2p identity,
-  without which every bootstrap address it published dies
-  ([ADR-031](adr/031-bootstrap-from-the-mesh-itself.md)). The rest —
-  learned bootstrap peers, replay marks, restart history — regenerate.
+**Built, and the state question turned out to be the wrong question.** An
+earlier version of this note worried about which two secrets a relay would have
+to carry in its deployment environment to survive a redeploy. That applies to a
+*mesh-member* relay like the VPS. A blind relay carries nothing at all: it is
+not a member, so there is no device identity; it is not a rendezvous node, so
+there is no libp2p identity; and its forwarding table is soft state that clients
+rebuild within one refresh interval.
 
-  So a persistent volume is not required. Both are small enough to carry in the
-  deployment's `env` and write into place at start, which makes a relay
-  genuinely stateless: redeploy it anywhere, it comes back as the same node.
-  Nothing reads config from the environment today, so this is a few lines in the
-  entrypoint rather than a change to the daemon.
+So there is no volume, no env secret, and nothing to restore. `internal/relay`
+depends on nothing native either, which means the whole thing is a 2.5 MB
+scratch image running as an unprivileged user — see `deploy/akash/`.
 
-**The IP lease is the real cost**, and it cannot be argued away: Akash's standard
-ingress is HTTP and HTTPS only, and a relay is UDP. That turns a node which
-should be nearly free into one costing five to fifteen dollars a month.
+- **UDP needs an IP lease**, and it is the one cost that cannot be designed
+  away: Akash's standard ingress terminates HTTP and HTTPS, and a relay is UDP.
+  A dedicated public IPv4 usually costs more than the compute under it. What
+  Akash gives back is unmetered traffic, which for a relay is the resource that
+  matters. Not every provider offers leases.
+- **The SDL in `deploy/akash/relay.yaml` has not been run against a live
+  provider.** It is written from the documentation. The lease section is the
+  part most likely to need adjusting, and saying so is more useful than
+  implying it has been tested.
 
-There is an escape, and it deserves naming because it arrives with a *different*
-justification from the one already refused. A relay speaking TCP on 443 would
-need no IP lease — standard ingress, any provider, cheapest tier.
+There is an escape from the lease, and it deserves naming because it arrives
+with a *different* justification from the one already refused. A relay speaking
+TCP on 443 would need no lease — standard ingress, any provider, cheapest tier.
 [ADR-030](adr/030-tailscale-shaped-not-tor-shaped.md) declined TLS-wrapping as
 censorship machinery and that refusal stands. "It makes a relay deployable on
 cheap ephemeral infrastructure" is a separate argument and a better one. It is

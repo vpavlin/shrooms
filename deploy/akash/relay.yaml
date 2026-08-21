@@ -1,0 +1,86 @@
+---
+# A blind relay on Akash (docs/blind-relays.md).
+#
+# Raised because Akash providers do not meter traffic, which is the right
+# instinct for a relay: a relay is almost pure bandwidth and almost no compute,
+# and that is the one resource most hosts charge for.
+#
+# What makes this fit in a deployment file with no volume attached is that a
+# blind relay keeps nothing. It is not a member of any mesh it carries, so there
+# is no device identity; it is not a rendezvous node, so there is no libp2p
+# identity; and its forwarding table is soft state that clients rebuild within
+# one refresh interval. Redeploy it whenever you like — the cost is a few
+# seconds of relayed traffic, and nothing has to be restored.
+#
+# UNVERIFIED AGAINST A LIVE PROVIDER. This is written from the SDL
+# documentation, not from a deployment that has been accepted and run. The IP
+# lease section in particular is the part most likely to need adjusting, and
+# provider support for leases varies. Treat it as a starting point.
+version: "2.0"
+
+endpoints:
+  # A dedicated public IPv4, which a relay cannot do without on Akash: the
+  # standard ingress terminates HTTP and HTTPS, and a relay is UDP. This is the
+  # one cost here that cannot be designed away, and it is usually larger than
+  # the compute it sits on top of.
+  relayip:
+    kind: ip
+
+services:
+  relay:
+    image: ghcr.io/vpavlin/shrooms-relay:latest
+    env:
+      # Open to anyone, which is safe for the reason the docs give at length:
+      # a registration installs nothing until the registrant echoes a nonce
+      # sent to the address it claims, so this cannot be pointed at a third
+      # party. Set SHROOMS_RELAY_TOKEN if you would rather choose who uses it.
+      #
+      # These ceilings are the part worth thinking about, because past this
+      # point what is being spent is the operator's bandwidth. 12.5 MB/s is
+      # 100 Mbit; the per-device figure stops the first heavy user taking all
+      # of it and leaving everybody else with a relay that appears broken.
+      - SHROOMS_RELAY_BYTES_PER_SECOND=12500000
+      - SHROOMS_RELAY_PEER_BYTES_PER_SECOND=2500000
+      - SHROOMS_RELAY_MAX_REGISTRATIONS=512
+      - SHROOMS_RELAY_MAX_PER_SOURCE=8
+    expose:
+      - port: 51820
+        as: 51820
+        proto: udp
+        to:
+          - global: true
+            ip: relayip
+
+profiles:
+  compute:
+    relay:
+      resources:
+        cpu:
+          # A relay copies bytes between two sockets. The work is per packet
+          # and trivial; what it needs is the network, not the processor.
+          units: 0.1
+        memory:
+          size: 128Mi
+        storage:
+          # Nothing is written. This is the image and room to run, not a place
+          # to keep anything, and losing it costs nothing.
+          size: 256Mi
+      endpoints:
+        - relayip
+
+  placement:
+    dcloud:
+      attributes:
+        # Not every provider offers leases, and one that does not will simply
+        # not bid rather than deploy something that cannot be reached.
+        ip-lease: true
+      pricing:
+        relay:
+          denom: uakt
+          amount: 10000
+
+deployment:
+  relay:
+    dcloud:
+      profile: relay
+      count: 1
