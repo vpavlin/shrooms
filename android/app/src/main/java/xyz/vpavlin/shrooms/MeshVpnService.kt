@@ -106,6 +106,15 @@ class MeshVpnService : VpnService() {
         private const val TAG = "shrooms"
 
         /** MTU 1280: the IPv6 minimum, which no path may fragment below. */
+        // 1280, the IPv6 minimum, which is a floor rather than a choice: the
+        // overlay is IPv6 and nothing smaller is legal.
+        //
+        // It is not enough for a relayed packet. A relay adds 86 bytes on top
+        // of WireGuard's own, so a minimum-size overlay packet is 1426 on the
+        // wire, and a phone on mobile data commonly sits behind a path carrying
+        // about 1250. Large relayed transfers therefore stall until path MTU
+        // discovery exists — see internal/wg/tun_linux.go and
+        // docs/relay-mtu.md.
         private const val MTU = 1280
     }
 

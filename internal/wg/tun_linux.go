@@ -11,10 +11,43 @@ import (
 	"golang.zx2c4.com/wireguard/tun"
 )
 
-// DefaultMTU is 1420: WireGuard's overhead is 60 bytes over IPv4 and 80 over
-// IPv6, and 1420 survives an IPv6 underlay. Raising it globally is a common
-// cause of "hangs on large transfers" via PMTUD blackholes.
-const DefaultMTU = 1420
+// DefaultMTU is 1280, the IPv6 minimum, and that is a floor rather than a
+// choice.
+//
+// WireGuard's own overhead is 60 bytes over IPv4 and 80 over IPv6, which is why
+// 1420 is the usual answer and was ours. It is wrong once a packet goes through
+// a relay, which adds the control header that lets relay frames share the
+// WireGuard socket plus the forward header naming both ends — 86 bytes on top
+// of WireGuard's own.
+//
+// So a relayed packet on the wire is the tunnel payload plus 146 bytes: 32 for
+// WireGuard, 5 for the control header, 81 for the forward header, 8 for UDP and
+// 20 for an IPv4 underlay.
+//
+// **This does not make relayed transfers work, and cannot.** The overlay is
+// IPv6, so the interface may not go below 1280 — the kernel refuses to add an
+// IPv6 address to anything smaller, with "RTNETLINK answers: Invalid argument".
+// A minimum-size overlay packet is therefore 1426 bytes on the wire, and a
+// phone on mobile data commonly sits behind a path carrying about 1250. There
+// is no MTU that satisfies both.
+//
+// Measured, after a 100MB download over a relayed tunnel stopped at 1.5KB.
+// Pinging the far end at increasing sizes put the break between a 1098-byte
+// tunnel packet, which arrived, and 1128, which did not. The handshake, the
+// request and the small responses all fit; the first full-size data packet did
+// not, and nothing anywhere reported an error.
+//
+// The fix is path MTU discovery, not a constant: emit ICMPv6 Packet Too Big
+// when a packet will not fit the path a peer is currently reached by, and let
+// the sending stack cache a smaller path MTU for that destination. That keeps
+// full size for direct peers and shrinks only what is relayed — which is
+// exactly the right shape, since which peers are relayed changes at runtime.
+// See docs/relay-mtu.md.
+//
+// 1280 in the meantime because it is the largest value that is legal
+// everywhere, matches what the Android client already used, and makes the
+// direct path behave the same as the relayed one rather than differently.
+const DefaultMTU = 1280
 
 // CreateTUN opens a TUN device and assigns the overlay address and route.
 //
