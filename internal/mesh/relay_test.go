@@ -195,7 +195,7 @@ func TestSelectRelaySkippedWhenActingAsRelay(t *testing.T) {
 func TestSelectRelayPinOverridesDiscovery(t *testing.T) {
 	f := newRelayFixture(t)
 	pin := netip.MustParseAddrPort("192.0.2.7:51820")
-	f.m.relayPin = pin
+	f.m.relayPins = []netip.AddrPort{pin}
 
 	got := f.m.selectRelay(f.now)
 	if !got.ok || got.addr != pin {

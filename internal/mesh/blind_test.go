@@ -227,3 +227,54 @@ func TestSelectionPrefersALiveRelayInConfiguredOrder(t *testing.T) {
 		t.Errorf("a stale relay was still chosen: %v", got.addr)
 	}
 }
+
+// Registering with every relay on a list is antisocial: these are machines
+// other people pay for, and a slot on a relay carrying none of your traffic is
+// pure imposition. So the number is bounded, and what it spends the quota on is
+// the relay a sender would actually choose plus one spare.
+func TestRegistrationIsBoundedAndPrefersLiveRelays(t *testing.T) {
+	pins := []netip.AddrPort{
+		netip.MustParseAddrPort("198.51.100.1:31000"),
+		netip.MustParseAddrPort("198.51.100.2:31000"),
+		netip.MustParseAddrPort("198.51.100.3:31000"),
+		netip.MustParseAddrPort("198.51.100.4:31000"),
+		netip.MustParseAddrPort("198.51.100.5:31000"),
+	}
+	now := time.Now()
+	m := &Mesh{relayPins: pins}
+
+	// Nothing known yet: a fresh device must still register somewhere, or it is
+	// unreachable until something tells it which relays work — and nothing
+	// will, because nothing can reach it.
+	got := m.registerWith(now)
+	if len(got) != maxRelayRegistrations {
+		t.Fatalf("a fresh device registered with %d relays, want %d", len(got), maxRelayRegistrations)
+	}
+	if got[0] != pins[0] {
+		t.Errorf("started at %v rather than the operator's first choice", got[0])
+	}
+
+	// With a late one live, the quota goes to it — that is the relay a sender
+	// will choose, so it is the one this device must be reachable on.
+	m.relayLive = map[netip.AddrPort]time.Time{pins[3]: now}
+	got = m.registerWith(now)
+	if len(got) != maxRelayRegistrations {
+		t.Fatalf("registered with %d relays, want %d", len(got), maxRelayRegistrations)
+	}
+	if got[0] != pins[3] {
+		t.Errorf("did not register with the live relay first: %v", got)
+	}
+	// And selection agrees with registration, or a device is reachable
+	// somewhere it does not send.
+	if sel := m.selectRelay(now); sel.addr != got[0] {
+		t.Errorf("sends via %v but registered first with %v", sel.addr, got[0])
+	}
+
+	// Never more than the cap, however many are live.
+	for _, p := range pins {
+		m.relayLive[p] = now
+	}
+	if got := m.registerWith(now); len(got) != maxRelayRegistrations {
+		t.Errorf("with everything live, registered with %d relays", len(got))
+	}
+}

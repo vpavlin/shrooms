@@ -270,15 +270,7 @@ func (m *Mesh) registerWithRelay() {
 	}
 	m.relayRegistered = now
 
-	// Registered with every configured relay, not only the one carrying
-	// traffic. A relay can only forward to a peer it knows, so being present
-	// everywhere is what lets the *sender* choose freely — otherwise two
-	// devices with the same list but different opinions about which is fastest
-	// would never meet.
-	//
-	// It costs one small packet per relay per RelayRefresh, which is nothing
-	// against being unreachable because the peer preferred a different one.
-	targets := m.relayPins
+	targets := m.registerWith(now)
 	if len(targets) == 0 {
 		targets = []netip.AddrPort{rl.addr}
 	}
@@ -292,6 +284,57 @@ func (m *Mesh) registerWithRelay() {
 			m.log.Debug("relay registration failed", "relay", at, "err", err)
 		}
 	}
+}
+
+// maxRelayRegistrations bounds how many relays one device occupies at once.
+//
+// A device has to be registered wherever a peer might send to it, and the naive
+// answer — register with all of them — is antisocial once a list gets long.
+// These are machines other people pay for, and a registration is a table slot
+// plus a packet a minute on a relay carrying none of your traffic. Ten devices
+// across ten relays is a hundred slots to move the traffic of ten.
+//
+// Two is enough because the choice is not free: every device works down the
+// same operator-supplied list, so the one a sender picks is the first live one,
+// and the first live one is in everybody's set. The second is a warm spare, so
+// that a relay going away does not leave a window where the two ends have moved
+// on at different moments and cannot find each other.
+const maxRelayRegistrations = 2
+
+// registerWith is where this device should be reachable: live relays first, in
+// configured order, then untried ones to fill the quota.
+//
+// Untried are included because a device that has just started has no liveness
+// information at all and would otherwise register nowhere.
+func (m *Mesh) registerWith(now time.Time) []netip.AddrPort {
+	if len(m.relayPins) == 0 {
+		return nil
+	}
+	m.relayMu.Lock()
+	live := make(map[netip.AddrPort]bool, len(m.relayLive))
+	for at, seen := range m.relayLive {
+		live[at] = now.Sub(seen) < RelayLiveFor
+	}
+	m.relayMu.Unlock()
+
+	out := make([]netip.AddrPort, 0, maxRelayRegistrations)
+	for _, at := range m.relayPins {
+		if live[at] {
+			out = append(out, at)
+		}
+	}
+	for _, at := range m.relayPins {
+		if len(out) >= maxRelayRegistrations {
+			break
+		}
+		if !live[at] {
+			out = append(out, at)
+		}
+	}
+	if len(out) > maxRelayRegistrations {
+		out = out[:maxRelayRegistrations]
+	}
+	return out
 }
 
 // RelayLiveFor is how long a relay counts as answering.

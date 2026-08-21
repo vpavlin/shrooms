@@ -123,10 +123,6 @@ type Mesh struct {
 	// traffic.
 	relayPins []netip.AddrPort
 
-	// relayPin is a hand-configured relay_addr. Normally empty: relays are
-	// discovered from the roster instead. Kept as an escape hatch for a mesh
-	// whose relay has not announced yet, and for the container tests.
-	relayPin netip.AddrPort
 	// relayNow is the relay currently in use, for logging changes.
 	relayNow netip.AddrPort
 
@@ -324,7 +320,6 @@ func New(log *slog.Logger, cfg state.Config, st *state.State, node *waku.Node, d
 		m.relayPins = append(m.relayPins, ap)
 	}
 	if len(m.relayPins) > 0 {
-		m.relayPin = m.relayPins[0]
 		log.Info("relays pinned by config", "addrs", m.relayPins, "blind", m.blind,
 			"token", cfg.RelayToken != "")
 	}

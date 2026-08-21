@@ -41,10 +41,18 @@ List several, separated by commas, and the device registers with all of them:
 
 That is not only redundancy. A relay can forward only between peers that have
 both registered with it, so if two devices each picked their own favourite from
-a list they would never meet. Registering everywhere means whichever one the
-sender chooses already knows the destination. Traffic goes through the first
-that is answering, in the order you wrote them, so devices given the same list
-agree without negotiating.
+a list they would never meet.
+
+**A device registers with at most two of them**, not all. These are machines
+other people pay for, and a table slot on a relay carrying none of your traffic
+is pure imposition — ten devices across ten relays would be a hundred slots to
+move the traffic of ten. Two is enough because the choice is not free: every
+device works down the same list you gave it, so the relay a sender picks is the
+first one answering, and that one is in everybody's set. The second is a warm
+spare, so a relay going away does not leave a window where two ends have moved
+on at different moments.
+
+Traffic goes through the first that is answering, in the order you wrote them.
 
 and, if the operator requires one:
 
