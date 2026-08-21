@@ -991,9 +991,27 @@ func WriteConfig(path string, c Config) error {
 		b.WriteString("relay = \"true\"\n")
 	}
 	if c.RelayAddr != "" {
-		b.WriteString("\n# Pins a relay, overriding discovery. Not normally needed: relays are\n")
-		b.WriteString("# found from their announces like any other peer.\n")
+		b.WriteString("\n# Pins a relay that is a member of this mesh, overriding discovery. Not\n")
+		b.WriteString("# normally needed: member relays are found from their announces.\n")
 		fmt.Fprintf(&b, "relay_addr  = %q\n", c.RelayAddr)
+	}
+	if len(c.RelayBlind) > 0 {
+		b.WriteString("\n# Relays run by people who are not on this mesh. They cannot announce\n")
+		b.WriteString("# themselves - no network key, no delivery node - so they are configured.\n")
+		b.WriteString("# This device registers with at most two, in the order given.\n")
+		b.WriteString("relay_blind = [")
+		for i, one := range c.RelayBlind {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			fmt.Fprintf(&b, "%q", one)
+		}
+		b.WriteString("]\n")
+	}
+	if c.RelayToken != "" {
+		b.WriteString("\n# Handed out by whoever runs a blind relay. Not a secret protecting\n")
+		b.WriteString("# anything of ours: it says an operator agreed to carry us.\n")
+		fmt.Fprintf(&b, "relay_token = %q\n", c.RelayToken)
 	}
 	if c.StatusFile != "" {
 		b.WriteString("\n# Write the status JSON here for a monitoring view.\n")

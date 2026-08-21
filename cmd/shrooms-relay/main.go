@@ -323,12 +323,11 @@ func deltas(a, b relay.Stat) string {
 		// network, and the operator is the only one who can see why.
 		parts = append(parts, fmt.Sprintf("throttled=%d (ceilings are biting)", n))
 	}
-	if n := b.Challenged - a.Challenged; n > b.Registered-a.Registered {
-		// More challenges than completed registrations: something is asking to
-		// register and not proving it receives. One or two is a lost packet;
-		// a stream of them is a device behind something that will not let the
-		// answer back.
-		parts = append(parts, fmt.Sprintf("unanswered-challenges=%d", n-(b.Registered-a.Registered)))
+	// Challenges issued against challenges answered, both counted directly.
+	// One or two unanswered is a lost packet; a stream is a device behind
+	// something that will not let the answer back to it.
+	if n := (b.Challenged - a.Challenged) - (b.Confirmed - a.Confirmed); n > 0 && b.Challenged > a.Challenged {
+		parts = append(parts, fmt.Sprintf("unanswered-challenges=%d", n))
 	}
 	return strings.Join(parts, " ")
 }

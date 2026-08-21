@@ -118,6 +118,7 @@ type Server struct {
 	refused    uint64
 	throttled  uint64
 	challenged uint64
+	confirmed  uint64
 	peak       int
 }
 
@@ -253,6 +254,7 @@ func (s *Server) Handle(pkt []byte, from netip.AddrPort, now time.Time) (out []b
 			return nil, netip.AddrPort{}, false
 		}
 		delete(s.waiting, from)
+		s.confirmed++
 		s.registerLocked(f.Key, from, now, f.DevicePub)
 		s.expireLocked(now)
 		s.mu.Unlock()
@@ -465,10 +467,19 @@ type Stat struct {
 	// first makes a relay at its limit look like a broken one.
 	Throttled uint64
 
-	// Challenged is a routability check issued but not yet answered, counted
-	// since start. On a blind relay a rising count with a flat Registered is
-	// what "something is registering that cannot receive" looks like.
+	// Challenged is a routability check issued, and Confirmed one answered,
+	// both counted since start. The gap between them is what "something is
+	// registering and cannot receive" looks like from here.
+	//
+	// Confirmed is counted rather than inferred, which sounds pedantic and is
+	// not. The first version of this compared challenges against *new*
+	// registrations, and a device re-registering from a new source port —
+	// every phone that changes network, and every run of the probe — is
+	// challenged but refreshes an existing entry rather than creating one. The
+	// relay reported dozens of unanswered challenges while answering every one
+	// of them.
 	Challenged uint64
+	Confirmed  uint64
 
 	// Bytes is payload forwarded, excluding relay headers — what an operator
 	// would compare against a bandwidth bill.
@@ -499,6 +510,7 @@ func (s *Server) Stats() Stat {
 		Refused:    s.refused,
 		Throttled:  s.throttled,
 		Challenged: s.challenged,
+		Confirmed:  s.confirmed,
 		Bytes:      s.bytes,
 		Peak:       s.peak,
 		Sources:    len(s.perSource),

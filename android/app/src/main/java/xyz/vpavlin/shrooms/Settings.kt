@@ -58,6 +58,9 @@ fun SettingsScreen(
         ModeSetting(dir, connected = connected)
 
         Spacer(Modifier.height(28.dp))
+        BlindRelaySetting(dir)
+
+        Spacer(Modifier.height(28.dp))
         KeycardSetting(dir)
 
         // No SERVICES section here, deliberately.

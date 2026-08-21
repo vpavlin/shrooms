@@ -395,3 +395,48 @@ func TestAForgedSignatureNeverReachesTheTable(t *testing.T) {
 	}
 	_ = ed25519.PublicKey(nil)
 }
+
+// A device that moves to a new source port is challenged again and, on
+// answering, refreshes the entry it already had rather than creating one. The
+// relay must not mistake that for an unanswered challenge.
+//
+// It did. The first version of the statistics inferred answered challenges from
+// the count of *new* registrations, so every phone changing network and every
+// run of the probe inflated a figure meant to mean "something cannot receive".
+// A relay answering every challenge put to it reported dozens outstanding.
+func TestAnsweredChallengesAreCountedNotInferred(t *testing.T) {
+	s, k := blindServer(t, Options{})
+	priv, wg := deviceAndKey(t, 1)
+	now := time.Now()
+
+	// Register, then re-register from a series of new ports, as a device that
+	// keeps changing network does.
+	for i := 0; i < 4; i++ {
+		from := netip.AddrPortFrom(netip.MustParseAddr("198.51.100.10"), uint16(40000+i))
+		out, _, send := s.Handle(EncodeRegister(k, wg, priv, now), from, now)
+		if !send {
+			t.Fatalf("attempt %d was not challenged", i)
+		}
+		f, err := Decode(k, out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.Handle(EncodeConfirm(k, wg, f.Nonce, priv, now), from, now)
+	}
+
+	st := s.Stats()
+	if st.Challenged != 4 {
+		t.Errorf("issued %d challenges, want 4", st.Challenged)
+	}
+	if st.Confirmed != st.Challenged {
+		t.Errorf("answered %d of %d challenges; every one was answered",
+			st.Confirmed, st.Challenged)
+	}
+	// And only one device is registered throughout: these were refreshes.
+	if st.Peers != 1 {
+		t.Errorf("holding %d registrations, want 1", st.Peers)
+	}
+	if st.Registered != 1 {
+		t.Errorf("counted %d new registrations, want 1 — the rest were refreshes", st.Registered)
+	}
+}
