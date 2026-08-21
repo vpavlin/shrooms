@@ -43,6 +43,35 @@ This is the one thing in the space nobody else appears to be doing, and it makes
 "no coordinator" concrete rather than architectural — the authority stops being
 a file on the machine that happens to be up and becomes an object in a pocket.
 
+## 3. A GNOME extension
+
+A mesh overview and its statistics in the shell, so the state of the thing is
+visible without a terminal.
+
+The data is already there and already shaped for this. `shrooms status --json`
+carries the roster, per-peer tunnel state, relay use, traffic counters and the
+health of the rendezvous plane; `status_file` exists precisely so a viewer that
+cannot open a unix socket can read it, which is how the Basecamp module works.
+So this is a presentation job rather than a plumbing one.
+
+What it should show, in the order somebody glancing at a panel cares:
+
+- **Up or not**, and how many peers are reachable rather than merely known —
+  the distinction `status` draws between announced and handshaked, because a
+  peer that is online and unreachable is the case that matters.
+- **Which peers are relayed**, since that is the slow path and the one that
+  explains a bad afternoon.
+- **Traffic**, per peer, from counters already collected.
+- **The rendezvous plane's health**, which is the first thing to check when a
+  new device cannot be found and the last thing anybody thinks of.
+
+Worth doing after the first-hour work rather than before: a panel showing a
+mesh that was hard to join is the wrong order.
+
+There is a parity argument too. The Basecamp module and the Android app already
+aim to do the same things, and a desktop that needs a terminal to answer "is it
+working" is the odd one out.
+
 ## Not doing
 
 **iOS.** nostr-vpn ships it and we will not, and the reason is substrate rather
