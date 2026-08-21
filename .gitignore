@@ -34,3 +34,6 @@ site/comparison.html
 # them, and the target does not exist for anybody who clones this.
 /result
 /result-core
+
+# built by `make relay`
+shrooms-relay

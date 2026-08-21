@@ -25,7 +25,7 @@ GO ?= go
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 .PHONY: all deps deps-basecamp check-lib shrooms wakuspike s3topics m0demo \
-        s1 s3 probe m0 m1 m2 m2-edm m3 m3-remote dist image push-image deps-release install uninstall build-all vet-cgo test test-unit android-deps android-core aar apk fdroid basecamp-check basecamp-lgx site-adrs fmt clean
+        s1 s3 probe relay relay-image m0 m1 m2 m2-edm m3 m3-remote dist image push-image deps-release install uninstall build-all vet-cgo test test-unit android-deps android-core aar apk fdroid basecamp-check basecamp-lgx site-adrs fmt clean
 
 all: shrooms
 
@@ -300,6 +300,26 @@ apk: aar
 ## repo. The key stays on that host; this builds unsigned and signs there.
 fdroid:
 	./scripts/publish-fdroid.sh
+
+## Build the standalone blind relay, and the probe that checks one
+## (docs/blind-relays.md).
+##
+## No cgo and no liblogosdelivery: internal/relay depends on nothing native,
+## which is what lets the same binary ship on scratch and run here without the
+## library the rest of this project needs. So this deliberately does not use
+## check-lib, and works on a machine that has never fetched it.
+relay:
+	CGO_ENABLED=0 $(GO) build -trimpath -o shrooms-relay ./cmd/shrooms-relay
+	@echo "built ./shrooms-relay — serve with it, or check a relay with:"
+	@echo "  ./shrooms-relay -probe <host>:<port>"
+
+## Build the relay container. amd64 explicitly, because that is what hosted
+## providers run and a scratch image built for the wrong architecture fails at
+## run rather than at pull.
+relay-image:
+	docker build --platform linux/amd64 -f docker/relay.Dockerfile \
+		-t ghcr.io/vpavlin/shrooms-relay:latest \
+		-t ghcr.io/vpavlin/shrooms-relay:$$(git rev-parse --short HEAD) .
 
 ## Build every package. test-unit skips the cgo-bound ones, so without this an
 ## API change can break a command without any check noticing — which is exactly
