@@ -499,12 +499,13 @@ line in a message you were sending anyway.
   design — `x/deployment` allows AKT only as a top-up to a deployment that
   already exists. Deposits and pricing are `uact`, minted from AKT with
   `tx bme mint-act`. Both descriptors priced in `uakt` until this was hit.
-- **It works without a lease, and one is running.** Confirmed 2026-08-21 on
-  digitalfrontier.so: a node port, no dedicated address, no volume, no state —
-  two devices registered through the routability challenge and a packet relayed
-  between them in 31ms. That is the whole idea working: a relay a stranger can
-  stand up on ephemeral compute, which cannot read what it forwards and cannot
-  be pointed at an address that does not answer.
+- **It works without a lease, one is running, and it costs 28 cents a month.**
+  Confirmed 2026-08-21 on codestan.fi: a node port, no dedicated address, no
+  volume, no state — two devices registered through the routability challenge
+  and a packet relayed between them in 85ms. The price is the part that matters
+  beyond the engineering: at five dollars a relay is a subscription somebody
+  decides to keep, and at twenty-eight cents it is not a decision at all. That
+  is what makes "other people run these" a plausible sentence.
 - **It is provider-dependent, and two others forwarded nothing.** Both ran the
   container correctly. On one this was measured: the provider's node address
   had TCP node ports wide open and nothing at all on UDP, so Kubernetes creates

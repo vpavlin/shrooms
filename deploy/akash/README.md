@@ -1,22 +1,26 @@
-**It works without a lease.** Confirmed 2026-08-21 on digitalfrontier.so in
-`eu-southeast`, node port only, no `endpoints:` block, ~$3.50/month:
+**It works without a lease, and it is cheap.** Confirmed 2026-08-21 on
+codestan.fi, node port only, no `endpoints:` block — **$0.28/month**:
 
-    $ shrooms-relay -probe provider.h6i-dedicated.eu-se-1.digitalfrontier.so:30730
-      first   device registered in 32ms (challenge answered)
-      second  device registered in 33ms (challenge answered)
-      packet relayed in 31ms
+    $ shrooms-relay -probe provider.codestan.fi:31760
+      first   device registered in 93ms (challenge answered)
+      second  device registered in 102ms (challenge answered)
+      packet relayed in 85ms
 
     OK — forwards, and cannot be pointed at an address that does not answer
 
-A blind relay on ephemeral compute: no dedicated address, no volume, no state,
-nothing to restore, and a 2.5 MB container that cannot read a byte of what it
-carries.
+That is the whole idea working: a blind relay a stranger can stand up on
+ephemeral compute for pocket change — no dedicated address, no volume, no state,
+nothing to restore — in a 2.5 MB container that cannot read a byte of what it
+carries and cannot be pointed at an address that does not answer.
 
-The price is the provider's compute rather than anything structural. That
-provider will not bid on the minimal profile at all, so this is the raised one
-(0.5 CPU / 512Mi / 1Gi); providers bidding on the minimal profile came in around
-a fifth of the price, and whether any of *those* forward UDP is the open
-question. Each is a few minutes and fractions of a cent to find out.
+The price matters more than it looks. At five dollars a month a relay is a
+subscription somebody has to decide to keep; at twenty-eight cents it is not a
+decision. That difference is what makes "other people run these" a plausible
+sentence rather than a hopeful one.
+
+Also confirmed on digitalfrontier.so in `eu-southeast` at ~$3.50 — same result,
+more money, because that provider will not bid on the minimal resource profile
+and has dearer compute.
 
 **But it is provider-dependent, and two others forwarded nothing.** zencloud.eu
 and cpu.dal.aes.akash.pub both ran the container correctly and forwarded no UDP.

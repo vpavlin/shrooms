@@ -29,6 +29,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -45,7 +46,23 @@ const readBuf = 65535
 // the counters are the whole diagnostic surface: registrations that never
 // become forwards mean devices that cannot receive, and a rising throttle count
 // means the ceilings are doing their job rather than the machine failing.
-const statEvery = 5 * time.Minute
+var statEvery = 5 * time.Minute
+
+// heartbeat is the longest a healthy relay stays silent.
+//
+// Long enough that an idle one is not chatter, short enough that an operator
+// checking in the morning can see it was alive overnight.
+const heartbeat = time.Hour
+
+// statInterval overrides the reporting interval, for seeing the output without
+// waiting five minutes for it.
+func init() {
+	if v := os.Getenv("SHROOMS_RELAY_STAT_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			statEvery = d
+		}
+	}
+}
 
 func main() {
 	if err := run(); err != nil {
@@ -124,7 +141,8 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	go report(ctx, log, srv)
+	started := time.Now()
+	go report(ctx, log, srv, started)
 	serve(ctx, log, pc, srv)
 	log.Info("stopped", "stats", fmt.Sprintf("%+v", srv.Stats()))
 	return nil
@@ -180,21 +198,144 @@ func normalise(a netip.AddrPort) netip.AddrPort {
 	return a
 }
 
-func report(ctx context.Context, log *slog.Logger, srv *relay.Server) {
+// report says what the relay has been doing, periodically.
+//
+// An operator running one for strangers has no other view of it, so this is the
+// whole diagnostic surface — and what makes it useful is the interval, not the
+// totals. A cumulative "forwarded=2" says nothing about whether the last five
+// minutes were busy or dead; a rate does.
+//
+// Aggregates only, deliberately. A blind relay's claim is that its operator
+// learns as little as possible about who is using it, and per-tag or per-address
+// lines in a log file would be precisely the traffic-analysis surface the design
+// works to keep small. An operator needs to know how much of their bandwidth is
+// being used and by how many people — not by whom.
+func report(ctx context.Context, log *slog.Logger, srv *relay.Server, started time.Time) {
 	t := time.NewTicker(statEvery)
 	defer t.Stop()
+	prev := srv.Stats()
+	prevAt := started
+	prevUse := sample()
+	// Zero rather than `started`, so a relay that comes up idle says so once
+	// promptly instead of staying silent for the first hour.
+	var lastSaid time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case now := <-t.C:
 			s := srv.Stats()
+			window := now.Sub(prevAt)
+			bytes := s.Bytes - prev.Bytes
+			packets := s.Forwarded - prev.Forwarded
+
+			// An idle relay says so once and then stays quiet, so that a log
+			// somebody actually reads is not mostly zeroes. A relay with peers
+			// but no traffic is still worth a line — that combination is what a
+			// broken data path looks like.
+			use := sample()
+
+			// A quiet relay should be quiet in the log too.
+			//
+			// The first version only skipped when nothing was registered at
+			// all, which is the rare case. The ordinary one is devices
+			// registered and idle — a phone that has not needed the relay
+			// since breakfast — and that printed a line of zeroes every
+			// interval, some three hundred a day, which is how a log stops
+			// being read.
+			//
+			// A heartbeat still goes out hourly, because silence is
+			// ambiguous: an operator cannot tell a relay with nothing to say
+			// from one that died.
+			quiet := packets == 0 && s.Peers == prev.Peers &&
+				s.Refused == prev.Refused && s.Dropped == prev.Dropped &&
+				s.Throttled == prev.Throttled
+			if quiet && now.Sub(lastSaid) < heartbeat {
+				prev, prevAt, prevUse = s, now, use
+				continue
+			}
+			lastSaid = now
+
 			log.Info("relaying",
-				"devices", s.Peers, "forwarded", s.Forwarded,
-				"registered", s.Registered, "challenged", s.Challenged,
-				"refused", s.Refused, "throttled", s.Throttled, "dropped", s.Dropped)
+				"up", short(now.Sub(started)),
+				"devices", s.Peers,
+				"clients", s.Sources,
+				"peak", s.Peak,
+				"window", short(window),
+				"carried", human(bytes),
+				"rate", human(uint64(float64(bytes)/window.Seconds()))+"/s",
+				"packets", packets,
+				"total", human(s.Bytes),
+				// What this costs the machine it was lent. A relay should be
+				// boring, and publishing it continuously is what makes that
+				// claim checkable by the person hosting it.
+				"mem", human(use.RSS),
+				"cpu", fmt.Sprintf("%.1f%%", use.percent(prevUse, window)),
+				"goroutines", use.Goroutines,
+			)
+
+			// Refusals and drops are only interesting when they are happening
+			// now. Printed on their own line so the ordinary one stays readable,
+			// and skipped entirely when there is nothing to say.
+			if d := deltas(prev, s); d != "" {
+				log.Info("relaying, of note", "window", short(window), "counts", d)
+			}
+			prev, prevAt, prevUse = s, now, use
 		}
 	}
+}
+
+// deltas describes what went wrong in the last window, or nothing at all.
+func deltas(a, b relay.Stat) string {
+	parts := []string{}
+	if n := b.Refused - a.Refused; n > 0 {
+		// Refused means a registration this relay would not accept: a stale
+		// timestamp, a device claiming a handle somebody else holds, or a
+		// source at its cap. Steady refusals with no registrations is what a
+		// client stuck in a loop looks like from here.
+		parts = append(parts, fmt.Sprintf("refused=%d", n))
+	}
+	if n := b.Dropped - a.Dropped; n > 0 {
+		// Dropped is a packet with nowhere to go — usually a sender reaching
+		// for a peer whose registration has expired.
+		parts = append(parts, fmt.Sprintf("dropped=%d", n))
+	}
+	if n := b.Throttled - a.Throttled; n > 0 {
+		// Throttled is this relay working as configured, not failing. Worth
+		// saying loudly anyway: it is what a user experiences as a slow
+		// network, and the operator is the only one who can see why.
+		parts = append(parts, fmt.Sprintf("throttled=%d (ceilings are biting)", n))
+	}
+	if n := b.Challenged - a.Challenged; n > b.Registered-a.Registered {
+		// More challenges than completed registrations: something is asking to
+		// register and not proving it receives. One or two is a lost packet;
+		// a stream of them is a device behind something that will not let the
+		// answer back.
+		parts = append(parts, fmt.Sprintf("unanswered-challenges=%d", n-(b.Registered-a.Registered)))
+	}
+	return strings.Join(parts, " ")
+}
+
+// human renders a byte count the way an operator reads a bandwidth bill.
+func human(n uint64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%dB", n)
+	}
+	div, exp := uint64(unit), 0
+	for v := n / unit; v >= unit && exp < 4; v /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f%cB", float64(n)/float64(div), "KMGTP"[exp])
+}
+
+// short renders a duration without the noise of sub-second precision.
+func short(d time.Duration) string {
+	if d >= time.Hour {
+		return d.Round(time.Minute).String()
+	}
+	return d.Round(time.Second).String()
 }
 
 func envInt(name string, def int) int {

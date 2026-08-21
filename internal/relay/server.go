@@ -113,10 +113,12 @@ type Server struct {
 	// stats
 	registered uint64
 	forwarded  uint64
+	bytes      uint64
 	dropped    uint64
 	refused    uint64
 	throttled  uint64
 	challenged uint64
+	peak       int
 }
 
 // NewServer returns an empty relay.
@@ -300,6 +302,10 @@ func (s *Server) Handle(pkt []byte, from netip.AddrPort, now time.Time) (out []b
 			return nil, netip.AddrPort{}, false
 		}
 		s.forwarded++
+		// Payload rather than frame, so the number means "traffic carried for
+		// somebody" rather than including our own header — an operator
+		// comparing this against a bandwidth bill wants the former.
+		s.bytes += uint64(len(f.Payload))
 		s.mu.Unlock()
 		return frame, dst.addr, true
 	}
@@ -352,6 +358,9 @@ func (s *Server) registerLocked(key identity.WGKey, from netip.AddrPort, now tim
 	}
 	s.peers[key] = registration{addr: from, seen: now, devicePub: owner, out: out}
 	s.byAddr[from] = key
+	if len(s.peers) > s.peak {
+		s.peak = len(s.peers)
+	}
 }
 
 // ownerLocked reports whether this device may claim this handle.
@@ -460,6 +469,22 @@ type Stat struct {
 	// since start. On a blind relay a rising count with a flat Registered is
 	// what "something is registering that cannot receive" looks like.
 	Challenged uint64
+
+	// Bytes is payload forwarded, excluding relay headers — what an operator
+	// would compare against a bandwidth bill.
+	Bytes uint64
+
+	// Peak is the most registrations held at once.
+	Peak int
+
+	// Sources is how many distinct addresses hold a registration now.
+	//
+	// Deliberately a count and not a list. A blind relay's whole claim is that
+	// its operator learns as little as possible, and "which addresses are here"
+	// written to a log file every few minutes is exactly the traffic-analysis
+	// surface the design exists to keep small. An operator needs to know how
+	// many people are using their bandwidth, not who.
+	Sources int
 }
 
 // Stats reports counters for diagnostics.
@@ -474,5 +499,8 @@ func (s *Server) Stats() Stat {
 		Refused:    s.refused,
 		Throttled:  s.throttled,
 		Challenged: s.challenged,
+		Bytes:      s.bytes,
+		Peak:       s.peak,
+		Sources:    len(s.perSource),
 	}
 }
