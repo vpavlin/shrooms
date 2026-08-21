@@ -1,0 +1,51 @@
+# A blind relay on a connection you own (docs/blind-relays.md).
+#
+# Deliberately a separate container rather than part of the shrooms daemon, and
+# the reason is the word "blind". A relay carries traffic it cannot read because
+# it does not hold the keys — and that is checkable when it is a 2.5 MB process
+# with no mesh state, and merely assertable when it shares a process with your
+# network key, your credentials and your roster. Keeping it separate also lets
+# you throttle, firewall and restart it without touching your own connectivity.
+#
+# BEFORE THIS IS ANY USE: the port has to be reachable from the internet.
+# Forward UDP 51820 to this host on your router. If your connection is behind
+# carrier-grade NAT — most mobile and a growing number of fixed lines — you
+# cannot run a relay on it at all, and no configuration here changes that.
+# Check from outside with:
+#
+#     shrooms-relay -probe <your public address>:51820
+services:
+  relay:
+    image: ghcr.io/vpavlin/shrooms-relay:latest
+    restart: unless-stopped
+    ports:
+      - "51820:51820/udp"
+    environment:
+      # The number that matters. Everything else is a table size; this is your
+      # upload, and an open relay without a ceiling is an unbounded claim on it.
+      #
+      # 2.5 MB/s is 20 Mbit. Set it to a fraction of your upload rather than all
+      # of it — a relay saturating the line makes everything else in the house
+      # feel broken, and the person whose video call it is will not know why.
+      SHROOMS_RELAY_BYTES_PER_SECOND: "2500000"
+      # And a per-device share, so the first heavy user does not take all of it
+      # and leave everyone else with a relay that appears dead.
+      SHROOMS_RELAY_PEER_BYTES_PER_SECOND: "500000"
+
+      # Uncomment to choose who may use it. Without one it is open to anyone,
+      # which is safe — a registration installs nothing until the registrant
+      # proves it receives at the address it gave, so this cannot be pointed at
+      # a third party — but open means your bandwidth is offered to strangers.
+      # SHROOMS_RELAY_TOKEN: "something you hand to friends"
+
+      # How often it reports. Every five minutes by default; quiet windows are
+      # skipped with an hourly heartbeat.
+      # SHROOMS_RELAY_STAT_INTERVAL: "5m"
+
+    # It writes nothing, opens nothing, and needs no privileges.
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    # A relay is a map and a socket. If it is using more than this, something is
+    # wrong rather than busy.
+    mem_limit: 128m

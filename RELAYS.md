@@ -99,8 +99,10 @@ It is a 2.5 MB container with no state, no volume and no identity:
       -e SHROOMS_RELAY_BYTES_PER_SECOND=12500000 \
       ghcr.io/vpavlin/shrooms-relay:latest
 
-See [deploy/akash/](deploy/akash/) for running one on ephemeral compute, where
-the whole thing costs a few tens of cents a month.
+See [deploy/akash/](deploy/akash/) for ephemeral compute, where the whole thing
+costs a few tens of cents a month, or [deploy/home/](deploy/home/) for a
+connection you already pay for — which needs a public address and a forwarded
+port, and is impossible behind carrier-grade NAT.
 
 **Set a bandwidth ceiling.** Open with no ceiling is an unbounded claim on a
 machine you pay for, and the relay says so on startup rather than letting you
