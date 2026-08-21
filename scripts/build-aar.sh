@@ -17,14 +17,25 @@ OUT=android/logosvpn.aar
 [ -d "$SDK/ndk/$NDK_VER" ] || { echo "no NDK at $SDK/ndk/$NDK_VER — set ANDROID_SDK/NDK_VER"; exit 1; }
 [ -f android/libs/arm64-v8a/liblogosdelivery.so ] || { echo "run 'make android-deps' first"; exit 1; }
 
-echo "==> binding (container: JDK + Go 1.25 + gomobile)"
+# gomobile must be the same version as the x/mobile the module already pins.
+#
+# It was installed at @latest, which is a supply-chain hole that closed itself
+# on 2026-08-21: x/mobile published a build requiring Go 1.26 while this image
+# has 1.25, and the APK stopped building for reasons nothing in this repository
+# had changed. Reading the version out of go.mod means the tool and the library
+# cannot drift apart, and that an old checkout builds the way it did.
+MOBILE_VER=$(awk '/golang.org\/x\/mobile v/ {print $2; exit}' mobile/go.mod)
+[ -n "$MOBILE_VER" ] || { echo "no golang.org/x/mobile version in mobile/go.mod"; exit 1; }
+
+echo "==> binding (container: JDK + Go 1.25 + gomobile $MOBILE_VER)"
 docker run --rm \
     -v "$PWD:/src" -v "$SDK:/sdk:ro" -w /src/mobile \
     -e ANDROID_HOME=/sdk -e ANDROID_NDK_HOME="/sdk/ndk/$NDK_VER" \
     -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
     golang:1.25 bash -euc '
         apt-get update -qq && apt-get install -y -qq default-jdk-headless >/dev/null 2>&1
-        go install golang.org/x/mobile/cmd/gomobile@latest golang.org/x/mobile/cmd/gobind@latest
+        go install golang.org/x/mobile/cmd/gomobile@'"$MOBILE_VER"' golang.org/x/mobile/cmd/gobind@'"$MOBILE_VER"'
+
         export PATH=$PATH:/go/bin:/root/go/bin
         export CGO_CFLAGS="-I/src/android/libs"
         export CGO_LDFLAGS="-L/src/android/libs/arm64-v8a -llogosdelivery"
