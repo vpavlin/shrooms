@@ -18,6 +18,13 @@ for a leased IP. The deployment's group spec asked for two endpoints —
 an assigned high port. The leased IP was never touched. So what is proven here
 is the free path, on a provider that forwards UDP without one.
 
+The same deployment's leased IP forwards too — `194.107.163.11:51820`, relaying
+in 31ms on the port the descriptor asked for. So on this provider **both
+endpoints work**, and the lease buys only a stable, chosen port. That is worth
+something for a relay whose address is written into other people's config, and
+it is not worth ten times the compute if the address is handed out with a token
+anyway.
+
 **But it is provider-dependent, and two others forwarded nothing.** zencloud.eu
 and cpu.dal.aes.akash.pub both ran the container correctly and forwarded no UDP.
 On the Dallas one this was measured rather than guessed: sweeping the provider's
