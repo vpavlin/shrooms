@@ -511,11 +511,42 @@ line in a message you were sending anyway.
   would, and a packet relayed between them. A pass means the whole path works,
   NAT and forwarded port included, rather than that something is listening.
 
-This also removes the argument for a TCP relay transport that was recorded here.
-That idea existed because port 443 was the way to avoid a lease; with no lease
-needed, the only remaining argument for it is the censorship one
-[ADR-030](adr/030-tailscale-shaped-not-tor-shaped.md) already refused. Dropping
-it.
+### A TCP relay transport, reinstated
+
+Dropped here once, on the grounds that its only remaining justification was the
+censorship one [ADR-030](adr/030-tailscale-shaped-not-tor-shaped.md) refused.
+That was reasoning from a belief since disproved — that UDP worked without a
+lease. It does not, and on the very host where UDP is dead, TCP NodePorts are
+wide open. So the deployment argument is back, and it is now measured rather
+than assumed.
+
+**And there is a better argument, about users rather than hosting.** Some
+networks block UDP outright — hotels, corporate guest wifi, a few mobile
+carriers. A device on one of those cannot reach the mesh at all today, directly
+or through a relay. A TCP relay fixes that. It is not censorship circumvention;
+it is an ordinary broken network, and it is the difference between "the mesh
+does not work here" and "the mesh is slower here".
+
+**Why it is not a redesign.** `RelayEndpoint` is a `conn.Endpoint` that
+WireGuard treats as opaque, and relay frames are already a self-contained byte
+protocol. How those bytes reach the relay is a transport swap under a seam that
+exists. The reason the data plane needs UDP — hole punching — does not apply to
+this leg at all: both ends dial *out* to a publicly reachable host.
+
+**What it costs.** TCP-over-TCP is the real objection. WireGuard carries the
+user's TCP inside, so one lost segment on the outer connection stalls everything
+behind it while the inner stack retransmits on top. Under loss that degrades
+badly, and the failure is confusing — a tunnel that is up and unusable. Against
+it: the relay is already the degraded path, each device holds its own
+connection, and every commercial VPN ships this as a fallback mode. Plus the
+ordinary plumbing of length-prefixed framing, reconnect with backoff, and
+keepalives.
+
+**Shape, if built.** A second listener on the relay and a second dialler on the
+client, both speaking the frames that already exist; the relay's table and every
+rule around it stay as they are. Offered alongside UDP rather than instead of
+it, and chosen only once UDP has failed — so nobody pays the head-of-line cost
+for a path that was working.
 
 ## The decision
 
