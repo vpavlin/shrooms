@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/vpavlin/shrooms/internal/ctrl"
 	"github.com/vpavlin/shrooms/internal/identity"
 	"github.com/vpavlin/shrooms/internal/relay"
 )
@@ -41,6 +42,22 @@ func probe(target, token string) error {
 	if err != nil {
 		return err
 	}
+	// Framed first, because that is what a real client speaks and therefore the
+	// only result that means "usable". An unframed retry exists only to tell an
+	// old relay apart from an absent one.
+	if err := probeOnce(at, token, true); err == nil {
+		return nil
+	} else if probeOnce(at, token, false) == nil {
+		return fmt.Errorf("this relay answers the unframed form but not the one "+
+			"shrooms clients use, so it is running a build older than the framing "+
+			"fix and no device can register with it — redeploy it from a current "+
+			"image (original error: %w)", err)
+	} else {
+		return err
+	}
+}
+
+func probeOnce(at netip.AddrPort, token string, framed bool) error {
 
 	key := relay.OpenKey()
 	if token != "" {
@@ -64,14 +81,16 @@ func probe(target, token string) error {
 	seed := probeSeed()
 	meshKey := relay.TokenKey(string(seed[:]))
 
-	fmt.Printf("probing %s (%s)\n", at, accessOf(token))
+	if framed {
+		fmt.Printf("probing %s (%s)\n", at, accessOf(token))
+	}
 
-	a, err := newProbeDevice(seed, 1)
+	a, err := newProbeDevice(seed, 1, framed)
 	if err != nil {
 		return err
 	}
 	defer a.close()
-	b, err := newProbeDevice(seed, 2)
+	b, err := newProbeDevice(seed, 2, framed)
 	if err != nil {
 		return err
 	}
@@ -88,7 +107,9 @@ func probe(target, token string) error {
 		if err != nil {
 			return fmt.Errorf("%s device: %w", d.name, err)
 		}
-		fmt.Printf("  %-7s device registered in %v (challenge answered)\n", d.name, took.Round(time.Millisecond))
+		if framed {
+			fmt.Printf("  %-7s device registered in %v (challenge answered)\n", d.name, took.Round(time.Millisecond))
+		}
 	}
 
 	payload := []byte("shrooms relay probe")
@@ -132,8 +153,13 @@ func probe(target, token string) error {
 	if got.Src != tagA {
 		return fmt.Errorf("the relay named the wrong sender: %x", got.Src[:8])
 	}
-	fmt.Printf("  packet relayed in %v\n", time.Since(start).Round(time.Millisecond))
-	fmt.Printf("\nOK — %s forwards, and cannot be pointed at an address that does not answer\n", at)
+	// Only the framed run reports success. The unframed one exists solely to
+	// tell an old relay from an absent one, and announcing "OK" from it would
+	// contradict the error printed a line later.
+	if framed {
+		fmt.Printf("  packet relayed in %v\n", time.Since(start).Round(time.Millisecond))
+		fmt.Printf("\nOK — %s forwards, and cannot be pointed at an address that does not answer\n", at)
+	}
 	return nil
 }
 
@@ -163,9 +189,10 @@ func resolve(target string) (netip.AddrPort, error) {
 }
 
 type probeDevice struct {
-	conn *net.UDPConn
-	priv ed25519.PrivateKey
-	wg   identity.WGKey
+	conn   *net.UDPConn
+	priv   ed25519.PrivateKey
+	wg     identity.WGKey
+	framed bool
 }
 
 // probeSeed is a value stable for this machine and unlikely to match another's.
@@ -178,7 +205,7 @@ func probeSeed() [32]byte {
 	return sha256.Sum256([]byte("shrooms-relay/probe/v1|" + host + "|" + strconv.Itoa(os.Getuid())))
 }
 
-func newProbeDevice(seed [32]byte, n byte) (*probeDevice, error) {
+func newProbeDevice(seed [32]byte, n byte, framed bool) (*probeDevice, error) {
 	c, err := net.ListenUDP("udp", nil)
 	if err != nil {
 		return nil, err
@@ -189,12 +216,24 @@ func newProbeDevice(seed [32]byte, n byte) (*probeDevice, error) {
 	priv := ed25519.NewKeyFromSeed(ds[:])
 	var wg identity.WGKey
 	wg[0] = n
-	return &probeDevice{conn: c, priv: priv, wg: wg}, nil
+	return &probeDevice{conn: c, priv: priv, wg: wg, framed: framed}, nil
 }
 
 func (d *probeDevice) close() { d.conn.Close() }
 
+// framed says whether to speak the dialect real clients speak.
+//
+// A shrooms client wraps relay frames in the control header that lets them
+// share the WireGuard socket; tools speaking the frames directly do not. A relay
+// older than that fix reads only the unframed form — so it answers this probe
+// and ignores every real client, which is a worse outcome than failing.
+//
+// Found the hard way: a relay probed green and neither of two containers could
+// register with it.
 func (d *probeDevice) send(to netip.AddrPort, pkt []byte) error {
+	if d.framed {
+		pkt = ctrl.Wrap(ctrl.SubRelay, pkt)
+	}
 	_, err := d.conn.WriteToUDPAddrPort(pkt, to)
 	return err
 }
@@ -212,7 +251,10 @@ func (d *probeDevice) recvWithin(k relay.Key, within time.Duration) (*relay.Fram
 	if err != nil {
 		return nil, fmt.Errorf("nothing came back within %v", within)
 	}
-	return relay.Decode(k, buf[:n])
+	// Accept either dialect on the way back, so a relay that answers in the
+	// other one is diagnosed rather than reported as silent.
+	_, frame, _ := ctrl.Unwrap(buf[:n])
+	return relay.Decode(k, frame)
 }
 
 // join runs the exchange a real client runs, which is what makes this a test of
