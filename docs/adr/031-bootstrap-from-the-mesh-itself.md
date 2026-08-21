@@ -1,9 +1,9 @@
 # 031. Bootstrap from the mesh itself
 
 **Status:** accepted and built. In service since 2026-08-21, when the VPS began
-publishing a bootstrap address that its peers now persist. One gap remains and
-is described under *Costs and risks*: the peer id is not yet stable across a
-restart, so an address survives less well than it should.
+publishing a bootstrap address that its peers now persist — and the identity in
+that address survives a restart, which took a second attempt to get right. See
+*Costs and risks*.
 
 ## Context
 
@@ -128,15 +128,19 @@ to 30304 and, in the same restart, gave it a new peer id — which broke a lapto
 whose `entry_nodes` had been hand-set to the old address, on the day the
 public fleet came back and it no longer needed one.
 
-`nodekey` is an accepted configuration option, confirmed against the library's
-own `AvailableConfigs` rather than inferred from strings in the binary. Storing
-one alongside the device identity and passing it would make the peer id as
-stable as the port, and is what this ADR needs to be durable rather than
-valid-until-the-relay-restarts.
+**Closed the same day.** `nodekey` takes "P2P node private key as 64 char hex
+string" — both the name and the format from the library's own
+`AvailableConfigs`, not from strings in the binary, a distinction this project
+has already paid for once. A key is generated once and kept beside the device
+identity, and two real starts of a real node now produce the same peer id.
 
-Until then the mitigation is the announce itself: the address is republished
-every 45 seconds, so a peer that is *connected* across the publisher's restart
-updates, and only one that was offline for it wakes up stale.
+Kept separate from the device key on purpose: this is a transport identity,
+visible to anybody the node meets on a public shard, and it authenticates
+nothing about membership — that is the device key's job
+([ADR-007](007-two-keys-per-device.md)).
+
+So a published bootstrap address now survives its publisher restarting, which is
+what the feature claimed and did not yet do.
 
 **Invite size.** A multiaddr with a peer ID is about 90 characters. Two or three
 fit comfortably in a QR that still scans on a phone; a dozen would not.
