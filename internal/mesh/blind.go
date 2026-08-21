@@ -60,6 +60,33 @@ func (m *Mesh) relayHandle(wg identity.WGKey) identity.WGKey {
 	return relay.Tag(m.relayKey, wg)
 }
 
+// RelayInUse is the relay currently carrying traffic, and whether it is one
+// somebody else runs.
+//
+// Reported because status could not otherwise see it. A blind relay is not a
+// peer and never announces, so a node counting relays in its roster finds none
+// and says "no relay" while routing everything through one — which is a
+// confusing thing to read while it is working.
+func (m *Mesh) RelayInUse() (netip.AddrPort, bool, bool) {
+	if !m.relayNow.IsValid() {
+		return netip.AddrPort{}, false, false
+	}
+	t, ok := m.targetFor(m.relayNow)
+	return m.relayNow, ok && t.blind, true
+}
+
+// ConfiguredRelays counts the relays this device was told about, and how many
+// of those are run by people who are not members.
+func (m *Mesh) ConfiguredRelays() (total, blind int) {
+	for _, t := range m.relays {
+		total++
+		if t.blind {
+			blind++
+		}
+	}
+	return total, blind
+}
+
 // parseRelayAddr accepts one configured relay address, complaining rather than
 // failing: a mistyped entry should cost that relay, not the mesh.
 func parseRelayAddr(log *slog.Logger, s string) (netip.AddrPort, bool) {

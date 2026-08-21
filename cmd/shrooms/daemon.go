@@ -373,6 +373,16 @@ type meshStatus struct {
 	// is invisible until a peer on mobile data cannot reach anything.
 	Relays int `json:"relays"`
 
+	// BlindRelays counts relays configured on this device that are not members
+	// of the mesh (docs/blind-relays.md). Counted separately because they can
+	// never appear in the roster: they hold no network key and never announce.
+	BlindRelays int `json:"blind_relays,omitempty"`
+
+	// RelayUsing is the relay currently carrying traffic, empty when none is.
+	RelayUsing string `json:"relay_using,omitempty"`
+	// RelayUsingBlind says that relay is one somebody else runs.
+	RelayUsingBlind bool `json:"relay_using_blind,omitempty"`
+
 	// What the config says about this mesh, so a UI can show the current
 	// setting rather than only offering the buttons that change it.
 	//
@@ -1159,6 +1169,10 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 				if p.Relay {
 					ms.Relays++
 				}
+			}
+			_, ms.BlindRelays = in.mesh.ConfiguredRelays()
+			if at, blind, ok := in.mesh.RelayInUse(); ok {
+				ms.RelayUsing, ms.RelayUsingBlind = at.String(), blind
 			}
 			if e := in.mesh.SelfExpiry(); !e.IsZero() {
 				ms.Expires = e.Unix()

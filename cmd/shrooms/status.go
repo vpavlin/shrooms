@@ -166,7 +166,16 @@ func cmdStatus(args []string) error {
 				relayNote(m), expiryNote(m.Expires), enrolNote(m))
 		}
 	} else if len(st.Meshes) == 1 {
-		if relayNote(st.Meshes[0]) != "" {
+		if u := st.Meshes[0].RelayUsing; u != "" {
+			// Which relay, and whose. "Somebody else's" is worth saying: it is
+			// carrying your traffic and cannot read it, and both halves of that
+			// are things an operator should be reminded of rather than assume.
+			kind := "one of this mesh's own"
+			if st.Meshes[0].RelayUsingBlind {
+				kind = "run by somebody else; it cannot read what it carries"
+			}
+			fmt.Fprintf(head, "relay\t%s\t%s\n", u, kind)
+		} else if relayNote(st.Meshes[0]) != "" {
 			fmt.Fprintf(head, "relay\tnone\tpeers on mobile data may reach only public addresses\n")
 		}
 		if st.Meshes[0].Unenrolled {
@@ -586,7 +595,10 @@ func enrolFix(label string) string {
 // (ADR-015), so a second mesh joined by invite has none until it is told to —
 // which is exactly the case that looked like a regression.
 func relayNote(m meshStatus) string {
-	if m.Relays > 0 || m.Peers == 0 {
+	// A configured blind relay counts, even though it can never appear in the
+	// roster: it holds no network key and never announces, so a node counting
+	// relays among its peers finds none while routing everything through one.
+	if m.Relays > 0 || m.BlindRelays > 0 || m.Peers == 0 {
 		return ""
 	}
 	return "  no relay"
