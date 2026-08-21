@@ -494,6 +494,11 @@ What going without costs is a stable address: the assigned port can change when
 a deployment is recreated. For a relay handed out alongside a token, that is a
 line in a message you were sending anyway.
 
+- **Deployments are paid in ACT, not AKT.** Found by deploying: a create with
+  an AKT deposit is refused with "Deposit invalid", and the chain rejects it by
+  design — `x/deployment` allows AKT only as a top-up to a deployment that
+  already exists. Deposits and pricing are `uact`, minted from AKT with
+  `tx bme mint-act`. Both descriptors priced in `uakt` until this was hit.
 - **Neither descriptor has been run against a live provider.** Both are written
   from documentation. The part most worth checking is whether a given provider
   forwards UDP this way at all — Kubernetes NodePort supports it, but that is

@@ -39,6 +39,38 @@ Build it yourself with:
 Check any relay, yours or somebody else's, with `shrooms-relay -probe` — see
 below.
 
+## Deployments are paid in ACT, not AKT
+
+Worth knowing before the first attempt, because the failure is opaque. Creating
+a deployment with an AKT deposit is refused by the chain outright:
+
+    Deposit invalid ... with gas used: '35786': unknown request
+
+That is not a configuration mistake. `x/deployment/handler/server.go` rejects it
+by design:
+
+```go
+// AKT deposits are only allowed via AccountDeposit (existing deployment)
+if msg.Deposit.Amount.Denom == sdkutil.DenomUakt {
+    return nil, v1.ErrInvalidDeposit
+}
+```
+
+So AKT can top up a deployment that already exists, and cannot create one.
+Deposits and pricing are both in **`uact`**, which you mint from AKT:
+
+    provider-services tx bme mint-act <amount>uakt --from <key> ...
+
+Mint **at least 10 ACT** — smaller amounts have been reported not to become
+spendable. There is an open issue where minted ACT does not appear in
+`query bank balances` at all
+([akash-network/support#445](https://github.com/akash-network/support/issues/445)),
+so if `deployment create` then fails with `insufficient balance` rather than
+`Deposit invalid`, that is a known problem with the chain rather than with
+anything here.
+
+The `pricing.denom` in both descriptors is `uact` for the same reason.
+
 ## Where to deploy from
 
 **https://air.akash.network/** — Console Air, the console that takes **AKT** as
