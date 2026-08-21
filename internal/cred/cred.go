@@ -23,6 +23,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base32"
 	"encoding/binary"
 	"errors"
@@ -128,6 +129,23 @@ func NewAuthority(keys ...ed25519.PublicKey) (*Authority, error) {
 }
 
 // ID names the mesh: a hash over every trusted key, in canonical order.
+// Has reports whether a public key is one this mesh trusts.
+//
+// For a signer to check itself before issuing. A card that is not in admin_keys
+// signs a credential every peer refuses, and the joining device is a bad place
+// to discover that — it fails silently, days later, as a member nobody admits.
+func (a *Authority) Has(pub ed25519.PublicKey) bool {
+	if a == nil {
+		return false
+	}
+	for _, k := range a.Keys {
+		if len(k) == len(pub) && subtle.ConstantTimeCompare(k, pub) == 1 {
+			return true
+		}
+	}
+	return false
+}
+
 func (a *Authority) ID() MeshID {
 	h := sha256.New()
 	h.Write([]byte("mesh/v2/id"))

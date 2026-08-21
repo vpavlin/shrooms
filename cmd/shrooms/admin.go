@@ -255,40 +255,6 @@ func addAdminKeys(cfgPath string, keys []string) error {
 	return err
 }
 
-// issueFor signs a credential and returns it in wire form.
-//
-// The mesh id is the authority's, not the signer's: a credential says which
-// mesh it admits you to, and this admin is one key among that mesh's set. Admin
-// .Issue cannot know that — it only has its own key — so every caller has to
-// restamp and re-sign, and doing that in three places was two too many.
-func issueFor(admin cred.Signer, auth *cred.Authority, devPub, wgPub []byte,
-	name string, serial uint64, now time.Time, life time.Duration) ([]byte, error) {
-
-	// A serial of zero means "now", in unix seconds.
-	//
-	// Serials must increase per device, because a revocation withdraws its
-	// serial and everything below — so re-issuing at the same serial would put
-	// the renewed credential inside the range an old revocation covers. Nothing
-	// tracks a counter per device, and a clock is a counter everyone already
-	// agrees on.
-	if serial == 0 {
-		serial = uint64(now.Unix())
-	}
-	// Through the Signer seam (ADR-022) rather than signing here: the admin key
-	// is the one secret in this system whose usage pattern suits a smartcard —
-	// a handful of signatures a year, each a deliberate act by someone present
-	// — and everything above this line already works in terms of a digest.
-	c, err := cred.IssueWith(admin, devPub, wgPub, name, serial,
-		// A minute of slack, because clocks differ and a credential that is not
-		// yet valid on the machine it was just issued to is a confusing
-		// failure.
-		now.Add(-time.Minute).Unix(), now.Add(life).Unix(), auth.ID())
-	if err != nil {
-		return nil, err
-	}
-	return c.MarshalBinary()
-}
-
 // issueLocal enrols the device whose state directory this is, on one mesh.
 //
 // networkID and legacy decide *which identity* is named. A device has one per
@@ -307,7 +273,7 @@ func issueLocal(admin *cred.Admin, auth *cred.Authority, stateDir, name, network
 	if err != nil {
 		return err
 	}
-	raw, err := issueFor(admin, auth, ms.Identity.DevicePub, ms.Identity.WGPub[:],
+	raw, err := cred.IssueFor(admin, auth, ms.Identity.DevicePub, ms.Identity.WGPub[:],
 		name, serial, time.Now(), cred.DefaultLife)
 	if err != nil {
 		return err
@@ -484,7 +450,7 @@ func cmdAdminIssue(args []string) error {
 	}
 
 	now := time.Now()
-	raw, err := issueFor(admin, auth, devPub, wgPub, *name, *serial, now, *life)
+	raw, err := cred.IssueFor(admin, auth, devPub, wgPub, *name, *serial, now, *life)
 	if err != nil {
 		return err
 	}

@@ -464,6 +464,14 @@ const DeafAfter = 12 * time.Minute
 // Roster exposes the peer roster.
 func (m *Mesh) Roster() *Roster { return m.roster }
 
+// Authority is the set of admin keys this mesh trusts, or nil when it has none.
+//
+// Exposed so a signer outside this package can check it is one of them before
+// issuing — a card that is not in admin_keys produces a credential every peer
+// will refuse, and finding that out on the joining device days later is a poor
+// way to learn it.
+func (m *Mesh) Authority() *cred.Authority { return m.authority }
+
 // Self returns this node's overlay address.
 func (m *Mesh) Self() netip.Addr { return m.self }
 

@@ -181,7 +181,7 @@ func cmdInvite(args []string) error {
 		if err != nil {
 			return fmt.Errorf("tunnel key: %w", err)
 		}
-		if credential, err = issueFor(admin, auth, devPub, wgPub, joiner, *serial, time.Now(), *life); err != nil {
+		if credential, err = cred.IssueFor(admin, auth, devPub, wgPub, joiner, *serial, time.Now(), *life); err != nil {
 			return err
 		}
 		if issued, err = cred.UnmarshalCredential(credential); err != nil {

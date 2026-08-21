@@ -105,7 +105,7 @@ func cmdAdminRenew(args []string) error {
 			fmt.Printf("  %-16s skipped: %v\n", nameOf(mem), err)
 			continue
 		}
-		raw, err := issueFor(admin, auth, devPub, wgPub, mem.Name, 0, now, *life)
+		raw, err := cred.IssueFor(admin, auth, devPub, wgPub, mem.Name, 0, now, *life)
 		if err != nil {
 			return fmt.Errorf("%s: %w", nameOf(mem), err)
 		}
