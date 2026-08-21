@@ -101,6 +101,15 @@ on isolated networks, forced through a relay on Akash, completes:
 OK 104.9 MB in 2m27s (0.71 MB/s)
 ```
 
+And from a phone on mobile data, which is the case the whole thing is for: 100MB
+at 0.7–0.8 MB/s, through the same relay, with no direct path possible in either
+direction.
+
+That the two figures match is the useful part. The phone adds a carrier's own
+path MTU, which neither container exercised, and it made no difference — so the
+bottleneck is the relay hop rather than any end, and the assumed underlay is
+conservative enough to cover a mobile network as well as a datacentre one.
+
 Three things had to be right, and the first two attempts each got one wrong.
 
 **Path MTU discovery cannot express it.** RFC 8201 forbids a node reducing its
