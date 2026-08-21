@@ -107,6 +107,27 @@ Check it from outside rather than trusting the setting:
 
 Two descriptors here. **Start with `relay-noip.yaml`.**
 
+### Choosing a provider that can do it
+
+Providers advertise IP-lease support under **two different attribute keys**, and
+SDL attributes are AND-matched — so filtering on either one silently excludes
+everybody using the other. On mainnet, 2026-08-21: 8 providers advertise
+`ip-lease: true`, and 4 advertise `feat-endpoint-ip: true`.
+
+`relay.yaml` therefore filters on neither. Choose from the bids instead, and
+check a candidate before accepting:
+
+    curl -s https://akash-api.polkachu.com/akash/provider/v1beta4/providers/<addr> \
+      | python3 -m json.tool | grep -i "endpoint-ip\|ip-lease\|host_uri"
+
+Everything about a deployment is public, which is useful when the console is
+unhelpful and the CLI wants a key you would rather not export. Bids, leases and
+provider records all read without authentication:
+
+    API=https://akash-api.polkachu.com
+    curl -s "$API/akash/market/v1beta5/leases/list?filters.owner=<addr>&filters.state=active"
+    curl -s "$API/akash/market/v1beta5/bids/list?filters.owner=<addr>&filters.dseq=<dseq>"
+
 `relay.yaml` takes an IP lease, which is the expensive part — often more than
 the compute under it. What a lease actually buys is the ability to *choose* a
 port. Akash's own announcement puts the limitation it removed plainly:
@@ -125,38 +146,32 @@ deployment is recreated, so the address is not stable across redeploys. For a
 relay handed out alongside a token, that is a line in a message you were sending
 anyway.
 
-**Tried on two providers, and not yet proven either way.** Deployed
-`relay-noip.yaml` on zencloud.eu (dseq 28269647) and on cpu.dal.aes.akash.pub,
-2026-08-21. In both cases the container started and logged its whole
-configuration correctly, so the image and the descriptor are sound. Neither
-console showed a forwarded port, and sweeping UDP 30000–32767 found nothing.
+**Tried on two providers: the no-lease path does not work, and now we know why.**
+Deployed `relay-noip.yaml` on zencloud.eu (dseq 28269647) and on
+cpu.dal.aes.akash.pub (dseq 28269739), 2026-08-21. Both times the container
+started and logged its whole configuration correctly, so the image and the
+descriptor are sound. Neither console showed a forwarded port, and nothing
+answered on UDP.
 
-**That sweep was aimed at the wrong host, so it proves very little.** It used
-the address the ingress hostname resolves to, which is the ingress controller. A
-NodePort lives on the Kubernetes *node*, usually a different address entirely.
+The first sweep was aimed at the wrong host and proved nothing — it used the
+address the ingress hostname resolves to, and a NodePort lives on the node. The
+two are genuinely different machines:
 
-And the provider does build UDP NodePorts — `cluster/kube/builder/service.go`
-maps `manitypes.UDP` to `corev1.ProtocolUDP` on a `ServiceTypeNodePort` service
-for any global, non-ingress expose. So the code path exists and a forwarded port
-probably does too; what is missing is the address it is on.
+    ingress    209.135.147.15
+    provider   209.135.147.17
 
-Getting that address needs `lease-status`, and in practice that is the thing
-that sinks the no-lease path rather than anything technical. It talks to the
-provider over mTLS, so it needs a current `provider-services` and the
-deploying account's key in a local keyring — which, for a deployment made from a
-browser wallet, means putting a seed phrase on disk. A CLI old enough to predate
-the ACT upgrade is refused by the chain outright ("unknown client version"), so
-the toolchain has to be current too.
+Sweeping the *node* settles it. TCP NodePorts there are wide open — twenty-odd
+ports answering, other tenants' services — while the same range on UDP answers
+nothing at all. So the address is right, NodePorts do reach the internet, and
+**this provider forwards TCP and not UDP.**
 
-**An IP lease removes the reason you wanted `lease-status` at all.** The only
-thing it was for is discovering a port somebody else picked. With a lease you
-choose the port, so the address is known the moment the lease is granted —
-nothing to query, nothing to import, and it stays put across redeploys rather
-than moving each time.
+That is consistent with the provider code, which does build UDP NodePorts
+(`cluster/kube/builder/service.go` maps `manitypes.UDP` to `corev1.ProtocolUDP`
+for any global non-ingress expose). Kubernetes creates the mapping; the
+provider's network does not carry it. Nothing in an SDL can fix that.
 
-That is the recommendation until there is a concrete reason to care about the
-difference: take the lease, and revisit the cheap path when the client side is
-wired and a running relay is worth optimising.
+**So the IP lease is the path that works** — not because UDP needs one in
+principle, but because providers do not forward UDP NodePorts in practice.
 
 ### The console URL is not the relay's address
 

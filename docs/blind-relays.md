@@ -499,14 +499,13 @@ line in a message you were sending anyway.
   design — `x/deployment` allows AKT only as a top-up to a deployment that
   already exists. Deposits and pricing are `uact`, minted from AKT with
   `tx bme mint-act`. Both descriptors priced in `uakt` until this was hit.
-- **Deployed on two providers; still unproven.** The relay ran and read its
-  configuration correctly both times, so image and descriptor are sound, but no
-  forwarded port was found. That is weaker evidence than it first looked: the
-  search used the ingress address, and a NodePort lives on the node rather than
-  the ingress controller. The provider does build UDP NodePorts — it maps
-  `manitypes.UDP` to `corev1.ProtocolUDP` for any global non-ingress expose — so
-  the mapping likely exists at an address we have not looked at. Settling it
-  needs `lease-status`. See `deploy/akash/README.md`.
+- **The no-lease path does not work, and the reason is the provider's network.**
+  Deployed on two providers; the relay ran correctly both times. Sweeping the
+  *node* address — not the ingress address, which was the first attempt's
+  mistake — found TCP NodePorts wide open and nothing whatever on UDP. So
+  Kubernetes creates the UDP mapping, as the provider code says it does, and the
+  network in front of it does not carry UDP. No SDL can fix that, and the IP
+  lease becomes the path that works. See `deploy/akash/README.md`.
 - **`shrooms-relay -probe host:port` is how you check.** It is a client rather
   than an inspection: two throwaway devices, both registered the way a real one
   would, and a packet relayed between them. A pass means the whole path works,

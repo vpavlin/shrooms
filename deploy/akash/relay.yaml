@@ -85,10 +85,19 @@ profiles:
 
   placement:
     dcloud:
-      attributes:
-        # Not every provider offers leases, and one that does not will simply
-        # not bid rather than deploy something that cannot be reached.
-        ip-lease: true
+      # Deliberately no attribute filter for the IP lease.
+      #
+      # Providers advertise the capability under two different keys — some say
+      # `ip-lease: true`, others `feat-endpoint-ip: true` — and SDL attributes
+      # are matched with AND, so requiring either one silently excludes every
+      # provider using the other. Measured on mainnet 2026-08-21: 8 advertise
+      # the first and 4 the second.
+      #
+      # So leave it open and choose from the bids. Check a provider's attributes
+      # before accepting, with:
+      #
+      #   curl -s https://akash-api.polkachu.com/akash/provider/v1beta4/providers/<addr> \
+      #     | python3 -m json.tool | grep -i "endpoint-ip\|ip-lease"
       pricing:
         relay:
           denom: uact
