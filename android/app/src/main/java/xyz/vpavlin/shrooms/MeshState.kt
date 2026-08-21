@@ -108,6 +108,16 @@ data class Snapshot(
     val peers: List<Peer> = emptyList(),
     val rendezvous: Rendezvous = Rendezvous("unknown", true, "", ""),
     val error: String = "",
+    /**
+     * Where this device tells peers to reach it.
+     *
+     * Empty is the interesting case and it is invisible everywhere else: a
+     * phone that cannot list its own addresses — Android restricts that for
+     * untrusted apps — announces nothing and looks perfectly healthy while no
+     * peer can dial it. Null means a core too old to report it, which is a
+     * different thing from none.
+     */
+    val announced: List<String>? = null,
     /** One entry per mesh, present only when this device has more than one. */
     val meshes: List<MeshInfo> = emptyList(),
 
@@ -211,6 +221,14 @@ object MeshState {
         }
 
         val r = o.optJSONObject("rendezvous")
+        // has() rather than optJSONArray alone: absent and empty are different
+        // answers, and conflating them reports "no addresses" for a core that
+        // simply predates the field.
+        val announced = if (o.has("announced")) {
+            o.optJSONArray("announced").let { arr ->
+                (0 until (arr?.length() ?: 0)).map { arr!!.getString(it) }
+            }
+        } else null
         return Snapshot(
             name = o.optString("name"),
             dnsName = o.optString("dns_name"),
@@ -223,6 +241,7 @@ object MeshState {
                 problem = r?.optString("problem") ?: "",
                 detail = r?.optString("detail") ?: "",
             ),
+            announced = announced,
             meshes = o.optJSONArray("meshes")?.let { arr ->
                 (0 until arr.length()).map { i ->
                     val m = arr.getJSONObject(i)

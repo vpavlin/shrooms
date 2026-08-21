@@ -695,6 +695,31 @@ private fun MeshScreen(
             )
         }
 
+        // A device with no address to give is undialable, and that is invisible
+        // from everything else on this screen: peers appear, discovery looks
+        // healthy, and every handshake fails.
+        //
+        // Guarded on more than "no addresses", because on Android that alone is
+        // the *normal* state — the OS will not let an untrusted app list its
+        // own interfaces, so a phone has nothing to announce until some peer
+        // reaches it and reports back. Saying so during an ordinary start would
+        // be an alarm on every healthy connect, which is how people learn to
+        // ignore banners.
+        //
+        // So: no address, peers to talk to, and not one of them has ever
+        // completed a handshake. That combination is stuck rather than starting.
+        val stuck = snap.connected &&
+            snap.announced != null && snap.announced.isEmpty() &&
+            snap.peers.isNotEmpty() && snap.peers.none { it.live || it.handshakeAgeS > 0 }
+        if (stuck) {
+            Banner(
+                "no peer can dial this device: it has no address to give\n" +
+                    "it becomes reachable once something reaches it first — a relay, " +
+                    "or a peer with a public address",
+                Palette.Amber,
+            )
+        }
+
         var asGraph by remember { mutableStateOf(true) }
         var selected by remember { mutableStateOf<Peer?>(null) }
 

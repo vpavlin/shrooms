@@ -173,12 +173,22 @@ type statusMesh struct {
 
 type statusPayload struct {
 	// Meshes is present only when there is more than one.
-	Meshes     []statusMesh `json:"meshes,omitempty"`
-	Name       string       `json:"name"`
-	DNSName    string       `json:"dns_name,omitempty"`
-	Overlay    string       `json:"overlay"`
-	Prefix     string       `json:"prefix"`
-	Peers      []statusPeer `json:"peers"`
+	Meshes  []statusMesh `json:"meshes,omitempty"`
+	Name    string       `json:"name"`
+	DNSName string       `json:"dns_name,omitempty"`
+	Overlay string       `json:"overlay"`
+	Prefix  string       `json:"prefix"`
+	Peers   []statusPeer `json:"peers"`
+
+	// Announced is where this device tells peers to reach it.
+	//
+	// Carried to the phone because that is where it is hardest to find out and
+	// most often empty: Android restricts interface enumeration for untrusted
+	// apps, so a phone frequently cannot list its own addresses and has nothing
+	// to announce until some peer reaches it and reports back. A device in that
+	// state looks perfectly healthy from every other screen while being
+	// undialable by everybody.
+	Announced  []string `json:"announced"`
 	Rendezvous struct {
 		Status  string `json:"status"`
 		OK      bool   `json:"ok"`
@@ -255,6 +265,14 @@ func snapshot(m *mesh.Mesh, suffix, label string) statusPayload {
 	out.Rendezvous.OK = h.OK(now)
 	out.Rendezvous.Problem = h.Problem(now)
 	out.Rendezvous.Detail = h.Detail(now)
+
+	// Never nil: the app distinguishes "none" from "this build does not report
+	// it", and a nil slice marshals to null, which is the same ambiguity the
+	// desktop status had to fix with a pointer.
+	out.Announced = m.Announced()
+	if out.Announced == nil {
+		out.Announced = []string{}
+	}
 
 	stats, _ := m.PeerStats()
 	svc, bnd := m.Services(now), m.Bound(now)
