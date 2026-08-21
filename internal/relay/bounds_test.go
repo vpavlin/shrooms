@@ -29,7 +29,7 @@ func TestRegistrationsAreCapped(t *testing.T) {
 
 	s.mu.Lock()
 	for i := 0; i < MaxRegistrations+50; i++ {
-		s.registerLocked(key(byte(i%251)), addr(i), now)
+		s.registerLocked(key(byte(i%251)), addr(i), now, nil)
 	}
 	held := len(s.peers)
 	s.mu.Unlock()
@@ -48,8 +48,8 @@ func TestOneAddressHoldsOneKey(t *testing.T) {
 	from := addr(1)
 
 	s.mu.Lock()
-	s.registerLocked(key(1), from, now)
-	s.registerLocked(key(2), from, now)
+	s.registerLocked(key(1), from, now, nil)
+	s.registerLocked(key(2), from, now, nil)
 	_, first := s.peers[key(1)]
 	_, second := s.peers[key(2)]
 	s.mu.Unlock()
@@ -71,8 +71,8 @@ func TestReRegisteringFromANewAddressLeavesNothingBehind(t *testing.T) {
 	old, new_ := addr(1), addr(2)
 
 	s.mu.Lock()
-	s.registerLocked(key(7), old, now)
-	s.registerLocked(key(7), new_, now)
+	s.registerLocked(key(7), old, now, nil)
+	s.registerLocked(key(7), new_, now, nil)
 	_, stale := s.byAddr[old]
 	got := s.byAddr[new_]
 	n := len(s.peers)
@@ -96,7 +96,7 @@ func TestExpiryClearsBothDirections(t *testing.T) {
 	now := time.Now()
 
 	s.mu.Lock()
-	s.registerLocked(key(3), addr(3), now.Add(-2*RegistrationTTL))
+	s.registerLocked(key(3), addr(3), now.Add(-2*RegistrationTTL), nil)
 	s.expireLocked(now)
 	peers, rev := len(s.peers), len(s.byAddr)
 	s.mu.Unlock()
@@ -116,7 +116,7 @@ func TestSourceLookupUsesTheReverseIndex(t *testing.T) {
 
 	s.mu.Lock()
 	for i := 0; i < 100; i++ {
-		s.registerLocked(key(byte(i)), addr(i), now)
+		s.registerLocked(key(byte(i)), addr(i), now, nil)
 	}
 	s.mu.Unlock()
 

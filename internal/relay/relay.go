@@ -104,6 +104,9 @@ type Frame struct {
 	// checks that the device owns Key and that the frame is recent.
 	DevicePub []byte
 	At        int64
+
+	// Nonce is the routability challenge, on the two frames that carry one.
+	Nonce [NonceLen]byte
 }
 
 // ErrNotSignedByDevice is a registration whose signature does not match the
@@ -182,6 +185,12 @@ func Decode(k Key, pkt []byte) (*Frame, error) {
 		copy(f.Src[:], pkt[1+keyLen:1+keyLen+keyLen])
 		f.Payload = pkt[forwardHeaderLen:]
 		return f, nil
+
+	case TypeChallenge:
+		return decodeChallenge(k, pkt)
+
+	case TypeConfirm:
+		return decodeConfirm(k, pkt)
 
 	default:
 		return nil, fmt.Errorf("unknown relay frame type %d", pkt[0])
