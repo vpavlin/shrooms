@@ -80,8 +80,6 @@ profiles:
           # Nothing is written. This is the image and room to run, not a place
           # to keep anything, and losing it costs nothing.
           size: 256Mi
-      endpoints:
-        - relayip
 
   placement:
     dcloud:
