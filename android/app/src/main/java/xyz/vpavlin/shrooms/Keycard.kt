@@ -62,7 +62,7 @@ private class IsoTransport(private val iso: IsoDep) : mobile.CardTransport {
  * The reader callback arrives on a binder thread, which is what we want — the
  * Go call is blocking and a card conversation is many round trips.
  */
-private suspend fun <T> onCardTap(activity: Activity, block: (mobile.CardTransport) -> T): T =
+internal suspend fun <T> onCardTap(activity: Activity, block: (mobile.CardTransport) -> T): T =
     suspendCancellableCoroutine { cont ->
         val adapter = NfcAdapter.getDefaultAdapter(activity)
         if (adapter == null) {

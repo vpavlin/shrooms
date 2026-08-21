@@ -93,6 +93,7 @@ class MainActivity : ComponentActivity() {
                 var configured by remember { mutableStateOf(Mobile.configured(dir)) }
                 var addingMesh by remember { mutableStateOf(false) }
                 var inSettings by remember { mutableStateOf(false) }
+                var inviting by remember { mutableStateOf(false) }
                 // Which picture the graph draws. It is set in settings and read
                 // by the mesh screen, so it belongs to neither of them — and it
                 // is saveable because a rotation that quietly reverts a setting
@@ -150,6 +151,22 @@ class MainActivity : ComponentActivity() {
                             },
                             onCancel = { addingMesh = false },
                         )
+                    } else if (inviting) {
+                        // Same reason as settings: a state-swapped screen, so
+                        // back has to mean "leave this screen" rather than
+                        // "close the app". More so here, where leaving by
+                        // accident drops an invite somebody is mid-way through
+                        // scanning.
+                        BackHandler { inviting = false }
+                        InviteScreen(
+                            dir = dir,
+                            // The first mesh, which is what a phone with one
+                            // mesh means. Inviting to a specific one of several
+                            // needs a picker; until there is one, this admits
+                            // to the mesh the phone thinks of as its own.
+                            meshLabel = "",
+                            onClose = { inviting = false },
+                        )
                     } else if (inSettings) {
                         // System back leaves settings rather than the app: this
                         // is a screen swapped in by state, not an Activity, so
@@ -178,6 +195,7 @@ class MainActivity : ComponentActivity() {
                             },
                             onAddMesh = { addingMesh = true },
                             onSettings = { inSettings = true },
+                            onInvite = { inviting = true },
                             onLeftMesh = {
                                 // The tunnel is built from the config at
                                 // connect time, so a mesh added, removed or
@@ -458,6 +476,7 @@ private fun MeshScreen(
     onDisconnect: () -> Unit,
     onAddMesh: () -> Unit = {},
     onSettings: () -> Unit = {},
+    onInvite: () -> Unit = {},
     onLeftMesh: () -> Unit = {},
 ) {
     // Leaving edits the config; the running session still holds the mesh it
@@ -934,6 +953,13 @@ private fun MeshScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = Palette.Phosphor,
                 modifier = Modifier.clickable { onAddMesh() },
+            )
+            Spacer(Modifier.width(16.dp))
+            Text(
+                "invite a device",
+                style = MaterialTheme.typography.bodySmall,
+                color = Palette.Phosphor,
+                modifier = Modifier.clickable { onInvite() },
             )
             Spacer(Modifier.width(16.dp))
             Text(
