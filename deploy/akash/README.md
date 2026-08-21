@@ -39,6 +39,12 @@ Build it yourself with:
 Check any relay, yours or somebody else's, with `shrooms-relay -probe` — see
 below.
 
+## Where to deploy from
+
+**https://air.akash.network/** — Console Air, the console that takes **AKT** as
+payment. The one the docs send you to, `console.akash.network`, is not the same
+thing, which is easy to lose track of when you only do this occasionally.
+
 ## Publish the image first
 
 The descriptors reference `ghcr.io/vpavlin/shrooms-relay:latest`, which does not
