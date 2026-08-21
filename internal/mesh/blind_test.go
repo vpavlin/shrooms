@@ -200,7 +200,7 @@ func TestSelectionPrefersALiveRelayInConfiguredOrder(t *testing.T) {
 	third := netip.MustParseAddrPort("198.51.100.3:31000")
 	now := time.Now()
 
-	m := &Mesh{relayPins: []netip.AddrPort{first, second, third}}
+	m := &Mesh{relays: []relayTarget{{addr: first}, {addr: second}, {addr: third}}}
 
 	// Nothing has answered: the operator's first choice stands, so a fresh
 	// device is not paralysed waiting for a signal it has never had.
@@ -241,7 +241,10 @@ func TestRegistrationIsBoundedAndPrefersLiveRelays(t *testing.T) {
 		netip.MustParseAddrPort("198.51.100.5:31000"),
 	}
 	now := time.Now()
-	m := &Mesh{relayPins: pins}
+	m := &Mesh{}
+	for _, p := range pins {
+		m.relays = append(m.relays, relayTarget{addr: p, blind: true})
+	}
 
 	// Nothing known yet: a fresh device must still register somewhere, or it is
 	// unreachable until something tells it which relays work — and nothing
@@ -250,7 +253,7 @@ func TestRegistrationIsBoundedAndPrefersLiveRelays(t *testing.T) {
 	if len(got) != maxRelayRegistrations {
 		t.Fatalf("a fresh device registered with %d relays, want %d", len(got), maxRelayRegistrations)
 	}
-	if got[0] != pins[0] {
+	if got[0].addr != pins[0] {
 		t.Errorf("started at %v rather than the operator's first choice", got[0])
 	}
 
@@ -261,13 +264,13 @@ func TestRegistrationIsBoundedAndPrefersLiveRelays(t *testing.T) {
 	if len(got) != maxRelayRegistrations {
 		t.Fatalf("registered with %d relays, want %d", len(got), maxRelayRegistrations)
 	}
-	if got[0] != pins[3] {
+	if got[0].addr != pins[3] {
 		t.Errorf("did not register with the live relay first: %v", got)
 	}
 	// And selection agrees with registration, or a device is reachable
 	// somewhere it does not send.
-	if sel := m.selectRelay(now); sel.addr != got[0] {
-		t.Errorf("sends via %v but registered first with %v", sel.addr, got[0])
+	if sel := m.selectRelay(now); sel.addr != got[0].addr {
+		t.Errorf("sends via %v but registered first with %v", sel.addr, got[0].addr)
 	}
 
 	// Never more than the cap, however many are live.
@@ -276,5 +279,68 @@ func TestRegistrationIsBoundedAndPrefersLiveRelays(t *testing.T) {
 	}
 	if got := m.registerWith(now); len(got) != maxRelayRegistrations {
 		t.Errorf("with everything live, registered with %d relays", len(got))
+	}
+}
+
+// Both kinds at once, which is the ordinary state while moving off a relay of
+// your own: keep the VPS listed and try other people's alongside it.
+//
+// The keys and the handles must differ per relay, and getting that wrong is
+// invisible — a frame authenticated under the wrong key is simply dropped at
+// the far end, with nothing said by anybody.
+func TestMemberAndBlindRelaysCoexist(t *testing.T) {
+	nk, err := identity.NewNetworkKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	meshKey := relay.DeriveKey(nk)
+	blindKey := relay.TokenKey("somebody else's token")
+
+	mine := netip.MustParseAddrPort("198.51.100.1:51820")
+	theirs := netip.MustParseAddrPort("203.0.113.9:31760")
+
+	m := &Mesh{
+		relayKey: meshKey,
+		relays: []relayTarget{
+			{addr: mine, key: meshKey},
+			{addr: theirs, key: blindKey, blind: true},
+		},
+	}
+	self := wgOf(1)
+
+	// A relay of ours sees the real tunnel key, under the mesh's own key.
+	own, ok := m.targetFor(mine)
+	if !ok {
+		t.Fatal("our own relay was not recognised as configured")
+	}
+	if own.key != meshKey {
+		t.Error("a member relay was given something other than the mesh key")
+	}
+	if m.handleFor(own, self) != self {
+		t.Error("a member relay was given a tag instead of the tunnel key")
+	}
+
+	// A stranger's sees neither.
+	other, ok := m.targetFor(theirs)
+	if !ok {
+		t.Fatal("the blind relay was not recognised as configured")
+	}
+	if other.key == meshKey {
+		t.Fatal("a stranger's relay was given the mesh key")
+	}
+	if h := m.handleFor(other, self); h == self {
+		t.Error("a stranger's relay was given the real tunnel key")
+	}
+
+	// An address we never configured is treated as a discovered member relay,
+	// which is the only kind discovery can find.
+	if _, ok := m.targetFor(netip.MustParseAddrPort("192.0.2.1:1")); ok {
+		t.Error("an unconfigured address was reported as one of ours")
+	}
+
+	// Our own relay comes first, so it is preferred over a stranger's while
+	// both are available.
+	if got := m.selectRelay(time.Now()); got.addr != mine {
+		t.Errorf("preferred %v over our own relay", got.addr)
 	}
 }

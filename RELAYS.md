@@ -30,18 +30,18 @@ whether you intend to keep it running or are just experimenting.
 
 ## Using one
 
-Two lines of config, both from whoever offered you the relay:
+One line, listing the relays somebody offered you:
 
-    relay_addr  = "203.0.113.10:31760"
-    relay_blind = "true"
+    relay_blind = ["203.0.113.10:31760"]
 
-List several, separated by commas, and the device registers with all of them:
+Several, if you have them — a relay somebody else runs may be busy, redeployed
+at a new port, or simply gone:
 
-    relay_addr = "203.0.113.10:31760, 198.51.100.7:32100"
+    relay_blind = ["203.0.113.10:31760", "198.51.100.7:32100"]
 
-That is not only redundancy. A relay can forward only between peers that have
-both registered with it, so if two devices each picked their own favourite from
-a list they would never meet.
+And a token, if the operator asks for one:
+
+    relay_token = "the token they gave you"
 
 **A device registers with at most two of them**, not all. These are machines
 other people pay for, and a table slot on a relay carrying none of your traffic
@@ -54,12 +54,15 @@ on at different moments.
 
 Traffic goes through the first that is answering, in the order you wrote them.
 
-and, if the operator requires one:
+`relay_addr` is a separate setting, for a relay that *is* a member of your mesh
+— your own VPS, say. Both can be listed at once, which is the ordinary state of
+affairs while moving from one to the other: keep yours while other people's
+prove themselves, then drop it. They are separate settings rather than a flag
+because an address cannot say which kind it is, and guessing wrong fails
+silently — every frame authenticated under the wrong key and dropped without
+comment at the far end.
 
-    relay_token = "the token they gave you"
-
-`relay_token` implies `relay_blind`, so a token-gated relay needs only the two
-lines. Check it works before relying on it:
+Check it works before relying on it:
 
     shrooms-relay -probe 203.0.113.10:31760
 

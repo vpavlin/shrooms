@@ -118,10 +118,10 @@ type Mesh struct {
 	relayLive map[netip.AddrPort]time.Time
 	// relaySrv is non-nil only when this node acts as a relay for others.
 	relaySrv *relay.Server
-	// relayPins are the hand-configured relays, in the order given. This
-	// device registers with all of them; see selectRelay for which one carries
-	// traffic.
-	relayPins []netip.AddrPort
+	// relays are the hand-configured relays, in the order given, each with the
+	// key it is spoken to under. See registerWith for how many are occupied at
+	// once and selectRelay for which carries traffic.
+	relays []relayTarget
 
 	// relayNow is the relay currently in use, for logging changes.
 	relayNow netip.AddrPort
@@ -295,41 +295,44 @@ func New(log *slog.Logger, cfg state.Config, st *state.State, node *waku.Node, d
 		m.relaySrv = relay.NewServer(m.relayKey, m.ownsWGKey)
 		log.Info("acting as a relay for this mesh")
 	}
-	// Frames are authenticated under the mesh's own key unless a blind relay
-	// is configured, in which case the stranger forwarding for us gets a key
-	// that reveals nothing about the mesh (docs/blind-relays.md).
-	m.frameKey = m.relayKey
-	m.blind = cfg.RelayBlind || cfg.RelayToken != ""
-	if m.blind {
-		if cfg.RelayToken != "" {
-			m.frameKey = relay.TokenKey(cfg.RelayToken)
-		} else {
-			m.frameKey = relay.OpenKey()
-		}
-	}
+	// Configured relays, each carrying the key it is spoken to under. Member
+	// relays first: a relay of your own is preferable to a stranger's, and
+	// listing both is the ordinary state of affairs while moving between them.
 	for _, one := range strings.Split(cfg.RelayAddr, ",") {
-		one = strings.TrimSpace(one)
-		if one == "" {
-			continue
+		if ap, ok := parseRelayAddr(log, one); ok {
+			m.relays = append(m.relays, relayTarget{addr: ap, key: m.relayKey})
 		}
-		ap, err := netip.ParseAddrPort(one)
-		if err != nil {
-			log.Warn("ignoring unparseable relay_addr", "value", one, "err", err)
-			continue
+	}
+	// A blind relay authenticates under its operator's token, or a public key
+	// when it is open. Never under the mesh's own — that is derived from the
+	// network key, and a stranger holding it could read every announce.
+	blindKey := relay.OpenKey()
+	if cfg.RelayToken != "" {
+		blindKey = relay.TokenKey(cfg.RelayToken)
+	}
+	for _, one := range cfg.RelayBlind {
+		if ap, ok := parseRelayAddr(log, one); ok {
+			m.relays = append(m.relays, relayTarget{addr: ap, key: blindKey, blind: true})
 		}
-		m.relayPins = append(m.relayPins, ap)
 	}
-	if len(m.relayPins) > 0 {
-		log.Info("relays pinned by config", "addrs", m.relayPins, "blind", m.blind,
-			"token", cfg.RelayToken != "")
+	if len(m.relays) > 0 {
+		log.Info("relays pinned by config", "count", len(m.relays),
+			"blind", len(cfg.RelayBlind), "token", cfg.RelayToken != "")
 	}
-	if m.blind && len(m.relayPins) == 0 {
-		// A blind relay cannot announce itself — it holds no network key and
-		// has no delivery node — so there is nothing for discovery to find and
-		// the setting does nothing on its own.
-		log.Warn("relay_blind or relay_token is set with no relay_addr; " +
-			"a blind relay has to be configured because it cannot be discovered")
+	if cfg.RelayToken != "" && len(cfg.RelayBlind) == 0 {
+		log.Warn("relay_token is set with no relay_blind; a token is only used " +
+			"with a relay that is not a member of this mesh")
 	}
+
+	// Kept for the paths that have already chosen a relay and only need to know
+	// which kind it was. True when every configured relay is blind, which is
+	// the case once somebody has moved off their own.
+	m.blind = len(cfg.RelayBlind) > 0 && cfg.RelayAddr == ""
+	m.frameKey = m.relayKey
+	if m.blind {
+		m.frameKey = blindKey
+	}
+
 	m.prober = disco.NewProber(m.discoKey, st.Identity.DevicePriv, m.sendDisco)
 
 	// Control packets share the WireGuard socket; this is what makes NAT
@@ -1965,8 +1968,14 @@ func (m *Mesh) syncPeers() error {
 			// No direct path. Route through the relay rather than leaving the
 			// peer unreachable — failing over is just an endpoint swap, with no
 			// tunnel teardown or rehandshake.
-			peer.RelayVia = wg.NewRelayEndpoint(m.frameKey, rl.addr,
-				m.relayHandle(m.st.Identity.WGPub), m.relayHandle(p.WGPub))
+			// The key and both handles come from the relay actually chosen: a
+			// member sees real tunnel keys, a stranger sees tags.
+			t, ok := m.targetFor(rl.addr)
+			if !ok {
+				t = relayTarget{addr: rl.addr, key: m.relayKey}
+			}
+			peer.RelayVia = wg.NewRelayEndpoint(t.key, rl.addr,
+				m.handleFor(t, m.st.Identity.WGPub), m.handleFor(t, p.WGPub))
 		case haveStats && st.Live(now):
 			// Nothing probed and no relay, but the tunnel is working. Leave the
 			// endpoint alone.

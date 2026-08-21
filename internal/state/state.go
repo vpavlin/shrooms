@@ -244,24 +244,17 @@ type Config struct {
 	// other directly. Only useful on a node with a reachable address.
 	Relay bool
 
-	// RelayAddr pins relays, overriding discovery. One address, or several
-	// separated by commas.
+	// RelayAddr pins relays that are members of this mesh, overriding
+	// discovery.
 	//
-	// A relay that is a member of this mesh announces itself and is picked up
-	// from the roster, so pinning one is only an escape hatch — bringing up a
-	// mesh whose relay has not announced yet, or forcing a particular one while
-	// debugging.
+	// Normally empty. A member relay announces itself like any other peer and
+	// is picked up from the roster, so no node needs to be told where one is.
+	// Kept as an escape hatch: bringing up a mesh whose relay has not announced
+	// yet, or forcing a particular one while debugging.
 	//
-	// A blind relay is different: it holds no network key and runs no delivery
-	// node, so it cannot announce itself and *must* be configured. Several are
-	// worth having, because a relay somebody else runs may be busy, redeployed
-	// at a new port, or simply gone.
-	//
-	// This device registers with all of them and sends through whichever is
-	// answering. That is deliberate and not merely redundant: a relay can only
-	// forward to a peer registered with it, so if each end chose its own
-	// favourite they would not meet. Registering everywhere makes any relay the
-	// sender picks one the destination is already known at.
+	// For a relay somebody else runs, see RelayBlind — the two are separate
+	// settings because they are separate things, and an address alone cannot
+	// say which it is.
 	RelayAddr string
 
 	// RelayToken authenticates us to a blind relay that wants one
@@ -272,18 +265,30 @@ type Config struct {
 	// A relay cannot read what it forwards whether it asks for a token or not.
 	RelayToken string
 
-	// RelayBlind says the pinned relay is not a member of this mesh.
+	// RelayBlind lists relays run by people who are not on this mesh
+	// (docs/blind-relays.md).
 	//
-	// It changes two things and nothing else. Frames authenticate under a key
-	// derived from the token — or a public one when the relay is open — rather
-	// than from the network key, which a stranger must never hold. And devices
-	// register under a tag derived from the mesh relay key rather than under
-	// their tunnel key, so the operator sees opaque handles that mean nothing
-	// off their own relay.
+	//	relay_blind = ["203.0.113.10:31760", "198.51.100.7:32100"]
 	//
-	// Implied by RelayToken, since a token is only ever handed out by somebody
-	// running a blind relay.
-	RelayBlind bool
+	// A separate setting from RelayAddr rather than a flag beside it, because
+	// an address cannot say which kind it is and guessing wrong fails silently
+	// — every frame authenticated under the wrong key, dropped without comment
+	// at the other end.
+	//
+	// Being blind changes two things. Frames authenticate under a key derived
+	// from the relay's token, or a public one when it is open, rather than from
+	// the network key a stranger must never hold. And devices register under a
+	// tag derived from the mesh relay key rather than under their tunnel key,
+	// so the operator sees handles that mean nothing off their own relay.
+	//
+	// Several are worth listing: a relay somebody else runs may be busy,
+	// redeployed at a new port, or simply gone. A device registers with at most
+	// two of them, and takes them in the order given.
+	//
+	// These have to be configured because they cannot be discovered: a blind
+	// relay holds no network key and runs no delivery node, so it has no way to
+	// announce itself.
+	RelayBlind []string
 
 	// StatusFile optionally writes the status JSON to a file, for a monitoring
 	// view that can read a file but not open a unix socket — QML can do the
@@ -861,7 +866,7 @@ func parseConfig(text string) (Config, error) {
 		case "relay_token":
 			c.RelayToken = unquote(val)
 		case "relay_blind":
-			c.RelayBlind = unquote(val) == "true"
+			c.RelayBlind = parseArray(val)
 		case "socket_group":
 			c.SocketGroup = unquote(val)
 		case "status_file_group":

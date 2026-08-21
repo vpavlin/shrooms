@@ -101,7 +101,16 @@ func (m *Mesh) handleRelayFrame(payload []byte, from netip.AddrPort) ([]byte, co
 	}
 
 	// Client role.
-	f, err := relay.Decode(m.frameKey, payload)
+	//
+	// Which key reads this depends on which relay sent it: a member speaks the
+	// mesh's own, a stranger its operator's token. A frame from an address we
+	// never configured is decoded under the mesh key, which is what a relay
+	// discovered from the roster uses.
+	t, configured := m.targetFor(from)
+	if !configured {
+		t = relayTarget{addr: from, key: m.relayKey}
+	}
+	f, err := relay.Decode(t.key, payload)
 	if err != nil {
 		return nil, nil, false
 	}
@@ -116,7 +125,9 @@ func (m *Mesh) handleRelayFrame(payload []byte, from netip.AddrPort) ([]byte, co
 	// entire point and is why an attacker registering somebody else's address
 	// cannot answer.
 	if f.Type == relay.TypeChallenge {
-		m.answerChallenge(f.Nonce, from)
+		if configured {
+			m.answerChallenge(t, f.Nonce)
+		}
 		return nil, nil, false
 	}
 	if f.Type != relay.TypeForward {
@@ -124,7 +135,7 @@ func (m *Mesh) handleRelayFrame(payload []byte, from netip.AddrPort) ([]byte, co
 	}
 	// f.Src is already the handle the sender registered under — a tag on a
 	// blind relay — so it is exactly what we must address to reply.
-	ep := wg.NewRelayEndpoint(m.frameKey, from, m.relayHandle(m.st.Identity.WGPub), f.Src)
+	ep := wg.NewRelayEndpoint(t.key, from, m.handleFor(t, m.st.Identity.WGPub), f.Src)
 	return f.Payload, ep, true
 }
 
@@ -134,24 +145,24 @@ func (m *Mesh) handleRelayFrame(payload []byte, from netip.AddrPort) ([]byte, co
 // sent to, which is more than a registration ever tells us on its own. A relay
 // that stops answering stops being chosen, which is what makes several
 // configured relays useful rather than merely redundant.
-func (m *Mesh) answerChallenge(nonce [relay.NonceLen]byte, from netip.AddrPort) {
-	ep, err := m.dev.Bind.ParseEndpoint(from.String())
+func (m *Mesh) answerChallenge(t relayTarget, nonce [relay.NonceLen]byte) {
+	ep, err := m.dev.Bind.ParseEndpoint(t.addr.String())
 	if err != nil {
 		return
 	}
-	frame := relay.EncodeConfirm(m.frameKey, m.relayHandle(m.st.Identity.WGPub),
+	frame := relay.EncodeConfirm(t.key, m.handleFor(t, m.st.Identity.WGPub),
 		nonce, m.st.Identity.DevicePriv, time.Now())
 	if err := m.dev.Bind.SendControl(wg.SubRelay, frame, ep); err != nil {
-		m.log.Debug("could not answer a relay's routability challenge", "relay", from, "err", err)
+		m.log.Debug("could not answer a relay's routability challenge", "relay", t.addr, "err", err)
 		return
 	}
 	m.relayMu.Lock()
 	if m.relayLive == nil {
 		m.relayLive = make(map[netip.AddrPort]time.Time)
 	}
-	m.relayLive[from] = time.Now()
+	m.relayLive[t.addr] = time.Now()
 	m.relayMu.Unlock()
-	m.log.Debug("answered a relay's routability challenge", "relay", from)
+	m.log.Debug("answered a relay's routability challenge", "relay", t.addr)
 }
 
 // endpointAddrPort extracts the source address from a wireguard-go endpoint.
@@ -202,11 +213,11 @@ func (m *Mesh) selectRelay(now time.Time) relayChoice {
 	//
 	// Liveness only ever *promotes* the same ordering, never reshuffles it: a
 	// relay that has gone quiet is skipped, and the rest keep their order.
-	if len(m.relayPins) > 0 {
-		if ap, ok := m.liveRelay(now); ok {
-			return relayChoice{ok: true, addr: ap}
+	if len(m.relays) > 0 {
+		if t, ok := m.liveRelay(now); ok {
+			return relayChoice{ok: true, addr: t.addr}
 		}
-		return relayChoice{ok: true, addr: m.relayPins[0]}
+		return relayChoice{ok: true, addr: m.relays[0].addr}
 	}
 	// A relay is publicly reachable by definition, so it has no use for one.
 	if m.relaySrv != nil {
@@ -272,16 +283,21 @@ func (m *Mesh) registerWithRelay() {
 
 	targets := m.registerWith(now)
 	if len(targets) == 0 {
-		targets = []netip.AddrPort{rl.addr}
+		// A relay found by discovery rather than configured, which is always a
+		// member of this mesh and so speaks the mesh's own key.
+		targets = []relayTarget{{addr: rl.addr, key: m.relayKey}}
 	}
-	frame := relay.EncodeRegister(m.frameKey, m.relayHandle(m.st.Identity.WGPub), m.st.Identity.DevicePriv, now)
-	for _, at := range targets {
-		ep, err := m.dev.Bind.ParseEndpoint(at.String())
+	// One frame per relay, because the key and the handle both depend on which
+	// relay it is going to: a member sees our tunnel key, a stranger sees a tag.
+	for _, t := range targets {
+		ep, err := m.dev.Bind.ParseEndpoint(t.addr.String())
 		if err != nil {
 			continue
 		}
+		frame := relay.EncodeRegister(t.key, m.handleFor(t, m.st.Identity.WGPub),
+			m.st.Identity.DevicePriv, now)
 		if err := m.dev.Bind.SendControl(wg.SubRelay, frame, ep); err != nil {
-			m.log.Debug("relay registration failed", "relay", at, "err", err)
+			m.log.Debug("relay registration failed", "relay", t.addr, "err", err)
 		}
 	}
 }
@@ -306,8 +322,8 @@ const maxRelayRegistrations = 2
 //
 // Untried are included because a device that has just started has no liveness
 // information at all and would otherwise register nowhere.
-func (m *Mesh) registerWith(now time.Time) []netip.AddrPort {
-	if len(m.relayPins) == 0 {
+func (m *Mesh) registerWith(now time.Time) []relayTarget {
+	if len(m.relays) == 0 {
 		return nil
 	}
 	m.relayMu.Lock()
@@ -317,18 +333,18 @@ func (m *Mesh) registerWith(now time.Time) []netip.AddrPort {
 	}
 	m.relayMu.Unlock()
 
-	out := make([]netip.AddrPort, 0, maxRelayRegistrations)
-	for _, at := range m.relayPins {
-		if live[at] {
-			out = append(out, at)
+	out := make([]relayTarget, 0, maxRelayRegistrations)
+	for _, t := range m.relays {
+		if live[t.addr] {
+			out = append(out, t)
 		}
 	}
-	for _, at := range m.relayPins {
+	for _, t := range m.relays {
 		if len(out) >= maxRelayRegistrations {
 			break
 		}
-		if !live[at] {
-			out = append(out, at)
+		if !live[t.addr] {
+			out = append(out, t)
 		}
 	}
 	if len(out) > maxRelayRegistrations {
@@ -344,15 +360,28 @@ func (m *Mesh) registerWith(now time.Time) []netip.AddrPort {
 const RelayLiveFor = 3 * RelayRefresh
 
 // liveRelay is the first configured relay that has answered recently.
-func (m *Mesh) liveRelay(now time.Time) (netip.AddrPort, bool) {
+func (m *Mesh) liveRelay(now time.Time) (relayTarget, bool) {
 	m.relayMu.Lock()
 	defer m.relayMu.Unlock()
-	for _, at := range m.relayPins {
-		if seen, ok := m.relayLive[at]; ok && now.Sub(seen) < RelayLiveFor {
-			return at, true
+	for _, t := range m.relays {
+		if seen, ok := m.relayLive[t.addr]; ok && now.Sub(seen) < RelayLiveFor {
+			return t, true
 		}
 	}
-	return netip.AddrPort{}, false
+	return relayTarget{}, false
+}
+
+// targetFor is the configured relay at this address, if it is one of ours.
+//
+// A frame arriving from somewhere we never configured is not something to
+// answer: it would mean signing a registration for a relay nobody chose.
+func (m *Mesh) targetFor(addr netip.AddrPort) (relayTarget, bool) {
+	for _, t := range m.relays {
+		if t.addr == addr {
+			return t, true
+		}
+	}
+	return relayTarget{}, false
 }
 
 // probeAll probes every known peer's candidates.
