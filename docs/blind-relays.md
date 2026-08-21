@@ -456,14 +456,34 @@ held to.
 Raised because Akash has no traffic limits, which is the right instinct for a
 relay. It works, with two caveats found by reading rather than assuming:
 
-- **UDP needs an IP lease** — a dedicated public IPv4, roughly $5–15/month on
-  top of compute. Standard Akash port exposure covers HTTP/HTTPS only, so the
-  relay port cannot be exposed without one. Not every provider offers them.
-- **It needs persistent storage**, which matters more than it looks. A relay's
-  libp2p identity lives in its state directory, and a redeploy without it mints
-  a new peer id — killing every bootstrap address the relay has published
-  ([ADR-031](adr/031-bootstrap-from-the-mesh-itself.md)). On ephemeral compute
-  that stops being a rare event.
+- **UDP needs an IP lease** — a dedicated public IPv4. Not every provider offers
+  them, and it is the one cost here that cannot be designed away; see below.
+- **It needs two secrets to survive a redeploy**, which is smaller than it first
+  looks. Of the six files in a relay's state directory only two matter:
+  `state.json`, the device identity, without which the node has a new overlay
+  address and is a stranger to every peer; and `nodekey`, the libp2p identity,
+  without which every bootstrap address it published dies
+  ([ADR-031](adr/031-bootstrap-from-the-mesh-itself.md)). The rest —
+  learned bootstrap peers, replay marks, restart history — regenerate.
+
+  So a persistent volume is not required. Both are small enough to carry in the
+  deployment's `env` and write into place at start, which makes a relay
+  genuinely stateless: redeploy it anywhere, it comes back as the same node.
+  Nothing reads config from the environment today, so this is a few lines in the
+  entrypoint rather than a change to the daemon.
+
+**The IP lease is the real cost**, and it cannot be argued away: Akash's standard
+ingress is HTTP and HTTPS only, and a relay is UDP. That turns a node which
+should be nearly free into one costing five to fifteen dollars a month.
+
+There is an escape, and it deserves naming because it arrives with a *different*
+justification from the one already refused. A relay speaking TCP on 443 would
+need no IP lease — standard ingress, any provider, cheapest tier.
+[ADR-030](adr/030-tailscale-shaped-not-tor-shaped.md) declined TLS-wrapping as
+censorship machinery and that refusal stands. "It makes a relay deployable on
+cheap ephemeral infrastructure" is a separate argument and a better one. It is
+also a second relay transport, so it is a real piece of work rather than a
+setting.
 
 ## The decision
 
