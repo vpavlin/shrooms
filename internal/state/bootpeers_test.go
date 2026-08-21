@@ -5,14 +5,7 @@ import (
 	"time"
 )
 
-func newState(t *testing.T) *State {
-	t.Helper()
-	st, err := LoadOrCreateState(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	return st
-}
+func newState(t *testing.T) *State { return newStateIn(t, t.TempDir()) }
 
 // The point of the file: an address learned in one process is available to the
 // next one. Bootstrap addresses are read only when the delivery node is built,

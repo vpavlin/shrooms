@@ -133,6 +133,16 @@ func cmdDaemon(args []string) error {
 	if cfg.DeliveryPort != 0 {
 		nodeCfg["tcpPort"] = cfg.DeliveryPort
 	}
+	// A stable libp2p identity, so a bootstrap address this node publishes
+	// keeps working after it restarts (ADR-031). Best effort: without it the
+	// library invents one per start, which is what every node did before.
+	if k, err := st.NodeKey(); err == nil {
+		nodeCfg["nodekey"] = k
+	} else {
+		log.Warn("could not keep a stable rendezvous identity; peers that "+
+			"bootstrap from this node will need a fresh address after a restart",
+			"err", err)
+	}
 	node, err := waku.New(nodeCfg)
 	if err != nil {
 		return fmt.Errorf("rendezvous plane: %w", err)
