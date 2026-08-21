@@ -50,6 +50,17 @@ type Device struct {
 	applied []Peer // last configuration written, for diffing
 }
 
+// SetMSSLimit installs a per-peer TCP segment limit on the tun.
+//
+// A no-op on a device whose tun is not one of ours, which is the case in tests
+// and in cmd/m0demo — clamping is a correctness fix for a relayed path, and a
+// netstack tun in a test has no relay under it.
+func (d *Device) SetMSSLimit(f func(netip.Addr) uint16) {
+	if p, ok := d.tun.(*Port); ok {
+		p.SetMSSLimit(f)
+	}
+}
+
 // NewDevice brings up a WireGuard device on the given TUN, using a Bind that
 // demultiplexes control packets off the same socket.
 //

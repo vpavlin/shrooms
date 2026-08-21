@@ -2025,8 +2025,35 @@ func (m *Mesh) syncPeers() error {
 	if err := m.dev.SetPeers(out); err != nil {
 		return err
 	}
+	m.setMSSLimits(out)
 	m.refreshHosts()
 	return nil
+}
+
+// setMSSLimits tells the tun which peers need smaller TCP segments.
+//
+// A relayed packet does not fit a path a direct one does
+// (docs/relay-mtu.md), and neither lowering the interface MTU nor path MTU
+// discovery can express that: the overlay is IPv6, 1280 is the floor for both,
+// and a relayed packet needs less than the floor allows. Clamping the segment
+// size can, because a segment is not an IP MTU and has no minimum.
+//
+// Applied per peer rather than per interface, because which peers are relayed
+// changes at runtime — failing over is an endpoint swap, with no handshake to
+// renegotiate at. A peer on the LAN keeps full-size segments throughout.
+func (m *Mesh) setMSSLimits(peers []wg.Peer) {
+	relayed := make(map[netip.Addr]bool, len(peers))
+	for _, p := range peers {
+		if p.RelayVia != nil {
+			relayed[p.AllowedIP] = true
+		}
+	}
+	m.dev.SetMSSLimit(func(dst netip.Addr) uint16 {
+		if relayed[dst] {
+			return wg.RelayedMSS
+		}
+		return 0
+	})
 }
 
 // RoamFights is how many times an endpoint may be pulled back before this node
