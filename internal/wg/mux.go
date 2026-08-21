@@ -58,10 +58,6 @@ type Port struct {
 	events   chan tun.Event
 	closed   chan struct{}
 	once     sync.Once
-
-	// mssFor answers how large a TCP segment may be for a given peer, and is
-	// read on the packet path so it is swapped atomically rather than locked.
-	mssFor atomic.Pointer[func(netip.Addr) uint16]
 }
 
 // queueDepth is per mesh. Deep enough to absorb a burst while a WireGuard
@@ -202,40 +198,9 @@ func (p *Port) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
 	case <-p.closed:
 		return 0, errors.New("tun mux closed")
 	case pkt := <-p.in:
-		n := copy(bufs[0][offset:], pkt)
-		// Outbound is the only place a SYN can be caught before it commits both
-		// ends to a segment size, and the destination is still readable here —
-		// a few bytes later it is inside a WireGuard packet.
-		if f := p.mssFor.Load(); f != nil {
-			if limit := (*f)(dstOf(bufs[0][offset : offset+n])); limit > 0 {
-				ClampMSS(bufs[0][offset:offset+n], limit)
-			}
-		}
-		sizes[0] = n
+		sizes[0] = copy(bufs[0][offset:], pkt)
 		return 1, nil
 	}
-}
-
-// SetMSSLimit installs a function saying the largest TCP segment that will
-// reach a given peer.
-//
-// A function rather than a number because the answer changes at runtime: a peer
-// reached directly can take full-size segments and the same peer through a relay
-// cannot, and failing over between them is an endpoint swap with no handshake
-// to renegotiate at. Zero means no limit, which is the direct case and the
-// common one.
-func (p *Port) SetMSSLimit(f func(dst netip.Addr) uint16) {
-	p.mssFor.Store(&f)
-}
-
-// dstOf reads the destination address out of an IPv6 packet, or returns the
-// zero value for anything else — including IPv4, which the overlay does not
-// carry (ADR-021 translates the synthetic addresses before this point).
-func dstOf(pkt []byte) netip.Addr {
-	if len(pkt) < ipv6HeaderLen || pkt[0]>>4 != 6 {
-		return netip.Addr{}
-	}
-	return netip.AddrFrom16([16]byte(pkt[24:40]))
 }
 
 // Write passes packets to the real device unchanged.

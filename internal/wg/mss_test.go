@@ -4,6 +4,8 @@ import (
 	"encoding/binary"
 	"net/netip"
 	"testing"
+
+	"golang.zx2c4.com/wireguard/tun"
 )
 
 // synPacket builds an IPv6 TCP SYN carrying an MSS option, and returns it with
@@ -214,5 +216,140 @@ func TestZeroMeansNoClamp(t *testing.T) {
 	}
 	if string(pkt) != string(before) {
 		t.Error("a zero limit modified the packet")
+	}
+}
+
+// A segment size is chosen by the receiver, so what a peer advertises to us
+// governs what we send it. Clamping only what we send would fix uploads and
+// leave downloads stalling, which is the case this was found on — and clamping
+// what arrives means one updated end repairs the connection without the other
+// knowing.
+func TestClampingWorksOnAnAdvertisementFromAPeer(t *testing.T) {
+	// A SYN as an older peer would send it: sized for its own interface MTU of
+	// 1280, which its relayed path cannot carry.
+	pkt := synPacket(t, 1220, nil, 0x02)
+	if !ClampMSS(pkt, RelayedMSS) {
+		t.Fatal("a peer's oversized advertisement was left alone")
+	}
+	if got := mssOf(t, pkt); got != RelayedMSS {
+		t.Errorf("MSS is %d, want %d", got, RelayedMSS)
+	}
+	// And it must still verify, or the handshake fails instead of shrinking.
+	tcp := pkt[ipv6HeaderLen:]
+	got := binary.BigEndian.Uint16(tcp[16:])
+	binary.BigEndian.PutUint16(tcp[16:], 0)
+	if want := tcpChecksum(pkt); got != want {
+		t.Errorf("checksum is %04x, want %04x", got, want)
+	}
+}
+
+// The arithmetic that decides all of it, asserted so a change to any term is
+// visible rather than silent.
+func TestRelayedSegmentFitsTheAssumedPath(t *testing.T) {
+	onWire := RelayedMSS + 40 + 20 + RelayOverhead
+	if onWire > SafeUnderlay {
+		t.Errorf("a full relayed segment is %d bytes on the wire, over the %d assumed",
+			onWire, SafeUnderlay)
+	}
+	if RelayedMSS < 536 {
+		t.Errorf("RelayedMSS is %d, below the 536 every TCP stack must accept", RelayedMSS)
+	}
+}
+
+// clampTun is a tun that records what reaches the layer below it, so a test can
+// see whether the clamp was applied on the way past rather than only that the
+// function works when called directly.
+type clampTun struct {
+	tun.Device
+	out  [][]byte // what Read produced, i.e. heading to a peer
+	in   [][]byte // what Write delivered, i.e. heading to the local stack
+	feed [][]byte // what Read should hand up
+}
+
+func (c *clampTun) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
+	if len(c.feed) == 0 {
+		return 0, errClosedForTest
+	}
+	pkt := c.feed[0]
+	c.feed = c.feed[1:]
+	sizes[0] = copy(bufs[0][offset:], pkt)
+	return 1, nil
+}
+
+func (c *clampTun) Write(bufs [][]byte, offset int) (int, error) {
+	for _, b := range bufs {
+		c.in = append(c.in, append([]byte(nil), b[offset:]...))
+	}
+	return len(bufs), nil
+}
+
+var errClosedForTest = errClosed{}
+
+type errClosed struct{}
+
+func (errClosed) Error() string { return "closed" }
+
+// The clamp has to be reached, not merely correct.
+//
+// The first version of this installed itself by asserting the tun was a
+// particular type, and the tun in the daemon is a v4 translator wrapping a real
+// device. The assertion failed, SetMSSLimit did nothing, every unit test still
+// passed, and a 100MB download still stalled at 1.5KB. So this drives the
+// wrapper the way the device does.
+func TestTheClampIsActuallyReachedInBothDirections(t *testing.T) {
+	peer := netip.MustParseAddr("fd58:e76:f6a1::2")
+	outbound := synPacket(t, 1440, nil, 0x02) // to the peer
+	inbound := synPacket(t, 1440, nil, 0x12)  // from the peer, SYN-ACK
+	// synPacket addresses ::1 -> ::2, so inbound must be turned around for the
+	// source to be the peer.
+	src, dst := inbound[8:24], inbound[24:40]
+	copy(src, netip.MustParseAddr("fd58:e76:f6a1::2").AsSlice())
+	copy(dst, netip.MustParseAddr("fd58:e76:f6a1::1").AsSlice())
+
+	base := &clampTun{feed: [][]byte{outbound}}
+	mt := &mssTun{Device: base}
+	limit := func(a netip.Addr) uint16 {
+		if a == peer {
+			return RelayedMSS
+		}
+		return 0
+	}
+	mt.mssFor.Store(&limit)
+
+	// Outbound, keyed on the destination.
+	bufs := [][]byte{make([]byte, 2048)}
+	sizes := make([]int, 1)
+	if _, err := mt.Read(bufs, sizes, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := mssOf(t, bufs[0][:sizes[0]]); got != RelayedMSS {
+		t.Errorf("outbound MSS is %d, want %d — the clamp was not reached", got, RelayedMSS)
+	}
+
+	// Inbound, keyed on the source.
+	if _, err := mt.Write([][]byte{inbound}, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := mssOf(t, base.in[0]); got != RelayedMSS {
+		t.Errorf("inbound MSS is %d, want %d — a peer's advertisement was not corrected", got, RelayedMSS)
+	}
+}
+
+// A peer with no limit passes through untouched, so a direct peer keeps
+// full-size segments.
+func TestAPeerWithNoLimitIsUntouched(t *testing.T) {
+	pkt := synPacket(t, 1440, nil, 0x02)
+	base := &clampTun{feed: [][]byte{pkt}}
+	mt := &mssTun{Device: base}
+	none := func(netip.Addr) uint16 { return 0 }
+	mt.mssFor.Store(&none)
+
+	bufs := [][]byte{make([]byte, 2048)}
+	sizes := make([]int, 1)
+	if _, err := mt.Read(bufs, sizes, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := mssOf(t, bufs[0][:sizes[0]]); got != 1440 {
+		t.Errorf("a direct peer's MSS was changed to %d", got)
 	}
 }

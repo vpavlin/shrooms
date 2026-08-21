@@ -1,6 +1,7 @@
 # A relayed packet does not fit
 
-**Status:** measured, not fixed. Large transfers over a relay stall.
+**Status:** fixed by clamping TCP segments, and the constant it relies on is a
+measured guess rather than a derived value. See *Fixed* below.
 
 A 100MB download from a container to a phone, both behind NAT and talking
 through a blind relay, stopped after 1.5KB. Nothing reported an error: the
@@ -89,6 +90,40 @@ header spends 64 of its 81 bytes on two full 32-byte handles. Short session ids
 agreed at registration would save around 56, bringing a relayed packet to about
 1370 on the wire — still above the ~1250 measured here. Worth doing eventually
 for the bandwidth, not as a fix for this.
+
+## Fixed, and how it was measured
+
+TCP segments are now clamped for peers reached through a relay, in both
+directions — see `internal/wg/mss.go`. A 100MB transfer between two containers
+on isolated networks, forced through a relay on Akash, completes:
+
+```
+OK 104.9 MB in 2m27s (0.71 MB/s)
+```
+
+Three things had to be right, and the first two attempts each got one wrong.
+
+**Path MTU discovery cannot express it.** RFC 8201 forbids a node reducing its
+path MTU below 1280, so a host told "packet too big, use 1134" raises it back
+and starts adding Fragment headers. A TCP segment size has no such floor, which
+is why clamping works where the honest signal does not.
+
+**The clamp has to be reached.** The first version installed itself by asserting
+the tun was a particular type; the daemon's tun is a v4 translator wrapping a
+real device, so the assertion failed, the clamp was installed on nothing, and
+every unit test still passed. It now wraps whatever `NewDevice` is given.
+
+**The constant was wrong, and only measurement found it.** 1280 looked
+inarguable — it is the IPv6 minimum, so nothing may carry less. Probing a relay
+on Akash put the real limit at about 1265 bytes on the wire: hosted networks
+stack their own encapsulation underneath, and an overlay eating twenty bytes
+below the IPv6 floor is apparently ordinary. `SafeUnderlay` is now 1200, which
+is a guess with margin rather than a derived value.
+
+**Which is why the constant is not the answer.** A client already exchanges
+registration frames with its relay and could pad one to find the largest that
+survives — real path MTU discovery on the one hop that needs it. Until then this
+is deliberately pessimistic, and pays for it in throughput.
 
 ## Until then
 

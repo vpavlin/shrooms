@@ -50,14 +50,15 @@ type Device struct {
 	applied []Peer // last configuration written, for diffing
 }
 
-// SetMSSLimit installs a per-peer TCP segment limit on the tun.
+// SetMSSLimit installs a per-peer TCP segment limit.
 //
-// A no-op on a device whose tun is not one of ours, which is the case in tests
-// and in cmd/m0demo — clamping is a correctness fix for a relayed path, and a
-// netstack tun in a test has no relay under it.
+// Always effective, because NewDevice wraps whatever tun it is given rather
+// than hoping it is a particular type. The first version asserted on one and
+// was a silent no-op for every other layering — which is how the clamp came to
+// be installed on nothing while every test passed.
 func (d *Device) SetMSSLimit(f func(netip.Addr) uint16) {
-	if p, ok := d.tun.(*Port); ok {
-		p.SetMSSLimit(f)
+	if t, ok := d.tun.(*mssTun); ok {
+		t.mssFor.Store(&f)
 	}
 }
 
@@ -68,6 +69,11 @@ func (d *Device) SetMSSLimit(f func(netip.Addr) uint16) {
 // WireGuard owns its UDP socket and will not share it, which makes NAT
 // traversal impossible to do correctly. See the package doc.
 func NewDevice(t tun.Device, priv identity.WGKey, listenPort uint16, logger *device.Logger) (*Device, error) {
+	// Wrapped so TCP segment sizes can be clamped for peers reached through a
+	// relay (docs/relay-mtu.md). Wrapping here rather than asserting on the tun
+	// somewhere later is what makes it work for every layering — a mux port, a
+	// v4 translator over a real device, or a netstack in a test.
+	t = &mssTun{Device: t}
 	b := NewBind()
 	dev := device.NewDevice(t, b, logger)
 
