@@ -33,6 +33,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/vpavlin/shrooms/internal/ctrl"
 	"github.com/vpavlin/shrooms/internal/relay"
 )
 
@@ -181,6 +182,13 @@ func serve(ctx context.Context, log *slog.Logger, pc *net.UDPConn, srv *relay.Se
 		_ = pc.Close()
 	}()
 
+	// Who speaks the framed form, remembered per address.
+	//
+	// A relay serves clients that share their WireGuard socket and tools that
+	// speak the frames directly, and it has to answer each in its own dialect.
+	// Keyed by address because that is all a relay knows about anybody.
+	framing := map[netip.AddrPort]bool{}
+
 	buf := make([]byte, readBuf)
 	for {
 		n, from, err := pc.ReadFromUDPAddrPort(buf)
@@ -194,8 +202,29 @@ func serve(ctx context.Context, log *slog.Logger, pc *net.UDPConn, srv *relay.Se
 			time.Sleep(10 * time.Millisecond)
 			continue
 		}
-		out, to, send := srv.Handle(buf[:n], normalise(from), time.Now())
+		// Real clients wrap relay frames in the control header that lets them
+		// share the WireGuard socket; the probe and anything speaking the
+		// frames directly do not. Both are accepted, and a reply goes back in
+		// whatever form the request arrived in — a client that framed its
+		// registration cannot read an unframed challenge, because its bind
+		// would never hand it to the relay code at all.
+		sub, frame, framed := ctrl.Unwrap(buf[:n])
+		if framed && sub != ctrl.SubRelay {
+			continue // some other control sub-protocol; not ours
+		}
+		src := normalise(from)
+		if framed {
+			framing[src] = true
+		}
+		out, to, send := srv.Handle(frame, src, time.Now())
 		if send {
+			// Framed for the *recipient*, which is not always the sender: a
+			// forward goes to somebody else, and whether they can read it
+			// depends on how they registered rather than on how this packet
+			// arrived.
+			if framing[to] || (to == src && framed) {
+				out = ctrl.Wrap(ctrl.SubRelay, out)
+			}
 			if _, err := pc.WriteToUDPAddrPort(out, to); err != nil {
 				log.Debug("send", "to", to, "err", err)
 			}

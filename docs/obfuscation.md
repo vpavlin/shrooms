@@ -130,3 +130,15 @@ to be in the first (see [ADR-011](adr/011-no-mixnet.md), and
 Level 1 is a small, self-contained improvement regardless of the answer:
 shipping a literal `mvpn` on the wire is a fingerprint nobody chose, and the
 cheapest fix in this document.
+
+**Blind relays sharpen this rather than complicating it.** A relay somebody else
+runs holds no network key, so it cannot derive a per-mesh prefix — but it does
+hold its own token, and so does every client using it. Blind-relay traffic
+therefore takes a prefix derived from the *relay's* key rather than the mesh's:
+different per relay instead of per mesh, still carrying no project identity, and
+computable by exactly the two parties who need it.
+
+The framing now lives in `internal/ctrl`, which is where that derivation belongs
+when it is built. It is a flag day for whichever plane adopts it, since a prefix
+only works if both ends agree — so it wants doing once, deliberately, rather
+than drifting in.

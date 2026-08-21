@@ -33,6 +33,7 @@ import (
 
 	"golang.zx2c4.com/wireguard/conn"
 
+	"github.com/vpavlin/shrooms/internal/ctrl"
 	"github.com/vpavlin/shrooms/internal/identity"
 	"github.com/vpavlin/shrooms/internal/relay"
 )
@@ -43,10 +44,10 @@ const relayScheme = "relay:"
 
 // Magic prefixes our control packets. First byte 0x6d ('m') is > 0x04 and
 // != 0x54, so it cannot be confused with WireGuard, disco or STUN.
-var Magic = [4]byte{0x6d, 0x76, 0x70, 0x6e} // "mvpn"
+var Magic = ctrl.Magic
 
 // MagicLen is the length of the control-packet magic prefix.
-const MagicLen = 4
+const MagicLen = ctrl.MagicLen
 
 // Sub identifies which control sub-protocol a packet belongs to. Both ride the
 // same socket, so they need distinguishing without either having to be
@@ -59,7 +60,7 @@ const (
 )
 
 // headerLen is magic plus the sub-protocol byte.
-const headerLen = MagicLen + 1
+const headerLen = ctrl.HeaderLen
 
 // ControlHandler receives a control packet and the endpoint it arrived from.
 //
