@@ -1,7 +1,9 @@
 # 031. Bootstrap from the mesh itself
 
-**Status:** proposed. Nothing built; the failure it fixes happened on
-2026-08-20 and is described below.
+**Status:** accepted and built. In service since 2026-08-21, when the VPS began
+publishing a bootstrap address that its peers now persist. One gap remains and
+is described under *Costs and risks*: the peer id is not yet stable across a
+restart, so an address survives less well than it should.
 
 ## Context
 
@@ -109,12 +111,32 @@ node that feeds selectively: an eclipse, not a forgery. Mitigations are ordinary
 — keep several addresses, prefer recently-seen, and never discard the configured
 ones in favour of learned ones.
 
-**Stale addresses.** The libp2p port is assigned at random on each start and
-nothing in Shrooms pins it. A Core node that restarts publishes its new address
-within 45 seconds, so connected peers stay current; a peer that is *offline*
-across that restart wakes with a stale entry. Keeping several addresses covers
-most of it. Pinning the port would close it properly and is worth doing
-separately — it is a config field and one plumb into the Waku node.
+**Stale addresses, and the half of it that pinning the port does not fix.**
+
+The port was the obvious problem and is solved: `delivery_port` pins it, and the
+VPS has published `/ip4/128.140.55.128/tcp/30304/p2p/…` since 2026-08-21.
+
+The identity is the other half and was missed. A bootstrap multiaddr names a
+peer id, and **the delivery node generates a fresh one on every start** — three
+distinct ids in six hours on that machine, and no key file anywhere in its state
+directory. So a persisted address is good until the publisher restarts,
+whereupon every peer holding it has a string that dials the right socket and is
+refused by the wrong identity.
+
+Observed the hard way. Pinning `delivery_port` moved the VPS from a random port
+to 30304 and, in the same restart, gave it a new peer id — which broke a laptop
+whose `entry_nodes` had been hand-set to the old address, on the day the
+public fleet came back and it no longer needed one.
+
+`nodekey` is an accepted configuration option, confirmed against the library's
+own `AvailableConfigs` rather than inferred from strings in the binary. Storing
+one alongside the device identity and passing it would make the peer id as
+stable as the port, and is what this ADR needs to be durable rather than
+valid-until-the-relay-restarts.
+
+Until then the mitigation is the announce itself: the address is republished
+every 45 seconds, so a peer that is *connected* across the publisher's restart
+updates, and only one that was offline for it wakes up stale.
 
 **Invite size.** A multiaddr with a peer ID is about 90 characters. Two or three
 fit comfortably in a QR that still scans on a phone; a dozen would not.
