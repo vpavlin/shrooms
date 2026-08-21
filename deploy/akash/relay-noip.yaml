@@ -69,15 +69,29 @@ profiles:
   compute:
     relay:
       resources:
+        # These are what a relay actually needs: it copies bytes between two
+        # sockets, so the work is per packet and trivial, and what it wants is
+        # the network rather than the processor. Nothing is written, so the
+        # storage is room to run rather than a place to keep anything.
+        #
+        # If the provider you want does not bid, raise them. Some bid engines
+        # have a floor and will not answer a request this small — observed
+        # 2026-08-21, where seventeen providers bid on this profile and one we
+        # wanted did not, though it had bid on the same deployment with an IP
+        # lease attached, a lease being separately billable. Raising this is
+        # buying bid eligibility rather than capacity, and it is still pennies:
+        #
+        #   cpu:     { units: 0.5 }
+        #   memory:  { size: 512Mi }
+        #   storage: { size: 1Gi }
+        #
+        # The price cap below is not the lever — it is a maximum, and bids come
+        # in at a tiny fraction of it.
         cpu:
-          # A relay copies bytes between two sockets. The work is per packet and
-          # trivial; what it needs is the network, not the processor.
           units: 0.1
         memory:
           size: 128Mi
         storage:
-          # Nothing is written. There is no identity to keep and no state to
-          # lose, so this is room to run rather than a place to keep anything.
           size: 256Mi
 
   placement:
