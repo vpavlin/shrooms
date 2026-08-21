@@ -2035,6 +2035,39 @@ type roamFight struct {
 	until time.Time
 }
 
+// hostEntries is what the managed /etc/hosts block should contain.
+//
+// Split out from refreshHosts, which writes to a fixed path and so cannot be
+// tested. That is not a hypothetical concern: there are two writers of this
+// block — this one and `shrooms hosts` — and when the IPv4 aliases were added
+// only the command got them, so the daemon quietly kept overwriting the file
+// with IPv6-only entries. Building the entries in one testable place is what
+// stops the two drifting again.
+func (m *Mesh) hostEntries() []hosts.Entry {
+	// Both families, because /etc/hosts is what most software actually
+	// resolves through — systemd-resolved answers from it synthetically, ahead
+	// of the mesh resolver — so a block with only overlay addresses hides the
+	// IPv4 aliases (ADR-021) from everything that cannot use IPv6. The resolver
+	// has always served both; nothing was asking it.
+	entries := []hosts.Entry{{
+		Name: m.cfg.Name, Addr: m.self.String(), AddrV4: m.aliasOf(m.self), Self: true,
+	}}
+	for _, p := range m.roster.Peers() {
+		entries = append(entries, hosts.Entry{
+			Name: p.Name, Addr: p.Overlay.String(), AddrV4: m.aliasOf(p.Overlay),
+		})
+	}
+	return entries
+}
+
+// aliasOf is a peer's synthetic IPv4 address, or empty when it has none.
+func (m *Mesh) aliasOf(overlay netip.Addr) string {
+	if a, ok := m.LookupV4(overlay); ok {
+		return a.String()
+	}
+	return ""
+}
+
 // refreshHosts keeps /etc/hosts in step with the roster, when asked to.
 //
 // Called after every successful peer sync rather than on a timer: the roster is
@@ -2046,10 +2079,7 @@ func (m *Mesh) refreshHosts() {
 		return
 	}
 
-	entries := []hosts.Entry{{Name: m.cfg.Name, Addr: m.self.String(), Self: true}}
-	for _, p := range m.roster.Peers() {
-		entries = append(entries, hosts.Entry{Name: p.Name, Addr: p.Overlay.String()})
-	}
+	entries := m.hostEntries()
 
 	suffix := m.cfg.HostsSuffix
 	if suffix == "" {
