@@ -58,10 +58,20 @@ provider will not bid, ask for more:
         size: 1Gi
 
 That is buying bid eligibility rather than capacity — the relay does not need
-any of it — but it is still pennies, and a relay you can reach beats a cheaper
-one nobody will host. This is a hypothesis that fits the evidence rather than a
-confirmed rule; if raising it does not bring a provider in, the reason is
-something else.
+any of it.
+
+**Confirmed, and it does not automatically pay off.** Raising the profile did
+bring digitalfrontier in, which settles the floor hypothesis: it bids on the
+larger request and ignores the smaller one. But it bid about twice the price of
+the same provider's small-request-plus-IP-lease deployment. For that provider
+the lease is the cheaper way to be reachable, which is the opposite of the
+assumption this whole exercise started from.
+
+So the thing to optimise for is a provider that forwards UDP node ports **and**
+has cheap compute. Those are independent properties and the second is easy to
+read off the bids; the first can only be found by deploying and probing. Testing
+several is cheap — each is fractions of a cent for the minutes it takes to
+probe and close.
 
 A GPU provider is a separate case and probably not worth chasing. Europlots
 advertises six GPU capability keys and thirteen active leases, so it is busy
