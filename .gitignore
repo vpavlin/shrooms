@@ -35,5 +35,11 @@ site/comparison.html
 /result
 /result-core
 
-# built by `make relay`
-shrooms-relay
+# built by `make relay`.
+#
+# Anchored, because a bare `shrooms-relay` matches any path component of that
+# name — including the cmd/shrooms-relay directory, whose sources then silently
+# never got committed. CI failed for fifteen commits on an undefined function
+# that was plainly defined, while every local build worked because the files
+# were on disk.
+/shrooms-relay
