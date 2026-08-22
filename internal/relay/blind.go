@@ -63,15 +63,30 @@ func TokenKey(token string) Key {
 // Tag is the handle a device registers under on a blind relay.
 //
 // Derived from the *mesh* relay key, which the relay does not have, so the
-// operator sees an opaque value: they cannot recognise the same device on a
-// second relay, match it against a key seen anywhere else, or learn anything
-// about the mesh from the identifier. Two operators comparing notes see
-// unrelated numbers.
+// operator sees an opaque value: they cannot recover the tunnel key behind it,
+// or learn anything about the mesh from the identifier.
 //
-// Both ends can compute it because both hold the mesh relay key and each
-// other's tunnel keys, which is the only reason this needs no negotiation.
-func Tag(meshKey Key, wg identity.WGKey) identity.WGKey {
-	r := hkdf.New(sha256.New, meshKey[:], wg[:], []byte("mesh/v1/relay/tag"))
+// And derived from the relay's own address, which is what makes the value
+// per-relay rather than merely per-mesh. Without that a device presents the
+// same handle everywhere it goes, and two operators comparing notes can link a
+// device — and by extension a whole mesh — across their relays. That property
+// was claimed here before it was true; binding the address is what makes the
+// claim honest.
+//
+// Both ends can compute it because both hold the mesh relay key, each other's
+// tunnel keys, and the address of the relay they have both chosen — which they
+// must agree on anyway, since a relay can only forward between peers registered
+// with it.
+//
+// The address is used in its canonical form rather than as configured, so a
+// relay written one way by one device and another way by the other still yields
+// one tag.
+func Tag(meshKey Key, at netip.AddrPort, wg identity.WGKey) identity.WGKey {
+	salt := make([]byte, 0, len(wg)+64)
+	salt = append(salt, wg[:]...)
+	salt = append(salt, []byte(at.String())...)
+
+	r := hkdf.New(sha256.New, meshKey[:], salt, []byte("mesh/v1/relay/tag"))
 	var t identity.WGKey
 	if _, err := r.Read(t[:]); err != nil {
 		panic(fmt.Sprintf("hkdf: %v", err))

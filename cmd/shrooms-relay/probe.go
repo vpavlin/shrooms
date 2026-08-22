@@ -96,7 +96,7 @@ func probeOnce(at netip.AddrPort, token string, framed bool) error {
 	}
 	defer b.close()
 
-	tagA, tagB := relay.Tag(meshKey, a.wg), relay.Tag(meshKey, b.wg)
+	tagA, tagB := relay.Tag(meshKey, at, a.wg), relay.Tag(meshKey, at, b.wg)
 
 	for _, d := range []struct {
 		name string

@@ -40,7 +40,8 @@ type relayTarget struct {
 // substituted at all. What it buys is that the operator cannot recognise a
 // device on a second relay, match it against a key seen anywhere else, or learn
 // anything about the mesh from the identifier; two operators comparing notes
-// see unrelated numbers.
+// see unrelated numbers, because the relay's own address goes into the
+// derivation.
 //
 // Both ends derive the same tag because both hold the mesh relay key and each
 // other's tunnel keys, so this needs no negotiation and no extra wire field.
@@ -48,16 +49,16 @@ func (m *Mesh) handleFor(t relayTarget, wg identity.WGKey) identity.WGKey {
 	if !t.blind {
 		return wg
 	}
-	return relay.Tag(m.relayKey, wg)
+	return relay.Tag(m.relayKey, t.addr, wg)
 }
 
 // relayHandle is handleFor against the relay currently carrying traffic, for
 // callers that have already chosen one.
 func (m *Mesh) relayHandle(wg identity.WGKey) identity.WGKey {
-	if !m.blind {
+	if !m.blind || len(m.relays) == 0 {
 		return wg
 	}
-	return relay.Tag(m.relayKey, wg)
+	return m.handleFor(m.relays[0], wg)
 }
 
 // RelayInUse is the relay currently carrying traffic, and whether it is one

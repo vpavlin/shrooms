@@ -284,21 +284,29 @@ func TestForwardingRespectsTheOperatorsCeiling(t *testing.T) {
 // mesh derive the same one, and it reveals nothing about the tunnel key.
 func TestTagsAgreeAcrossTheMeshAndHideTheKey(t *testing.T) {
 	meshKey := testKey(t)
-	other := testKey(t)
+	otherMesh := testKey(t)
 	wg := wgKey(7)
 
-	if Tag(meshKey, wg) != Tag(meshKey, wg) {
+	at := netip.MustParseAddrPort("198.51.100.1:31760")
+	other := netip.MustParseAddrPort("203.0.113.9:31760")
+	if Tag(meshKey, at, wg) != Tag(meshKey, at, wg) {
 		t.Fatal("a tag is not stable, so two devices could not address each other")
 	}
-	if Tag(meshKey, wg) == wg {
+	if Tag(meshKey, at, wg) == wg {
 		t.Fatal("the tag is the tunnel key, which defeats the point")
 	}
-	// A second mesh — or a second relay operator's view of the same device —
-	// sees an unrelated value.
-	if Tag(meshKey, wg) == Tag(other, wg) {
+	// A second mesh sees an unrelated value.
+	if Tag(meshKey, at, wg) == Tag(otherMesh, at, wg) {
 		t.Fatal("two meshes derive the same tag, so operators could correlate devices")
 	}
-	if Tag(meshKey, wg) == Tag(meshKey, wgKey(8)) {
+	// And so does a second *relay*, which is the property the comments claimed
+	// before it was true. Without the address in the derivation a device wears
+	// one handle everywhere, and two operators comparing notes can link it —
+	// and by extension its whole mesh — across their relays.
+	if Tag(meshKey, at, wg) == Tag(meshKey, other, wg) {
+		t.Fatal("the same device has one tag on every relay; operators can correlate it")
+	}
+	if Tag(meshKey, at, wg) == Tag(meshKey, at, wgKey(8)) {
 		t.Fatal("two devices collide on one tag")
 	}
 }

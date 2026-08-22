@@ -41,8 +41,9 @@ func TestBothEndsDeriveTheSameTag(t *testing.T) {
 	}
 	// Two Mesh values standing in for two devices, sharing only what every
 	// member shares: the network key.
-	a := &Mesh{blind: true, relayKey: relay.DeriveKey(nk)}
-	b := &Mesh{blind: true, relayKey: relay.DeriveKey(nk)}
+	at := relayTarget{addr: netip.MustParseAddrPort("198.51.100.1:31760"), blind: true}
+	a := &Mesh{blind: true, relayKey: relay.DeriveKey(nk), relays: []relayTarget{at}}
+	b := &Mesh{blind: true, relayKey: relay.DeriveKey(nk), relays: []relayTarget{at}}
 
 	peer := wgOf(7)
 	if a.relayHandle(peer) != b.relayHandle(peer) {
@@ -70,8 +71,9 @@ func TestADifferentMeshDerivesUnrelatedTags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := &Mesh{blind: true, relayKey: relay.DeriveKey(one)}
-	b := &Mesh{blind: true, relayKey: relay.DeriveKey(two)}
+	at := relayTarget{addr: netip.MustParseAddrPort("198.51.100.1:31760"), blind: true}
+	a := &Mesh{blind: true, relayKey: relay.DeriveKey(one), relays: []relayTarget{at}}
+	b := &Mesh{blind: true, relayKey: relay.DeriveKey(two), relays: []relayTarget{at}}
 
 	peer := wgOf(7)
 	if a.relayHandle(peer) == b.relayHandle(peer) {
@@ -125,8 +127,12 @@ func TestTwoMembersRelayThroughAStranger(t *testing.T) {
 	// The relay: no roster, no network key, nothing but its own token.
 	srv := relay.NewServerWith(frameKey, nil, relay.Options{Blind: true})
 
-	a := &Mesh{blind: true, relayKey: relay.DeriveKey(nk), frameKey: frameKey}
-	b := &Mesh{blind: true, relayKey: relay.DeriveKey(nk), frameKey: frameKey}
+	target := relayTarget{addr: netip.MustParseAddrPort("198.51.100.1:31760"),
+		key: frameKey, blind: true}
+	a := &Mesh{blind: true, relayKey: relay.DeriveKey(nk), frameKey: frameKey,
+		relays: []relayTarget{target}}
+	b := &Mesh{blind: true, relayKey: relay.DeriveKey(nk), frameKey: frameKey,
+		relays: []relayTarget{target}}
 	aWG, bWG := wgOf(1), wgOf(2)
 
 	aAddr := netip.MustParseAddrPort("198.51.100.1:51820")
