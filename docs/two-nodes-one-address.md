@@ -30,16 +30,20 @@ direct. Hence the switching.
 
 ## Why pi5 claims an address that is not reliably its own
 
-Not from its own port mapping: pi5 listens on 51820 and the laptop on 51821. It
-learned `:51821` by **reflection** — a peer observed pi5's traffic arriving from
-that address, and reflection is how a node behind NAT discovers its public
-address at all ([ADR-009](adr/009-probe-before-use.md)).
+The router gave it one. Guessed at reflection first and that was wrong; pi5's
+own log settles it:
 
-The trap is that on a symmetric NAT the mapping is *per destination*. The
-address a peer observed is real for that peer's flow and worthless to anybody
-else, but it is announced to everybody. The router reusing a port another host
-already maps is ordinary behaviour for outbound connections and makes the
-collision look deliberate.
+```
+port mapped by the router  mesh=default external=178.213.45.235:51821 proto=natpmp
+```
+
+pi5 listens on 51820, asked NAT-PMP to map 51820, and was handed **51821** —
+which the laptop already held from its own mapping. So both machines hold what
+each believes is a valid promise from the router for one address and port, and
+only one can receive on it.
+
+A mapping is a promise the router makes, and this is what it looks like when the
+router breaks one. Nothing either node did was wrong, and neither can tell.
 
 ## The fix
 
@@ -62,14 +66,34 @@ This is the STUN test for NAT type, done with the peers already present instead
 of a server. No new messages and no wire change: the pong already carries the
 observation, and the only thing missing was remembering who sent it.
 
+### And the same for mapped addresses
+
+Corroboration cannot help with the case above, because a mapped address never
+goes through reflection — the router asserts it directly. So the second half is
+simpler: **do not announce an address a peer is already announcing.**
+
+Two nodes cannot both be behind one address and port. If a peer claims one of
+ours, at most one of us is right and neither knows which, so saying it anyway is
+worse than staying quiet. The roster already carries every peer's announced
+endpoints; the check costs a map.
+
+Only public addresses are compared. Two machines on one LAN legitimately share a
+subnet, and treating that as a conflict would strip the LAN address from every
+node in the building — the addresses most likely to work.
+
 ### What it does not fix
 
 A node that has no corroborated address now announces fewer candidates, which
-is honest but not the same as being reachable. pi5 announces no mapping of its
-own — it listens on 51820 and nothing advertises `178.213.45.235:51820`, though
-the laptop reaches it there. Whatever forwards that port, pi5 does not know
-about it, so it cannot tell anybody. Asking the router (ADR-024) is what would
-close that, and pi5's build has the code; why it has no mapping is unanswered.
+is honest but not the same as being reachable. Neither node gets a working public address out of this — they get an honest
+silence instead of a misleading claim, which is better but is not reachability.
+Both will fall back to a relay until the router hands out distinct ports, or one
+of them is configured with `advertise` for a port that is genuinely forwarded.
+
+Worth noting what the laptop actually reaches pi5 at: `178.213.45.235:51820`,
+which pi5 never announced. WireGuard learned it by roaming — packets arrived
+from there, so it replies there. That address is real and neither node knows it,
+which suggests a third improvement: an address a peer's traffic *actually
+arrives from* is better evidence than either a mapping or a single observation.
 
 ## Meanwhile
 

@@ -473,13 +473,30 @@ func (m *Mesh) candidates() []string {
 		}
 	}
 
+	// Addresses a peer is already announcing are not ours to announce.
+	//
+	// Two nodes cannot both be behind one address and port, so if a peer claims
+	// one of ours, at most one of us is right and neither knows which. Saying
+	// it anyway is worse than saying nothing: peers probe it, whichever node is
+	// not behind it answers with the wrong device signature, the probe is
+	// correctly rejected, and the path flaps between direct and relayed.
+	//
+	// Not hypothetical. A home router granted the same NAT-PMP external port to
+	// two machines on 2026-08-22 — one asked for 51820 and was handed 51821,
+	// which the other already held — and both then advertised it
+	// (docs/two-nodes-one-address.md). A mapping is a promise from the router,
+	// and this is what it looks like when the router breaks one.
+	claimed := m.claimedByPeers()
+
 	for _, ap := range m.prober.Reflexive(time.Now()) {
-		add(ap.String())
+		if !claimed[ap.String()] {
+			add(ap.String())
+		}
 	}
 	m.mu.Lock()
 	mapped := m.mapped
 	m.mu.Unlock()
-	if mapped.IsValid() {
+	if mapped.IsValid() && !claimed[mapped.String()] {
 		add(mapped.String())
 	}
 	for _, a := range m.cfg.Advertise {
@@ -495,6 +512,26 @@ func (m *Mesh) candidates() []string {
 	out = reserveLocal(out)
 	if len(out) > 4 {
 		out = out[:4]
+	}
+	return out
+}
+
+// claimedByPeers is every endpoint the roster says somebody else is at.
+//
+// Only public ones matter and only those are compared: two nodes on one LAN
+// legitimately share nothing, but they do share the network their private
+// addresses come from, and 192.168.0.209:51820 belonging to a peer says nothing
+// about whether we may announce our own 192.168.0.151:51821.
+func (m *Mesh) claimedByPeers() map[string]bool {
+	out := map[string]bool{}
+	for _, p := range m.roster.Peers() {
+		for _, e := range p.Endpoints {
+			ap, err := netip.ParseAddrPort(e)
+			if err != nil || !ap.Addr().IsGlobalUnicast() || ap.Addr().IsPrivate() {
+				continue
+			}
+			out[e] = true
+		}
 	}
 	return out
 }

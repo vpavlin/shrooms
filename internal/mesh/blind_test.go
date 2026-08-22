@@ -6,8 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vpavlin/shrooms/internal/disco"
 	"github.com/vpavlin/shrooms/internal/identity"
 	"github.com/vpavlin/shrooms/internal/relay"
+	"github.com/vpavlin/shrooms/internal/state"
 )
 
 func wgOf(b byte) identity.WGKey {
@@ -342,5 +344,82 @@ func TestMemberAndBlindRelaysCoexist(t *testing.T) {
 	// both are available.
 	if got := m.selectRelay(time.Now()); got.addr != mine {
 		t.Errorf("preferred %v over our own relay", got.addr)
+	}
+}
+
+// rosterClaiming builds a roster whose single peer announces these endpoints.
+func rosterClaiming(t *testing.T, endpoints ...string) *Roster {
+	t.Helper()
+	pub := pubOfMesh(t, 9)
+	return &Roster{peers: map[string]PeerInfo{
+		"peer": {DevicePub: pub, Name: "other", Endpoints: endpoints},
+	}}
+}
+
+// meshWithRoster is enough of a Mesh to ask what it would announce: candidates()
+// consults the prober, so a real one is needed even with nothing in it.
+func meshWithRoster(t *testing.T, port uint16, r *Roster) *Mesh {
+	t.Helper()
+	var k disco.Key
+	return &Mesh{
+		cfg:    state.Config{ListenPort: port},
+		roster: r,
+		prober: disco.NewProber(k, make([]byte, 64), func([]byte, netip.AddrPort) error { return nil }),
+	}
+}
+
+func pubOfMesh(t *testing.T, n byte) ed25519.PublicKey {
+	t.Helper()
+	seed := make([]byte, ed25519.SeedSize)
+	seed[0] = n
+	return ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
+}
+
+// Two nodes cannot both be behind one address and port. When a peer already
+// claims one of ours, at most one of us is right and neither knows which — so
+// announcing it is worse than staying quiet: peers probe it, the wrong node
+// answers, the signature check rejects the reply, and the path flaps.
+//
+// A home router really did grant the same NAT-PMP external port to two machines,
+// which is what makes this worth defending against rather than assuming away.
+func TestAnAddressAPeerClaimsIsNotAnnounced(t *testing.T) {
+	contested := "178.213.45.235:51821"
+	m := meshWithRoster(t, 51821, rosterClaiming(t, contested))
+	m.mapped = netip.MustParseAddrPort(contested)
+
+	for _, c := range m.candidates() {
+		if c == contested {
+			t.Fatalf("announced %s while a peer also claims it", contested)
+		}
+	}
+}
+
+// An uncontested mapping is still announced, or the defence would cost every
+// node behind a working router its only public address.
+func TestAnUncontestedMappingIsStillAnnounced(t *testing.T) {
+	mine := "178.213.45.235:51820"
+	m := meshWithRoster(t, 51820, rosterClaiming(t, "178.213.45.235:51821"))
+	m.mapped = netip.MustParseAddrPort(mine)
+
+	found := false
+	for _, c := range m.candidates() {
+		if c == mine {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("dropped %s although no peer claims it: %v", mine, m.candidates())
+	}
+}
+
+// A peer's private address says nothing about ours. Two machines on one LAN
+// share a subnet, and treating that as a conflict would strip the LAN address
+// from every node in the building — the addresses most likely to work.
+func TestAPeersPrivateAddressIsNotAConflict(t *testing.T) {
+	m := meshWithRoster(t, 51820, rosterClaiming(t, "192.168.0.209:51820"))
+	// candidates() adds local addresses itself; the point is that a private
+	// address from a peer never enters the claimed set at all.
+	if m.claimedByPeers()["192.168.0.209:51820"] {
+		t.Error("a peer's private address was treated as claiming ours")
 	}
 }
