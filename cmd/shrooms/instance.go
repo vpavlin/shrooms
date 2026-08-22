@@ -220,7 +220,7 @@ func named(instances []*instance) []namedMesh {
 // Picking the first is honest enough: both addresses reach the same machine,
 // and it is the mesh the config lists first that answers. The qualified form
 // remains the way to say which one you mean.
-func resolveAcross(meshes []namedMesh) dnssrv.Lookup {
+func resolveAcross(meshes []namedMesh, known map[string]bool) dnssrv.Lookup {
 	return func(host string) (netip.Addr, bool) {
 		// Qualified: the label to the right of the device is a mesh label.
 		// Tried first, and only against the mesh it names — otherwise
@@ -231,6 +231,20 @@ func resolveAcross(meshes []namedMesh) dnssrv.Lookup {
 				if m.label == rest {
 					return m.lookup(dev)
 				}
+			}
+			// A configured mesh that is not running — switched off, or not yet
+			// started. Answer nothing rather than falling through: the loop
+			// below hands the WHOLE host to every mesh, and Mesh.Lookup splits
+			// on dots and tries the first label as a device name, so
+			// "vps.work" would quietly return "vps" on the home mesh. That is
+			// the answer this comment calls certainly wrong, and it was
+			// reachable for any mesh that was switched off.
+			//
+			// Only for labels the config knows. "immich.vps" is a service on a
+			// device and has the same shape, so refusing every unmatched label
+			// would take services away instead.
+			if known[rest] {
+				return netip.Addr{}, false
 			}
 		}
 		for _, m := range meshes {
@@ -273,4 +287,19 @@ func cutLabel(host string) (first, rest string, ok bool) {
 		}
 	}
 	return "", "", false
+}
+
+// knownLabels is every mesh label the config names, running or not.
+//
+// The distinction matters to resolveAcross: a label the config knows but which
+// is not running must answer nothing, while an unknown label is probably a
+// service name and has to keep falling through.
+func knownLabels(cfg state.Config) map[string]bool {
+	out := map[string]bool{}
+	for _, m := range cfg.Meshes() {
+		if m.Label != "" {
+			out[m.Label] = true
+		}
+	}
+	return out
 }

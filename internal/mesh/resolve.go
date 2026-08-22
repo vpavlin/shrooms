@@ -155,9 +155,16 @@ func QualifiedDNSName(name, label, suffix string) string {
 func (m *Mesh) Lookup(host string) (netip.Addr, bool) {
 	labels := strings.Split(host, ".")
 
-	// A device, by its own name.
-	if addr, ok := m.lookupDevice(labels[0]); ok {
-		return addr, true
+	// A device, by its own name — and only when that is the whole name. With
+	// trailing labels allowed here, "vps.anything" resolved to the device vps
+	// no matter what followed it, so a name qualified with another mesh's
+	// label fell through to a device of the same name on this one. That is the
+	// answer resolveAcross calls certainly wrong, and this rule is where it
+	// came from.
+	if len(labels) == 1 {
+		if addr, ok := m.lookupDevice(labels[0]); ok {
+			return addr, true
+		}
 	}
 	// A service on a device: the label to the right is the host.
 	if len(labels) >= 2 {

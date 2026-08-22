@@ -106,9 +106,14 @@ func TestLookupResolvesServiceOnPeer(t *testing.T) {
 		{"jellyfin.home-server", server}, // any service name; none are announced
 		{"laptop", m.self},               // ourselves
 		{"immich.laptop", m.self},        // a service on ourselves
-		{"home-server.home", server},     // the mesh-qualified form still works
-		{"immich.nonesuch", nil},         // the device does not exist
-		{"nonesuch", nil},                // nor does this
+		// The mesh-qualified form is NOT this function's job. A Mesh does not
+		// know its own label, so it could not tell "home" from any other word
+		// and resolved dev.<anything> — which is how a name qualified with one
+		// mesh's label fell through to a device on another. Both production
+		// callers wrap this in a resolver that does know the labels.
+		{"home-server.home", nil},
+		{"immich.nonesuch", nil}, // the device does not exist
+		{"nonesuch", nil},        // nor does this
 	}
 	for _, c := range cases {
 		addr, ok := m.Lookup(c.name)

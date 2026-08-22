@@ -243,7 +243,7 @@ func cmdDaemon(args []string) error {
 	} else {
 		resolver := &dnssrv.Server{
 			Suffix: cfg.HostsSuffix,
-			Lookup: resolveAcross(named(instances)),
+			Lookup: resolveAcross(named(instances), knownLabels(cfg)),
 			Alias:  aliasAcross(named(instances)),
 			Log:    func(msg string, args ...any) { log.Debug(msg, args...) },
 		}

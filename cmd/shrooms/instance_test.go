@@ -2,19 +2,31 @@ package main
 
 import (
 	"net/netip"
+	"strings"
 	"testing"
 
 	"github.com/vpavlin/shrooms/internal/mesh"
 	"github.com/vpavlin/shrooms/internal/state"
 )
 
+// fixed stands in for mesh.Lookup and must answer the way it does, or these
+// tests agree with nothing. It resolves a bare device name, and a service on a
+// device as the label to its right — and, like the real one, refuses a name
+// with trailing labels it cannot account for. An exact-match map instead of
+// this is what let the fall-through bug pass its own guard test.
 func fixed(addrs map[string]string) func(string) (netip.Addr, bool) {
 	return func(host string) (netip.Addr, bool) {
-		s, ok := addrs[host]
-		if !ok {
+		labels := strings.Split(host, ".")
+		if len(labels) == 1 {
+			if s, ok := addrs[labels[0]]; ok {
+				return netip.MustParseAddr(s), true
+			}
 			return netip.Addr{}, false
 		}
-		return netip.MustParseAddr(s), true
+		if s, ok := addrs[labels[1]]; ok && len(labels) == 2 {
+			return netip.MustParseAddr(s), true
+		}
+		return netip.Addr{}, false
 	}
 }
 
@@ -23,7 +35,7 @@ func fixed(addrs map[string]string) func(string) (netip.Addr, bool) {
 func TestOneMeshResolvesTheShortName(t *testing.T) {
 	lookup := resolveAcross([]namedMesh{
 		{label: "default", lookup: fixed(map[string]string{"vps": "fd00::1"})},
-	})
+	}, map[string]bool{"default": true})
 	if addr, ok := lookup("vps"); !ok || addr.String() != "fd00::1" {
 		t.Errorf("vps resolved to %v (%v)", addr, ok)
 	}
@@ -38,7 +50,7 @@ func TestQualifiedNamePicksTheMesh(t *testing.T) {
 	lookup := resolveAcross([]namedMesh{
 		{label: "home", lookup: fixed(map[string]string{"vps": "fd00::1", "nas": "fd00::2"})},
 		{label: "shared", lookup: fixed(map[string]string{"vps": "fd11::1"})},
-	})
+	}, map[string]bool{"home": true, "shared": true})
 
 	if addr, ok := lookup("vps.home"); !ok || addr.String() != "fd00::1" {
 		t.Errorf("vps.home resolved to %v (%v)", addr, ok)
@@ -70,13 +82,26 @@ func TestQualifiedNameDoesNotFallThrough(t *testing.T) {
 	lookup := resolveAcross([]namedMesh{
 		{label: "home", lookup: fixed(map[string]string{"vps": "fd00::1"})},
 		{label: "shared", lookup: fixed(map[string]string{})},
-	})
+	}, map[string]bool{"home": true, "shared": true, "work": true})
 	if addr, ok := lookup("vps.shared"); ok {
 		t.Errorf("vps.shared resolved to %v, but shared has no vps", addr)
 	}
 	// And a mesh nobody has joined resolves nothing.
 	if _, ok := lookup("vps.elsewhere"); ok {
 		t.Error("resolved a name on a mesh this node is not in")
+	}
+	// The reported case: a mesh the config knows but which is not running,
+	// because it was switched off. It is absent from the slice, so the
+	// qualified branch matches nothing and used to fall through to the loop
+	// below it — which handed the whole host to every mesh and got back "vps"
+	// on home. `ssh vps.work.mesh` then silently reached a different machine.
+	if addr, ok := lookup("vps.work"); ok {
+		t.Errorf("vps.work resolved to %v with the work mesh switched off", addr)
+	}
+	// A service on a device keeps working, which is why an unmatched label
+	// cannot simply be refused: it has the same shape as a qualified name.
+	if addr, ok := lookup("immich.vps"); !ok || addr.String() != "fd00::1" {
+		t.Errorf("immich.vps resolved to %v (%v)", addr, ok)
 	}
 }
 
