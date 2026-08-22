@@ -125,7 +125,7 @@ func TestTwoDevicesReachEachOtherThroughABlindRelay(t *testing.T) {
 	// behind them, which is the point — here it simply never sees them.
 	meshKey := relay.TokenKey("a mesh's own relay key")
 	a, b := newDevice(t, 1), newDevice(t, 2)
-	tagA, tagB := relay.Tag(meshKey, a.wg), relay.Tag(meshKey, b.wg)
+	tagA, tagB := relay.Tag(meshKey, at, a.wg), relay.Tag(meshKey, at, b.wg)
 
 	a.join(t, at, k, tagA)
 	b.join(t, at, k, tagB)
