@@ -58,9 +58,15 @@ encrypted to it — but everything *after* it decrypts, which is your ordinary
 internet traffic with whatever TLS it already had and nothing more.
 
 So this **moves trust, it does not remove it**: from your ISP or the cafe's
-router, to whoever runs the exit. If the exit is your own VPS, that is your
-hosting provider. If it is an Akash container, that is a provider you have never
-met, chosen by a marketplace, on hardware you cannot inspect.
+router, to whoever runs the machine the exit peer runs *on*.
+
+To be clear about which machine that is: the exit is your own deployed peer, a
+full mesh member holding a credential like any other — not a blind relay, which
+could not do this even in principle, since it never holds a network key and
+cannot decrypt anything to forward it onward. But your peer still runs on
+somebody's hardware. A VPS means your hosting provider; an Akash container means
+a provider you have never met, chosen by a marketplace, on a host you cannot
+inspect. Either can see what the exit peer emits.
 
 That is a straightforward downgrade for the Akash case, and it should be said in
 the UI rather than buried here.

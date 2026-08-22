@@ -203,6 +203,65 @@ func TestTheLongerRetentionWins(t *testing.T) {
 	}
 }
 
+// Retention and reach are separate axes. A higher serial withdraws strictly
+// more, so it replaces the entry — but it must not also shorten how long the
+// entry is kept, or revoking a device twice quietly converts "keep this
+// forever" into a date, after which every node forgets and re-admits it.
+//
+// Both revocations here are legitimate and admin-signed: this is the operator
+// running `admin revoke --keep-for 0` and then running it again with the
+// defaults, which is an ordinary thing to do and used to lose the first bound.
+func TestAHigherSerialDoesNotShortenRetention(t *testing.T) {
+	admin, _ := NewAdmin()
+	dev, _ := device(t)
+	now := time.Now()
+
+	// Kept forever, because nobody knows what the lost device holds.
+	l := NewList()
+	forever, foreverRaw := revFor(t, admin, dev, 100)
+	l.Add(forever, foreverRaw)
+
+	// Revoked again later, with the default bound rather than --keep-for 0.
+	bounded, boundedRaw := revUntil(t, admin, dev, 200, now.Add(time.Hour))
+	l.Add(bounded, boundedRaw)
+
+	if n := l.Prune(now.Add(2 * time.Hour)); n != 0 {
+		t.Errorf("pruned %d: a higher serial shortened an unbounded revocation", n)
+	}
+	if l.Len() != 1 {
+		t.Fatal("the revocation was forgotten; the device is re-admitted")
+	}
+	// The wider reach of the higher serial has to survive the merge too.
+	if !l.Revoked(&Credential{DevicePub: dev, Serial: 150}) {
+		t.Error("serial 150 is no longer revoked; the higher serial's reach was lost")
+	}
+	// And it must still be gossiped, or peers that never saw it never learn.
+	if len(l.All()) != 1 {
+		t.Error("the revocation is no longer republished to peers")
+	}
+}
+
+// The mirror of the above: a *lower* serial arriving late must not widen the
+// bound either way round, but it must still contribute its longer retention.
+func TestALowerSerialStillContributesItsRetention(t *testing.T) {
+	admin, _ := NewAdmin()
+	dev, _ := device(t)
+	now := time.Now()
+
+	l := NewList()
+	bounded, boundedRaw := revUntil(t, admin, dev, 200, now.Add(time.Hour))
+	l.Add(bounded, boundedRaw)
+	forever, foreverRaw := revFor(t, admin, dev, 100)
+	l.Add(forever, foreverRaw)
+
+	if n := l.Prune(now.Add(2 * time.Hour)); n != 0 {
+		t.Errorf("pruned %d: a late unbounded revocation was ignored", n)
+	}
+	if !l.Revoked(&Credential{DevicePub: dev, Serial: 150}) {
+		t.Error("the higher serial's reach was lost to a later, lower one")
+	}
+}
+
 // The bound is signed, so a holder cannot decide a revocation lapses early.
 // Editing NotAfter must break the signature rather than move the deadline.
 func TestTheRetentionBoundIsSigned(t *testing.T) {

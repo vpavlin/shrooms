@@ -69,17 +69,39 @@ func (l *List) Add(r *Revocation, raw []byte) bool {
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if prev, ok := l.seen[k]; ok && prev.serial >= r.Serial {
-		// Keep the longer of the two, where "no bound" is the longest of all.
-		// Two revocations for the same device can disagree, and forgetting on
-		// the shorter one would re-admit a device the other still withdraws.
-		if !prev.until.IsZero() && (keepUntil.IsZero() || keepUntil.After(prev.until)) {
+	if prev, ok := l.seen[k]; ok {
+		// How far back a revocation reaches and how long we keep it are
+		// separate axes, and the winner on one is not the winner on the other.
+		// Merge retention first, so it survives either outcome below: two
+		// revocations for the same device can disagree, and forgetting on the
+		// shorter one would re-admit a device the other still withdraws.
+		keepUntil = longerRetention(prev.until, keepUntil)
+		if prev.serial >= r.Serial {
 			prev.until = keepUntil
+			return false
 		}
-		return false
+		// A higher serial withdraws strictly more, so it replaces the entry —
+		// but it carries the merged bound with it rather than its own. Letting
+		// it bring its own is how revoking a device twice used to convert
+		// "keep this forever" into a date: the second revocation is signed and
+		// legitimate, it simply defaults to a bound, and on the day it lapsed
+		// every node forgot the device and re-admitted it.
 	}
 	l.seen[k] = &entry{serial: r.Serial, until: keepUntil, raw: append([]byte(nil), raw...)}
 	return true
+}
+
+// longerRetention picks the later of two deadlines, treating the zero time as
+// "no bound" — which is the longest of all, not the shortest, and is why this
+// cannot be time.Time.After alone.
+func longerRetention(a, b time.Time) time.Time {
+	if a.IsZero() || b.IsZero() {
+		return time.Time{}
+	}
+	if b.After(a) {
+		return b
+	}
+	return a
 }
 
 // Revoked reports whether a credential has been withdrawn.
