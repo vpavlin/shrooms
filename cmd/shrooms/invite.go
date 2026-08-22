@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -433,7 +432,7 @@ func cmdJoinInvite(token string, args []string) error {
 	if len(resp.AdminKeys) > 0 {
 		encoded := make([]string, 0, len(resp.AdminKeys))
 		for _, k := range resp.AdminKeys {
-			if len(k) != ed25519.PublicKeySize {
+			if !cred.ValidAdminKey(k) {
 				return errors.New("the invite carried a malformed admin key")
 			}
 			encoded = append(encoded, b32.EncodeToString(k))

@@ -117,7 +117,6 @@ func TestResponseIsSealedToTheRequester(t *testing.T) {
 		NetworkKey: bytes.Repeat([]byte{9}, 32),
 		AdminKeys:  [][]byte{bytes.Repeat([]byte{7}, 32)},
 		Credential: bytes.Repeat([]byte{5}, 300),
-		Suffix:     "mesh",
 		Timestamp:  now.Unix(),
 	}
 	blob, err := SealResponse(s, ephPub, resp)
@@ -131,9 +130,6 @@ func TestResponseIsSealedToTheRequester(t *testing.T) {
 	}
 	if !bytes.Equal(got.NetworkKey, resp.NetworkKey) || len(got.Credential) != 300 {
 		t.Error("response did not survive the round trip")
-	}
-	if got.Suffix != "mesh" {
-		t.Errorf("suffix is %q", got.Suffix)
 	}
 
 	// Same token, different device: it can see that an enrolment happened,
@@ -191,7 +187,6 @@ func TestFullResponseFits(t *testing.T) {
 		NetworkKey: make([]byte, 32),
 		AdminKeys:  [][]byte{make([]byte, 32), make([]byte, 32), make([]byte, 32)},
 		Credential: make([]byte, 450),
-		Suffix:     "mesh",
 		Timestamp:  time.Now().Unix(),
 	})
 	if err != nil {

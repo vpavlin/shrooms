@@ -43,6 +43,14 @@ func knownKeySize(n int) bool {
 	return n == ed25519.PublicKeySize || n == secp256k1PubKeySize
 }
 
+// ValidAdminKey reports whether a blob is the right length to be an admin key
+// of either supported type.
+//
+// Exported because the join paths check keys as they arrive off an invite, and
+// checking for ed25519's length alone rejected every card-minted mesh with a
+// message blaming the invite (ADR-022).
+func ValidAdminKey(k []byte) bool { return knownKeySize(len(k)) }
+
 // verifyKey checks one signature against one admin key, whichever type it is.
 func verifyKey(pub ed25519.PublicKey, digest, sig []byte) bool {
 	if len(pub) == ed25519.PublicKeySize {

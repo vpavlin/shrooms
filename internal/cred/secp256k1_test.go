@@ -158,3 +158,20 @@ func TestVerifiesASyntheticSecp256k1Signature(t *testing.T) {
 		t.Error("it verified over a digest it does not cover")
 	}
 }
+
+// The join paths check admin keys as they come off an invite. Checking against
+// ed25519's length alone rejected every card-minted mesh, with a message
+// blaming the invite — so the predicate they use has to accept both types.
+func TestValidAdminKeyAcceptsBothTypes(t *testing.T) {
+	if !ValidAdminKey(make([]byte, ed25519.PublicKeySize)) {
+		t.Error("rejected an ed25519 admin key")
+	}
+	if !ValidAdminKey(make([]byte, secp256k1PubKeySize)) {
+		t.Error("rejected a secp256k1 admin key; a card-minted mesh cannot be joined")
+	}
+	for _, n := range []int{0, 31, 34, 65} {
+		if ValidAdminKey(make([]byte, n)) {
+			t.Errorf("accepted a %d-byte admin key", n)
+		}
+	}
+}

@@ -134,7 +134,6 @@ func (m *Mesh) ReplyInvite(s invite.Secret, req *invite.Request, credential []by
 func (m *Mesh) inviteResponse() *invite.Response {
 	resp := &invite.Response{
 		MeshID:    state.NetworkID(m.nk),
-		Suffix:    m.cfg.HostsSuffix,
 		Timestamp: time.Now().Unix(),
 	}
 	if m.authority != nil {

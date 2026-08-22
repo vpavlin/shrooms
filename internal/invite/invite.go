@@ -256,8 +256,13 @@ type Response struct {
 	MeshID     string   `json:"mesh_id,omitempty"` // one-way id, safe to send first
 	AdminKeys  [][]byte `json:"admin_keys"`        // ed25519, may be empty
 	Credential []byte   `json:"cred,omitempty"`    // signed for the requesting device
-	Suffix     string   `json:"suffix,omitempty"`  // the mesh's DNS suffix
-	Timestamp  int64    `json:"ts"`
+	// No DNS suffix. It used to ride along here and mobile wrote it straight
+	// to config, unvalidated and device-wide, so an inviter could make the
+	// phone authoritative for ".com". Names are a local decision - there is no
+	// coordinator in this design and the suffix is not one either. Dropped
+	// rather than validated, which also protects phones running older builds:
+	// they only adopted it when the field was non-empty.
+	Timestamp int64 `json:"ts"`
 }
 
 // SealRequest encrypts a request under the token.

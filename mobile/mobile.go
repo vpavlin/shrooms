@@ -310,12 +310,9 @@ func joinInvite(token, name, label, configDir string, timeoutSeconds int) error 
 	} else {
 		cfg.NetworkKey = nk.String()
 	}
-	if resp.Suffix != "" {
-		cfg.HostsSuffix = resp.Suffix
-	}
 	var adminKeys []string
 	for _, k := range resp.AdminKeys {
-		if len(k) != ed25519.PublicKeySize {
+		if !cred.ValidAdminKey(k) {
 			return errors.New("the invitation carried a malformed admin key")
 		}
 		adminKeys = append(adminKeys, b32.EncodeToString(k))

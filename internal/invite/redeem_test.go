@@ -98,7 +98,6 @@ func TestRedeem(t *testing.T) {
 			resp, err := SealResponse(s, req.EphPub, &Response{
 				NetworkKey: bytes.Repeat([]byte{9}, 32),
 				Credential: bytes.Repeat([]byte{5}, 300),
-				Suffix:     "mesh",
 				Timestamp:  time.Now().Unix(),
 			})
 			if err != nil {
@@ -121,9 +120,9 @@ func TestRedeem(t *testing.T) {
 	if !bytes.Equal(got.NetworkKey, bytes.Repeat([]byte{9}, 32)) {
 		t.Error("wrong network key")
 	}
-	if len(got.Credential) != 300 || got.Suffix != "mesh" {
-		t.Errorf("response came back wrong: %d bytes of credential, suffix %q",
-			len(got.Credential), got.Suffix)
+	if len(got.Credential) != 300 {
+		t.Errorf("response came back wrong: %d bytes of credential",
+			len(got.Credential))
 	}
 	if !bus.unsub[s.Topic()] {
 		t.Error("left the invite topic subscribed")
@@ -212,7 +211,6 @@ func holdTwoRounds(t *testing.T, s Secret, bus *fakeBus, admin []byte) *[]byte {
 			resp := &Response{
 				NetworkKey: bytes.Repeat([]byte{9}, 32),
 				AdminKeys:  [][]byte{admin},
-				Suffix:     "mesh",
 				Timestamp:  time.Now().Unix(),
 			}
 			if req.Deferred {
@@ -372,7 +370,6 @@ func holdRounds(t *testing.T, s Secret, bus *fakeBus, adminKeys [][]byte, meshOn
 			resp := &Response{
 				MeshID:    "testmeshid",
 				AdminKeys: adminKeys,
-				Suffix:    "mesh",
 				Timestamp: time.Now().Unix(),
 			}
 			// The first round must be answerable without the network key; an
