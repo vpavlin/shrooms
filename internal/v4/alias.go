@@ -22,6 +22,7 @@ import (
 	"net/netip"
 	"sort"
 	"sync"
+	"time"
 )
 
 // Prefix is the whole range aliases come from: RFC 2544, reserved for
@@ -115,27 +116,35 @@ func blockOf(tag uint32) netip.Prefix {
 // The nonce breaks a collision: two devices whose hashes land on the same
 // address are resolved locally, by whoever noticed, without telling anyone.
 func Alias(block netip.Prefix, devicePub ed25519.PublicKey, nonce uint8) netip.Addr {
-	h := sha256.New()
-	h.Write([]byte("mesh/v1/v4alias"))
-	h.Write([]byte{nonce})
-	h.Write(devicePub)
-	sum := h.Sum(nil)
+	// Bounded, and iterative. This used to recurse on nonce+1 with nothing to
+	// stop it: nonce is a uint8, so on a block too small to hold any usable
+	// address it wrapped and recursed until the stack ran out. 256 is the whole
+	// space of the argument, so trying each once is exhaustive rather than
+	// arbitrary. Returns an invalid address when the block has nothing to give,
+	// which the caller must check.
+	for i := 0; i < 256; i++ {
+		h := sha256.New()
+		h.Write([]byte("mesh/v1/v4alias"))
+		h.Write([]byte{nonce})
+		h.Write(devicePub)
+		sum := h.Sum(nil)
 
-	v := binary.BigEndian.Uint32(sum[:4]) & ((1 << DeviceBits) - 1)
-	base := block.Addr().As4()
-	addr := binary.BigEndian.Uint32(base[:]) | v
+		v := binary.BigEndian.Uint32(sum[:4]) & ((1 << DeviceBits) - 1)
+		base := block.Addr().As4()
+		addr := binary.BigEndian.Uint32(base[:]) | v
 
-	var out [4]byte
-	binary.BigEndian.PutUint32(out[:], addr)
-	a := netip.AddrFrom4(out)
+		var out [4]byte
+		binary.BigEndian.PutUint32(out[:], addr)
+		a := netip.AddrFrom4(out)
 
-	// .0 and .255 in any /24 confuse enough software to be worth skipping, and
-	// so does the first address of the range.
-	last := out[3]
-	if last == 0 || last == 255 || !block.Contains(a) {
-		return Alias(block, devicePub, nonce+1)
+		// .0 and .255 in any /24 confuse enough software to be worth skipping,
+		// and so does the first address of the range.
+		if last := out[3]; last != 0 && last != 255 && block.Contains(a) {
+			return a
+		}
+		nonce++
 	}
-	return a
+	return netip.Addr{}
 }
 
 // A Table maps between overlay addresses and their aliases.
@@ -150,7 +159,22 @@ type Table struct {
 	to6   map[netip.Addr]netip.Addr // alias -> overlay
 	self  netip.Addr                // this device's own alias
 	self6 netip.Addr
+	// When each peer was last in the roster, so an alias can be reclaimed a
+	// long while after the peer is gone without moving under a live one.
+	seen map[netip.Addr]time.Time
+	// Peers the block had no room for. Counted rather than logged, because the
+	// symptom is a name that answers over IPv6 and returns NODATA for A - which
+	// looks like a browser problem and is the exact failure ADR-021 exists to
+	// fix, so it must be visible somewhere rather than silent.
+	exhausted int
 }
+
+// AliasGrace is how long a peer keeps its alias after leaving the roster.
+//
+// Long enough that a flap, a reboot or a laptop lid never moves an address
+// under a live connection; short enough that the block does not fill with
+// devices that are never coming back.
+const AliasGrace = 6 * time.Hour
 
 // Entry is one device: its overlay address and the key that derives its alias.
 type Entry struct {
@@ -173,11 +197,20 @@ func NewTableIn(block netip.Prefix, self Entry, peers []Entry) *Table {
 		to4:   make(map[netip.Addr]netip.Addr, len(peers)+1),
 		to6:   make(map[netip.Addr]netip.Addr, len(peers)+1),
 		self6: self.Overlay,
+		seen:  make(map[netip.Addr]time.Time, len(peers)+1),
 	}
+	// Seeded now, so the grace period runs from construction. Without this an
+	// entry made here has no timestamp, and the reclaim loop - which walks the
+	// timestamps - would never consider it.
+	now := time.Now()
 	t.add(self)
 	t.self = t.to4[self.Overlay]
+	t.seen[self.Overlay] = now
 	for _, p := range peers {
 		t.add(p)
+		if p.Overlay.IsValid() {
+			t.seen[p.Overlay] = now
+		}
 	}
 	return t
 }
@@ -194,6 +227,9 @@ func (t *Table) add(e Entry) {
 	}
 	for nonce := uint8(0); nonce < 64; nonce++ {
 		a := Alias(t.block, e.DevicePub, nonce)
+		if !a.IsValid() {
+			break // the block holds no usable address at all
+		}
 		if _, taken := t.to6[a]; taken {
 			continue
 		}
@@ -201,17 +237,52 @@ func (t *Table) add(e Entry) {
 		t.to6[a] = e.Overlay
 		return
 	}
+	// No room. The peer resolves over IPv6 and gets NODATA for A.
+	t.exhausted++
+}
+
+// Exhausted counts peers the block had no room for, so a caller can say so
+// rather than leaving a half-resolving name to be discovered by hand.
+func (t *Table) Exhausted() int {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.exhausted
 }
 
 // Update replaces the peer set, keeping this device's own alias fixed.
 //
 // Aliases must not move underneath a live connection, so a peer that is already
 // mapped keeps the address it has even if it briefly leaves the roster.
-func (t *Table) Update(peers []Entry) {
+func (t *Table) Update(peers []Entry) { t.UpdateAt(peers, time.Now()) }
+
+// UpdateAt is Update at a stated time, so the grace period can be tested.
+//
+// "Briefly" used to mean forever: nothing ever removed an entry, while the
+// roster this is fed from prunes on every change. The table grew for the life
+// of the process, and as the block filled - 13 bits, 8192 addresses - add
+// started failing and peers silently lost their A records while IPv6 kept
+// working, which is what made the original bug hard to find.
+func (t *Table) UpdateAt(peers []Entry, now time.Time) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.seen == nil {
+		t.seen = map[netip.Addr]time.Time{}
+	}
 	for _, p := range peers {
 		t.add(p)
+		if p.Overlay.IsValid() {
+			t.seen[p.Overlay] = now
+		}
+	}
+	for overlay, last := range t.seen {
+		if now.Sub(last) < AliasGrace || overlay == t.self6 {
+			continue
+		}
+		if a, ok := t.to4[overlay]; ok {
+			delete(t.to6, a)
+		}
+		delete(t.to4, overlay)
+		delete(t.seen, overlay)
 	}
 }
 
