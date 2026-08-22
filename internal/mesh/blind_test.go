@@ -423,3 +423,32 @@ func TestAPeersPrivateAddressIsNotAConflict(t *testing.T) {
 		t.Error("a peer's private address was treated as claiming ours")
 	}
 }
+
+// A mapping a peer also claims is not a mapping. The mesh cannot resolve that —
+// the router made a promise it could not keep — but it can notice, and noticing
+// is what lets the next renewal ask for a different port.
+func TestAContestedMappingIsReported(t *testing.T) {
+	contested := "178.213.45.235:51821"
+	m := meshWithRoster(t, 51820, rosterClaiming(t, contested))
+	m.mapped = netip.MustParseAddrPort(contested)
+
+	if !m.MappedIsContested() {
+		t.Error("a mapping a peer also announces was not reported as contested")
+	}
+}
+
+// The ordinary case must stay quiet, or every node would churn its port on
+// every renewal.
+func TestAnUncontestedMappingIsNotReported(t *testing.T) {
+	m := meshWithRoster(t, 51820, rosterClaiming(t, "178.213.45.235:51821"))
+	m.mapped = netip.MustParseAddrPort("178.213.45.235:51820")
+
+	if m.MappedIsContested() {
+		t.Error("a mapping nobody else claims was reported as contested")
+	}
+	// And with no mapping at all there is nothing to contest.
+	m.mapped = netip.AddrPort{}
+	if m.MappedIsContested() {
+		t.Error("an absent mapping was reported as contested")
+	}
+}

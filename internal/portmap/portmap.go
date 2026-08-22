@@ -78,8 +78,26 @@ type Client struct {
 // looks like a success. Callers should treat the address as a candidate to be
 // confirmed by a peer actually reaching it, not as proof of reachability.
 func (c *Client) Map(ctx context.Context, localPort uint16, lifetime time.Duration) (Mapping, error) {
+	return c.MapTo(ctx, localPort, localPort, lifetime)
+}
+
+// MapTo is Map with a specific external port to ask for.
+//
+// Needed because a router can hand out the same external port twice. Observed
+// on 2026-08-22: two machines behind one NAT, one asked to map 51820 and was
+// given 51821, which the other already held from its own mapping. Both then
+// believed they were reachable there and only one was.
+//
+// Suggesting a different port is the way out, and it is what the protocol
+// field is for. The router remains free to ignore the suggestion — the mapping
+// it returns is the answer, and a caller must read it rather than assume it got
+// what it asked for.
+func (c *Client) MapTo(ctx context.Context, localPort, wantExternal uint16, lifetime time.Duration) (Mapping, error) {
 	if localPort == 0 {
 		return Mapping{}, errors.New("portmap: cannot map port 0")
+	}
+	if wantExternal == 0 {
+		wantExternal = localPort
 	}
 	// A zero lifetime means "delete this mapping" in both protocols, so it must
 	// never be passed through by accident — a caller that forgot to set one
@@ -104,7 +122,7 @@ func (c *Client) Map(ctx context.Context, localPort uint16, lifetime time.Durati
 		return Mapping{}, fmt.Errorf("portmap: gateway %s is not IPv4", gw)
 	}
 
-	m, pcpErr := c.mapPCP(ctx, gw, localPort, lifetime)
+	m, pcpErr := c.mapPCP(ctx, gw, localPort, wantExternal, lifetime)
 	if pcpErr == nil {
 		return m, nil
 	}
@@ -115,7 +133,7 @@ func (c *Client) Map(ctx context.Context, localPort uint16, lifetime time.Durati
 		return Mapping{}, fmt.Errorf("portmap: %w", pcpErr)
 	}
 
-	m, npErr := c.mapNATPMP(ctx, gw, localPort, lifetime)
+	m, npErr := c.mapNATPMP(ctx, gw, localPort, wantExternal, lifetime)
 	if npErr == nil {
 		return m, nil
 	}

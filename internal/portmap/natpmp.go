@@ -29,7 +29,7 @@ const (
 // that does not speak NAT-PMP is discovered before we have created any state on
 // it, and there is no window in which a mapping exists that we failed to learn
 // the address of and therefore cannot use or tear down.
-func (c *Client) mapNATPMP(ctx context.Context, gw netip.Addr, localPort uint16, lifetime time.Duration) (Mapping, error) {
+func (c *Client) mapNATPMP(ctx context.Context, gw netip.Addr, localPort, wantExternal uint16, lifetime time.Duration) (Mapping, error) {
 	s, err := c.dial(ctx, gw)
 	if err != nil {
 		return Mapping{}, err
@@ -50,9 +50,11 @@ func (c *Client) mapNATPMP(ctx context.Context, gw netip.Addr, localPort uint16,
 	req[1] = natpmpOpMapUDP
 	// Bytes 2-3 are reserved and must be zero.
 	binary.BigEndian.PutUint16(req[4:6], localPort)
-	// Suggest the same port externally. Routers usually honour it, and a peer
-	// that has only ever seen us on localPort then needs no new information.
-	binary.BigEndian.PutUint16(req[6:8], localPort)
+	// The external port to ask for. Normally the same as the local one, since
+	// routers usually honour it and a peer that has only ever seen us there
+	// needs no new information — but a caller that has discovered its mapping
+	// collides with somebody else's asks for a different one.
+	binary.BigEndian.PutUint16(req[6:8], wantExternal)
 	binary.BigEndian.PutUint32(req[8:12], lifetimeSeconds(lifetime))
 
 	resp, err = s.roundTrip(ctx, req, c.timeout())

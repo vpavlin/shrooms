@@ -1,7 +1,8 @@
 # Two nodes announcing one address
 
-**Status:** diagnosed, and the announcing half is fixed. A node no longer
-advertises a reflexive address its peers disagree about.
+**Status:** fixed. A node notices when the router has given it a port a peer
+also holds, asks for a different one, and says nothing misleading in the
+meantime.
 
 A phone on mobile data shows pi5 as reached *through a relay*, and switches
 between that and a direct path every few minutes. pi5 is itself a relay and
@@ -81,13 +82,31 @@ Only public addresses are compared. Two machines on one LAN legitimately share a
 subnet, and treating that as a conflict would strip the LAN address from every
 node in the building — the addresses most likely to work.
 
+### Asking the router for a different port
+
+Staying quiet is honest and leaves both nodes relaying, which is not a fix. The
+fix is to ask the router for a port that is actually free.
+
+NAT-PMP and PCP both carry a *suggested external port* — until now always the
+node's own, since routers usually honour it and a peer that has only seen us
+there needs no new information. When the mapping we were given turns out to be
+contested, the next renewal suggests a different one instead.
+
+The router remains free to ignore the suggestion, so what it returns is followed
+rather than what was asked for. Without that, a node refused its choice would go
+on asking for the same wrong port forever.
+
+Checked at renewal rather than the moment a conflict appears, because renewal is
+already the loop that talks to the router, and a collision is not an emergency:
+until it clears, both nodes relay, and relaying works.
+
 ### What it does not fix
 
 A node that has no corroborated address now announces fewer candidates, which
-is honest but not the same as being reachable. Neither node gets a working public address out of this — they get an honest
-silence instead of a misleading claim, which is better but is not reachability.
-Both will fall back to a relay until the router hands out distinct ports, or one
-of them is configured with `advertise` for a port that is genuinely forwarded.
+is honest but not the same as being reachable. A router that refuses every alternative, or hands out the same port whatever is
+asked for, cannot be talked round — and then both nodes relay, which is the
+honest outcome. `advertise` remains for anyone who knows their forwarding better
+than the router does.
 
 Worth noting what the laptop actually reaches pi5 at: `178.213.45.235:51820`,
 which pi5 never announced. WireGuard learned it by roaming — packets arrived

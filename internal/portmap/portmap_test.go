@@ -223,7 +223,7 @@ func TestParsePCPMapRejectsNATPMPResponse(t *testing.T) {
 func TestBuildPCPMap(t *testing.T) {
 	nonce := [pcpNonceLen]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}
 	local := netip.MustParseAddr("192.168.1.50")
-	req := buildPCPMap(nonce, local, 51820, time.Hour)
+	req := buildPCPMap(nonce, local, 51820, 51820, time.Hour)
 
 	if len(req) != pcpMsgLen {
 		t.Fatalf("request is %d bytes, want %d", len(req), pcpMsgLen)

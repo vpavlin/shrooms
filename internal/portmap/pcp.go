@@ -31,7 +31,7 @@ const (
 //
 // One exchange, unlike NAT-PMP: the MAP response carries the assigned address
 // and port together, so there is no window in which we hold half an answer.
-func (c *Client) mapPCP(ctx context.Context, gw netip.Addr, localPort uint16, lifetime time.Duration) (Mapping, error) {
+func (c *Client) mapPCP(ctx context.Context, gw netip.Addr, localPort, wantExternal uint16, lifetime time.Duration) (Mapping, error) {
 	s, err := c.dial(ctx, gw)
 	if err != nil {
 		return Mapping{}, err
@@ -43,7 +43,7 @@ func (c *Client) mapPCP(ctx context.Context, gw netip.Addr, localPort uint16, li
 		return Mapping{}, fmt.Errorf("generating pcp nonce: %w", err)
 	}
 
-	req := buildPCPMap(nonce, s.local, localPort, lifetime)
+	req := buildPCPMap(nonce, s.local, localPort, wantExternal, lifetime)
 	resp, err := s.roundTrip(ctx, req, c.timeout())
 	if err != nil {
 		return Mapping{}, err
@@ -63,7 +63,7 @@ func (c *Client) mapPCP(ctx context.Context, gw netip.Addr, localPort uint16, li
 // sitting behind a NAT it does not control. That is why the socket is connected
 // before the request is built rather than after — the kernel's choice of source
 // address is the only trustworthy answer on a multi-homed machine.
-func buildPCPMap(nonce [pcpNonceLen]byte, local netip.Addr, localPort uint16, lifetime time.Duration) []byte {
+func buildPCPMap(nonce [pcpNonceLen]byte, local netip.Addr, localPort, wantExternal uint16, lifetime time.Duration) []byte {
 	req := make([]byte, pcpMsgLen)
 	req[0] = pcpVersion
 	req[1] = pcpOpMap
@@ -77,7 +77,7 @@ func buildPCPMap(nonce [pcpNonceLen]byte, local netip.Addr, localPort uint16, li
 	// Bytes 37-39 are reserved.
 	binary.BigEndian.PutUint16(req[40:42], localPort)
 	// Suggest the same port externally; the server is free to ignore it.
-	binary.BigEndian.PutUint16(req[42:44], localPort)
+	binary.BigEndian.PutUint16(req[42:44], wantExternal)
 	// A zero suggested external address asks the server to choose, which is
 	// what we want: we do not know the router's WAN address, and asking for a
 	// specific one is how a request gets refused with CANNOT_PROVIDE_EXTERNAL.

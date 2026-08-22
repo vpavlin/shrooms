@@ -516,6 +516,25 @@ func (m *Mesh) candidates() []string {
 	return out
 }
 
+// MappedIsContested reports whether a peer is announcing the address the router
+// gave us.
+//
+// Two nodes cannot both be behind one address and port, so this means the
+// router made a promise it could not keep — observed on 2026-08-22, when one
+// machine asked to map 51820 and was handed 51821, which another already held.
+//
+// The mesh cannot resolve that; the router can, if asked for a different port.
+// So this exists to be checked by whoever is renewing the mapping.
+func (m *Mesh) MappedIsContested() bool {
+	m.mu.Lock()
+	mapped := m.mapped
+	m.mu.Unlock()
+	if !mapped.IsValid() {
+		return false
+	}
+	return m.claimedByPeers()[mapped.String()]
+}
+
 // claimedByPeers is every endpoint the roster says somebody else is at.
 //
 // Only public ones matter and only those are compared: two nodes on one LAN

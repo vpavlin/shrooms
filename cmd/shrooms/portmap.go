@@ -44,9 +44,33 @@ const mapFloor = time.Minute
 func keepMapped(ctx context.Context, log *slog.Logger, in *instance) {
 	c := &portmap.Client{}
 	announced := false
+	// The external port to ask for. Starts as our own, which routers usually
+	// honour, and moves only when the one we were given turns out to belong to
+	// somebody else as well.
+	want := in.port
 
 	for {
-		m, err := c.Map(ctx, in.port, portmap.DefaultLifetime)
+		// A mapping a peer also claims is not a mapping. The router gave the
+		// same external port to two machines — which it is entitled to get
+		// wrong, and neither node can tell from its side — so ask for a
+		// different one rather than advertise an address that works for at most
+		// one of us.
+		//
+		// Checked before renewing rather than on discovery, because renewal is
+		// already the loop that talks to the router, and a collision is not
+		// urgent: until it clears, both nodes relay, which works.
+		if in.mesh.MappedIsContested() {
+			next := want + 1
+			if next < in.port || next == 0 {
+				next = in.port + 1
+			}
+			log.Info("the router gave us a port a peer also claims; asking for another",
+				"mesh", in.label, "contested", want, "asking", next)
+			want = next
+			announced = false // say what we get, since it will be new
+		}
+
+		m, err := c.MapTo(ctx, in.port, want, portmap.DefaultLifetime)
 		wait := mapRetry
 		switch {
 		case err != nil:
@@ -72,6 +96,11 @@ func keepMapped(ctx context.Context, log *slog.Logger, in *instance) {
 			// Half the granted lifetime, which is the usual soft-state
 			// discipline: late enough to be cheap, early enough that one lost
 			// packet does not cost the mapping.
+			// Follow the router rather than our own request: it is free to
+			// ignore the suggestion, and the mapping it returned is the truth.
+			// Without this a node that was refused its choice would ask for the
+			// same wrong port forever.
+			want = m.External.Port()
 			wait = max(m.Lifetime/2, mapFloor)
 		}
 
