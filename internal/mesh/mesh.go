@@ -342,6 +342,13 @@ func New(log *slog.Logger, cfg state.Config, st *state.State, node *waku.Node, d
 	// ParseEndpoint needs these to rebuild relay endpoints when WireGuard hands
 	// back an endpoint string over the UAPI.
 	dev.Bind.SetRelayIdentity(m.frameKey, m.relayHandle(st.Identity.WGPub))
+	// And per relay, because a node may use its own and a stranger's at once,
+	// and they are spoken to under different keys with different handles. The
+	// global pair above remains the answer for a relay found by discovery,
+	// which is always a member.
+	for _, t := range m.relays {
+		dev.Bind.SetRelayIdentityFor(t.addr, t.key, m.handleFor(t, st.Identity.WGPub))
+	}
 
 	return m, nil
 }

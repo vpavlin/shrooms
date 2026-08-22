@@ -84,6 +84,9 @@ type Bind struct {
 	mu       sync.RWMutex
 	handler  ControlHandler
 	relayKey relay.Key
+	// relayFor overrides the above per relay, for a node using more than one
+	// kind at once. See SetRelayIdentityFor.
+	relayFor map[netip.AddrPort]relayIdent
 	selfPub  identity.WGKey
 
 	// stats
@@ -355,6 +358,9 @@ func (b *Bind) ParseEndpoint(s string) (conn.Endpoint, error) {
 
 	b.mu.RLock()
 	key, self := b.relayKey, b.selfPub
+	if id, ok := b.relayFor[addr]; ok {
+		key, self = id.key, id.self
+	}
 	b.mu.RUnlock()
 
 	// Fail loudly rather than building an endpoint whose MAC the relay will
@@ -367,10 +373,42 @@ func (b *Bind) ParseEndpoint(s string) (conn.Endpoint, error) {
 	return NewRelayEndpoint(key, addr, self, peer), nil
 }
 
-// SetRelayIdentity supplies what ParseEndpoint needs to rebuild relay endpoints.
+// SetRelayIdentity supplies what ParseEndpoint needs to rebuild relay endpoints
+// for a relay that is a member of this mesh, and as the fallback for one found
+// by discovery.
 func (b *Bind) SetRelayIdentity(key relay.Key, selfPub identity.WGKey) {
 	b.mu.Lock()
 	b.relayKey, b.selfPub = key, selfPub
 	b.mu.Unlock()
 }
+
+// SetRelayIdentityFor supplies them for one particular relay.
+//
+// Needed because a node may use relays of two kinds at once — its own and a
+// stranger's — and they are spoken to under different keys with different
+// handles. WireGuard stores an endpoint as a *string* over the UAPI and hands
+// it back to ParseEndpoint to rebuild, and that string carries only the peer
+// and the relay address; everything else has to be looked up here.
+//
+// Without this the rebuild used one global key for every relay, so on a node
+// with both configured — which the documentation calls the ordinary case while
+// moving between them — every frame to the blind relay was authenticated with
+// the mesh key and dropped without comment at the far end. Registration still
+// worked, because that path never round-trips through the UAPI, so the relay
+// looked healthy and carried nothing.
+func (b *Bind) SetRelayIdentityFor(at netip.AddrPort, key relay.Key, selfPub identity.WGKey) {
+	b.mu.Lock()
+	if b.relayFor == nil {
+		b.relayFor = make(map[netip.AddrPort]relayIdent)
+	}
+	b.relayFor[at] = relayIdent{key: key, self: selfPub}
+	b.mu.Unlock()
+}
+
+// relayIdent is how one relay is spoken to.
+type relayIdent struct {
+	key  relay.Key
+	self identity.WGKey
+}
+
 func (b *Bind) BatchSize() int { return b.inner.BatchSize() }

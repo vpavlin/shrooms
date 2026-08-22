@@ -169,7 +169,7 @@ The relay uses the tunnel key purely as a lookup handle — it does no
 cryptography with it. So it does not have to be the real key. Both ends could
 register and address under
 
-    tag = HKDF(relay_key, wg_pub)
+    tag = HKDF(mesh_relay_key, wg_pub ‖ relay_address)
 
 Both already hold the relay key and each other's tunnel keys, so both derive the
 same tag; the relay matches tags and never sees a real key.
@@ -178,6 +178,14 @@ What it buys: the operator sees opaque per-relay tags. They cannot recognise a
 device on a second relay, cannot match one against a key observed anywhere else,
 and learn nothing about the mesh from the identifier itself. Two relay operators
 comparing notes see unrelated values.
+
+**The relay address has to be in the derivation, and the signing key has to be
+per relay too.** Both were missed the first time, and each on its own defeats
+the property entirely. A tag derived from the mesh key alone is the same
+everywhere a device goes. And a register frame carries its signing key in
+cleartext — the relay needs it to enforce first claim wins — so signing with the
+device's mesh identity hands every operator one stable name regardless of how
+good the tag is. See `relay.Tag` and `relay.RelayIdentity`.
 
 What it does not buy: the IP address, the pairing, the volume and the timing are
 all still visible. Hiding those is what a mixnet would be for, and per the above
@@ -216,7 +224,7 @@ meshes.
 **"Which device is this?"** belongs to the mesh, and never needs to reach the
 relay at all. Devices register under
 
-    tag = HKDF(mesh_relay_key, wg_pub)
+    tag = HKDF(mesh_relay_key, wg_pub ‖ relay_address)
 
 as described above. Only members of that mesh can compute its tags, because only
 they hold the key it derives from — so a token holder from another mesh cannot

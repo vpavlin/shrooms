@@ -1,6 +1,7 @@
 package wg
 
 import (
+	"encoding/hex"
 	"net/netip"
 	"testing"
 
@@ -73,6 +74,58 @@ func TestParseEndpointRejectsMalformedRelayForm(t *testing.T) {
 	for _, s := range []string{"relay:", "relay:nothex@1.2.3.4:1", "relay:aabb@notanaddr", "relay:aabb"} {
 		if _, err := b.ParseEndpoint(s); err == nil {
 			t.Errorf("accepted malformed relay endpoint %q", s)
+		}
+	}
+}
+
+// A node may use its own relay and a stranger's at once — the documentation
+// calls that the ordinary case while moving between them — and the two are
+// spoken to under different keys with different handles.
+//
+// WireGuard stores an endpoint as a string and hands it back to ParseEndpoint
+// to rebuild, and that string carries only the peer and the relay address. So
+// everything else is looked up, and looking it up in one global slot meant every
+// frame to the blind relay was authenticated with the mesh key and dropped
+// without comment. Registration was unaffected, so the relay looked healthy and
+// carried nothing.
+func TestEachRelayIsRebuiltWithItsOwnKey(t *testing.T) {
+	b := NewBind()
+	meshKey := testRelayKey(t)
+	var blindKey relay.Key
+	for i := range blindKey {
+		blindKey[i] = 0xbb
+	}
+	mine := netip.MustParseAddrPort("198.51.100.1:51820")
+	theirs := netip.MustParseAddrPort("203.0.113.9:31760")
+	selfMesh := identity.WGKey{1}
+	selfTag := identity.WGKey{2}
+
+	b.SetRelayIdentity(meshKey, selfMesh)
+	b.SetRelayIdentityFor(theirs, blindKey, selfTag)
+
+	peer := identity.WGKey{9}
+	for _, tc := range []struct {
+		name string
+		at   netip.AddrPort
+		key  relay.Key
+		self identity.WGKey
+	}{
+		{"our own relay", mine, meshKey, selfMesh},
+		{"a stranger's", theirs, blindKey, selfTag},
+	} {
+		ep, err := b.ParseEndpoint(relayScheme + hex.EncodeToString(peer[:]) + "@" + tc.at.String())
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		re, ok := ep.(*RelayEndpoint)
+		if !ok {
+			t.Fatalf("%s: not a relay endpoint", tc.name)
+		}
+		if re.key != tc.key {
+			t.Errorf("%s: rebuilt with the wrong key, so its frames would be dropped", tc.name)
+		}
+		if re.SelfPub != tc.self {
+			t.Errorf("%s: rebuilt with the wrong handle, so the peer could not address us back", tc.name)
 		}
 	}
 }

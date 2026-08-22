@@ -125,6 +125,69 @@ Named because a review's silence is otherwise read as approval:
 
 ---
 
+## Found by a second reader, after this review called itself done
+
+The review above named its own weakness — that its author wrote what it examined
+— and then a fresh agent was asked one question: *does any comment here claim a
+property the code does not deliver?* It found two serious things this review had
+walked past.
+
+### 8. The per-relay tag was defeated by the field beside it — certain
+
+A register frame carries its signing key in cleartext, because the relay needs
+it to enforce first-claim-wins. The daemon signed with the device's **mesh
+identity**, which is stable across every relay. So two operators comparing
+register frames saw byte-identical 32-byte values and could link a device — and,
+since a mesh's devices register at the same relays at the same times, the whole
+mesh. Finding 3 fixed the derivation and left the message carrying it untouched,
+and the review then blessed the result as fixed.
+
+**Fixed:** blind relays are signed to with a key derived per relay
+(`relay.RelayIdentity`). Stable within one relay, so first-claim-wins still
+works; unrelated across relays; and revealing nothing about the mesh identity.
+
+### 9. The memory-exhaustion vector was reintroduced one layer out — certain
+
+Finding 1 removed unbounded state from the relay server. The framing work added
+a map in the outer read loop, keyed by source address, to remember which dialect
+each client speaks — filled in after a four-byte magic check, never capped,
+never expired. A five-byte spoofed packet allocated an entry permanently.
+
+**Fixed:** the dialect lives in the registration, which is bounded and only
+exists once a device has answered a challenge. Recommendation 2 above says
+"every feature that gives it memory is a feature that can be exhausted"; it was
+written the same day as the feature that gave it memory.
+
+### 10. Two relay kinds at once silently carried nothing — probable
+
+WireGuard stores an endpoint as a string and hands it back to be rebuilt, and
+that string carries only the peer and the relay address. Everything else was
+looked up in one global slot, so a node configured with both its own relay and a
+stranger's authenticated every frame to the latter with the mesh key. Dropped
+without comment at the far end, while registration — which never round-trips
+through the UAPI — kept working, so the relay looked healthy and carried
+nothing. The comments call that configuration "the ordinary case".
+
+**Fixed:** the bind resolves key and handle per relay address.
+
+### And three smaller ones
+
+`usableReflexive` said it "removes the arbitrary-target case" while rejecting
+only four address classes; the wording now matches what it does. "Neither half
+can admit a device alone" and "nothing it can use to enrol anyone else" are true
+only on a mesh with admin keys, and said so nowhere. SECURITY.md gave the disco
+packet size as 104 bytes, stale since ADR-029 made it 168, and contradicted
+itself later in the same file.
+
+### What this says about the method
+
+Every one of these was visible from the prose. The question that found them —
+*does it actually do this?* — is the same question this review claimed to be
+asking, applied by somebody without the assumptions that wrote the code. That is
+the whole argument for recommendation 1, made concretely and at my own expense.
+
+---
+
 ## Recommendations
 
 1. **An outside review before v1.0.0.** The cryptography here is standard and
