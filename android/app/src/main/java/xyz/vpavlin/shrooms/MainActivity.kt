@@ -28,6 +28,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
@@ -486,6 +487,23 @@ private fun MeshScreen(
     // Which mesh has been tapped once. Leaving means re-enrolling to come
     // back, which is too much to hang on a single tap next to a toggle.
     var confirmLeave by remember { mutableStateOf("") }
+
+    // An armed confirmation disarms itself.
+    //
+    // Tapping "leave" by mistake otherwise leaves "sure?" sitting there
+    // indefinitely, one slip away from a mesh you have to re-enrol into — and
+    // the way out was to notice the small "cancel" beside it. A destructive
+    // confirmation should expire on its own: the safe state is the resting
+    // state, and time should return you to it.
+    //
+    // Thirty seconds is long enough to read the sentence underneath and decide,
+    // and short enough that a phone put down and picked up again is disarmed.
+    LaunchedEffect(confirmLeave) {
+        if (confirmLeave.isNotEmpty()) {
+            delay(30_000)
+            confirmLeave = ""
+        }
+    }
     val clipboard = LocalClipboardManager.current
 
     Column(Modifier.fillMaxSize()) {
