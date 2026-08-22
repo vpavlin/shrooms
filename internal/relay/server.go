@@ -32,6 +32,17 @@ type registration struct {
 	// out limits what this registration may be sent, when the operator has set
 	// a per-peer ceiling.
 	out *bucket
+
+	// framed records whether this device speaks the control-header dialect, so
+	// a forward can be written the way its recipient can read it.
+	//
+	// Here rather than in a map of its own, and that is the point: this table is
+	// bounded and an entry only exists once a device has answered a routability
+	// challenge. The first version kept a separate map keyed by source address,
+	// filled in before any validation, which any spoofed five-byte packet could
+	// grow without limit — the same vector the challenge cookies removed,
+	// reintroduced one layer out.
+	framed bool
 }
 
 // ChallengeTTL is how long a routability challenge stays answerable.
@@ -119,7 +130,12 @@ type Server struct {
 	challenged uint64
 	confirmed  uint64
 	probed     uint64
-	peak       int
+
+	// framedNow carries the current packet's dialect into registerLocked
+	// without threading it through every branch. Read and written under mu on
+	// the single Handle path.
+	framedNow bool
+	peak      int
 }
 
 // NewServer returns an empty relay.
@@ -159,6 +175,17 @@ func NewServerWith(key Key, owns func(devicePub []byte, wg identity.WGKey) bool,
 // never an address the client claims. A client behind NAT does not know its own
 // external address, and one that lied could redirect another peer's traffic.
 func (s *Server) Handle(pkt []byte, from netip.AddrPort, now time.Time) (out []byte, to netip.AddrPort, ok bool) {
+	return s.HandleFramed(pkt, from, now, false)
+}
+
+// HandleFramed is Handle, told whether this packet arrived wrapped in the
+// control header that lets relay frames share a WireGuard socket.
+//
+// Recorded against the registration it belongs to, so a forward can be written
+// the way its *recipient* reads it — which is not always how the sender wrote
+// it, since a forward goes to somebody else.
+func (s *Server) HandleFramed(pkt []byte, from netip.AddrPort, now time.Time, framed bool) (out []byte, to netip.AddrPort, ok bool) {
+	s.framedNow = framed
 	f, err := Decode(s.key, pkt)
 	if err != nil {
 		s.mu.Lock()
@@ -391,7 +418,9 @@ func (s *Server) registerLocked(key identity.WGKey, from netip.AddrPort, now tim
 	if !existed || prev.addr != from {
 		s.perSource[from.Addr()]++
 	}
-	s.peers[key] = registration{addr: from, seen: now, devicePub: owner, out: out}
+	s.peers[key] = registration{
+		addr: from, seen: now, devicePub: owner, out: out, framed: s.framedNow,
+	}
 	s.byAddr[from] = key
 	if len(s.peers) > s.peak {
 		s.peak = len(s.peers)
@@ -545,4 +574,20 @@ func (s *Server) Stats() Stat {
 		Peak:       s.peak,
 		Sources:    len(s.perSource),
 	}
+}
+
+// FramedFor reports whether the device at this address speaks the control-header
+// dialect, so a caller writing to it can match.
+//
+// Unknown addresses report false, which is the unframed form — what a tool
+// speaking the frames directly uses, and the safe default for anybody we have
+// never heard from.
+func (s *Server) FramedFor(at netip.AddrPort) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	k, ok := s.byAddr[at]
+	if !ok {
+		return false
+	}
+	return s.peers[k].framed
 }

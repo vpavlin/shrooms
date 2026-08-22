@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"net/netip"
 	"time"
 
@@ -250,4 +251,33 @@ func validChallenge(cookieKey [32]byte, from netip.AddrPort, key identity.WGKey,
 		}
 	}
 	return false
+}
+
+// RelayIdentity derives the key a device signs to a blind relay with.
+//
+// Not the device's mesh identity, which is the whole point. A register frame
+// carries the signing key in cleartext — the relay needs it to enforce
+// first-claim-wins — so signing with the mesh identity hands every relay a
+// stable 32-byte identifier for the device. Two operators comparing register
+// frames then see byte-identical values, and the per-relay tag beside it
+// achieves nothing: the plaintext next to it is a global name.
+//
+// That is exactly the hole the tag was supposed to close, left open by the
+// field beside it. The derivation was audited; the message carrying it was not.
+//
+// So: a key per relay, derived from the mesh relay key and the relay's address.
+// The relay can still tell one registration from another and still refuse a
+// second device claiming a held handle, because within one relay this key is
+// stable. Across relays it is unrelated, and it reveals nothing about the mesh
+// identity it came from.
+//
+// Only the registering device needs to compute this. It is not a shared secret
+// and never has to agree with anybody.
+func RelayIdentity(meshKey Key, at netip.AddrPort, devicePub ed25519.PublicKey) ed25519.PrivateKey {
+	r := hkdf.New(sha256.New, meshKey[:], devicePub, []byte("mesh/v1/relay/identity/"+at.String()))
+	seed := make([]byte, ed25519.SeedSize)
+	if _, err := io.ReadFull(r, seed); err != nil {
+		panic(fmt.Sprintf("hkdf: %v", err))
+	}
+	return ed25519.NewKeyFromSeed(seed)
 }

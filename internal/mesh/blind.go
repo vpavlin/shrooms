@@ -1,6 +1,7 @@
 package mesh
 
 import (
+	"crypto/ed25519"
 	"log/slog"
 	"net/netip"
 	"strings"
@@ -50,6 +51,21 @@ func (m *Mesh) handleFor(t relayTarget, wg identity.WGKey) identity.WGKey {
 		return wg
 	}
 	return relay.Tag(m.relayKey, t.addr, wg)
+}
+
+// signerFor is the key this device signs registrations to a relay with.
+//
+// A member relay is told our mesh identity because it already knows it — it
+// holds the roster and checks the pairing against it. A blind relay is told a
+// key derived per relay instead: the signing key travels in cleartext, so using
+// the mesh identity would hand every operator one stable name for this device
+// and undo the tag beside it entirely.
+func (m *Mesh) signerFor(t relayTarget) ed25519.PrivateKey {
+	if !t.blind {
+		return m.st.Identity.DevicePriv
+	}
+	return relay.RelayIdentity(m.relayKey, t.addr,
+		m.st.Identity.DevicePriv.Public().(ed25519.PublicKey))
 }
 
 // relayHandle is handleFor against the relay currently carrying traffic, for

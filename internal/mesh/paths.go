@@ -151,7 +151,7 @@ func (m *Mesh) answerChallenge(t relayTarget, nonce [relay.NonceLen]byte) {
 		return
 	}
 	frame := relay.EncodeConfirm(t.key, m.handleFor(t, m.st.Identity.WGPub),
-		nonce, m.st.Identity.DevicePriv, time.Now())
+		nonce, m.signerFor(t), time.Now())
 	if err := m.dev.Bind.SendControl(wg.SubRelay, frame, ep); err != nil {
 		m.log.Debug("could not answer a relay's routability challenge", "relay", t.addr, "err", err)
 		return
@@ -295,7 +295,7 @@ func (m *Mesh) registerWithRelay() {
 			continue
 		}
 		frame := relay.EncodeRegister(t.key, m.handleFor(t, m.st.Identity.WGPub),
-			m.st.Identity.DevicePriv, now)
+			m.signerFor(t), now)
 		if err := m.dev.Bind.SendControl(wg.SubRelay, frame, ep); err != nil {
 			m.log.Debug("relay registration failed", "relay", t.addr, "err", err)
 		}

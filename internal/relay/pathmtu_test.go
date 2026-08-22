@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"crypto/ed25519"
 	"errors"
 	"net/netip"
 	"testing"
@@ -164,5 +165,45 @@ func TestATooSmallProbeIsRefused(t *testing.T) {
 	id, _ := NewProbeID()
 	if _, err := EncodeMTUProbe(OpenKey(), id, 4); !errors.Is(err, ErrProbeTooSmall) {
 		t.Errorf("got %v, want ErrProbeTooSmall", err)
+	}
+}
+
+// The signing key in a register frame travels in cleartext, because the relay
+// needs it to enforce first-claim-wins. So it must not be the device's mesh
+// identity: two operators comparing register frames would see byte-identical
+// values and could link a device — and its whole mesh — across their relays,
+// which is precisely what the per-relay tag exists to prevent.
+//
+// The tag was fixed and this field was not, so the property was still not
+// delivered. That is the same failure twice: the derivation audited, the message
+// carrying it ignored.
+func TestARelayIdentityIsPerRelayAndNotTheMeshIdentity(t *testing.T) {
+	meshKey := TokenKey("a mesh relay key")
+	pub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	one := netip.MustParseAddrPort("198.51.100.1:31760")
+	two := netip.MustParseAddrPort("203.0.113.9:31760")
+
+	a := RelayIdentity(meshKey, one, pub)
+	b := RelayIdentity(meshKey, two, pub)
+
+	if a.Public().(ed25519.PublicKey).Equal(b.Public()) {
+		t.Fatal("one device presents the same signing key on two relays")
+	}
+	if a.Public().(ed25519.PublicKey).Equal(pub) {
+		t.Fatal("the mesh identity itself is handed to the relay")
+	}
+	// Stable within one relay, or first-claim-wins would refuse our own
+	// refresh and the device would lose its handle every renewal.
+	if !RelayIdentity(meshKey, one, pub).Public().(ed25519.PublicKey).Equal(a.Public()) {
+		t.Error("the per-relay identity is not stable across derivations")
+	}
+	// And unrelated across meshes, so an operator cannot link a device that
+	// belongs to two of them.
+	other := TokenKey("a different mesh")
+	if RelayIdentity(other, one, pub).Public().(ed25519.PublicKey).Equal(a.Public()) {
+		t.Error("two meshes derive the same relay identity for one device")
 	}
 }

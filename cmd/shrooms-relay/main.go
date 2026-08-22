@@ -182,13 +182,6 @@ func serve(ctx context.Context, log *slog.Logger, pc *net.UDPConn, srv *relay.Se
 		_ = pc.Close()
 	}()
 
-	// Who speaks the framed form, remembered per address.
-	//
-	// A relay serves clients that share their WireGuard socket and tools that
-	// speak the frames directly, and it has to answer each in its own dialect.
-	// Keyed by address because that is all a relay knows about anybody.
-	framing := map[netip.AddrPort]bool{}
-
 	buf := make([]byte, readBuf)
 	for {
 		n, from, err := pc.ReadFromUDPAddrPort(buf)
@@ -213,16 +206,17 @@ func serve(ctx context.Context, log *slog.Logger, pc *net.UDPConn, srv *relay.Se
 			continue // some other control sub-protocol; not ours
 		}
 		src := normalise(from)
-		if framed {
-			framing[src] = true
-		}
-		out, to, send := srv.Handle(frame, src, time.Now())
+		// The dialect is remembered against the registration rather than in a
+		// map here. A map keyed by source address was filled in before any
+		// validation, so any spoofed five-byte packet grew it without limit —
+		// the vector the challenge cookies removed, reintroduced one layer out.
+		out, to, send := srv.HandleFramed(frame, src, time.Now(), framed)
 		if send {
 			// Framed for the *recipient*, which is not always the sender: a
 			// forward goes to somebody else, and whether they can read it
 			// depends on how they registered rather than on how this packet
 			// arrived.
-			if framing[to] || (to == src && framed) {
+			if (to == src && framed) || srv.FramedFor(to) {
 				out = ctrl.Wrap(ctrl.SubRelay, out)
 			}
 			if _, err := pc.WriteToUDPAddrPort(out, to); err != nil {
