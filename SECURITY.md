@@ -8,6 +8,13 @@ mutually trusted. The adversary is a network observer, someone subscribed to
 the public Waku shard, or an opportunistic scanner. **Not** a global passive
 adversary — if that is your threat model, do not use this.
 
+**Blind relays add a party the model did not have** (docs/blind-relays.md). A
+relay run by somebody else is not a peer, holds no key of ours, and is trusted
+with nothing — but it is deliberately placed in the traffic path, which is a
+different thing from an observer who happens to be there. What it can and cannot
+do is set out under *Relays run by other people* below. Using one is a choice,
+and the default is still a mesh whose relays are its own members.
+
 ---
 
 ## Closed
@@ -45,6 +52,55 @@ topic is its own devices, so publisher anonymity would be worth little anyway.
 **WireGuard traffic is identifiable as WireGuard.** Handshake packets have
 distinctive sizes (148/92/32). An ISP can tell you run a VPN, though not what
 is inside. Obfuscation is a different project; do not conflate it with this.
+
+---
+
+## Relays run by other people
+
+A blind relay forwards for meshes it is not a member of. It is the only
+component here deliberately operated by somebody outside the trust boundary, so
+what it can reach is worth stating precisely rather than reassuringly.
+
+**It cannot read anything it carries.** The payload is WireGuard, encrypted
+between two devices whose keys it does not hold. That is arithmetic rather than
+a promise about the operator, and it is the only guarantee in this section that
+does not depend on the code being right.
+
+**It cannot read the control plane.** It never holds the network key, so
+announces, topics and payload keys are all beyond it. Frames authenticate under
+its own token, or under a public key when it is open — a separate key doing a
+separate job (ADR: two keys, two questions).
+
+**It cannot be pointed at a third party.** A registration installs nothing until
+the registrant echoes a nonce sent to the address it claims, so an attacker
+registering somebody else's address never receives it. Relaying is one packet in
+and one packet out, so there is no amplification to be had; the challenge and
+the MTU echo are both *smaller* than what prompts them.
+
+**It cannot take a device's handle from it.** First claim wins and does not
+move while the entry lives. Weaker than the roster check a member relay does —
+an attacker who claims a handle before its owner ever does keeps it — and
+stronger than nothing, since a stranger cannot compute the handle at all.
+
+**It can see a traffic pattern**, and this is the real cost. Opaque per-relay
+tags, the addresses they connect from, which pairs exchange packets, how much
+and when. The tags are derived from the mesh key *and the relay's own address*,
+so they are meaningless on any other relay and two operators comparing notes see
+unrelated values — a property that was claimed here before it was true, and is
+now enforced in `relay.Tag`.
+
+**It can drop your traffic**, silently and selectively, and you would see it as
+a slow network. Keeping several configured is the answer, and a device
+registers with at most two.
+
+**An open relay authenticates nothing at the frame layer**, deliberately: its
+key is public by construction. Every real property above comes from the
+registrant's signature, first-claim-wins and the routability check instead. One
+consequence reaches the client: a device using an open relay will accept and
+unwrap relay frames from anybody who knows its address, and hand the payload to
+WireGuard, which rejects it. That is a few CPU cycles per forged packet and not
+an injection — but before blind relays existed, only a mesh member could make a
+node do that much.
 
 ---
 

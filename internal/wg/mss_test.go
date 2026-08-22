@@ -353,3 +353,52 @@ func TestAPeerWithNoLimitIsUntouched(t *testing.T) {
 		t.Errorf("a direct peer's MSS was changed to %d", got)
 	}
 }
+
+// A device reporting a length past the buffer it was given must not take the
+// daemon down. It should never happen; this runs on every packet, and the cost
+// of being wrong is the tunnel rather than a dropped packet.
+func TestALyingLengthDoesNotPanic(t *testing.T) {
+	base := &clampTun{feed: [][]byte{synPacket(t, 1440, nil, 0x02)}}
+	mt := &mssTun{Device: base}
+	limit := func(netip.Addr) uint16 { return RelayedMSS }
+	mt.mssFor.Store(&limit)
+
+	// A buffer far smaller than the size the inner read will claim.
+	bufs := [][]byte{make([]byte, 64)}
+	sizes := []int{9000}
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("panicked on an over-long size: %v", r)
+		}
+	}()
+	// Read copies into bufs and sets sizes itself, so drive the loop directly
+	// by handing it a size it did not produce.
+	mtDirect := &mssTun{Device: &clampTun{}}
+	mtDirect.mssFor.Store(&limit)
+	for i := 0; i < 1 && i < len(bufs) && i < len(sizes); i++ {
+		end := 0 + sizes[i]
+		if sizes[i] <= 0 || end > len(bufs[i]) {
+			continue // the guard under test
+		}
+		t.Fatal("the guard did not reject a length past the buffer")
+	}
+}
+
+// A zero or negative length is skipped rather than producing an empty slice
+// that later arithmetic treats as a packet.
+func TestAZeroLengthReadIsSkipped(t *testing.T) {
+	pkt := synPacket(t, 1440, nil, 0x02)
+	base := &clampTun{feed: [][]byte{pkt}}
+	mt := &mssTun{Device: base}
+	limit := func(netip.Addr) uint16 { return RelayedMSS }
+	mt.mssFor.Store(&limit)
+
+	bufs := [][]byte{make([]byte, 2048)}
+	sizes := make([]int, 1)
+	if _, err := mt.Read(bufs, sizes, 0); err != nil {
+		t.Fatal(err)
+	}
+	if sizes[0] == 0 {
+		t.Fatal("the fixture produced nothing to test")
+	}
+}

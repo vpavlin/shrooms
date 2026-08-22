@@ -184,8 +184,17 @@ func (t *mssTun) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
 	if f == nil || n == 0 {
 		return n, err
 	}
-	for i := 0; i < n && i < len(bufs); i++ {
-		pkt := bufs[i][offset : offset+sizes[i]]
+	for i := 0; i < n && i < len(bufs) && i < len(sizes); i++ {
+		// Bounded rather than trusted. This runs on every packet, and a slice
+		// out of range here does not drop a packet — it takes the daemon down
+		// and the tunnel with it. The inner device should never report a length
+		// past the buffer it was given, which is exactly the kind of "should"
+		// worth not staking a VPN on.
+		end := offset + sizes[i]
+		if sizes[i] <= 0 || end > len(bufs[i]) {
+			continue
+		}
+		pkt := bufs[i][offset:end]
 		if limit := (*f)(dstOf(pkt)); limit > 0 {
 			ClampMSS(pkt, limit)
 		}
