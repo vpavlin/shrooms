@@ -12,6 +12,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -94,9 +95,14 @@ func cmdAdminInit(args []string) error {
 		return err
 	}
 
-	if _, err := os.Stat(adminPath(*dir)); err == nil {
+	// The path for the mesh being minted, not always admin.json. One file per
+	// mesh is the whole point of adminPathFor, and checking the default here
+	// meant `admin init --mesh foo` refused on any machine that already had a
+	// default mesh - the exact machine a second mesh gets added to.
+	path := adminPathFor(*dir, *label)
+	if _, err := os.Stat(path); err == nil {
 		return fmt.Errorf("%s already exists; minting again would create a different mesh",
-			adminPath(*dir))
+			path)
 	}
 
 	return mintAuthorityAt(*dir, *plain, "", "", "", *label)
@@ -498,6 +504,11 @@ func cmdAdminRevoke(args []string) error {
 	fs := flag.NewFlagSet("admin revoke", flag.ExitOnError)
 	dir := fs.String("dir", defaultAdminDir(), "where the admin key is kept")
 	devHex := fs.String("device", "", "the device's public key, hex")
+	// `issue` and `renew` both take this and `revoke` did not, which made it
+	// the one command that could only ever act on the default mesh - signing
+	// with the wrong authority, stamping the wrong mesh id, and being told
+	// "Published" for a device that stayed a member.
+	label := fs.String("mesh", "", "which mesh to revoke this device from (ADR-015)")
 	signWith := fs.String("sign-with", "", "a command that signs a digest, instead of the admin key file")
 	external := fs.Bool("external-signer", false, "print the digest and read the signature back (ADR-022)")
 	// Zero means "everything issued up to now", which is what revoking a device
@@ -525,7 +536,7 @@ func cmdAdminRevoke(args []string) error {
 	if *serial == 0 {
 		*serial = uint64(time.Now().Unix())
 	}
-	admin, auth, err := signerFor(*dir, "", *signWith, *external)
+	admin, auth, err := signerFor(*dir, *label, *signWith, *external)
 	if err != nil {
 		return err
 	}
@@ -572,7 +583,7 @@ func cmdAdminRevoke(args []string) error {
 	fmt.Println()
 
 	if *publish {
-		if err := publishRevocation(*sock, raw); err != nil {
+		if err := publishRevocation(*sock, *label, raw); err != nil {
 			fmt.Printf("Not published: %v\n\n", err)
 			fmt.Printf("Hand it to a running node yourself:\n\n  %s\n\n",
 				base64.StdEncoding.EncodeToString(raw))
@@ -592,7 +603,7 @@ func cmdAdminRevoke(args []string) error {
 }
 
 // publishRevocation hands a signed revocation to the local daemon.
-func publishRevocation(sock string, raw []byte) error {
+func publishRevocation(sock, label string, raw []byte) error {
 	if sock == DefaultSocket {
 		if _, err := os.Stat(sock); err != nil {
 			if _, err := os.Stat(LegacySocket); err == nil {
@@ -609,7 +620,11 @@ func publishRevocation(sock string, raw []byte) error {
 		Timeout: 10 * time.Second,
 	}
 	body := strings.NewReader(base64.StdEncoding.EncodeToString(raw))
-	resp, err := client.Post("http://unix/revoke", "text/plain", body)
+	url := "http://unix/revoke"
+	if label != "" {
+		url += "?mesh=" + neturl.QueryEscape(label)
+	}
+	resp, err := client.Post(url, "text/plain", body)
 	if err != nil {
 		return fmt.Errorf("no daemon on %s: %w", sock, err)
 	}

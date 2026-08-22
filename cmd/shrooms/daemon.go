@@ -1475,7 +1475,18 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 			http.Error(w, "revocation is not base64: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		if err := m.Revoke(blob); err != nil {
+		// The mesh named, not whichever happens to be first. A node may hold
+		// the authority for several meshes (ADR-015), and publishing a
+		// revocation on the wrong one is silent: the primary accepts it,
+		// because its own key signed it, while every peer on the mesh the
+		// operator meant rejects it as being for another mesh. They are told
+		// the device is out and it is still a member.
+		target := pickMesh(r.URL.Query().Get("mesh"))
+		if target == nil {
+			http.Error(w, "no such mesh is running here", http.StatusNotFound)
+			return
+		}
+		if err := target.Revoke(blob); err != nil {
 			log.Warn("refused a revocation", "err", err)
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return

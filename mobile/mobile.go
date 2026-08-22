@@ -14,7 +14,6 @@ package mobile
 
 import (
 	"context"
-	"crypto/ed25519"
 	"encoding/base32"
 	"encoding/json"
 	"errors"
@@ -330,6 +329,16 @@ func joinInvite(token, name, label, configDir string, timeoutSeconds int) error 
 
 	// The credential is checked before anything is written, so a failed join
 	// leaves the device exactly as it was rather than half-joined.
+	//
+	// Both checks, which is the point: the signature here, and — below, before
+	// the config is written — that it names the identity this mesh will
+	// announce with. Only the signature used to run first. The second check
+	// lives in SetMeshCredentialFor and used to run after WriteConfig, so a
+	// credential for the wrong keys left the config listing a mesh with no
+	// credential stored. On the FIRST mesh that is unrecoverable from inside
+	// the app: JoinWithInvite then refuses with "this device has already joined
+	// a mesh" and LeaveMesh refuses to leave the only one, so the remedy was
+	// clearing app data, which destroys the device identity for every mesh.
 	if len(resp.Credential) > 0 {
 		c, err := cred.UnmarshalCredential(resp.Credential)
 		if err != nil {
@@ -351,9 +360,6 @@ func joinInvite(token, name, label, configDir string, timeoutSeconds int) error 
 		}
 	}
 
-	if err := state.WriteConfig(cfgPath, cfg); err != nil {
-		return fmt.Errorf("write config: %w", err)
-	}
 	if len(resp.Credential) > 0 {
 		// Stored against the identity the credential actually names. The first
 		// mesh keeps this device's base identity, which is what the single-mesh
@@ -361,10 +367,18 @@ func joinInvite(token, name, label, configDir string, timeoutSeconds int) error 
 		// the second round of the exchange (ADR-017). Getting this flag wrong
 		// derives a fresh identity beside a credential naming another, and
 		// every peer then refuses this device — correctly, and silently.
+		//
+		// Before the config is written, because this is the call that rejects a
+		// credential naming the wrong keys. An orphan credential for a mesh the
+		// config does not list is inert; a config listing a mesh with no
+		// credential is a phone that cannot join and cannot back out.
 		legacy := label == "" || label == state.DefaultLabel
 		if err := st.SetMeshCredentialFor(state.NetworkID(nk), legacy, resp.Credential); err != nil {
 			return err
 		}
+	}
+	if err := state.WriteConfig(cfgPath, cfg); err != nil {
+		return fmt.Errorf("write config: %w", err)
 	}
 	return nil
 }
