@@ -157,6 +157,12 @@ func probeOnce(at netip.AddrPort, token string, framed bool) error {
 	// tell an old relay from an absent one, and announcing "OK" from it would
 	// contradict the error printed a line later.
 	if framed {
+		// What the path to this relay actually carries, asked rather than
+		// assumed. The number every earlier attempt guessed at.
+		if mtu, err := a.discoverMTU(at, key); err == nil && mtu > 0 {
+			fmt.Printf("  path carries %d bytes to this relay (%d byte TCP segments)\n",
+				mtu+ctrlOverhead, mtu-relayFrameOverhead)
+		}
 		fmt.Printf("  packet relayed in %v\n", time.Since(start).Round(time.Millisecond))
 		fmt.Printf("\nOK — %s forwards, and cannot be pointed at an address that does not answer\n", at)
 	}
@@ -193,6 +199,29 @@ type probeDevice struct {
 	priv   ed25519.PrivateKey
 	wg     identity.WGKey
 	framed bool
+}
+
+// ctrlOverhead and relayFrameOverhead turn a frame size into the two figures a
+// person reading this cares about: what the path carries, and how large a TCP
+// segment may be inside it.
+const (
+	ctrlOverhead = ctrl.HeaderLen + 8 + 20 // control header, UDP, IPv4
+	// A forward frame's header, plus WireGuard's, plus the IPv6 and TCP
+	// headers a segment sits inside.
+	relayFrameOverhead = 1 + 32 + 32 + 16 + 32 + 40 + 20
+)
+
+// discoverMTU asks the relay how large a packet reaches it.
+func (d *probeDevice) discoverMTU(at netip.AddrPort, k relay.Key) (int, error) {
+	return relay.DiscoverPathMTU(k, 200, 1400, func(pkt []byte) (*relay.Frame, error) {
+		if err := d.send(at, pkt); err != nil {
+			return nil, err
+		}
+		// Short, because a probe that does not fit is discarded silently and
+		// waiting the full timeout for each step of a binary search would make
+		// this take a minute.
+		return d.recvWithin(k, 900*time.Millisecond)
+	})
 }
 
 // probeSeed is a value stable for this machine and unlikely to match another's.

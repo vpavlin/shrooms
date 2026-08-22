@@ -107,6 +107,11 @@ type Frame struct {
 
 	// Nonce is the routability challenge, on the two frames that carry one.
 	Nonce [NonceLen]byte
+
+	// ProbeID and Saw are the path-MTU exchange: which probe this refers to,
+	// and how many bytes actually arrived.
+	ProbeID [probeIDLen]byte
+	Saw     int
 }
 
 // ErrNotSignedByDevice is a registration whose signature does not match the
@@ -191,6 +196,12 @@ func Decode(k Key, pkt []byte) (*Frame, error) {
 
 	case TypeConfirm:
 		return decodeConfirm(k, pkt)
+
+	case TypeMTUProbe:
+		return decodeMTUProbe(k, pkt)
+
+	case TypeMTUEcho:
+		return decodeMTUEcho(k, pkt)
 
 	default:
 		return nil, fmt.Errorf("unknown relay frame type %d", pkt[0])

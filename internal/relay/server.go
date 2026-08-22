@@ -119,6 +119,7 @@ type Server struct {
 	throttled  uint64
 	challenged uint64
 	confirmed  uint64
+	probed     uint64
 	peak       int
 }
 
@@ -259,6 +260,19 @@ func (s *Server) Handle(pkt []byte, from netip.AddrPort, now time.Time) (out []b
 		s.expireLocked(now)
 		s.mu.Unlock()
 		return nil, netip.AddrPort{}, false
+
+	case TypeMTUProbe:
+		// Answered by anybody, registered or not, and deliberately: a device
+		// needs to know what the path carries *before* it commits to using
+		// this relay, and the answer reveals nothing — it is the size of a
+		// packet the relay just received from the asker.
+		//
+		// One packet in, one much smaller packet out, so this is not an
+		// amplifier. It is counted so an operator can see it happening.
+		s.mu.Lock()
+		s.probed++
+		s.mu.Unlock()
+		return EncodeMTUEcho(s.key, f.ProbeID, f.Saw), from, true
 
 	case TypeForward:
 		s.mu.RLock()
@@ -481,6 +495,10 @@ type Stat struct {
 	Challenged uint64
 	Confirmed  uint64
 
+	// Probed counts path-MTU probes answered, which is what a device asking
+	// how large a packet may be looks like from here.
+	Probed uint64
+
 	// Bytes is payload forwarded, excluding relay headers — what an operator
 	// would compare against a bandwidth bill.
 	Bytes uint64
@@ -511,6 +529,7 @@ func (s *Server) Stats() Stat {
 		Throttled:  s.throttled,
 		Challenged: s.challenged,
 		Confirmed:  s.confirmed,
+		Probed:     s.probed,
 		Bytes:      s.bytes,
 		Peak:       s.peak,
 		Sources:    len(s.perSource),
