@@ -78,11 +78,20 @@ func Render(entries []Entry, suffix string) string {
 	suffix = strings.TrimPrefix(suffix, ".")
 
 	sorted := append([]Entry(nil), entries...)
+	// The address breaks the tie, so the order is total. Two devices in one
+	// mesh both calling themselves "vps" compare equal on (Mesh, Name), and
+	// sort.Slice is not stable — so which of them owned vps.home.mesh was
+	// arbitrary AND free to change between runs, which is the version of
+	// last-writer-wins this file exists to refuse. Names are self-asserted, so
+	// a peer can contest one deliberately; it should at least not flip.
 	sort.Slice(sorted, func(i, j int) bool {
 		if sorted[i].Mesh != sorted[j].Mesh {
 			return sorted[i].Mesh < sorted[j].Mesh
 		}
-		return sorted[i].Name < sorted[j].Name
+		if sorted[i].Name != sorted[j].Name {
+			return sorted[i].Name < sorted[j].Name
+		}
+		return sorted[i].Addr < sorted[j].Addr
 	})
 
 	// Resolve within-mesh duplicates first, so the cross-mesh count below sees

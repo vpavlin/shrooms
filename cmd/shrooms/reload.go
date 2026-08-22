@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -183,6 +184,23 @@ func needsRestart(was, now state.Config) []string {
 	add("relay", was.Relay != now.Relay)
 	add("advertise", !slices.Equal(was.Advertise, now.Advertise))
 	add("admin_keys", !slices.Equal(was.AdminKeys, now.AdminKeys))
-	add("meshes", len(was.MeshSet) != len(now.MeshSet))
+	// Every mesh, by label, rather than a count. Comparing only the number of
+	// meshes meant a change to any per-mesh setting - mesh.work.key,
+	// mesh.work.relay, mesh.work.admin_keys - was applied to nothing and named
+	// in nothing: reload reported success and the edit vanished. The same for a
+	// mesh replaced rather than added, which leaves the count unchanged.
+	for label, a := range was.MeshSet {
+		b, ok := now.MeshSet[label]
+		if !ok {
+			add("mesh."+label+" (removed)", true)
+			continue
+		}
+		add("mesh."+label, !reflect.DeepEqual(a, b))
+	}
+	for label := range now.MeshSet {
+		if _, ok := was.MeshSet[label]; !ok {
+			add("mesh."+label+" (added)", true)
+		}
+	}
 	return out
 }
