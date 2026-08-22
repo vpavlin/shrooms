@@ -31,12 +31,20 @@ func lookupGroup(g string) (int, error) {
 	}
 	found, err := user.LookupGroup(g)
 	if err != nil {
-		// A username is the obvious thing to write, and on most systems there
-		// is a group of the same name. Try that before giving up.
-		if u, uerr := user.Lookup(g); uerr == nil {
-			if gid, cerr := strconv.Atoi(u.Gid); cerr == nil {
-				return gid, nil
-			}
+		// No fallback to the user's primary group, though a username is the
+		// obvious thing to write here and on most systems there is a group of
+		// the same name. That convention is exactly why the fallback was
+		// unsafe: where it holds, LookupGroup already succeeded and this line
+		// is never reached, so the fallback only ever ran on the systems where
+		// it does NOT hold - and there the primary group is a shared one like
+		// `users`, which would have handed the socket tier to every local
+		// account on the machine. Refusing leaves the socket root-only, which
+		// is the direction that fails safe.
+		if _, uerr := user.Lookup(g); uerr == nil {
+			return 0, fmt.Errorf("no group named %q: %q is a user, and this "+
+				"system has no group of that name — name a group, or a numeric "+
+				"gid, rather than letting this fall back to that user's primary "+
+				"group, which may be shared with every account here", g, g)
 		}
 		return 0, err
 	}

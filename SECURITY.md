@@ -125,8 +125,21 @@ would remove it is not built.
 
 **The control socket's group is a real grant.** `socket_group` exists so a
 desktop app — and `shrooms status` — need not run as root, and it is not a
-read-only permission: that group may change this device's settings, switch a
-mesh off, and leave one.
+read-only permission. Sized honestly, that group may:
+
+- change this device's settings, switch a mesh off, and leave one;
+- **join this device to another mesh** (`/join`), which is the most
+  consequential thing in the tier;
+- restart the daemon (`/restart`) and read its logs (`/logs`);
+- **declare a service forwarding to any address this host can reach** — a
+  spec like `ha->192.168.0.116:80` is supported deliberately, and `/reload`
+  applies it live, so a member of this group can make the root daemon publish
+  a loopback-only admin panel, a database, or a LAN host to the whole mesh.
+
+Name a **group**, not a username. On most personal Linux systems your login
+also has a group of the same name, which is why the examples read that way; on
+a system where it does not, this refuses rather than falling back to your
+primary group, which may be shared with every account on the machine.
 
 What it cannot do is admit anybody — including by invite, which an earlier
 version of this note said it could. Both halves of the exchange (`/invite/hold`

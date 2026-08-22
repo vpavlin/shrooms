@@ -33,13 +33,24 @@ import (
 // relay off the internet until the next attempt.
 const mapRenewAfter = 2
 
+// mapFloor bounds how often a mapping is renewed however short a lifetime the
+// router grants, so a router answering with seconds cannot spin this loop.
+const mapFloor = time.Minute
+
 func holdPortMapping(ctx context.Context, log *slog.Logger, port uint16) {
 	var c portmap.Client
 	var last netip.AddrPort
 
 	for {
 		m, err := c.Map(ctx, port, portmap.DefaultLifetime)
-		wait := portmap.DefaultLifetime / mapRenewAfter
+		// Half of what the router granted, not half of what we asked for. The
+		// router is free to give less, and many give far less than an hour;
+		// renewing on our own request left the mapping expired for the rest of
+		// the hour. portmap deliberately does not retransmit, on the grounds
+		// that the caller renews well inside the lifetime - so getting this
+		// wrong took the relay off the internet silently and periodically,
+		// which is the one thing a relay may not do.
+		wait := max(m.Lifetime/mapRenewAfter, mapFloor)
 		switch {
 		case err != nil:
 			log.Warn("could not ask the router to forward the relay port; "+
