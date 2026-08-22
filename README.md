@@ -8,6 +8,24 @@ account, no vendor in the path.
 
 Yes, it is a mushroom pun. Deal with it.
 
+> **This is an experiment, and there are no guarantees of any kind.**
+>
+> It works, it is used daily, and it has never been audited by anybody
+> independent. WireGuard carries the traffic and is well reviewed; everything
+> around it — discovery, membership, path selection, relays — was written here
+> and has been read only by the people who wrote it. A
+> [security review](docs/security-review-2026-08.md) in August 2026 found seven
+> issues in a fortnight-old feature, two of them after that same review had
+> declared the area fixed.
+>
+> If you want a mesh VPN with the same objection to coordination servers and a
+> longer track record, look at
+> [**nostr-vpn**](https://github.com/mmalmi/nostr-vpn). It is further along as a
+> product: more platforms, iOS included, and a real release cadence. We compare
+> the two honestly in [docs/comparison.md](docs/comparison.md), including where
+> they are ahead. As far as we know neither project has had a public security
+> audit — that is a reason to be careful with both, not a point in our favour.
+
 Discovery and signalling run over **Logos Delivery**, a censorship-resistant
 pub/sub transport from the Logos stack. **WireGuard** carries the traffic —
 the real thing, in userspace, not something WireGuard-shaped. Delivery is used
