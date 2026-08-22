@@ -73,7 +73,13 @@ func RedeemForMesh(ctx context.Context, t Transport, s Secret, first *Request,
 	if err != nil {
 		return nil, err
 	}
-	if len(resp.Credential) > 0 || len(resp.AdminKeys) == 0 {
+	// Round two runs even when the mesh has no admin keys and so has no
+	// credential to issue. It is the round that consumes the invite, and
+	// stopping here left the token live for the rest of its window - on a
+	// --no-admin mesh, where the network key alone is membership, that turned
+	// "one device, once" into "anyone holding the token, until it expires".
+	// The inviter was told nobody had used it.
+	if len(resp.Credential) > 0 {
 		return resp, nil
 	}
 

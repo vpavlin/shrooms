@@ -252,10 +252,11 @@ type Request struct {
 // who may admit devices, and this device's own credential.
 type Response struct {
 	Kind       string   `json:"kind"`
-	NetworkKey []byte   `json:"nk"`               // 32 bytes
-	AdminKeys  [][]byte `json:"admin_keys"`       // ed25519, may be empty
-	Credential []byte   `json:"cred,omitempty"`   // signed for the requesting device
-	Suffix     string   `json:"suffix,omitempty"` // the mesh's DNS suffix
+	NetworkKey []byte   `json:"nk"`                // 32 bytes; second round only
+	MeshID     string   `json:"mesh_id,omitempty"` // one-way id, safe to send first
+	AdminKeys  [][]byte `json:"admin_keys"`        // ed25519, may be empty
+	Credential []byte   `json:"cred,omitempty"`    // signed for the requesting device
+	Suffix     string   `json:"suffix,omitempty"`  // the mesh's DNS suffix
 	Timestamp  int64    `json:"ts"`
 }
 
@@ -374,8 +375,15 @@ func OpenResponse(s Secret, ephPriv []byte, blob []byte, now time.Time) (*Respon
 	if r.Kind != KindResponse {
 		return nil, fmt.Errorf("expected an invite response, got %q", r.Kind)
 	}
-	if len(r.NetworkKey) != 32 {
-		return nil, errors.New("invite response carries no network key")
+	// A response has to name the mesh, but the two rounds name it differently.
+	// The first round carries the mesh id alone: it does not consume the invite
+	// and is answered as often as it is asked, so it must not carry the key.
+	// The second round carries the key, and that is the round that admits.
+	if len(r.NetworkKey) == 0 && r.MeshID == "" {
+		return nil, errors.New("invite response names no mesh")
+	}
+	if len(r.NetworkKey) != 0 && len(r.NetworkKey) != 32 {
+		return nil, errors.New("invite response carries a malformed network key")
 	}
 	if err := checkSkew(r.Timestamp, now); err != nil {
 		return nil, err

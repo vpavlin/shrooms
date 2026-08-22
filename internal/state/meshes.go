@@ -111,6 +111,24 @@ func NetworkID(nk identity.NetworkKey) string {
 	return strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(sum[:8]))
 }
 
+// MeshIDFromInvite picks the mesh id out of an invite response.
+//
+// A node that has been updated sends the id directly, because the first round
+// of the exchange does not consume the invite and so must not carry a secret.
+// A node running an older build sent the network key instead; the id is a
+// one-way hash of that key, so both answer the same question and a joining
+// device can talk to either.
+func MeshIDFromInvite(meshID string, networkKey []byte) (string, error) {
+	if meshID != "" {
+		return meshID, nil
+	}
+	nk, err := identity.NetworkKeyFromBytes(networkKey)
+	if err != nil {
+		return "", fmt.Errorf("the invite answer named no mesh: %w", err)
+	}
+	return NetworkID(nk), nil
+}
+
 // DefaultLabel is the mesh a single-mesh config describes.
 const DefaultLabel = "default"
 

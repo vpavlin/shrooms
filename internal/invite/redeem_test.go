@@ -329,3 +329,142 @@ func TestRedeemForMeshFallsBackToOneRound(t *testing.T) {
 		t.Error("dropped the credential the old holder sent")
 	}
 }
+
+// holdRounds plays the inviting side and records every request it saw, so a
+// test can assert which rounds actually happened. adminKeys may be empty, which
+// is a --no-admin mesh: there is no credential to issue, and the second round
+// exists purely to consume the invite.
+//
+// Unlike a real node it never stops answering deferred requests, because the
+// point here is what the joining client does, not what the holder allows.
+func holdRounds(t *testing.T, s Secret, bus *fakeBus, adminKeys [][]byte, meshOnlyFirst bool) *[]bool {
+	t.Helper()
+	rounds := new([]bool) // one entry per request seen: true if deferred
+	go func() {
+		deadline := time.After(4 * time.Second)
+		// Answer each request once. The bus drops sends when its buffer is
+		// full, so a holder that re-answers whatever lastSent still points at
+		// starves the round it is waiting for.
+		answered := map[string]bool{}
+		for {
+			select {
+			case <-deadline:
+				return
+			default:
+			}
+			raw := bus.lastSent()
+			if raw == nil {
+				time.Sleep(5 * time.Millisecond)
+				continue
+			}
+			req, err := OpenRequest(s, raw, time.Now())
+			if err != nil {
+				time.Sleep(5 * time.Millisecond)
+				continue
+			}
+			if k := string(req.EphPub); answered[k] {
+				time.Sleep(5 * time.Millisecond)
+				continue
+			} else {
+				answered[k] = true
+			}
+			*rounds = append(*rounds, req.Deferred)
+			resp := &Response{
+				MeshID:    "testmeshid",
+				AdminKeys: adminKeys,
+				Suffix:    "mesh",
+				Timestamp: time.Now().Unix(),
+			}
+			// The first round must be answerable without the network key; an
+			// older node sent it anyway, and both must work.
+			if !req.Deferred || !meshOnlyFirst {
+				resp.NetworkKey = bytes.Repeat([]byte{9}, 32)
+			}
+			if !req.Deferred && len(adminKeys) > 0 {
+				resp.Credential = bytes.Repeat([]byte{5}, 300)
+			}
+			sealed, err := SealResponse(s, req.EphPub, resp)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			bus.deliver(Message{Topic: s.Topic(), Payload: sealed})
+			if !req.Deferred {
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}()
+	return rounds
+}
+
+func redeemBoth(t *testing.T, s Secret, bus *fakeBus) (*Response, error) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	return RedeemForMesh(ctx, bus, s, &Request{
+		DevicePub: bytes.Repeat([]byte{1}, 32),
+		WGPub:     bytes.Repeat([]byte{2}, 32),
+		Name:      "phone",
+	}, func(r *Response) (*Request, error) {
+		return &Request{
+			DevicePub: bytes.Repeat([]byte{3}, 32),
+			WGPub:     bytes.Repeat([]byte{4}, 32),
+			Name:      "phone",
+		}, nil
+	})
+}
+
+// A mesh with no admin keys has no credential to issue, and the exchange used
+// to stop after the first round because of that. The first round deliberately
+// does not consume the invite, so stopping there left the token live for the
+// rest of its window — and on such a mesh the network key alone is membership,
+// so one token admitted every device that presented it. The second round has to
+// happen regardless of whether there is a credential waiting at the end of it.
+func TestANoAdminMeshStillRunsTheRoundThatConsumesTheInvite(t *testing.T) {
+	s, _ := New()
+	bus := newBus()
+	rounds := holdRounds(t, s, bus, nil, true)
+
+	if _, err := redeemBoth(t, s, bus); err != nil {
+		t.Fatalf("join a --no-admin mesh: %v", err)
+	}
+	if len(*rounds) < 2 {
+		t.Fatalf("saw %d request(s); the invite was never consumed", len(*rounds))
+	}
+	if (*rounds)[len(*rounds)-1] {
+		t.Error("the last request was still deferred; no round consumed the invite")
+	}
+}
+
+// The first round is answered as often as it is asked and does not consume the
+// invite, so it must not carry the mesh's secret. A joining device needs only
+// the mesh id from it — enough to derive the identity it will use — and gets
+// the network key in the second round, which is the one that admits it.
+func TestTheFirstRoundNeedsNoNetworkKey(t *testing.T) {
+	s, _ := New()
+	bus := newBus()
+	admin := bytes.Repeat([]byte{7}, 32)
+	holdRounds(t, s, bus, [][]byte{admin}, true)
+
+	resp, err := redeemBoth(t, s, bus)
+	if err != nil {
+		t.Fatalf("a first round with no network key must still work: %v", err)
+	}
+	if len(resp.Credential) == 0 {
+		t.Error("the second round issued no credential")
+	}
+}
+
+// A node running an older build answers the first round with the network key
+// and no mesh id. A joining device must still be able to talk to it.
+func TestAnOlderNodeSendingTheKeyFirstStillWorks(t *testing.T) {
+	s, _ := New()
+	bus := newBus()
+	admin := bytes.Repeat([]byte{7}, 32)
+	holdRounds(t, s, bus, [][]byte{admin}, false)
+
+	if _, err := redeemBoth(t, s, bus); err != nil {
+		t.Fatalf("older holder: %v", err)
+	}
+}

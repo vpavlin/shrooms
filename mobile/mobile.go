@@ -266,11 +266,11 @@ func joinInvite(token, name, label, configDir string, timeoutSeconds int) error 
 	if label != "" && label != state.DefaultLabel {
 		resp, err = invite.RedeemForMesh(ctx, tr, secret, base,
 			func(r *invite.Response) (*invite.Request, error) {
-				nk, err := identity.NetworkKeyFromBytes(r.NetworkKey)
+				id, err := state.MeshIDFromInvite(r.MeshID, r.NetworkKey)
 				if err != nil {
 					return nil, err
 				}
-				ms, err := st.MeshState(state.NetworkID(nk), false)
+				ms, err := st.MeshState(id, false)
 				if err != nil {
 					return nil, err
 				}

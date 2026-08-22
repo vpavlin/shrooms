@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/vpavlin/shrooms/internal/invite"
+	"github.com/vpavlin/shrooms/internal/state"
 )
 
 // Holding an invite open, on the node that is already a member.
@@ -82,16 +83,22 @@ func (m *Mesh) HoldInvite(ctx context.Context, s invite.Secret) (*invite.Request
 	}
 }
 
-// answerDeferred replies to a first-round request with the mesh and no
-// credential, so the joiner can derive the identity it will use here and ask
-// again for a credential naming it (ADR-017).
+// answerDeferred replies to a first-round request with enough to identify the
+// mesh and nothing else, so the joiner can derive the identity it will use here
+// and ask again for a credential naming it (ADR-017).
 //
-// Answered by the daemon rather than surfaced to the CLI, because nothing in
-// it needs the admin key: it is the network key, the admin *public* keys and
-// the suffix, all of which this node already holds. The invite stays open for
-// the second request, which is the one worth a person looking at.
+// It sends the mesh *id* rather than the network key. The id is a one-way hash
+// of the key (state.NetworkID) and is the only thing the joiner needs from this
+// round: it derives a per-mesh identity from it and comes back. Sending the key
+// here handed the mesh's secret to anyone holding the token, on a round that by
+// design does not consume the invite and answers as often as it is asked - so
+// the "one device, once" the token promises was never enforced on this path.
+//
+// Answered by the daemon rather than surfaced to the CLI, because nothing in it
+// needs the admin key. The invite stays open for the second request, which is
+// the one that carries a secret and the one worth a person looking at.
 func (m *Mesh) answerDeferred(s invite.Secret, req *invite.Request) {
-	if err := m.ReplyInvite(s, req, nil); err != nil {
+	if err := m.replyMeshOnly(s, req); err != nil {
 		m.log.Warn("could not answer the first round of an invite", "err", err)
 		return
 	}
@@ -108,17 +115,9 @@ func (m *Mesh) ReplyInvite(s invite.Secret, req *invite.Request, credential []by
 	if req == nil {
 		return errors.New("no request to reply to")
 	}
-	resp := &invite.Response{
-		NetworkKey: m.nk[:],
-		Credential: credential,
-		Suffix:     m.cfg.HostsSuffix,
-		Timestamp:  time.Now().Unix(),
-	}
-	if m.authority != nil {
-		for _, k := range m.authority.Keys {
-			resp.AdminKeys = append(resp.AdminKeys, append([]byte(nil), k...))
-		}
-	}
+	resp := m.inviteResponse()
+	resp.NetworkKey = m.nk[:]
+	resp.Credential = credential
 	blob, err := invite.SealResponse(s, req.EphPub, resp)
 	if err != nil {
 		return err
@@ -127,6 +126,39 @@ func (m *Mesh) ReplyInvite(s invite.Secret, req *invite.Request, credential []by
 		return fmt.Errorf("publish the invite response: %w", err)
 	}
 	m.log.Info("admitted a device", "name", req.Name, "credential", len(credential) > 0)
+	return nil
+}
+
+// inviteResponse is everything an invite answer carries that is not a secret:
+// which mesh this is, who may sign for it, and the DNS suffix.
+func (m *Mesh) inviteResponse() *invite.Response {
+	resp := &invite.Response{
+		MeshID:    state.NetworkID(m.nk),
+		Suffix:    m.cfg.HostsSuffix,
+		Timestamp: time.Now().Unix(),
+	}
+	if m.authority != nil {
+		for _, k := range m.authority.Keys {
+			resp.AdminKeys = append(resp.AdminKeys, append([]byte(nil), k...))
+		}
+	}
+	return resp
+}
+
+// replyMeshOnly answers the first round. No network key and no credential: this
+// round does not consume the invite, so whatever it sends can be had as many
+// times as the token is presented.
+func (m *Mesh) replyMeshOnly(s invite.Secret, req *invite.Request) error {
+	if req == nil {
+		return errors.New("no request to reply to")
+	}
+	blob, err := invite.SealResponse(s, req.EphPub, m.inviteResponse())
+	if err != nil {
+		return err
+	}
+	if _, err := m.node.Send(s.Topic(), blob, true); err != nil {
+		return fmt.Errorf("publish the invite response: %w", err)
+	}
 	return nil
 }
 

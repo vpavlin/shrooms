@@ -627,11 +627,11 @@ func groupToken(s string) string {
 // names exactly the keys it will announce with. Getting that pair out of step is
 // the failure where every peer refuses a device, correctly and silently.
 func perMeshRequest(st *state.State, r *invite.Response, name string) (*invite.Request, error) {
-	nk, err := identity.NetworkKeyFromBytes(r.NetworkKey)
+	id, err := state.MeshIDFromInvite(r.MeshID, r.NetworkKey)
 	if err != nil {
 		return nil, err
 	}
-	ms, err := st.MeshState(state.NetworkID(nk), false)
+	ms, err := st.MeshState(id, false)
 	if err != nil {
 		return nil, err
 	}
