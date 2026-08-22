@@ -109,13 +109,31 @@ mesh this project is for.
 ### Revocation that means something
 
 The admin signs `{revoked: device_pub, serial, not_before}` and publishes it on
-the rendezvous topic. Members drop the device from the roster, stop wrapping
-announce keys to it, and remove its WireGuard peer.
+the rendezvous topic. Members drop the device from the roster and remove its
+WireGuard peer. Monotonic serials, as with announces, so a revocation cannot be
+rolled back by replay.
 
-The revoked device keeps whatever it already had — nothing can reach into it —
-but it stops receiving announces, so it cannot follow anyone who moves, and no
-member will establish a new tunnel with it. Monotonic serials, as with
-announces, so a revocation cannot be rolled back by replay.
+**What revocation buys, precisely.** The revoked device keeps whatever it
+already had — nothing can reach into it — and no member will establish a new
+tunnel with it. That is the data plane, and it is the half that works.
+
+**What it does not buy, corrected.** An earlier version of this section said the
+device "stops receiving announces, so it cannot follow anyone who moves". That
+was never true. It presumed announce keys were wrapped per recipient, which
+[ADR-020](020-one-announce-many-readers.md) decided against and the scope note
+above already says is not built. Announces are sealed under the shared network
+key, and revocation does not rotate it — revocation removes the device from
+*our* roster and refuses *its* announces, the inbound direction only.
+
+So a revoked device keeps deriving the rendezvous topic and reading every
+announce on the mesh — names, overlay addresses, external endpoints, relay use,
+bound ports, service lists, every 45 seconds — for as long as the mesh exists.
+It cannot join a tunnel. It can watch indefinitely.
+
+Plan for closing that without renumbering the mesh:
+[revocation-and-the-network-key.md](../revocation-and-the-network-key.md).
+Found by an audit in August 2026, in a section that had asserted the opposite
+since it was written.
 
 ### Renewal is a sweep, not a ceremony per device
 
