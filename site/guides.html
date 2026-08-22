@@ -737,13 +737,32 @@ relay_token = "…"     <span class="c"># only if its operator asks for one</spa
 </p>
 
 <p>
-    <strong>Can:</strong> opaque per-relay tags, the addresses they connect from,
-    which pairs exchange packets, how much, and when. Devices register under a
-    tag derived from your mesh's own key rather than under their tunnel key, so
-    the tags mean nothing on any other relay and two operators comparing notes
-    see unrelated numbers. It is still a traffic pattern. Compared with running
-    your own relay this is a real change: today the only machines seeing that
-    are yours.
+    <strong>Can:</strong> opaque per-relay handles, the addresses they connect
+    from, which pairs exchange packets, how much, and when. It is a traffic
+    pattern, and compared with running your own relay it is a real change: today
+    the only machines seeing that are yours.
+</p>
+
+<p>
+    Two things have to be per-relay for those handles to mean nothing elsewhere,
+    and each one on its own is enough to give the game away. The tag a device
+    registers under is derived from your mesh's key <em>and the relay's own
+    address</em> — from the mesh key alone it would be identical everywhere the
+    device went. And a registration is signed, with the signing key travelling in
+    the clear because the relay needs it to stop one device claiming another's
+    handle; that key is derived per relay too, because signing with the device's
+    real identity would hand every operator one stable name however good the tag
+    beside it was.
+</p>
+
+<p>
+    Both were wrong at first, and the second was found only after the first had
+    been fixed and declared done. Which is the honest note to end on: this is a
+    young design, the reasoning is written down in
+    <a href="https://github.com/vpavlin/shrooms/blob/master/docs/blind-relays.md">docs/blind-relays.md</a>
+    and
+    <a href="https://github.com/vpavlin/shrooms/blob/master/docs/security-review-2026-08.md">a security review</a>
+    that records its own misses, and nobody independent has audited any of it.
 </p>
 
 <h3>Why an open one is not an open proxy</h3>
