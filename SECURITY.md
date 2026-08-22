@@ -295,7 +295,13 @@ per-device revocation and no expiry.
   anywhere in the code, so nothing can express or enforce one. `mesh_id` and
   `serial` were added instead: the first stops a credential being replayed onto
   another mesh, the second is what revocation withdraws.
-- 7–30 day expiry, auto-renewed while the admin is reachable.
+- A 30-day expiry by default (`--life` sets any other), renewed by running
+  `shrooms admin renew`. **Nothing renews automatically.** Renewal needs the
+  admin key, and this design deliberately keeps no online signing key, so there
+  is nobody to sign a renewal while you are asleep. If nobody runs the sweep,
+  every device falls off the mesh on day 30. That is the cost of the guarantee
+  in the next paragraph, and it is a real one — an earlier version of this line
+  said "auto-renewed while the admin is reachable", which no code has ever done.
 
 **Why the expiry matters more than the signature:** a gossip bus lets an
 attacker *suppress* a revocation message even though it cannot forge one.
@@ -308,8 +314,12 @@ defeated by dropping packets.
 ### Phase 3 — revocation ✅ built
 
 Revocations are signed, gossiped on the control plane, verified by each node
-against the admin keys itself, and kept until the credential they withdraw would
-have expired anyway.
+against the admin keys itself, and kept for however long the revocation itself
+says. That is `--keep-for`, which defaults to the standard credential life plus
+a day — **not** the actual expiry of the credential being withdrawn, which
+nothing looks up. Revoking a device that was issued a longer `--life` therefore
+needs `--keep-for 0`, or peers forget the revocation while the credential is
+still valid and the device rejoins. `admin revoke` says so when it runs.
 
 **Change:** `shrooms revoke <name>` publishes a signed revocation with a
 monotonic serial, republished on every epoch rotation and on join. Peers **tear

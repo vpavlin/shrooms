@@ -527,8 +527,13 @@ type statusPayload struct {
 	Announced *[]string `json:"announced,omitempty"`
 
 	// Services are the local ports this device publishes on the mesh. Only
-	// this device's own: services are not announced, so no node knows what any
-	// other one publishes.
+	// this device's own — peers' services are reported separately, on
+	// peerStatus.Services, when they announce them.
+	//
+	// "services are not announced, so no node knows what any other one
+	// publishes", which this said, stopped being true with ADR-023.
+	// announce_services is off by default, but it is settable from
+	// /config/announce and takes effect immediately.
 	Services []serviceStatus `json:"services,omitempty"`
 
 	// NameRouter is the shared-port router that lets a service be reached

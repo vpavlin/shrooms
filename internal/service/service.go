@@ -14,8 +14,13 @@
 // half-working. So the daemon listens on the overlay address itself and
 // forwards to loopback, where the application actually is.
 //
-// It is a forwarder, not a proxy in any protocol sense: bytes are copied, TLS
-// is not terminated, and nothing is inspected.
+// It is a forwarder, not a proxy in any protocol sense: bytes are copied and TLS
+// is not terminated.
+//
+// One exception, in this package and worth knowing about: the name router reads
+// the HTTP Host header or the TLS SNI of connections to 80 and 443 to decide
+// which device they are for. It parses, it does not decrypt or terminate — but
+// "nothing is inspected", which this said, was not true of the package.
 package service
 
 import (
@@ -251,13 +256,23 @@ func Publish(ctx context.Context, addr netip.Addr, device string, specs []Spec, 
 		ln, err := net.Listen("tcp6", ap.String())
 		if err != nil {
 			if errors.Is(err, syscall.EADDRINUSE) {
-				// Something already listens here. On the overlay address that
-				// can only be the application itself binding :: — in which case
-				// it is already reachable and there is nothing to forward.
+				// Something already listens here, and nothing here identifies
+				// what. This used to say it "can only be the application itself
+				// binding ::", which is not true: any local process that bound
+				// the port first wins, and for a service port above 1024 -
+				// immich, jellyfin, the ordinary case - that process needs no
+				// privilege. It then serves every member of the mesh under this
+				// device's name, and status reported it as healthy.
+				//
+				// Still not forwarded, because taking the port is not ours to
+				// do and the usual cause really is the application. But it is
+				// reported as unverified rather than as the application, and
+				// said once at warn level so it is visible if it was not.
 				st.Direct = true
-				log("service already reachable directly",
+				log("service port already held by another process; not forwarding",
 					"service", spec.Name, "port", spec.Port,
-					"note", "another process holds this port; not forwarding")
+					"note", "shrooms cannot tell which process holds it — if this "+
+						"is not the application, it is serving the mesh under this device's name")
 				continue
 			}
 			st.Err = err.Error()

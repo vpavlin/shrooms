@@ -396,9 +396,13 @@ func printPeerServices(out io.Writer, peers []peerStatus) {
 	w.Flush()
 }
 
-// printServices lists what this device publishes, and only this device: nothing
-// is announced, so no node knows what any other one runs. The names printed are
-// the ones to type on another machine, which is the only reason to print them.
+// printServices lists what this device publishes, and only this device. The
+// names printed are the ones to type on another machine, which is the only
+// reason to print them.
+//
+// Peers' services are printed by printPeers, from what they announce (ADR-023).
+// This used to claim "nothing is announced, so no node knows what any other one
+// runs" while printPeers, in this same file, printed exactly that.
 func printServices(out io.Writer, svcs []serviceStatus, router []routerStatus) {
 	if len(svcs) == 0 {
 		return
@@ -429,7 +433,7 @@ func printServices(out io.Writer, svcs []serviceStatus, router []routerStatus) {
 		case s.Direct:
 			// Something else holds the port on the overlay address, which
 			// means the application binds it itself and is already reachable.
-			state = "the application itself"
+			state = "held by another process (not verified)"
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%d\n", s.Name, addr, state, s.Conns)
 	}

@@ -29,9 +29,14 @@ import (
 
 // secp256k1PubKeySize is a compressed point: one parity byte and the X
 // coordinate. Uncompressed (65 bytes, 0x04-prefixed) is deliberately not
-// accepted — the card exports that form, and `admin init --keycard` compresses
-// it before writing, so that there is exactly one representation of a key in a
-// config and therefore exactly one mesh ID.
+// accepted, so that there is exactly one representation of a key in a config
+// and therefore exactly one mesh ID. The card exports the uncompressed form and
+// cred.CompressPoint converts it; the invariant is enforced here, by
+// knownKeySize, on every path into NewAuthority.
+//
+// This used to credit `admin init --keycard` with compressing it. There is no
+// such flag: cmdAdminInit registers -dir, -no-passphrase and -mesh, and always
+// mints ed25519.
 const secp256k1PubKeySize = 33
 
 // signatureSize is r ‖ s. The card also returns a recovery byte, which matters

@@ -461,12 +461,10 @@ func writeJSON(w http.ResponseWriter, v any) {
 
 // What is deliberately not here yet, and why.
 //
-// **Joining another mesh from the socket.** The daemon has everything it needs
-// — a rendezvous connection to redeem the invite and the config to write — but
-// a new mesh is a new WireGuard device, so it only runs after a restart. That
-// is worth building; it is not worth half-building, because a join that appears
-// to work and does nothing until the next reboot is the sort of thing people
-// remember.
+// (**Joining another mesh from the socket** was on this list and is now built:
+// /join, in joinmore.go, in the socket-group tier. It is the most consequential
+// endpoint in that tier, and a reader consulting this block to size the socket's
+// surface was being told the opposite.)
 //
 // **Issuing a credential.** An invite is two halves (ADR-017): the daemon holds
 // the exchange, and the admin key signs the credential. The socket can do the

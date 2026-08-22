@@ -82,7 +82,8 @@ func requireRoot(h http.HandlerFunc) http.HandlerFunc {
 		if cred.Uid != 0 && cred.Uid != uint32(os.Getuid()) {
 			http.Error(w, fmt.Sprintf(
 				"this changes the mesh, so it needs root; you are uid %d.\n"+
-					"The socket group can read status and nothing else.", cred.Uid),
+					"This endpoint needs root; the socket group has a wider tier than "+
+					"status, but not this.", cred.Uid),
 				http.StatusForbidden)
 			return
 		}

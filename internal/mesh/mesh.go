@@ -1089,10 +1089,16 @@ func (m *Mesh) publishRevocation(raw []byte, now time.Time) error {
 // and a member may be hostile. Only a signature from this mesh's authority
 // makes it a revocation rather than an assertion.
 //
-// Kept until the credential it withdraws would have expired anyway. After that
-// expiry does the same job, and keeping them forever would grow without bound
-// on precisely the input an attacker controls — the number of device keys they
-// can invent.
+// Kept for as long as the revocation itself says (--keep-for), which defaults
+// to the standard credential life plus a day rather than to the actual expiry
+// of the credential withdrawn — nothing looks that up. After it lapses, expiry
+// does the same job.
+//
+// Not "keeping them forever would grow without bound on the input an attacker
+// controls", which this said: applyRevocation verifies the admin signature
+// before anything is stored, so only the admin-key holder can add an entry.
+// The bound exists to stop the list growing with the mesh's own history, not to
+// stop an attacker.
 func (m *Mesh) handleRevocation(raw []byte, now time.Time) {
 	if _, err := m.applyRevocation(raw, now); err != nil {
 		m.log.Warn("ignoring a revocation", "err", err)
