@@ -2,11 +2,14 @@ package relay
 
 import (
 	"crypto/ed25519"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"net/netip"
 	"time"
 
 	"golang.org/x/crypto/hkdf"
@@ -172,4 +175,64 @@ func decodeConfirm(k Key, pkt []byte) (*Frame, error) {
 		return nil, ErrNotSignedByDevice
 	}
 	return f, nil
+}
+
+// Challenges that cost the relay no memory.
+//
+// The first version kept a table of outstanding challenges keyed by the address
+// they were sent to. That is a remote memory-exhaustion vector, and an easy one:
+// a register frame's signature covers the frame, not the address it came from,
+// so an attacker generates one keypair, signs one register, and replays it from
+// as many spoofed sources as their network permits. Each arrival allocated an
+// entry that lived for ChallengeTTL. On an open relay the frame key is public
+// by design, so nothing even had to be stolen.
+//
+// The fix is the one TCP reached for against SYN floods: put the state in the
+// nonce. The challenge is a keyed hash over the things it is a challenge
+// *about* — where it was sent, which handle, which device, and roughly when.
+// Answering it proves the sender received it; recomputing proves it was ours,
+// and neither needs anything remembered.
+//
+// The cookie key is generated per process and never leaves it. It has no
+// meaning beyond this and does not survive a restart, so a challenge in flight
+// across one is simply reissued.
+
+// cookieEra is the granularity of the timestamp inside a challenge.
+//
+// A challenge is accepted in its own era and the one before, so the window a
+// client actually gets is between one and two of these — comfortably more than
+// a round trip, and short enough that a captured challenge is useless quickly.
+const cookieEra = 15 * time.Second
+
+// challengeFor derives the nonce for one registration attempt.
+//
+// Bound to the address, the handle and the device key together: a cookie minted
+// for one of them must not answer for another, or an attacker could collect a
+// challenge for their own handle and use it to claim somebody else's.
+func challengeFor(cookieKey [32]byte, from netip.AddrPort, key identity.WGKey,
+	devicePub []byte, era int64) [NonceLen]byte {
+
+	h := hmac.New(sha256.New, cookieKey[:])
+	h.Write([]byte(from.String()))
+	h.Write(key[:])
+	h.Write(devicePub)
+	_ = binary.Write(h, binary.BigEndian, era)
+
+	var out [NonceLen]byte
+	copy(out[:], h.Sum(nil))
+	return out
+}
+
+// validChallenge reports whether a nonce is one we would have issued recently.
+func validChallenge(cookieKey [32]byte, from netip.AddrPort, key identity.WGKey,
+	devicePub []byte, got [NonceLen]byte, now time.Time) bool {
+
+	era := now.Unix() / int64(cookieEra/time.Second)
+	for _, e := range [2]int64{era, era - 1} {
+		want := challengeFor(cookieKey, from, key, devicePub, e)
+		if subtle.ConstantTimeCompare(want[:], got[:]) == 1 {
+			return true
+		}
+	}
+	return false
 }

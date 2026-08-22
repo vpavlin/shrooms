@@ -329,7 +329,9 @@ func TestAStaleConfirmIsRefused(t *testing.T) {
 	out, _, _ := s.Handle(EncodeRegister(k, wg, priv, now), here, now)
 	f, _ := Decode(k, out)
 
-	// Answered after the challenge has expired.
+	// Answered after the challenge has expired. Well past, because a challenge
+	// carries an era rather than a deadline and is accepted in that era and the
+	// one before — so the window is up to twice cookieEra.
 	late := now.Add(ChallengeTTL + time.Second)
 	s.Handle(EncodeConfirm(k, wg, f.Nonce, priv, late), here, late)
 	if _, ok := registered(s, wg); ok {
@@ -438,5 +440,108 @@ func TestAnsweredChallengesAreCountedNotInferred(t *testing.T) {
 	}
 	if st.Registered != 1 {
 		t.Errorf("counted %d new registrations, want 1 — the rest were refreshes", st.Registered)
+	}
+}
+
+// A register's signature covers the frame, not the address it arrived from. So
+// one keypair and one signed register can be replayed from as many spoofed
+// sources as an attacker's network permits — and on an open relay the frame key
+// is public, so nothing has to be stolen first.
+//
+// The first version allocated a pending-challenge entry per arrival, held for
+// the challenge lifetime. This asserts the relay now keeps nothing.
+func TestASpoofedRegisterFloodCostsNoMemory(t *testing.T) {
+	s, k := blindServer(t, Options{})
+	priv, wg := deviceAndKey(t, 1)
+	now := time.Now()
+	frame := EncodeRegister(k, wg, priv, now)
+
+	for i := 0; i < 5000; i++ {
+		from := netip.AddrPortFrom(
+			netip.AddrFrom4([4]byte{198, 51, byte(i / 256), byte(i % 256)}),
+			uint16(30000+i%1000))
+		s.Handle(frame, from, now)
+	}
+
+	// Nothing is registered — none of them answered — and, more to the point,
+	// nothing is being held on their behalf.
+	s.mu.Lock()
+	peers := len(s.peers)
+	sources := len(s.perSource)
+	s.mu.Unlock()
+	if peers != 0 {
+		t.Errorf("%d registrations from unanswered challenges", peers)
+	}
+	if sources != 0 {
+		t.Errorf("%d source entries held for addresses that never confirmed", sources)
+	}
+}
+
+// The cookie has to be bound to what it is a challenge about, or an attacker
+// collects one for a handle they own and answers it for somebody else's.
+func TestAChallengeCannotBeReusedForAnotherHandle(t *testing.T) {
+	s, k := blindServer(t, Options{})
+	mine, myWG := deviceAndKey(t, 1)
+	victimWG := wgKey(9)
+	here := netip.MustParseAddrPort("198.51.100.10:51820")
+	now := time.Now()
+
+	out, _, send := s.Handle(EncodeRegister(k, myWG, mine, now), here, now)
+	if !send {
+		t.Fatal("no challenge for our own handle")
+	}
+	f, err := Decode(k, out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Answer it naming a different handle.
+	s.Handle(EncodeConfirm(k, victimWG, f.Nonce, mine, now), here, now)
+	if _, ok := registered(s, victimWG); ok {
+		t.Error("a challenge issued for one handle installed another")
+	}
+}
+
+// And bound to the address, so a cookie collected at one cannot be replayed
+// from another — which is the reflection defence itself.
+func TestAChallengeCannotBeReplayedFromElsewhere(t *testing.T) {
+	s, k := blindServer(t, Options{})
+	priv, wg := deviceAndKey(t, 1)
+	here := netip.MustParseAddrPort("198.51.100.10:51820")
+	elsewhere := netip.MustParseAddrPort("203.0.113.9:9")
+	now := time.Now()
+
+	out, _, _ := s.Handle(EncodeRegister(k, wg, priv, now), here, now)
+	f, _ := Decode(k, out)
+	s.Handle(EncodeConfirm(k, wg, f.Nonce, priv, now), elsewhere, now)
+	if at, ok := registered(s, wg); ok {
+		t.Errorf("a challenge from %v was answered from %v and installed %v", here, elsewhere, at)
+	}
+}
+
+// Answers to registers and probes are small, but a relay that emits them
+// without limit spends an operator's uplink for free.
+func TestControlAnswersAreRateLimited(t *testing.T) {
+	// A tiny total, so the twentieth given to control is tinier still.
+	s, k := blindServer(t, Options{BytesPerSecond: 2000, BurstSeconds: 1})
+	priv, wg := deviceAndKey(t, 1)
+	now := time.Now()
+
+	answered, refused := 0, 0
+	for i := 0; i < 200; i++ {
+		from := netip.AddrPortFrom(netip.MustParseAddr("198.51.100.5"), uint16(30000+i))
+		if _, _, send := s.Handle(EncodeRegister(k, wg, priv, now), from, now); send {
+			answered++
+		} else {
+			refused++
+		}
+	}
+	if refused == 0 {
+		t.Error("the relay answered every register with no ceiling on the total")
+	}
+	if answered == 0 {
+		t.Error("the relay answered none, which is a broken relay rather than a limited one")
+	}
+	if s.Stats().Throttled == 0 {
+		t.Error("throttling was not counted, so an operator cannot see it")
 	}
 }

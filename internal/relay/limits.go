@@ -77,6 +77,21 @@ type Options struct {
 
 const defaultBurstSeconds = 3
 
+// controlShare is the fraction of the total ceiling that answers to registers
+// and probes may use.
+//
+// They need a ceiling of their own, and did not have one: only forwarding went
+// through the buckets, so a relay could be made to emit challenges and echoes
+// without limit. Neither amplifies — a challenge is 33 bytes against a
+// 153-byte register, an echo 27 against a probe of up to 65535 — so this is not
+// about being used as a weapon against somebody else. It is about an operator's
+// uplink, which is the thing they actually pay for.
+//
+// A twentieth, because control traffic is tiny beside relayed traffic and a
+// relay whose control answers are crowding out the packets it exists to carry
+// is misconfigured rather than busy.
+const controlShare = 20
+
 func (o Options) maxRegistrations() int {
 	if o.MaxRegistrations > 0 {
 		return o.MaxRegistrations

@@ -1,7 +1,9 @@
 package relay
 
 import (
+	"crypto/rand"
 	"crypto/subtle"
+	"fmt"
 	"net/netip"
 	"sync"
 	"time"
@@ -32,23 +34,13 @@ type registration struct {
 	out *bucket
 }
 
-// pending is a registration waiting for its routability challenge to come back.
-//
-// Deliberately tiny: a nonce, an expiry, and what it would install. An attacker
-// who floods registrations makes the relay hold a few dozen bytes per address
-// for a few seconds and nothing else.
-type pending struct {
-	nonce     [NonceLen]byte
-	key       identity.WGKey
-	devicePub []byte
-	until     time.Time
-}
-
 // ChallengeTTL is how long a routability challenge stays answerable.
 //
-// One round trip to the registrant. Generous enough for a phone on mobile data
-// waking a radio, short enough that pending state cannot accumulate.
-const ChallengeTTL = 10 * time.Second
+// A consequence of how the challenge is built rather than a policy: it carries
+// its own era, and is accepted in that era and the one before, so the real
+// window is between one and two of them. Stated as the outer bound, because
+// that is the one a caller has to assume.
+const ChallengeTTL = 2 * cookieEra
 
 // MaxRegistrations bounds the table.
 //
@@ -99,9 +91,12 @@ type Server struct {
 	// unbounded map into a way to exhaust the relay.
 	byAddr map[netip.AddrPort]identity.WGKey
 
-	// waiting holds routability challenges, keyed by the address the challenge
-	// was sent to — which is the address that has to answer.
-	waiting map[netip.AddrPort]pending
+	// cookieKey signs routability challenges so none has to be remembered.
+	//
+	// Per process and never leaving it. It means nothing outside this relay and
+	// does not survive a restart, so a challenge in flight across one is simply
+	// reissued.
+	cookieKey [32]byte
 
 	// perSource counts registrations per source IP, so one host cannot take
 	// the table on a relay open to strangers.
@@ -109,6 +104,10 @@ type Server struct {
 
 	// total limits everything forwarded, when the operator has set a ceiling.
 	total *bucket
+
+	// control limits what a relay says in answer to registers and probes.
+	// Small, because those answers are small — see controlShare.
+	control *bucket
 
 	// stats
 	registered uint64
@@ -134,15 +133,23 @@ func NewServer(key Key, owns func(devicePub []byte, wg identity.WGKey) bool) *Se
 // NewServerWith is NewServer with the operator's limits and, for a relay that
 // is not a member of the meshes it carries, blind mode (docs/blind-relays.md).
 func NewServerWith(key Key, owns func(devicePub []byte, wg identity.WGKey) bool, opts Options) *Server {
+	var cookie [32]byte
+	if _, err := rand.Read(cookie[:]); err != nil {
+		// A predictable cookie key would let anybody mint a challenge for
+		// anybody, which defeats the routability check entirely. Failing to
+		// read the system's randomness is not a condition to continue past.
+		panic(fmt.Sprintf("relay: no randomness for the challenge key: %v", err))
+	}
 	return &Server{
 		key:       key,
+		cookieKey: cookie,
 		opts:      opts,
 		owns:      owns,
 		peers:     make(map[identity.WGKey]registration),
 		byAddr:    make(map[netip.AddrPort]identity.WGKey),
-		waiting:   make(map[netip.AddrPort]pending),
 		perSource: make(map[netip.Addr]int),
 		total:     newBucket(float64(opts.BytesPerSecond), opts.burst()),
+		control:   newBucket(float64(opts.BytesPerSecond)/controlShare, opts.burst()),
 	}
 }
 
@@ -215,21 +222,20 @@ func (s *Server) Handle(pkt []byte, from netip.AddrPort, now time.Time) (out []b
 			s.mu.Unlock()
 			return nil, netip.AddrPort{}, false
 		}
-		nonce, err := NewNonce()
-		if err != nil {
+		// Derived rather than remembered, so a flood of registers from spoofed
+		// addresses costs this relay nothing but the packets it declines to
+		// keep. See challengeFor.
+		nonce := challengeFor(s.cookieKey, from, f.Key, f.DevicePub,
+			now.Unix()/int64(cookieEra/time.Second))
+		out := EncodeChallenge(s.key, nonce)
+		if !s.control.allow(len(out), now) {
+			s.throttled++
 			s.mu.Unlock()
 			return nil, netip.AddrPort{}, false
 		}
-		s.expirePendingLocked(now)
-		s.waiting[from] = pending{
-			nonce:     nonce,
-			key:       f.Key,
-			devicePub: append([]byte(nil), f.DevicePub...),
-			until:     now.Add(ChallengeTTL),
-		}
 		s.challenged++
 		s.mu.Unlock()
-		return EncodeChallenge(s.key, nonce), from, true
+		return out, from, true
 
 	case TypeConfirm:
 		if skew := now.Sub(time.Unix(f.At, 0)); skew > RegisterSkew || skew < -RegisterSkew {
@@ -238,23 +244,30 @@ func (s *Server) Handle(pkt []byte, from netip.AddrPort, now time.Time) (out []b
 			s.mu.Unlock()
 			return nil, netip.AddrPort{}, false
 		}
-		s.mu.Lock()
-		p, ok := s.waiting[from]
-		// Everything has to match, and the nonce comparison is the whole
-		// point: it proves this address received what was sent to it.
-		//
-		// The handle and the device key are re-checked from the frame rather
-		// than taken from the pending entry, so a confirm cannot install
-		// something the register did not ask for.
-		if !ok || now.After(p.until) ||
-			subtle.ConstantTimeCompare(p.nonce[:], f.Nonce[:]) != 1 ||
-			p.key != f.Key ||
-			subtle.ConstantTimeCompare(p.devicePub, f.DevicePub) != 1 {
+		// Recomputed rather than looked up: the challenge carried its own
+		// state, and this proves both that we issued it and that it was issued
+		// about exactly this address, handle and device.
+		if !validChallenge(s.cookieKey, from, f.Key, f.DevicePub, f.Nonce, now) {
+			s.mu.Lock()
 			s.refused++
 			s.mu.Unlock()
 			return nil, netip.AddrPort{}, false
 		}
-		delete(s.waiting, from)
+		s.mu.Lock()
+		// First claim still wins; a valid cookie says the address receives, not
+		// that the handle is free.
+		if !s.ownerLocked(f.Key, f.DevicePub) {
+			s.refused++
+			s.mu.Unlock()
+			return nil, netip.AddrPort{}, false
+		}
+		if s.perSource[from.Addr()] >= s.opts.MaxPerSource && s.opts.MaxPerSource > 0 {
+			if _, existing := s.peers[f.Key]; !existing {
+				s.refused++
+				s.mu.Unlock()
+				return nil, netip.AddrPort{}, false
+			}
+		}
 		s.confirmed++
 		s.registerLocked(f.Key, from, now, f.DevicePub)
 		s.expireLocked(now)
@@ -269,10 +282,16 @@ func (s *Server) Handle(pkt []byte, from netip.AddrPort, now time.Time) (out []b
 		//
 		// One packet in, one much smaller packet out, so this is not an
 		// amplifier. It is counted so an operator can see it happening.
+		out := EncodeMTUEcho(s.key, f.ProbeID, f.Saw)
 		s.mu.Lock()
+		if !s.control.allow(len(out), now) {
+			s.throttled++
+			s.mu.Unlock()
+			return nil, netip.AddrPort{}, false
+		}
 		s.probed++
 		s.mu.Unlock()
-		return EncodeMTUEcho(s.key, f.ProbeID, f.Saw), from, true
+		return out, from, true
 
 	case TypeForward:
 		s.mu.RLock()
@@ -420,14 +439,6 @@ func (s *Server) releaseSourceLocked(addr netip.AddrPort) {
 		s.perSource[ip] = n - 1
 	} else {
 		delete(s.perSource, ip)
-	}
-}
-
-func (s *Server) expirePendingLocked(now time.Time) {
-	for a, p := range s.waiting {
-		if now.After(p.until) {
-			delete(s.waiting, a)
-		}
 	}
 }
 
