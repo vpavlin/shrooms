@@ -93,7 +93,7 @@ type Prober struct {
 	mu        sync.Mutex
 	pending   map[TxID]probe
 	paths     map[string]map[netip.AddrPort]*Path // peerID -> addr -> path
-	reflexive map[netip.AddrPort]time.Time        // self-addresses peers reported
+	reflexive map[netip.AddrPort]*reflexObs       // self-addresses peers reported
 
 	// selected is the path currently in use per peer, so Best can keep it
 	// rather than re-racing near-equal candidates on every call.
@@ -129,7 +129,7 @@ func NewProber(key Key, selfPriv ed25519.PrivateKey, send func([]byte, netip.Add
 		pending:   make(map[TxID]probe),
 		paths:     make(map[string]map[netip.AddrPort]*Path),
 		selected:  make(map[string]netip.AddrPort),
-		reflexive: make(map[netip.AddrPort]time.Time),
+		reflexive: make(map[netip.AddrPort]*reflexObs),
 		selfAddrs: make(map[netip.Addr]bool),
 	}
 }
@@ -265,8 +265,18 @@ func (p *Prober) HandlePong(m *Message, from netip.AddrPort, now time.Time) (pee
 	// Record where the peer saw us. This is reflexive discovery: with several
 	// peers we get several independent vantage points and need no STUN server.
 	if usableReflexive(m.Observed) {
-		if len(p.reflexive) < MaxReflexive || !p.reflexive[m.Observed].IsZero() {
-			p.reflexive[m.Observed] = now
+		if e := p.reflexive[m.Observed]; e != nil {
+			e.last = now
+			e.by[pr.peerID] = now
+		} else if len(p.reflexive) < MaxReflexive {
+			// Who saw it, not just when. Two peers agreeing on an address means
+			// the NAT maps this socket the same way for everybody, so the
+			// address is worth announcing. Two peers disagreeing means it does
+			// not, and neither address generalises — see Reflexive.
+			p.reflexive[m.Observed] = &reflexObs{
+				last: now,
+				by:   map[string]time.Time{pr.peerID: now},
+			}
 		}
 	}
 
@@ -388,7 +398,17 @@ func (p *Prober) Paths(peerID string) []Path {
 	return out
 }
 
-// Reflexive returns the self-addresses peers have reported, most recent first.
+// reflexObs is one reflexive address and the peers that reported it.
+type reflexObs struct {
+	last time.Time
+	by   map[string]time.Time
+}
+
+// reflexiveTTL is how long a peer's observation of our address counts.
+const reflexiveTTL = 10 * time.Minute
+
+// Reflexive returns the self-addresses peers have reported, best corroborated
+// first, and drops addresses that peers disagree about.
 //
 // Actually sorted, which it was not: it returned them in map order, so the set
 // arrived in a different order every call. The caller announces the first few
@@ -402,17 +422,61 @@ func (p *Prober) Reflexive(now time.Time) []netip.AddrPort {
 	type entry struct {
 		addr netip.AddrPort
 		seen time.Time
+		by   int
 	}
 	found := make([]entry, 0, len(p.reflexive))
-	for addr, seen := range p.reflexive {
-		if now.Sub(seen) < 10*time.Minute {
-			found = append(found, entry{addr, seen})
+	observers := map[string]bool{}
+	for addr, e := range p.reflexive {
+		if now.Sub(e.last) >= reflexiveTTL {
+			continue
+		}
+		fresh := 0
+		for peer, at := range e.by {
+			if now.Sub(at) < reflexiveTTL {
+				fresh++
+				observers[peer] = true
+			}
+		}
+		if fresh > 0 {
+			found = append(found, entry{addr, e.last, fresh})
 		}
 	}
+
+	// Do the peers agree about where we are?
+	//
+	// On a NAT that maps this socket the same way for every destination, they
+	// do, and the address is genuinely public — announce it. On one that maps
+	// per destination, each peer reports a different port, and *none* of those
+	// addresses works for anybody but its observer. Announcing them anyway is
+	// how a node comes to advertise an address that is not reliably its own,
+	// which is worse than advertising nothing: peers probe it, something else
+	// answers or nothing does, and the path flaps.
+	//
+	// Observed in the field — two machines behind one home NAT announcing the
+	// same external address, only one of them ever actually behind it, and a
+	// phone alternating between a direct path and a relay every few minutes
+	// (docs/two-nodes-one-address.md).
+	//
+	// Disagreement needs at least two vantage points to detect. With one peer
+	// there is nothing to compare against, so a single observation is kept:
+	// unverified, but no worse than having no candidate at all.
+	if len(observers) > 1 && len(found) > 1 {
+		corroborated := found[:0]
+		for _, e := range found {
+			if e.by > 1 {
+				corroborated = append(corroborated, e)
+			}
+		}
+		found = corroborated
+	}
+
 	// Ties broken on the address so the order is total: several peers observing
 	// us at the same moment is normal, and two addresses that swap places are
 	// the thing this is here to stop.
 	sort.Slice(found, func(i, j int) bool {
+		if found[i].by != found[j].by {
+			return found[i].by > found[j].by // best corroborated first
+		}
 		if !found[i].seen.Equal(found[j].seen) {
 			return found[i].seen.After(found[j].seen)
 		}

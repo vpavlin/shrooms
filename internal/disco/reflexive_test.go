@@ -1,61 +1,123 @@
 package disco
 
 import (
+	"crypto/ed25519"
+	"encoding/hex"
 	"net/netip"
 	"testing"
+	"time"
 )
 
-// A pong carries the address the peer says it observed us at, and whatever it
-// said was stored and then advertised to every other peer as somewhere we can
-// be reached. Disco authenticates mesh membership, not device identity, so a
-// hostile member could seed addresses of its choosing — and if it named a third
-// party, every honest peer would probe there.
+// observe makes the prober believe `peer` saw us at `at`, the way a pong does.
 //
-// This does not make the value trustworthy. It refuses the ones that could not
-// be an external view of this device, which removes the arbitrary-target case.
-func TestReflexiveAddressesThatCannotBeOurs(t *testing.T) {
-	refuse := []string{
-		"0.0.0.0:51820",      // unspecified
-		"127.0.0.1:51820",    // loopback: aims a probe at the prober
-		"[::1]:51820",        //
-		"224.0.0.1:51820",    // multicast
-		"169.254.10.1:51820", // link-local
-		"[fe80::1]:51820",    //
-		"198.51.100.7:0",     // no port to reach us on
-	}
-	for _, s := range refuse {
-		ap, err := netip.ParseAddrPort(s)
-		if err != nil {
-			t.Fatalf("%s: %v", s, err)
-		}
-		if usableReflexive(ap) {
-			t.Errorf("%s was accepted as an address peers observe us at", s)
-		}
-	}
-	if usableReflexive(netip.AddrPort{}) {
-		t.Error("the zero address was accepted")
+// Driven through HandlePong rather than by writing the map directly, so the
+// test exercises the path a real pong takes — including the check that a pong
+// comes from the device that was probed.
+func observe(t *testing.T, p *Prober, peerPriv ed25519.PrivateKey, at netip.AddrPort) {
+	t.Helper()
+	peerID := hex.EncodeToString(peerPriv.Public().(ed25519.PublicKey))
+
+	// A probe has to be outstanding for its answer to count.
+	p.mu.Lock()
+	var tx TxID
+	tx[0] = byte(len(p.pending) + 1)
+	p.pending[tx] = probe{peerID: peerID, sentAt: time.Now()}
+	p.mu.Unlock()
+
+	m := &Message{Type: TypePong, TxID: tx, Observed: at}
+	copy(m.SenderPub[:], peerPriv.Public().(ed25519.PublicKey))
+	if _, ok := p.HandlePong(m, netip.MustParseAddrPort("203.0.113.1:1"), time.Now()); !ok {
+		t.Fatal("the pong was not accepted")
 	}
 }
 
-// Private and carrier-NAT addresses are kept deliberately: a peer on the same
-// LAN observes us at a private address, and that is the most useful candidate
-// this ever collects — the one whose loss sends two machines in one room
-// through a relay.
-func TestReflexiveKeepsTheAddressesThatMatter(t *testing.T) {
-	keep := []string{
-		"192.168.0.151:51820", // a peer on our LAN sees this
-		"10.1.2.3:51820",      //
-		"100.64.0.5:51820",    // carrier NAT: what a phone is behind
-		"198.51.100.7:51820",  // an ordinary public address
-		"[2001:db8::1]:51820", // global v6
+func peerKey(t *testing.T, n byte) ed25519.PrivateKey {
+	t.Helper()
+	seed := make([]byte, ed25519.SeedSize)
+	seed[0] = n
+	return ed25519.NewKeyFromSeed(seed)
+}
+
+// Two peers agreeing means the NAT maps this socket the same way for everybody,
+// so the address genuinely is ours and is worth telling people about.
+func TestAgreeingPeersConfirmAnAddress(t *testing.T) {
+	p := bareProber(t)
+	pub := netip.MustParseAddrPort("198.51.100.7:51820")
+
+	observe(t, p, peerKey(t, 1), pub)
+	observe(t, p, peerKey(t, 2), pub)
+
+	got := p.Reflexive(time.Now())
+	if len(got) != 1 || got[0] != pub {
+		t.Fatalf("got %v, want just %v", got, pub)
 	}
-	for _, s := range keep {
-		ap, err := netip.ParseAddrPort(s)
-		if err != nil {
-			t.Fatalf("%s: %v", s, err)
-		}
-		if !usableReflexive(ap) {
-			t.Errorf("%s was refused; it is exactly what reflexive discovery is for", s)
-		}
+}
+
+// Peers disagreeing means the NAT maps per destination, and none of those
+// addresses works for anybody but the peer that observed it. Announcing them
+// is worse than announcing nothing: peers probe an address something else is
+// behind, and the path flaps between direct and relayed.
+//
+// This is the case seen in the field, where two machines behind one home NAT
+// both advertised the same external address and a phone alternated between a
+// direct path and a relay every few minutes.
+func TestDisagreeingPeersSuppressTheAddresses(t *testing.T) {
+	p := bareProber(t)
+	observe(t, p, peerKey(t, 1), netip.MustParseAddrPort("198.51.100.7:51820"))
+	observe(t, p, peerKey(t, 2), netip.MustParseAddrPort("198.51.100.7:51999"))
+
+	if got := p.Reflexive(time.Now()); len(got) != 0 {
+		t.Errorf("announced %v from a NAT that maps per destination", got)
 	}
+}
+
+// One peer is not a disagreement, and a two-node mesh has only one vantage
+// point. An unverified address is kept, because it is no worse than having no
+// candidate at all — and without it a pair of NATed nodes could never find a
+// direct path.
+func TestASingleObserverIsStillUsed(t *testing.T) {
+	p := bareProber(t)
+	pub := netip.MustParseAddrPort("198.51.100.7:51820")
+	observe(t, p, peerKey(t, 1), pub)
+
+	got := p.Reflexive(time.Now())
+	if len(got) != 1 || got[0] != pub {
+		t.Fatalf("got %v, want %v — a lone observation is better than nothing", got, pub)
+	}
+}
+
+// When some addresses are corroborated and others are not, the corroborated
+// ones are what get announced rather than merely being listed first: an
+// uncorroborated address on an endpoint-dependent NAT is not a weaker
+// candidate, it is a wrong one.
+func TestCorroboratedWinsOverMerelyRecent(t *testing.T) {
+	p := bareProber(t)
+	good := netip.MustParseAddrPort("198.51.100.7:51820")
+	odd := netip.MustParseAddrPort("198.51.100.7:51999")
+
+	observe(t, p, peerKey(t, 1), good)
+	observe(t, p, peerKey(t, 2), good)
+	observe(t, p, peerKey(t, 3), odd) // a third peer sees something else
+
+	got := p.Reflexive(time.Now())
+	if len(got) != 1 || got[0] != good {
+		t.Fatalf("got %v, want just the corroborated %v", got, good)
+	}
+}
+
+// An observation ages out, and when the last one does the address goes with it.
+func TestStaleObservationsAreDropped(t *testing.T) {
+	p := bareProber(t)
+	observe(t, p, peerKey(t, 1), netip.MustParseAddrPort("198.51.100.7:51820"))
+
+	if got := p.Reflexive(time.Now().Add(reflexiveTTL + time.Minute)); len(got) != 0 {
+		t.Errorf("a stale observation was still announced: %v", got)
+	}
+}
+
+// bareProber is a prober with no network, for testing what it concludes rather
+// than what it sends.
+func bareProber(t *testing.T) *Prober {
+	t.Helper()
+	return NewProber(testKey(t), make([]byte, 64), func([]byte, netip.AddrPort) error { return nil })
 }

@@ -1,6 +1,7 @@
 # Two nodes announcing one address
 
-**Status:** observed and diagnosed, not fixed.
+**Status:** diagnosed, and the announcing half is fixed. A node no longer
+advertises a reflexive address its peers disagree about.
 
 A phone on mobile data shows pi5 as reached *through a relay*, and switches
 between that and a direct path every few minutes. pi5 is itself a relay and
@@ -40,23 +41,35 @@ else, but it is announced to everybody. The router reusing a port another host
 already maps is ordinary behaviour for outbound connections and makes the
 collision look deliberate.
 
-## What would fix it
+## The fix
 
-Three candidates, in increasing order of how much they actually address it:
+**Ask whether the peers agree.** The prober now records *which* peer reported
+each reflexive address, not merely when. That turns a guess into a measurement:
 
-- **Do not announce a candidate a peer already announces.** The roster is right
-  there and the check is cheap. It cannot decide *which* node is wrong, but two
-  nodes claiming one address means at most one is right, and announcing it to
-  everyone is worse than announcing nothing. Cheap, partial, and would stop the
+- Several peers reporting the **same** address means the NAT maps this socket
+  the same way for every destination. The address is genuinely ours, and it is
+  announced ahead of anything less corroborated.
+- Peers reporting **different** addresses means the NAT maps per destination.
+  None of those addresses works for anybody but its observer, so none is
+  announced. That is the case here, and suppressing them is what stops the
   flapping.
-- **Remember a candidate that answered as the wrong device.** The prober already
-  rejects the reply; it does not remember that this address answers as somebody
-  else, so it retries on a timer forever. Recording it would stop a node
-  repeatedly offering a path that has demonstrably never worked.
-- **Distinguish reflexive addresses learned from one peer from those confirmed
-  by several.** An address seen by two peers on different networks is a real
-  public address; one seen by a single peer may be a per-destination mapping.
-  This is the honest fix and the largest.
+- A **single** observer is not a disagreement. A two-node mesh has only one
+  vantage point, so a lone observation is kept — unverified, but no worse than
+  having no candidate at all, and without it a pair of NATed nodes could never
+  find each other directly.
+
+This is the STUN test for NAT type, done with the peers already present instead
+of a server. No new messages and no wire change: the pong already carries the
+observation, and the only thing missing was remembering who sent it.
+
+### What it does not fix
+
+A node that has no corroborated address now announces fewer candidates, which
+is honest but not the same as being reachable. pi5 announces no mapping of its
+own — it listens on 51820 and nothing advertises `178.213.45.235:51820`, though
+the laptop reaches it there. Whatever forwards that port, pi5 does not know
+about it, so it cannot tell anybody. Asking the router (ADR-024) is what would
+close that, and pi5's build has the code; why it has no mapping is unanswered.
 
 ## Meanwhile
 
