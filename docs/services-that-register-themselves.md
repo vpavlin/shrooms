@@ -160,6 +160,72 @@ will collide on any machine already serving something there, and the audit's
 finding applies — the daemon reports a port it did not bind as being held by
 "another process" and does not check which.
 
+## The case that prompted this: a phone with no storage node
+
+Vaclav, clarifying: *"there is no Logos Storage for mobile, but if I have a
+desktop node on the mesh I can use the REST API easily and securely — I just
+need to find it with minimal config."*
+
+That is a much narrower thing than general service discovery, and most of it is
+already built. Worth separating what exists from what does not.
+
+**Already true.** A peer's announce carries `Bound` as `"name:port"`
+([ADR-026](adr/026-bound-ports.md)), the phone already receives it, and
+`mobile/support.go` already surfaces it per peer. So a desktop that binds
+something on its mesh address is already discoverable from the phone, port
+included, with no new protocol at all.
+
+**Already true, and the reason this is worth doing at all.** "Securely" is
+carried entirely by the mesh: the API is reached over WireGuard, between two
+devices that hold credentials this mesh's admin signed. No TLS to configure, no
+certificate, no port forwarding, no exposure beyond the mesh.
+
+**The gap.** Logos Storage binds its API to `localhost:8080` by default, so the
+natural declaration is a *forwarded* service — `storage->127.0.0.1:8080` — and
+**forwarded services announce their name and not their port.** `publishServices`
+puts `sp.Name` into `Names`, and nothing carries the published port. The phone
+learns that `nas` offers `storage` and has to be told `8080` by hand, which is
+exactly the config the request wants to avoid.
+
+Two ways out, and they are worth deciding between rather than doing both:
+
+1. **Bind the mesh address instead of loopback.** If Logos Storage can be told
+   to listen on the device's overlay address, it becomes a `Bound` service,
+   `name:port` is already announced, and the phone already has everything. Zero
+   new code — a documentation answer rather than a feature.
+2. **Announce the port for forwarded services too.** `Names` cannot simply
+   become `name:port`: an older reader would take the whole string as a name and
+   `sanitiseName` would mangle it into a DNS label that resolves to nothing. So
+   it wants a new field alongside, tolerated when absent, in the shape ADR-026
+   already established.
+
+Option 1 is free and should be checked first. Option 2 is small, and is right
+regardless, because "the port a service is published on" is not knowledge a
+client should have to be given out of band.
+
+**One thing to say out loud before either.** The Logos Storage API is
+unauthenticated — it binds loopback because that *is* its access control. On the
+mesh it gains `DELETE /data/{cid}` for every member. On a mesh where every
+device is yours that is fine and is the same trust the tunnel already assumes.
+On a mesh with a guest it is not, and nothing in shrooms would stop it.
+
+## Peer discovery over mesh addresses
+
+Vaclav's second half: *"using mesh addrs for peer discovery could be useful to a
+degree."*
+
+Agreed, and "to a degree" is the right hedge. `GET /spr` returns a node's
+Service Peer Record and `GET /connect/{peerId}` takes supplied multiaddrs, so
+two of your own storage nodes can be pointed at each other over the overlay:
+stable addresses, already authenticated, no NAT traversal, no waiting for the
+public DHT to find them.
+
+Where the degree runs out: this only helps nodes that are *yours*. Codex's DHT
+exists to find providers you have never met, which is most of them, and nothing
+here replaces that. So the honest framing is that the mesh is a good way to
+introduce your own nodes to each other and irrelevant to everyone else's — a
+private peering shortcut, not a discovery layer.
+
 ## How others do it
 
 - **mDNS / DNS-SD (Bonjour, Avahi)** — the default on every LAN. Apps register
