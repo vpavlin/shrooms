@@ -4,7 +4,13 @@ import (
 	"bytes"
 	"sync"
 	"testing"
+
+	"github.com/vpavlin/shrooms/internal/identity"
 )
+
+// identityWGKeyZero is the zero key, which is what a forgotten derivation
+// leaves behind — and PublicFromPrivate accepts it without complaint.
+var identityWGKeyZero identity.WGKey
 
 // The mesh a device already belonged to must keep its keys exactly. Re-deriving
 // them would change its overlay address and tunnel key, so every peer would see
@@ -192,5 +198,100 @@ func TestConcurrentSavesDoNotRace(t *testing.T) {
 	}
 	if len(back.Meshes) != 2 {
 		t.Errorf("read back %d meshes, want 2", len(back.Meshes))
+	}
+}
+
+// A generation must survive a restart, or the anchor resets every time the
+// daemon does — and a revoked device, which legitimately holds the previous
+// secret through the grace window and can replay the public statement naming
+// it, would win the race to pin a rebooting node back to a generation it can
+// still read.
+func TestAGenerationSurvivesARestart(t *testing.T) {
+	dir := t.TempDir()
+	st, err := LoadOrCreateState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := bytes.Repeat([]byte{7}, 32)
+	rot := bytes.Repeat([]byte{8}, 64)
+	if err := st.SetGenerationFor("meshid", true, 5, secret, rot); err != nil {
+		t.Fatal(err)
+	}
+
+	back, err := LoadOrCreateState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ms, err := back.MeshState("meshid", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ms.Generation != 5 {
+		t.Errorf("generation came back as %d, want 5", ms.Generation)
+	}
+	if !bytes.Equal(ms.GenerationSecret, secret) {
+		t.Error("the generation secret did not survive the restart")
+	}
+	if !bytes.Equal(ms.Rotation, rot) {
+		t.Error("the signed statement did not survive; peers cannot be served")
+	}
+}
+
+// The floor. An older generation must be refused however it arrives.
+func TestAGenerationCannotGoBackwards(t *testing.T) {
+	dir := t.TempDir()
+	st, _ := LoadOrCreateState(dir)
+	secret := bytes.Repeat([]byte{7}, 32)
+
+	if err := st.SetGenerationFor("meshid", true, 5, secret, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, gen := range []uint64{1, 4, 5} {
+		if err := st.SetGenerationFor("meshid", true, gen, secret, nil); err == nil {
+			t.Errorf("accepted generation %d over 5", gen)
+		}
+	}
+	if err := st.SetGenerationFor("meshid", true, 6, secret, nil); err != nil {
+		t.Errorf("refused a newer generation: %v", err)
+	}
+	// And a generation with no secret is not a generation: adopting the number
+	// alone would leave the node refusing every earlier one with nothing to
+	// read the current one.
+	if err := st.SetGenerationFor("meshid", true, 99, nil, nil); err == nil {
+		t.Error("adopted a generation number with no secret")
+	}
+}
+
+// Every per-mesh identity rebuilt from disk needs its sealing key. The legacy
+// path was covered; this one is rebuilt by different code and was not, which is
+// exactly how the same bug lives twice.
+func TestAPerMeshIdentityFromDiskHasASealingKey(t *testing.T) {
+	dir := t.TempDir()
+	st, _ := LoadOrCreateState(dir)
+	ms, err := st.MeshState("othermesh", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := ms.Identity.SealPub
+	if want == (identityWGKeyZero) {
+		t.Fatal("a fresh per-mesh identity has no sealing key")
+	}
+	if err := st.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	back, err := LoadOrCreateState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := back.MeshState("othermesh", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Identity.SealPriv == (identityWGKeyZero) {
+		t.Error("a per-mesh identity came back from disk with a zero sealing key")
+	}
+	if got.Identity.SealPub != want {
+		t.Error("the sealing key changed across a restart; rekeys would stop arriving")
 	}
 }
