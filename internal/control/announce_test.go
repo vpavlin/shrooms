@@ -1,10 +1,14 @@
 package control
 
 import (
+	"bytes"
 	"crypto/ed25519"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/vpavlin/shrooms/internal/cred"
 	"github.com/vpavlin/shrooms/internal/identity"
 )
 
@@ -234,5 +238,70 @@ func TestReplayGuardForget(t *testing.T) {
 	}
 	if !g.Accept(&Announce{DevicePub: pub, Seq: 1}) {
 		t.Fatal("after Forget, a fresh low sequence should be accepted")
+	}
+}
+
+// The endpoint budget, measured rather than assumed.
+//
+// An announce is padded to a fixed size and Seal refuses anything larger, so
+// every byte a new field adds is taken from the endpoints — and the sender
+// trims silently from the end. A node that quietly drops to one endpoint is
+// unreachable on its LAN and reads as a network fault, so the cost of adding a
+// field belongs in a test rather than in a commit message.
+//
+// The numbers here are what fits today. If a change moves them, that is the
+// change's real price and it should be looked at deliberately.
+func TestEndpointBudget(t *testing.T) {
+	admin, _ := cred.NewAdmin()
+	auth, _ := cred.NewAuthority(admin.Pub)
+	devPub, devPriv, _ := ed25519.GenerateKey(nil)
+	credRaw, err := cred.IssueFor(admin, auth, devPub, bytes.Repeat([]byte{2}, 32),
+		"home-server", 1787464532, time.Now(), 30*24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var nk identity.NetworkKey
+	copy(nk[:], bytes.Repeat([]byte{7}, 32))
+	const boot = "/ip4/203.0.113.10/tcp/60000/p2p/16Uiu2HAm56qiyCnUQpoCiEGNj84d3rftQ9a1pVFruHhnWsSNyGRc"
+
+	maxEndpoints := func(withCred bool, bootAddr string) int {
+		for n := 0; n < 64; n++ {
+			a := Announce{
+				Kind: KindAnnounce, DevicePub: devPub,
+				WGPub:     bytes.Repeat([]byte{2}, 32),
+				Name:      "home-server",
+				Seq:       18446744073709551615,
+				Timestamp: time.Now().Unix(),
+				Relay:     true, Boot: bootAddr,
+			}
+			for i := 0; i <= n; i++ {
+				a.Endpoints = append(a.Endpoints, fmt.Sprintf("178.213.45.2%02d:51820", i))
+			}
+			if withCred {
+				a.Credential = credRaw
+			}
+			if _, err := Seal(nk, 1, devPriv, a); errors.Is(err, ErrTooLarge) {
+				return n
+			}
+		}
+		return 64
+	}
+	for _, c := range []struct {
+		what     string
+		withCred bool
+		boot     string
+		want     int
+	}{
+		{"no credential, no boot", false, "", 20},
+		{"credential, no boot", true, "", 9},
+		// The tightest real case, and the one to watch: a Core relay carrying
+		// both. Live nodes advertise four endpoints, so this has no slack.
+		{"credential and boot", true, boot, 4},
+	} {
+		if got := maxEndpoints(c.withCred, c.boot); got != c.want {
+			t.Errorf("%s: %d endpoints fit, expected %d — a field was added or "+
+				"removed; check what it costs the nodes that carry both",
+				c.what, got, c.want)
+		}
 	}
 }

@@ -221,13 +221,39 @@ Doable if we want zero new fields.
 **A dedicated sealing key.** `identity.go` already derives every per-mesh key by
 HKDF label (`m.expand("mesh/v1/identity", networkID, …)`), so this costs one new
 label and *no new stored state* — it falls out of the seed each device already
-has. The public half rides in the announce beside `wg_pub`.
+has. The public half has to reach the sender somehow, which is where the cost
+turned out to be; see below.
 
-**Recommended: the dedicated key.** It is the only one with no reuse argument to
-have, and the derivation machinery is already written. Cost is one new announce
-field — worth checking against `PaddedSizes`, since announces are padded to
-fixed sizes and 32 bytes plus JSON overhead has to fit inside the current one or
-this gets more expensive than it looks.
+**Decided: the dedicated key** — `Identity.SealPriv`/`SealPub`, derived from the
+same master under `mesh/v1/seal`. Nothing stored, nothing reused.
+
+**But it must not ride in every announce, and that took measuring.** An announce
+is padded to 512 or 1024 bytes, `Seal` refuses anything larger, and the sender
+trims endpoints from the end until it fits. Adding a 32-byte key costs 76 bytes
+on the wire, and those bytes come out of the endpoints:
+
+| announce | endpoints that fit today | with a sealing key in every one |
+|---|---|---|
+| no credential, no boot | 20 | 16 |
+| credential, no boot | 9 | 5 |
+| **credential and boot** | **4** | **1** |
+
+The last row is a Core relay, and live nodes on this mesh advertise four
+endpoints. Putting the key in every announce would silently cut the most
+important nodes to a single endpoint — no LAN address, so peers on the same
+network stop finding each other, reported as nothing at all. `TestEndpointBudget`
+in `internal/control` now pins these numbers so the next field to be added has
+to argue with them.
+
+**So it is sent only while it is needed.** A node that cannot open its peers'
+announces — the existing `Deaf` signal, traffic arriving and theirs unreadable —
+is exactly a node that is behind, and it adds `seal_pub` to its own announce
+until it has been rekeyed. Steady state costs nothing. The transient costs a few
+endpoints on a node that is already cut off, for the seconds it takes somebody
+to answer.
+
+That also removes the need to broadcast anything speculatively: the key appears
+precisely when somebody needs to send to it.
 
 ### No generation number on the wire
 

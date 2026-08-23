@@ -83,3 +83,58 @@ func TestDerivedKeysAreValid(t *testing.T) {
 		t.Error("the derived device key does not verify its own signature")
 	}
 }
+
+// The sealing key must be a third key, not a rename of one of the other two,
+// and must be as deterministic as they are — it is derived on every start and
+// never stored, so a device that derived a different one each time could not be
+// sent anything.
+func TestSealingKeyIsItsOwnKey(t *testing.T) {
+	m, err := NewMaster()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := m.Derive("mesh-one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id.SealPub == (WGKey{}) || id.SealPriv == (WGKey{}) {
+		t.Fatal("no sealing key was derived")
+	}
+	// Distinct from the tunnel key. Sharing one static across WireGuard's Noise
+	// and the control plane is the reuse this key exists to avoid.
+	if id.SealPriv == id.WGPriv || id.SealPub == id.WGPub {
+		t.Error("the sealing key is the WireGuard key")
+	}
+	if bytes.Equal(id.SealPub[:], id.DevicePub) {
+		t.Error("the sealing key is the signing key")
+	}
+	// Deterministic: derived again from the same master and mesh, identical.
+	again, err := m.Derive("mesh-one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.SealPriv != id.SealPriv {
+		t.Error("the sealing key is not deterministic; nothing could be sent to it")
+	}
+	// Per-mesh, like everything else here: the same device on two meshes must
+	// not present one key to both, which is what per-mesh identities are for.
+	other, err := m.Derive("mesh-two")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other.SealPriv == id.SealPriv {
+		t.Error("the same sealing key on two meshes")
+	}
+	// Clamped, so it is a usable X25519 scalar.
+	if id.SealPriv[0]&7 != 0 || id.SealPriv[31]&128 != 0 || id.SealPriv[31]&64 == 0 {
+		t.Errorf("sealing key is not clamped: %x", id.SealPriv)
+	}
+	// And it really is the public half of the private one.
+	pub, err := PublicFromPrivate(id.SealPriv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pub != id.SealPub {
+		t.Error("SealPub is not the public half of SealPriv")
+	}
+}
