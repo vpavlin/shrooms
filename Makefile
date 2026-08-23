@@ -357,6 +357,11 @@ test: check-lib
 	  echo "run: make fmt"; exit 1; \
 	fi
 	$(GO) test -race ./...
+	@# The mobile module is nested, so ./... above does not reach it. build-all
+	@# has known that since a struct change reached an F-Droid publish before
+	@# anything complained — but `make test` did not depend on it, so the same
+	@# thing happened again: the binding was broken and every check was green.
+	cd mobile && $(GO) build ./...
 
 ## --- site ---
 

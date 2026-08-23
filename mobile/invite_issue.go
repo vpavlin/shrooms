@@ -39,6 +39,7 @@ type InviteRequest struct {
 	Name      string `json:"name"`
 	DevicePub string `json:"device_pub"`
 	WGPub     string `json:"wg_pub"`
+	SealPub   string `json:"seal_pub,omitempty"`
 	EphPub    string `json:"eph_pub"`
 }
 
@@ -151,6 +152,12 @@ func AdmitWithCard(t CardTransport, configDir, pin, token, requestJSON, name str
 	if err != nil {
 		return "", fmt.Errorf("ephemeral key: %w", err)
 	}
+	// Empty from a device that predates the control-plane sealing key, which
+	// issues a version 1 credential exactly as before.
+	sealPub, err := hex.DecodeString(r.SealPub)
+	if err != nil {
+		return "", fmt.Errorf("sealing key: %w", err)
+	}
 	if name == "" {
 		name = r.Name
 	}
@@ -188,7 +195,7 @@ func AdmitWithCard(t CardTransport, configDir, pin, token, requestJSON, name str
 	// signed actually verifies all live in one place now
 	// (internal/cred/issue.go). A phone issuing credentials by different rules
 	// from a laptop would be a bug nobody found until the credentials met.
-	raw, err := cred.IssueFor(signer, auth, devPub, wgPub, req.SealPub, name, 0, time.Now(), life)
+	raw, err := cred.IssueFor(signer, auth, devPub, wgPub, sealPub, name, 0, time.Now(), life)
 	if err != nil {
 		return "", err
 	}
