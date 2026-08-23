@@ -101,6 +101,58 @@ must compute the same topic with no coordination.
 The revoked device therefore still finds the topic, still sees sealed traffic on
 it, and can no longer open any of it.
 
+### It is a re-invite, to a degree — and that is the useful way to see it
+
+Vaclav's observation, and it is the right one: a rekey is a secret sealed to each
+device, which is structurally what an invite is. Worth being precise about where
+the analogy holds, because both halves matter.
+
+**Where it holds.** One small sealed message per device, to a key that device
+alone can open. Same shape, and it should reuse the same sealing primitive
+rather than growing a second one.
+
+**Where it breaks — which is the whole argument for doing it.** An invite needs
+a person running `shrooms invite`, a token carried to the other machine, and
+both ends live inside fifteen minutes. It hands over a *new* identity: new
+address, new DNS name, new credential. A rekey needs none of that. Nothing
+renumbers, no credential is reissued, no human is present, and a device that was
+asleep picks it up when it wakes. "Re-invite every device" is a weekend; this is
+a keystroke and a fan-out.
+
+### Who does the wrapping
+
+The analogy pays off here. **Every current member already holds `S_N`** — so any
+member can wrap it for any other member, and the admin does not have to.
+
+That matters because the admin key is meant to be offline, and increasingly on a
+card ([ADR-022](adr/022-keycard-for-the-admin-key.md)). A card can sign a short
+statement. Asking it to perform key agreement against a dozen recipients is a
+different proposition, and it would tie every rotation to having the card in
+hand.
+
+So split it:
+
+- **The admin authorises**, with one signature over
+  `{mesh_id, N, H(S_N), not_before}` — a statement, not a secret. This is what
+  a card is for, and it is the same shape as a revocation.
+- **Members distribute.** Any member seals `S_N` to any other member's device
+  key. The recipient checks `H(S_N)` against the admin-signed commitment before
+  accepting it, so a rogue member cannot inject a generation of its own
+  choosing — the worst it can do is stay silent.
+- **Members refuse non-members.** A revoked device asking a peer for `S_N` is
+  refused by the same membership check that already rejects its announces
+  (`checkMembership`).
+
+**The honest cost of that split.** Confidentiality of the new generation now
+rests on every member refusing correctly, rather than on the admin alone. One
+buggy or malicious member re-admits the revoked device.
+
+That is a real weakening and should be written down — but it is a small one,
+because a malicious member can hand over the network key itself today, and
+nothing in this design has ever defended against a member who wants to. It is
+the difference between "a member can leak the mesh" and "a member can leak the
+mesh", which is to say no difference at all.
+
 ### Catching up
 
 A device that missed generations `N+1…N+3` and is handed `S_{N+4}` cannot read
