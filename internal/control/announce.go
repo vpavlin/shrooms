@@ -203,10 +203,18 @@ type envelope struct {
 // handshake and rekeys every couple of minutes without involving this key at
 // all. The gap is retrospective metadata, against somebody who by then can
 // decrypt everything current and join the mesh outright.
-func epochKey(nk identity.NetworkKey, epoch int64) []byte {
+func epochKey(nk identity.NetworkKey, epoch int64, gen []byte) []byte {
 	var b [8]byte
 	binary.BigEndian.PutUint64(b[:], uint64(epoch))
-	r := hkdf.New(sha256.New, nk.PayloadKey(), nil, append([]byte("mesh/v1/epoch"), b[:]...))
+	// The generation secret is mixed into the key material, not into the label:
+	// it is a key, not a name. At generation zero there is none, and the input
+	// is byte-for-byte what it has always been — which is what lets a mesh that
+	// has never rotated read and write exactly as before.
+	ikm := nk.PayloadKey()
+	if len(gen) > 0 {
+		ikm = append(append([]byte(nil), ikm...), gen...)
+	}
+	r := hkdf.New(sha256.New, ikm, nil, append([]byte("mesh/v1/epoch"), b[:]...))
 	key := make([]byte, chacha20poly1305.KeySize)
 	if _, err := r.Read(key); err != nil {
 		panic(fmt.Sprintf("hkdf: %v", err))
@@ -227,11 +235,41 @@ func epochKey(nk identity.NetworkKey, epoch int64) []byte {
 // carrying a credential from one that is not. Within a size the padding is
 // still constant, so "came online" and "changed address" remain
 // indistinguishable, which is what the padding was for.
+// Keyring is the material a control message is sealed under: the network key,
+// and the generation secret in force.
+//
+// They travel together because they are used together, and separating them is
+// how one of them gets forgotten at a call site. The generation is nil until a
+// mesh has rotated, and a nil generation IS generation zero — the derivation
+// then reduces byte-for-byte to what it was before generations existed, which
+// is what lets this ship without a flag day.
+//
+// The network key alone still derives the rendezvous TOPIC. That is deliberate,
+// and it is why this type does not simply replace the network key everywhere: a
+// device that missed a rotation has to keep finding the place where the rekey
+// it needs is published.
+type Keyring struct {
+	nk  identity.NetworkKey
+	gen []byte
+}
+
+// NewKeyring pairs a network key with the generation secret in force, if any.
+func NewKeyring(nk identity.NetworkKey, gen []byte) Keyring {
+	return Keyring{nk: nk, gen: append([]byte(nil), gen...)}
+}
+
+// NetworkKey is the key the rendezvous topic still derives from.
+func (k Keyring) NetworkKey() identity.NetworkKey { return k.nk }
+
 func Seal(nk identity.NetworkKey, epoch int64, priv ed25519.PrivateKey, msg any) ([]byte, error) {
+	return NewKeyring(nk, nil).Seal(epoch, priv, msg)
+}
+
+func (k Keyring) Seal(epoch int64, priv ed25519.PrivateKey, msg any) ([]byte, error) {
 	var err error
 	for _, size := range PaddedSizes {
 		var out []byte
-		out, err = sealPadded(nk, epoch, priv, msg, size)
+		out, err = k.sealPadded(epoch, priv, msg, size)
 		if err == nil {
 			return out, nil
 		}
@@ -245,7 +283,7 @@ func Seal(nk identity.NetworkKey, epoch int64, priv ed25519.PrivateKey, msg any)
 // sealPadded seals to a specific plaintext size. Exists so the sending size can
 // be moved deliberately, and so tests can prove a reader accepts each size
 // rather than only the one compiled in today.
-func sealPadded(nk identity.NetworkKey, epoch int64, priv ed25519.PrivateKey, msg any, size int) ([]byte, error) {
+func (k Keyring) sealPadded(epoch int64, priv ed25519.PrivateKey, msg any, size int) ([]byte, error) {
 	body, err := json.Marshal(msg)
 	if err != nil {
 		return nil, fmt.Errorf("marshal body: %w", err)
@@ -265,7 +303,7 @@ func sealPadded(nk identity.NetworkKey, epoch int64, priv ed25519.PrivateKey, ms
 	binary.BigEndian.PutUint16(padded[:2], uint16(len(plain)))
 	copy(padded[2:], plain)
 
-	aead, err := chacha20poly1305.NewX(epochKey(nk, epoch))
+	aead, err := chacha20poly1305.NewX(epochKey(k.nk, epoch, k.gen))
 	if err != nil {
 		return nil, fmt.Errorf("aead: %w", err)
 	}
@@ -284,7 +322,11 @@ func sealPadded(nk identity.NetworkKey, epoch int64, priv ed25519.PrivateKey, ms
 //
 // It does NOT check Seq — that needs cross-message state; see ReplayGuard.
 func OpenAnnounce(nk identity.NetworkKey, epoch int64, raw []byte, now time.Time) (*Announce, error) {
-	plain, err := open(nk, epoch, raw)
+	return NewKeyring(nk, nil).OpenAnnounce(epoch, raw, now)
+}
+
+func (k Keyring) OpenAnnounce(epoch int64, raw []byte, now time.Time) (*Announce, error) {
+	plain, err := k.open(epoch, raw)
 	if err != nil {
 		return nil, err
 	}
@@ -322,8 +364,8 @@ func OpenAnnounce(nk identity.NetworkKey, epoch int64, raw []byte, now time.Time
 }
 
 // open decrypts and strips padding.
-func open(nk identity.NetworkKey, epoch int64, raw []byte) ([]byte, error) {
-	aead, err := chacha20poly1305.NewX(epochKey(nk, epoch))
+func (k Keyring) open(epoch int64, raw []byte) ([]byte, error) {
+	aead, err := chacha20poly1305.NewX(epochKey(k.nk, epoch, k.gen))
 	if err != nil {
 		return nil, fmt.Errorf("aead: %w", err)
 	}
@@ -379,7 +421,11 @@ type Revoke struct {
 // here: only its mesh's authority can do that, and this package does not know
 // it.
 func OpenRevoke(nk identity.NetworkKey, epoch int64, raw []byte, now time.Time) (*Revoke, error) {
-	plain, err := open(nk, epoch, raw)
+	return NewKeyring(nk, nil).OpenRevoke(epoch, raw, now)
+}
+
+func (k Keyring) OpenRevoke(epoch int64, raw []byte, now time.Time) (*Revoke, error) {
+	plain, err := k.open(epoch, raw)
 	if err != nil {
 		return nil, err
 	}
@@ -429,7 +475,11 @@ type Grant struct {
 // here, exactly as OpenRevoke does not check the withdrawal: only the mesh's
 // authority can, and this package does not know it.
 func OpenGrant(nk identity.NetworkKey, epoch int64, raw []byte, now time.Time) (*Grant, error) {
-	plain, err := open(nk, epoch, raw)
+	return NewKeyring(nk, nil).OpenGrant(epoch, raw, now)
+}
+
+func (k Keyring) OpenGrant(epoch int64, raw []byte, now time.Time) (*Grant, error) {
+	plain, err := k.open(epoch, raw)
 	if err != nil {
 		return nil, err
 	}
@@ -491,7 +541,11 @@ type Services struct {
 // (ADR-008). The caller is expected to ignore lists from devices it has not
 // already admitted, because this package does not know who those are.
 func OpenServices(nk identity.NetworkKey, epoch int64, raw []byte, now time.Time) (*Services, error) {
-	plain, err := open(nk, epoch, raw)
+	return NewKeyring(nk, nil).OpenServices(epoch, raw, now)
+}
+
+func (k Keyring) OpenServices(epoch int64, raw []byte, now time.Time) (*Services, error) {
+	plain, err := k.open(epoch, raw)
 	if err != nil {
 		return nil, err
 	}
@@ -521,9 +575,13 @@ func OpenServices(nk identity.NetworkKey, epoch int64, raw []byte, now time.Time
 // OpenAnnounceWindow tries each epoch in the acceptance window. Peers whose
 // clocks differ will be publishing under a neighbouring epoch key.
 func OpenAnnounceWindow(nk identity.NetworkKey, epochs []int64, raw []byte, now time.Time) (*Announce, error) {
+	return NewKeyring(nk, nil).OpenAnnounceWindow(epochs, raw, now)
+}
+
+func (k Keyring) OpenAnnounceWindow(epochs []int64, raw []byte, now time.Time) (*Announce, error) {
 	var lastErr error
 	for _, e := range epochs {
-		a, err := OpenAnnounce(nk, e, raw, now)
+		a, err := k.OpenAnnounce(e, raw, now)
 		if err == nil {
 			return a, nil
 		}

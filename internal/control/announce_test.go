@@ -428,3 +428,66 @@ func TestCompactFramingBuysEndpoints(t *testing.T) {
 	}
 	t.Logf("Core relay endpoints: %d legacy -> %d compact (+%d)", legacy, compact, compact-legacy)
 }
+
+// Generation zero must derive exactly the key it always did.
+//
+// A golden vector, because this is the compatibility promise the whole rollout
+// rests on: a mesh that has never rotated keeps reading and writing as before,
+// so senders and readers can be updated in any order. If this value ever moves,
+// every node in the field goes deaf at once — and nothing else in the test
+// suite would notice, because both sides of every other test would move
+// together.
+func TestGenerationZeroDerivationIsPinned(t *testing.T) {
+	var nk identity.NetworkKey
+	copy(nk[:], bytes.Repeat([]byte{0xab}, 32))
+	const want = "f8e599d6e9adbf10ada887c613016a66a90623ae7f9d12624bf4b951daac2663"
+	if got := fmt.Sprintf("%x", epochKey(nk, 12345, nil)); got != want {
+		t.Errorf("generation zero derivation changed:\n got  %s\n want %s\n"+
+			"every existing node reads announces with the old value", got, want)
+	}
+	// An empty non-nil generation is still generation zero.
+	if got := fmt.Sprintf("%x", epochKey(nk, 12345, []byte{})); got != want {
+		t.Error("an empty generation was not treated as generation zero")
+	}
+}
+
+// A generation must actually change the key, or rotation is decoration.
+func TestAGenerationChangesTheKey(t *testing.T) {
+	var nk identity.NetworkKey
+	copy(nk[:], bytes.Repeat([]byte{0xab}, 32))
+	zero := epochKey(nk, 12345, nil)
+	a := epochKey(nk, 12345, bytes.Repeat([]byte{1}, 32))
+	b := epochKey(nk, 12345, bytes.Repeat([]byte{2}, 32))
+
+	if bytes.Equal(zero, a) {
+		t.Error("a generation secret did not change the key")
+	}
+	if bytes.Equal(a, b) {
+		t.Error("two different generations derived the same key")
+	}
+}
+
+// The point of the whole exercise: a holder of the network key who does not
+// have the current generation cannot read what is sealed under it.
+func TestTheNetworkKeyAloneCannotOpenARotatedMesh(t *testing.T) {
+	nk, id, a := fixture(t)
+	gen := bytes.Repeat([]byte{4}, 32)
+	rotated := NewKeyring(nk, gen)
+
+	sealed, err := rotated.Seal(1, id.DevicePriv, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The revoked device: it kept nk, and it is at generation zero.
+	if _, err := OpenAnnounce(nk, 1, sealed, time.Now()); err == nil {
+		t.Error("the network key alone opened an announce from a rotated mesh")
+	}
+	// A member on the wrong generation fares no better.
+	if _, err := NewKeyring(nk, bytes.Repeat([]byte{5}, 32)).OpenAnnounce(1, sealed, time.Now()); err == nil {
+		t.Error("the wrong generation opened it")
+	}
+	// The current one works.
+	if _, err := rotated.OpenAnnounce(1, sealed, time.Now()); err != nil {
+		t.Errorf("the current generation could not open it: %v", err)
+	}
+}
