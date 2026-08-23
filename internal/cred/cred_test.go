@@ -1,6 +1,7 @@
 package cred
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
@@ -458,5 +459,106 @@ func TestSignatureCoversADigestOfEverything(t *testing.T) {
 	after, _ := c.Digest()
 	if before == after {
 		t.Error("the digest did not change when a signed field did")
+	}
+}
+
+// A version 2 credential carries the device's sealing key, admin-signed so
+// nobody can substitute their own.
+func TestCredentialV2CarriesTheSealingKey(t *testing.T) {
+	admin, _ := NewAdmin()
+	auth, _ := NewAuthority(admin.Pub)
+	dev, _ := device(t)
+	seal := bytes.Repeat([]byte{9}, 32)
+	now := time.Now()
+
+	c := &Credential{
+		MeshID: auth.ID(), DevicePub: dev, WGPub: bytes.Repeat([]byte{2}, 32),
+		SealPub: seal, Name: "phone", Serial: 1,
+		NotBefore: now.Add(-time.Minute).Unix(), NotAfter: now.Add(time.Hour).Unix(),
+	}
+	dig, err := c.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Sig = ed25519.Sign(admin.Priv, dig[:])
+
+	raw, err := c.MarshalBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := UnmarshalCredential(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(back.SealPub, seal) {
+		t.Errorf("sealing key did not survive the round trip: %x", back.SealPub)
+	}
+	if back.Version != 2 {
+		t.Errorf("read as version %d, want 2", back.Version)
+	}
+	if err := VerifyBy(auth, back, now); err != nil {
+		t.Errorf("a v2 credential did not verify: %v", err)
+	}
+
+	// The key is signed, so substituting one must break the signature. This is
+	// the whole reason it lives here rather than in the announce.
+	back.SealPub = bytes.Repeat([]byte{8}, 32)
+	if err := VerifyBy(auth, back, now); err == nil {
+		t.Error("a substituted sealing key still verified")
+	}
+}
+
+// Every credential ever issued is version 1. They must keep verifying, which
+// means signedBytes has to reproduce exactly the bytes that were signed rather
+// than re-encoding them in the current layout.
+func TestVersionOneCredentialsStillVerify(t *testing.T) {
+	admin, _ := NewAdmin()
+	auth, _ := NewAuthority(admin.Pub)
+	dev, _ := device(t)
+	now := time.Now()
+
+	// No sealing key: this is a v1 credential, and is written as one.
+	c, err := admin.Issue(dev, bytes.Repeat([]byte{2}, 32), "vps", 1, now, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := c.MarshalBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if raw[0] != 1 {
+		t.Fatalf("a credential with no sealing key was written as version %d", raw[0])
+	}
+	back, err := UnmarshalCredential(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyBy(auth, back, now); err != nil {
+		t.Errorf("a v1 credential stopped verifying: %v", err)
+	}
+	if len(back.SealPub) != 0 {
+		t.Error("a v1 credential invented a sealing key")
+	}
+}
+
+// The digest names the version, so a signature made over one layout cannot be
+// replayed as the other — a v1 credential must not be readable as a v2 one
+// carrying an attacker's sealing key, or the admin binding is worthless.
+func TestAVersionOneSignatureCannotBeReplayedAsVersionTwo(t *testing.T) {
+	admin, _ := NewAdmin()
+	auth, _ := NewAuthority(admin.Pub)
+	dev, _ := device(t)
+	now := time.Now()
+
+	v1, err := admin.Issue(dev, bytes.Repeat([]byte{2}, 32), "vps", 1, now, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Same fields, same signature, relabelled as v2 with a chosen key.
+	forged := *v1
+	forged.Version = 2
+	forged.SealPub = bytes.Repeat([]byte{7}, 32)
+	if err := VerifyBy(auth, &forged, now); err == nil {
+		t.Error("a v1 signature verified over a v2 body with a chosen sealing key")
 	}
 }

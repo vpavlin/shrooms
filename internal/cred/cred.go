@@ -219,6 +219,20 @@ type Credential struct {
 	NotBefore int64 // unix seconds
 	NotAfter  int64
 	Sig       []byte // ed25519 over signedBytes()
+
+	// SealPub receives secrets addressed to this device on the control plane —
+	// today, the announce generation after somebody is revoked. Empty on a
+	// version 1 credential, which predates it.
+	//
+	// Here rather than in the announce for two reasons. It is admin-signed, so
+	// nobody can substitute their own; and a credential is binary, so it costs
+	// about half what a base64 field in the announce JSON does.
+	SealPub []byte // curve25519, 32 bytes; empty in v1
+
+	// Version is the wire version this was read as, so signedBytes can
+	// reproduce exactly the bytes that were signed. A v1 credential re-encoded
+	// as v2 would not verify against its own signature.
+	Version byte
 }
 
 // Wire format. Version 1:
@@ -241,10 +255,14 @@ type Credential struct {
 // signed is a byte layout with exactly one representation, rather than a JSON
 // document whose stability depends on a marshaller's field ordering.
 const (
-	credVersion = 1
-	credFixed   = 1 + MeshIDLen + 32 + 32 + 8 + 8 + 8 + 1
-	sigLen      = ed25519.SignatureSize
-	maxNameLen  = 64
+	// credVersion is what new credentials are written as. Version 1 is still
+	// read and never written; it has no sealing key.
+	credVersion   = 2
+	credVersionV1 = 1
+	credFixed     = 1 + MeshIDLen + 32 + 32 + 8 + 8 + 8 + 1
+	sealPubLen    = 32
+	sigLen        = ed25519.SignatureSize
+	maxNameLen    = 64
 )
 
 // Digest is what is actually signed: SHA-256 over the canonical body.
@@ -259,7 +277,25 @@ func (c *Credential) Digest() ([32]byte, error) {
 	if err != nil {
 		return [32]byte{}, err
 	}
-	return sha256.Sum256(append([]byte("shrooms/cred/v1"), body...)), nil
+	// The domain separator names the version, so a signature made over one
+	// layout can never be replayed as the other.
+	domain := "shrooms/cred/v1"
+	if c.version() == credVersion {
+		domain = "shrooms/cred/v2"
+	}
+	return sha256.Sum256(append([]byte(domain), body...)), nil
+}
+
+// version reports the wire version this credential is, defaulting to the
+// current one so a freshly constructed credential is written as v2.
+func (c *Credential) version() byte {
+	// No sealing key means this IS a version 1 credential — that is the only
+	// thing v2 adds. So every existing caller keeps working and v2 appears
+	// exactly when there is a key to put in it.
+	if c.Version == credVersionV1 || len(c.SealPub) == 0 {
+		return credVersionV1
+	}
+	return credVersion
 }
 
 // signedBytes is everything the signature covers: the credential without it.
@@ -274,11 +310,19 @@ func (c *Credential) signedBytes() ([]byte, error) {
 		return nil, fmt.Errorf("name is %d bytes, over the %d limit", len(c.Name), maxNameLen)
 	}
 
-	b := make([]byte, 0, credFixed+len(c.Name))
-	b = append(b, credVersion)
+	v := c.version()
+	if v == credVersion && len(c.SealPub) != sealPubLen {
+		return nil, fmt.Errorf("sealing key is %d bytes, want %d or none", len(c.SealPub), sealPubLen)
+	}
+
+	b := make([]byte, 0, credFixed+sealPubLen+len(c.Name))
+	b = append(b, v)
 	b = append(b, c.MeshID[:]...)
 	b = append(b, c.DevicePub...)
 	b = append(b, c.WGPub...)
+	if v == credVersion {
+		b = append(b, c.SealPub...)
+	}
 	b = binary.BigEndian.AppendUint64(b, c.Serial)
 	b = binary.BigEndian.AppendUint64(b, uint64(c.NotBefore))
 	b = binary.BigEndian.AppendUint64(b, uint64(c.NotAfter))
@@ -309,10 +353,15 @@ func UnmarshalCredential(b []byte) (*Credential, error) {
 	if len(b) < credFixed+sigLen {
 		return nil, fmt.Errorf("credential is %d bytes, too short", len(b))
 	}
-	if b[0] != credVersion {
+	// Version 1 is still read and never written. Refusing it would drop every
+	// credential issued before the sealing key existed, which is all of them.
+	if b[0] != credVersion && b[0] != credVersionV1 {
 		return nil, fmt.Errorf("credential version %d is not supported", b[0])
 	}
-	c := &Credential{}
+	c := &Credential{Version: b[0]}
+	if b[0] == credVersion && len(b) < credFixed+sealPubLen+sigLen {
+		return nil, fmt.Errorf("credential is %d bytes, too short for version 2", len(b))
+	}
 	i := 1
 	copy(c.MeshID[:], b[i:i+MeshIDLen])
 	i += MeshIDLen
@@ -320,6 +369,10 @@ func UnmarshalCredential(b []byte) (*Credential, error) {
 	i += 32
 	c.WGPub = append([]byte(nil), b[i:i+32]...)
 	i += 32
+	if c.Version == credVersion {
+		c.SealPub = append([]byte(nil), b[i:i+sealPubLen]...)
+		i += sealPubLen
+	}
 	c.Serial = binary.BigEndian.Uint64(b[i : i+8])
 	i += 8
 	c.NotBefore = int64(binary.BigEndian.Uint64(b[i : i+8]))
