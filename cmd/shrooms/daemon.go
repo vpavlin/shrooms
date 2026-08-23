@@ -891,6 +891,17 @@ const rendezvousGrace = 6 * time.Minute
 // not coming back".
 const rendezvousStall = 10 * time.Minute
 
+// netSettle is how long to allow after the underlying network changes before
+// treating a still-dead rendezvous connection as needing a rebuild.
+//
+// The ten minutes above are for "this connection is not coming back" with no
+// other evidence. A wifi restart, a dock, a switch to mobile data IS that
+// evidence: every libp2p connection the node had is gone, and nothing in the
+// library reports it, so the node sits deaf for the rest of the ten minutes.
+// Long enough here that a DHCP lease renewing to the same address, or the brief
+// gap while an interface comes back, costs nothing.
+const netSettle = 45 * time.Second
+
 // deafConfirm is how long the deaf condition must persist before acting on it.
 //
 // Short, because mesh.DeafAfter has already waited twelve minutes for an
@@ -934,6 +945,8 @@ func watchRendezvous(ctx context.Context, log *slog.Logger, instances []*instanc
 	// exited this process. See restartlog.go.
 	restarts := loadRestartLog(stateDir)
 	healthy := started
+	underlay := localUnderlay(instances)
+	var netChanged time.Time
 	// When we first noticed a peer we can reach but cannot hear. Zero when
 	// there is no such peer.
 	var deafSince time.Time
@@ -1011,6 +1024,14 @@ func watchRendezvous(ctx context.Context, log *slog.Logger, instances []*instanc
 				restarts.clear()
 			}
 
+			// Did the ground move? Cheap: a handful of syscalls a tick.
+			if cur := localUnderlay(instances); cur != underlay {
+				log.Info("the network changed underneath us",
+					"was", underlay, "now", cur)
+				underlay = cur
+				netChanged = now
+			}
+
 			if now.Sub(started) < rendezvousGrace {
 				continue
 			}
@@ -1037,6 +1058,14 @@ func watchRendezvous(ctx context.Context, log *slog.Logger, instances []*instanc
 
 			var problem string
 			switch {
+			case !netChanged.IsZero() && now.Sub(netChanged) >= netSettle &&
+				now.Sub(healthy) >= netSettle:
+				// The underlay changed and the plane did not come back with it.
+				// Waiting out rendezvousStall here is ten minutes of being off
+				// the mesh for a reason already known, which is what a wifi
+				// restart used to cost.
+				netChanged = time.Time{}
+				problem = "the network changed and the rendezvous connection did not come back"
 			case now.Sub(healthy) >= rendezvousStall:
 				problem = fmt.Sprintf("no rendezvous connection for %s (%s)",
 					now.Sub(healthy).Round(time.Second),
