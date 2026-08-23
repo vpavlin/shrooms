@@ -124,6 +124,56 @@ type Announce struct {
 	Boot string `json:"boot,omitempty"`
 }
 
+// compactMarker introduces the compact envelope framing.
+//
+// 0x00 can never begin the legacy framing, which is JSON and therefore always
+// starts with '{'. So one byte distinguishes the two with no version
+// negotiation and no ambiguity.
+const compactMarker = 0x00
+
+// emitCompact selects the framing SENDERS use. Readers accept both regardless.
+//
+// Off until every node in the field can read the compact form. This is the
+// PaddedSizes manoeuvre again — ship tolerant readers, then move the senders —
+// and it matters more here: a node that cannot parse an announce goes deaf, and
+// a phone updates through an app store on its own schedule.
+//
+// Flip this once everything is updated. It is worth flipping: the legacy
+// framing is JSON around a body that is itself JSON, so Go base64-encodes the
+// body a second time on the way out and the signature with it. That costs about
+// 250 bytes on a full announce - a quarter of the 1024-byte budget, paid for
+// nothing, and taken out of the endpoints a node can advertise.
+var emitCompact = false
+
+// encodeEnvelope frames a signed body for padding and encryption.
+//
+// Compact framing is marker ‖ signature ‖ body. The signature is fixed at
+// ed25519.SignatureSize, so the split needs no length prefix.
+func encodeEnvelope(body, sig []byte) ([]byte, error) {
+	if !emitCompact {
+		return json.Marshal(envelope{Body: body, Sig: sig})
+	}
+	out := make([]byte, 0, 1+len(sig)+len(body))
+	out = append(out, compactMarker)
+	out = append(out, sig...)
+	return append(out, body...), nil
+}
+
+// decodeEnvelope reads either framing.
+func decodeEnvelope(plain []byte) (body, sig []byte, err error) {
+	if len(plain) > 0 && plain[0] == compactMarker {
+		if len(plain) < 1+ed25519.SignatureSize {
+			return nil, nil, errors.New("compact envelope is truncated")
+		}
+		return plain[1+ed25519.SignatureSize:], plain[1 : 1+ed25519.SignatureSize], nil
+	}
+	var env envelope
+	if err := json.Unmarshal(plain, &env); err != nil {
+		return nil, nil, fmt.Errorf("unmarshal envelope: %w", err)
+	}
+	return env.Body, env.Sig, nil
+}
+
 // envelope is what actually gets signed and encrypted.
 type envelope struct {
 	Body []byte `json:"b"` // canonical JSON of the message
@@ -201,8 +251,7 @@ func sealPadded(nk identity.NetworkKey, epoch int64, priv ed25519.PrivateKey, ms
 		return nil, fmt.Errorf("marshal body: %w", err)
 	}
 
-	env := envelope{Body: body, Sig: ed25519.Sign(priv, body)}
-	plain, err := json.Marshal(env)
+	plain, err := encodeEnvelope(body, ed25519.Sign(priv, body))
 	if err != nil {
 		return nil, fmt.Errorf("marshal envelope: %w", err)
 	}
@@ -240,13 +289,13 @@ func OpenAnnounce(nk identity.NetworkKey, epoch int64, raw []byte, now time.Time
 		return nil, err
 	}
 
-	var env envelope
-	if err := json.Unmarshal(plain, &env); err != nil {
-		return nil, fmt.Errorf("unmarshal envelope: %w", err)
+	envBody, envSig, err := decodeEnvelope(plain)
+	if err != nil {
+		return nil, err
 	}
 
 	var a Announce
-	if err := json.Unmarshal(env.Body, &a); err != nil {
+	if err := json.Unmarshal(envBody, &a); err != nil {
 		return nil, fmt.Errorf("unmarshal announce: %w", err)
 	}
 	if a.Kind != KindAnnounce {
@@ -262,7 +311,7 @@ func OpenAnnounce(nk identity.NetworkKey, epoch int64, raw []byte, now time.Time
 	// The signature is over the body, and the body names the key. So this
 	// proves "the holder of DevicePub wrote this", which is what the overlay
 	// address is derived from.
-	if !ed25519.Verify(ed25519.PublicKey(a.DevicePub), env.Body, env.Sig) {
+	if !ed25519.Verify(ed25519.PublicKey(a.DevicePub), envBody, envSig) {
 		return nil, errors.New("signature verification failed")
 	}
 
@@ -334,12 +383,12 @@ func OpenRevoke(nk identity.NetworkKey, epoch int64, raw []byte, now time.Time) 
 	if err != nil {
 		return nil, err
 	}
-	var env envelope
-	if err := json.Unmarshal(plain, &env); err != nil {
-		return nil, fmt.Errorf("unmarshal envelope: %w", err)
+	envBody, envSig, err := decodeEnvelope(plain)
+	if err != nil {
+		return nil, err
 	}
 	var r Revoke
-	if err := json.Unmarshal(env.Body, &r); err != nil {
+	if err := json.Unmarshal(envBody, &r); err != nil {
 		return nil, fmt.Errorf("unmarshal revoke: %w", err)
 	}
 	if r.Kind != KindRevoke {
@@ -348,7 +397,7 @@ func OpenRevoke(nk identity.NetworkKey, epoch int64, raw []byte, now time.Time) 
 	if len(r.DevicePub) != ed25519.PublicKeySize {
 		return nil, errors.New("bad device public key length")
 	}
-	if !ed25519.Verify(ed25519.PublicKey(r.DevicePub), env.Body, env.Sig) {
+	if !ed25519.Verify(ed25519.PublicKey(r.DevicePub), envBody, envSig) {
 		return nil, errors.New("signature verification failed")
 	}
 	if skew := now.Sub(time.Unix(r.Timestamp, 0)); skew > MaxClockSkew || skew < -MaxClockSkew {
@@ -384,12 +433,12 @@ func OpenGrant(nk identity.NetworkKey, epoch int64, raw []byte, now time.Time) (
 	if err != nil {
 		return nil, err
 	}
-	var env envelope
-	if err := json.Unmarshal(plain, &env); err != nil {
-		return nil, fmt.Errorf("unmarshal envelope: %w", err)
+	envBody, envSig, err := decodeEnvelope(plain)
+	if err != nil {
+		return nil, err
 	}
 	var g Grant
-	if err := json.Unmarshal(env.Body, &g); err != nil {
+	if err := json.Unmarshal(envBody, &g); err != nil {
 		return nil, fmt.Errorf("unmarshal grant: %w", err)
 	}
 	if g.Kind != KindGrant {
@@ -398,7 +447,7 @@ func OpenGrant(nk identity.NetworkKey, epoch int64, raw []byte, now time.Time) (
 	if len(g.DevicePub) != ed25519.PublicKeySize {
 		return nil, errors.New("bad device public key length")
 	}
-	if !ed25519.Verify(ed25519.PublicKey(g.DevicePub), env.Body, env.Sig) {
+	if !ed25519.Verify(ed25519.PublicKey(g.DevicePub), envBody, envSig) {
 		return nil, errors.New("signature verification failed")
 	}
 	if skew := now.Sub(time.Unix(g.Timestamp, 0)); skew > MaxClockSkew || skew < -MaxClockSkew {
@@ -446,12 +495,12 @@ func OpenServices(nk identity.NetworkKey, epoch int64, raw []byte, now time.Time
 	if err != nil {
 		return nil, err
 	}
-	var env envelope
-	if err := json.Unmarshal(plain, &env); err != nil {
-		return nil, fmt.Errorf("unmarshal envelope: %w", err)
+	envBody, envSig, err := decodeEnvelope(plain)
+	if err != nil {
+		return nil, err
 	}
 	var sv Services
-	if err := json.Unmarshal(env.Body, &sv); err != nil {
+	if err := json.Unmarshal(envBody, &sv); err != nil {
 		return nil, fmt.Errorf("unmarshal services: %w", err)
 	}
 	if sv.Kind != KindServices {
@@ -460,7 +509,7 @@ func OpenServices(nk identity.NetworkKey, epoch int64, raw []byte, now time.Time
 	if len(sv.DevicePub) != ed25519.PublicKeySize {
 		return nil, errors.New("bad device public key length")
 	}
-	if !ed25519.Verify(ed25519.PublicKey(sv.DevicePub), env.Body, env.Sig) {
+	if !ed25519.Verify(ed25519.PublicKey(sv.DevicePub), envBody, envSig) {
 		return nil, errors.New("signature verification failed")
 	}
 	if skew := now.Sub(time.Unix(sv.Timestamp, 0)); skew > MaxClockSkew || skew < -MaxClockSkew {

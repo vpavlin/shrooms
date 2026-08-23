@@ -312,3 +312,99 @@ func TestEndpointBudget(t *testing.T) {
 		}
 	}
 }
+
+// Readers must accept both framings, or moving the senders is a flag day and a
+// node that cannot parse an announce goes deaf.
+func TestBothEnvelopeFramingsRoundTrip(t *testing.T) {
+	nk, id, a := fixture(t)
+	for _, compact := range []bool{false, true} {
+		emitCompact = compact
+		sealed, err := Seal(nk, 1, id.DevicePriv, a)
+		if err != nil {
+			t.Fatalf("compact=%v: seal: %v", compact, err)
+		}
+		got, err := OpenAnnounce(nk, 1, sealed, time.Now())
+		if err != nil {
+			t.Fatalf("compact=%v: open: %v", compact, err)
+		}
+		if got.Name != a.Name || len(got.Endpoints) != len(a.Endpoints) {
+			t.Errorf("compact=%v: round trip lost content", compact)
+		}
+	}
+	emitCompact = false
+}
+
+// A tampered body must still be caught under the compact framing: the signature
+// is moved, not dropped.
+func TestCompactFramingStillVerifies(t *testing.T) {
+	nk, id, a := fixture(t)
+	emitCompact = true
+	defer func() { emitCompact = false }()
+
+	sealed, err := Seal(nk, 1, id.DevicePriv, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Forge one signed by somebody else, framed compactly.
+	other, err := identity.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	forged, err := Seal(nk, 1, other.DevicePriv, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenAnnounce(nk, 1, forged, time.Now()); err == nil {
+		t.Error("accepted an announce signed by a key it does not name")
+	}
+	if _, err := OpenAnnounce(nk, 1, sealed, time.Now()); err != nil {
+		t.Errorf("rejected a good one: %v", err)
+	}
+}
+
+// What the compact framing is for. The legacy framing is JSON around a body
+// that is itself JSON, so the body is base64-encoded a second time on the way
+// out, and the signature with it.
+func TestCompactFramingBuysEndpoints(t *testing.T) {
+	admin, _ := cred.NewAdmin()
+	auth, _ := cred.NewAuthority(admin.Pub)
+	devPub, devPriv, _ := ed25519.GenerateKey(nil)
+	credRaw, err := cred.IssueFor(admin, auth, devPub, bytes.Repeat([]byte{2}, 32),
+		"home-server", 1787464532, time.Now(), 30*24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var nk identity.NetworkKey
+	copy(nk[:], bytes.Repeat([]byte{7}, 32))
+	const boot = "/ip4/203.0.113.10/tcp/60000/p2p/16Uiu2HAm56qiyCnUQpoCiEGNj84d3rftQ9a1pVFruHhnWsSNyGRc"
+
+	maxEnd := func() int {
+		for n := 0; n < 64; n++ {
+			a := Announce{
+				Kind: KindAnnounce, DevicePub: devPub,
+				WGPub: bytes.Repeat([]byte{2}, 32), Name: "home-server",
+				Seq: 1 << 62, Timestamp: time.Now().Unix(),
+				Relay: true, Boot: boot, Credential: credRaw,
+			}
+			for i := 0; i <= n; i++ {
+				a.Endpoints = append(a.Endpoints, fmt.Sprintf("178.213.45.2%02d:51820", i))
+			}
+			if _, err := Seal(nk, 1, devPriv, a); errors.Is(err, ErrTooLarge) {
+				return n
+			}
+		}
+		return 64
+	}
+	emitCompact = false
+	legacy := maxEnd()
+	emitCompact = true
+	compact := maxEnd()
+	emitCompact = false
+
+	// The tight case — a Core relay carrying a credential and a bootstrap
+	// address — is where the budget actually bites.
+	if compact <= legacy {
+		t.Errorf("compact framing bought nothing: %d endpoints vs %d", compact, legacy)
+	}
+	t.Logf("Core relay endpoints: %d legacy -> %d compact (+%d)", legacy, compact, compact-legacy)
+}
