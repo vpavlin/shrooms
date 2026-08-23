@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/base32"
 	"encoding/base64"
 	"encoding/hex"
@@ -536,6 +538,9 @@ func cmdAdminRevoke(args []string) error {
 			"the longest credential this device holds")
 	sock := fs.String("socket", DefaultSocket, "control socket of the local daemon")
 	publish := fs.Bool("publish", true, "hand it to the local daemon to put on the mesh")
+	rotate := fs.Bool("rotate", false,
+		"also rotate the announce generation, so the revoked device stops being "+
+			"able to READ the control plane (see docs/revocation-and-the-network-key.md)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -589,6 +594,17 @@ func cmdAdminRevoke(args []string) error {
 	fmt.Println()
 
 	if *publish {
+		if *rotate {
+			if err := rotateAfter(*sock, *label, admin, auth, r.Serial); err != nil {
+				fmt.Printf("\nRevoked, but NOT rotated: %v\n", err)
+				fmt.Println("The device can no longer join or be peered with, and can")
+				fmt.Println("still read announces. Re-run with --rotate when the daemon")
+				fmt.Println("is reachable.")
+				return nil
+			}
+			fmt.Println("\nRotated. Members will pick up the new generation within the")
+			fmt.Println("hour; a device that is switched off gets it when it wakes.")
+		}
 		if err := publishRevocation(*sock, *label, raw); err != nil {
 			fmt.Printf("Not published: %v\n\n", err)
 			fmt.Printf("Hand it to a running node yourself:\n\n  %s\n\n",
@@ -720,4 +736,72 @@ func parseOptionalKey(h string) ([]byte, error) {
 		return nil, nil
 	}
 	return hex.DecodeString(h)
+}
+
+// rotateAfter mints a generation secret, has the admin sign a statement naming
+// it, and hands both to the local daemon.
+//
+// The generation number IS the revocation serial. Serials are unix seconds and
+// strictly increasing per device, so this cannot repeat and cannot go backwards
+// — and it binds the rotation to the withdrawal that caused it, which is what
+// lets a member refuse to serve a generation while its own revocation list is
+// still behind.
+func rotateAfter(sock, label string, admin cred.Signer, auth *cred.Authority, serial uint64) error {
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		return fmt.Errorf("generate the generation secret: %w", err)
+	}
+	rot, err := cred.RotateWith(admin, auth, serial, serial, secret, time.Now())
+	if err != nil {
+		return err
+	}
+	raw, err := rot.MarshalBinary()
+	if err != nil {
+		return err
+	}
+	body, err := json.Marshal(map[string]string{
+		"rotation": base64.StdEncoding.EncodeToString(raw),
+		"secret":   base64.StdEncoding.EncodeToString(secret),
+	})
+	if err != nil {
+		return err
+	}
+	return postToDaemon(sock, "/rotate", label, body)
+}
+
+// postToDaemon sends a JSON body to one of the daemon's root endpoints.
+//
+// The same socket-finding as publishRevocation, including the fall back to the
+// legacy path, so an admin command works on a machine that has not been
+// restarted since the socket moved.
+func postToDaemon(sock, path, label string, body []byte) error {
+	if sock == DefaultSocket {
+		if _, err := os.Stat(sock); err != nil {
+			if _, err := os.Stat(LegacySocket); err == nil {
+				sock = LegacySocket
+			}
+		}
+	}
+	client := &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, "unix", sock)
+			},
+		},
+		Timeout: 15 * time.Second,
+	}
+	url := "http://unix" + path
+	if label != "" {
+		url += "?mesh=" + neturl.QueryEscape(label)
+	}
+	resp, err := client.Post(url, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("no daemon on %s: %w", sock, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("the daemon refused it: %s", strings.TrimSpace(string(msg)))
+	}
+	return nil
 }

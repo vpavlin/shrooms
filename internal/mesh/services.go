@@ -120,7 +120,7 @@ func (m *Mesh) publishServices(now time.Time) error {
 	// node with a long list should advertise most of it instead of vanishing
 	// from the roster's service view entirely.
 	for {
-		sealed, err := control.Seal(m.nk, topic.Epoch(now), m.st.Identity.DevicePriv, msg)
+		sealed, err := m.keys().Seal(topic.Epoch(now), m.st.Identity.DevicePriv, msg)
 		if err == nil {
 			_, err = m.node.Send(topic.Current(m.nk, now), sealed, true)
 			return err

@@ -1529,6 +1529,49 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 		w.WriteHeader(http.StatusNoContent)
 	}))
 
+	// Rotating the announce generation after a revocation.
+	//
+	// Root, like /revoke: it carries the generation secret in the clear over
+	// the socket, and a caller who could set it could lock every other member
+	// out of the control plane. The mesh verifies the admin signature and the
+	// commitment on arrival regardless, exactly as it does for one arriving
+	// from a peer — this endpoint is a delivery route, not a grant of trust.
+	mux.HandleFunc("/rotate", requireRoot(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST a rotation", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			Rotation string `json:"rotation"`
+			Secret   string `json:"secret"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 8192)).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		rotRaw, err := base64.StdEncoding.DecodeString(body.Rotation)
+		if err != nil {
+			http.Error(w, "rotation is not base64: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		secret, err := base64.StdEncoding.DecodeString(body.Secret)
+		if err != nil {
+			http.Error(w, "secret is not base64: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		target := pickMesh(r.URL.Query().Get("mesh"))
+		if target == nil {
+			http.Error(w, "no such mesh is running here", http.StatusNotFound)
+			return
+		}
+		if err := target.Rotate(rotRaw, secret); err != nil {
+			log.Warn("refused a rotation", "err", err)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
 	// The mirror of /revoke: how a renewed credential reaches the mesh.
 	//
 	// Same reasoning about permissions. This one carries a credential rather

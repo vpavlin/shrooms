@@ -44,6 +44,13 @@ type MeshState struct {
 	Generation       uint64
 	GenerationSecret []byte
 
+	// PrevSecret is the generation before this one, kept so peers that have not
+	// been rekeyed yet can still be read. Without it every peer is unreadable
+	// from the moment we rotate until its own envelope reaches it, which is up
+	// to an epoch of a mesh that looks broken.
+	PrevGeneration uint64
+	PrevSecret     []byte
+
 	// Rotation is the admin-signed statement naming Generation, kept so this
 	// device can serve the secret onward: every rekey envelope carries the
 	// statement its recipient needs to check the secret against.
@@ -185,6 +192,9 @@ func (s *State) SetGenerationFor(networkID string, legacy bool, gen uint64, secr
 	if gen <= ms.Generation {
 		return fmt.Errorf("generation %d is not newer than %d", gen, ms.Generation)
 	}
+	// The one we are leaving becomes the previous, so peers that have not been
+	// rekeyed yet stay readable until their own envelope reaches them.
+	ms.PrevGeneration, ms.PrevSecret = ms.Generation, ms.GenerationSecret
 	ms.Generation = gen
 	ms.GenerationSecret = append([]byte(nil), secret...)
 	ms.Rotation = append([]byte(nil), rotation...)
@@ -200,6 +210,8 @@ type meshStateFile struct {
 
 	Generation       uint64 `json:"generation,omitempty"`
 	GenerationSecret string `json:"generation_secret,omitempty"`
+	PrevGeneration   uint64 `json:"prev_generation,omitempty"`
+	PrevSecret       string `json:"prev_secret,omitempty"`
 	Rotation         string `json:"rotation,omitempty"`
 
 	Services map[string]ServiceClaim `json:"services,omitempty"`
@@ -222,6 +234,10 @@ func encodeMeshes(in map[string]*MeshState) map[string]meshStateFile {
 		f.Generation = ms.Generation
 		if len(ms.GenerationSecret) > 0 {
 			f.GenerationSecret = base64.StdEncoding.EncodeToString(ms.GenerationSecret)
+		}
+		f.PrevGeneration = ms.PrevGeneration
+		if len(ms.PrevSecret) > 0 {
+			f.PrevSecret = base64.StdEncoding.EncodeToString(ms.PrevSecret)
 		}
 		if len(ms.Rotation) > 0 {
 			f.Rotation = base64.StdEncoding.EncodeToString(ms.Rotation)
@@ -281,6 +297,12 @@ func decodeMeshes(in map[string]meshStateFile) (map[string]*MeshState, error) {
 				ms.Rotation, _ = base64.StdEncoding.DecodeString(f.Rotation)
 			}
 		}
+		if f.PrevGeneration > 0 && f.PrevSecret != "" {
+			if sec, err := base64.StdEncoding.DecodeString(f.PrevSecret); err == nil {
+				ms.PrevGeneration = f.PrevGeneration
+				ms.PrevSecret = sec
+			}
+		}
 		out[id] = ms
 	}
 	return out, nil
@@ -302,7 +324,13 @@ func (s *State) View(ms *MeshState) *State {
 		// whole map would let one mesh's Save clobber another's.
 		Credential: ms.Credential,
 		Services:   ms.Services,
-		owner:      s,
-		view:       ms,
+
+		Generation:       ms.Generation,
+		GenerationSecret: ms.GenerationSecret,
+		PrevGeneration:   ms.PrevGeneration,
+		PrevSecret:       ms.PrevSecret,
+		Rotation:         ms.Rotation,
+		owner:            s,
+		view:             ms,
 	}
 }
