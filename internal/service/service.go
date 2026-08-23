@@ -84,10 +84,18 @@ type Spec struct {
 const MaxTypeLen = 15
 
 // String renders a Spec in the config syntax that produced it.
+//
+// The one place that knows how to build a declaration, so that `services add`,
+// a UI, or a future registration API cannot drift from what ParseSpec accepts.
+// The round trip is tested — this method silently dropped Type the moment Type
+// was added, which is exactly the drift the test exists to catch.
 func (s Spec) String() string {
 	suffix := ""
 	if s.TLS {
-		suffix = "/tls"
+		suffix += "/tls"
+	}
+	if s.Type != "" {
+		suffix += "/type=" + s.Type
 	}
 	if s.Target == defaultTarget(s.Port) {
 		return fmt.Sprintf("%s:%d%s", s.Name, s.Port, suffix)
