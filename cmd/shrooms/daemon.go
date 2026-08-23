@@ -735,6 +735,7 @@ func inviteHandlers(mux *http.ServeMux, pick func(string) inviteHolder) {
 		json.NewEncoder(w).Encode(map[string]any{
 			"device_pub": hex.EncodeToString(got.DevicePub),
 			"wg_pub":     hex.EncodeToString(got.WGPub),
+			"seal_pub":   hex.EncodeToString(got.SealPub),
 			"name":       got.Name,
 			"eph_pub":    hex.EncodeToString(got.EphPub),
 		})

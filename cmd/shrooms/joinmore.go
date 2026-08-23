@@ -92,7 +92,8 @@ func joinAnother(ctx context.Context, log *slog.Logger, tr invite.Transport,
 	// than the base one (ADR-017). Using the base identity here would hand the
 	// same public key to two different networks.
 	resp, err := invite.RedeemForMesh(ctx, tr, secret,
-		&invite.Request{DevicePub: st.Identity.DevicePub, WGPub: st.Identity.WGPub[:], Name: name},
+		&invite.Request{DevicePub: st.Identity.DevicePub, WGPub: st.Identity.WGPub[:],
+			SealPub: st.Identity.SealPub[:], Name: name},
 		func(r *invite.Response) (*invite.Request, error) {
 			return perMeshRequest(st, r, name)
 		})

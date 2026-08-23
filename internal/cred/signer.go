@@ -56,7 +56,7 @@ func (a *Admin) SignDigest(d [32]byte) ([]byte, error) {
 // The same as Admin.Issue except for where the signature comes from, and it is
 // what the admin tooling calls: Issue stays for the tests and callers that
 // already hold a key in memory.
-func IssueWith(s Signer, devicePub, wgPub []byte, name string, serial uint64,
+func IssueWith(s Signer, devicePub, wgPub, sealPub []byte, name string, serial uint64,
 	now int64, notAfter int64, meshID MeshID) (*Credential, error) {
 
 	if s == nil {
@@ -66,6 +66,7 @@ func IssueWith(s Signer, devicePub, wgPub []byte, name string, serial uint64,
 		MeshID:    meshID,
 		DevicePub: append([]byte(nil), devicePub...),
 		WGPub:     append([]byte(nil), wgPub...),
+		SealPub:   append([]byte(nil), sealPub...),
 		Name:      name,
 		Serial:    serial,
 		NotBefore: now,

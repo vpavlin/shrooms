@@ -40,6 +40,7 @@ var renewWindow = cred.RenewBefore(cred.DefaultLife)
 type memberJSON struct {
 	DevicePub string `json:"device_pub"`
 	WGPub     string `json:"wg_pub"`
+	SealPub   string `json:"seal_pub,omitempty"`
 	Name      string `json:"name"`
 	NotAfter  int64  `json:"not_after,omitempty"`
 }
@@ -105,7 +106,12 @@ func cmdAdminRenew(args []string) error {
 			fmt.Printf("  %-16s skipped: %v\n", nameOf(mem), err)
 			continue
 		}
-		raw, err := cred.IssueFor(admin, auth, devPub, wgPub, mem.Name, 0, now, *life)
+		// Empty until this device's sealing key is known here, in which case
+		// the renewal is a version 1 credential exactly as before. Renewing a
+		// device INTO version 2 needs its key to have reached this node, which
+		// is the piece still to be built.
+		sealPub, _ := parseOptionalKey(mem.SealPub)
+		raw, err := cred.IssueFor(admin, auth, devPub, wgPub, sealPub, mem.Name, 0, now, *life)
 		if err != nil {
 			return fmt.Errorf("%s: %w", nameOf(mem), err)
 		}

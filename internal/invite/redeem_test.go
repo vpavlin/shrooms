@@ -465,3 +465,54 @@ func TestAnOlderNodeSendingTheKeyFirstStillWorks(t *testing.T) {
 		t.Fatalf("older holder: %v", err)
 	}
 }
+
+// A joining device's sealing key has to reach the issuer, or the credential it
+// gets back cannot be version 2 and nothing can ever be addressed to it.
+func TestTheRequestCarriesTheSealingKey(t *testing.T) {
+	s, _ := New()
+	bus := newBus()
+	seal := bytes.Repeat([]byte{6}, 32)
+
+	var got []byte
+	go func() {
+		deadline := time.After(4 * time.Second)
+		for {
+			select {
+			case <-deadline:
+				return
+			default:
+			}
+			raw := bus.lastSent()
+			if raw == nil {
+				time.Sleep(5 * time.Millisecond)
+				continue
+			}
+			req, err := OpenRequest(s, raw, time.Now())
+			if err != nil {
+				time.Sleep(5 * time.Millisecond)
+				continue
+			}
+			got = append([]byte(nil), req.SealPub...)
+			sealed, _ := SealResponse(s, req.EphPub, &Response{
+				MeshID: "m", NetworkKey: bytes.Repeat([]byte{9}, 32),
+				Credential: bytes.Repeat([]byte{5}, 300), Timestamp: time.Now().Unix(),
+			})
+			bus.deliver(Message{Topic: s.Topic(), Payload: sealed})
+			return
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	if _, err := Redeem(ctx, bus, s, &Request{
+		DevicePub: bytes.Repeat([]byte{1}, 32),
+		WGPub:     bytes.Repeat([]byte{2}, 32),
+		SealPub:   seal,
+		Name:      "phone",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, seal) {
+		t.Errorf("the sealing key did not reach the issuer: got %x", got)
+	}
+}

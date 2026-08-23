@@ -180,7 +180,13 @@ func cmdInvite(args []string) error {
 		if err != nil {
 			return fmt.Errorf("tunnel key: %w", err)
 		}
-		if credential, err = cred.IssueFor(admin, auth, devPub, wgPub, joiner, *serial, time.Now(), *life); err != nil {
+		// Empty from a device that predates the sealing key, which issues a
+		// version 1 credential and behaves exactly as before.
+		sealPub, err := hex.DecodeString(req.SealPub)
+		if err != nil {
+			return fmt.Errorf("sealing key: %w", err)
+		}
+		if credential, err = cred.IssueFor(admin, auth, devPub, wgPub, sealPub, joiner, *serial, time.Now(), *life); err != nil {
 			return err
 		}
 		if issued, err = cred.UnmarshalCredential(credential); err != nil {
@@ -205,6 +211,7 @@ func cmdInvite(args []string) error {
 type inviteRequest struct {
 	DevicePub string `json:"device_pub"`
 	WGPub     string `json:"wg_pub"`
+	SealPub   string `json:"seal_pub,omitempty"`
 	Name      string `json:"name"`
 	EphPub    string `json:"eph_pub"`
 }
@@ -399,6 +406,7 @@ func cmdJoinInvite(token string, args []string) error {
 	base := &invite.Request{
 		DevicePub: st.Identity.DevicePub,
 		WGPub:     st.Identity.WGPub[:],
+		SealPub:   st.Identity.SealPub[:],
 		Name:      deviceName,
 	}
 	tr := rendezvous.InviteTransport(node)
@@ -637,6 +645,7 @@ func perMeshRequest(st *state.State, r *invite.Response, name string) (*invite.R
 	return &invite.Request{
 		DevicePub: ms.Identity.DevicePub,
 		WGPub:     ms.Identity.WGPub[:],
+		SealPub:   ms.Identity.SealPub[:],
 		Name:      name,
 	}, nil
 }
