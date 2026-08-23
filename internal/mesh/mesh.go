@@ -157,6 +157,10 @@ type Mesh struct {
 	// a device by staying quiet.
 	revoked *cred.List
 
+	// sealPubs are peers' control-plane sealing keys, as named by the
+	// credentials this node verified. Guarded by mu.
+	sealPubs map[string][]byte
+
 	// networkID names this mesh in the state dir, so its revocations survive a
 	// restart (see loadRevocations).
 	networkID string
@@ -610,6 +614,11 @@ func (m *Mesh) Run(ctx context.Context) error {
 			if e := topic.Epoch(now); e != m.lastEpoch {
 				if m.lastEpoch != 0 {
 					m.republishRevocations(now)
+					// And hand the current generation to every member that can
+					// receive it, for the same reason and on the same schedule:
+					// a device that wakes finds its envelope waiting instead of
+					// having to ask for one. See publishRekeys.
+					m.publishRekeys(now)
 				}
 				m.lastEpoch = e
 			}
@@ -751,7 +760,18 @@ func (m *Mesh) checkMembership(a *control.Announce, now time.Time) error {
 	if m.expiry == nil {
 		m.expiry = map[string]int64{}
 	}
-	m.expiry[hex.EncodeToString(a.DevicePub)] = c.NotAfter
+	id := hex.EncodeToString(a.DevicePub)
+	m.expiry[id] = c.NotAfter
+	// The peer's sealing key, taken from the credential rather than from the
+	// announce: this one is admin-signed, so a peer cannot name somebody else's
+	// key and have the mesh seal that peer's secrets to it. Empty on a version
+	// 1 credential, which simply cannot be sent a generation.
+	if len(c.SealPub) == 32 {
+		if m.sealPubs == nil {
+			m.sealPubs = map[string][]byte{}
+		}
+		m.sealPubs[id] = append([]byte(nil), c.SealPub...)
+	}
 	// A renewal arrived: this peer may be carried again, and if it expires
 	// once more that is a new event worth acting on.
 	delete(m.expiredDropped, hex.EncodeToString(a.DevicePub))
@@ -1075,7 +1095,7 @@ func (m *Mesh) publishRevocation(raw []byte, now time.Time) error {
 		Payload:   raw,
 		Timestamp: now.Unix(),
 	}
-	sealed, err := control.Seal(m.nk, topic.Epoch(now), m.st.Identity.DevicePriv, msg)
+	sealed, err := m.keys().Seal(topic.Epoch(now), m.st.Identity.DevicePriv, msg)
 	if err != nil {
 		return err
 	}
@@ -1186,7 +1206,7 @@ func (m *Mesh) publishGrant(raw []byte, now time.Time) error {
 		Payload:   raw,
 		Timestamp: now.Unix(),
 	}
-	sealed, err := control.Seal(m.nk, topic.Epoch(now), m.st.Identity.DevicePriv, msg)
+	sealed, err := m.keys().Seal(topic.Epoch(now), m.st.Identity.DevicePriv, msg)
 	if err != nil {
 		return err
 	}
@@ -1488,7 +1508,7 @@ func (m *Mesh) announceWith(now time.Time, fresh bool) error {
 	//
 	// Dropping from the end is right because candidates() is ordered by
 	// usefulness: reflexive first, then configured, then local addresses.
-	raw, err := control.Seal(m.nk, topic.Epoch(now), m.st.Identity.DevicePriv, a)
+	raw, err := m.keys().Seal(topic.Epoch(now), m.st.Identity.DevicePriv, a)
 
 	// The bootstrap address goes first, before any endpoint. It is a
 	// convenience for somebody's *next* start (ADR-031); an endpoint is how
@@ -1498,7 +1518,7 @@ func (m *Mesh) announceWith(now time.Time, fresh bool) error {
 	if err != nil && a.Boot != "" && errors.Is(err, control.ErrTooLarge) {
 		a.Boot = ""
 		m.log.Debug("announce too large; dropping the bootstrap address")
-		raw, err = control.Seal(m.nk, topic.Epoch(now), m.st.Identity.DevicePriv, a)
+		raw, err = m.keys().Seal(topic.Epoch(now), m.st.Identity.DevicePriv, a)
 	}
 
 	wanted := len(a.Endpoints)
@@ -1506,7 +1526,7 @@ func (m *Mesh) announceWith(now time.Time, fresh bool) error {
 		a.Endpoints = a.Endpoints[:len(a.Endpoints)-1]
 		m.log.Debug("announce too large; dropping the least useful endpoint",
 			"remaining", len(a.Endpoints))
-		raw, err = control.Seal(m.nk, topic.Epoch(now), m.st.Identity.DevicePriv, a)
+		raw, err = m.keys().Seal(topic.Epoch(now), m.st.Identity.DevicePriv, a)
 	}
 
 	// Announcing no endpoints at all is legitimate — a node behind NAT that has
@@ -1786,25 +1806,45 @@ func (m *Mesh) handle(ev waku.Event) {
 	// Try every epoch in the window: a peer whose clock differs will have
 	// sealed under a neighbouring key.
 	e := topic.Epoch(now)
-	a, err := control.OpenAnnounceWindow(m.nk, []int64{e - 1, e, e + 1}, msg.Payload, now)
-	if err != nil {
-		// A revocation is sealed the same way and published to the same topic,
-		// so it lands here too. Tried second because announces are almost all
-		// the traffic.
-		for _, ep := range []int64{e - 1, e, e + 1} {
-			if r, rerr := control.OpenRevoke(m.nk, ep, msg.Payload, now); rerr == nil {
-				m.health.announceOpened(now)
-				m.handleRevocation(r.Payload, now)
-				return
-			}
-			if g, gerr := control.OpenGrant(m.nk, ep, msg.Payload, now); gerr == nil {
+	epochs := []int64{e - 1, e, e + 1}
+
+	// Announces, grants and service lists are sealed under the generation. Try
+	// the current one first, then the previous: a peer that has not been
+	// rekeyed yet is still a member and still needs reading.
+	var a *control.Announce
+	var err error
+	for _, kr := range m.readKeys() {
+		if a, err = kr.OpenAnnounceWindow(epochs, msg.Payload, now); err == nil {
+			break
+		}
+		for _, ep := range epochs {
+			if g, gerr := kr.OpenGrant(ep, msg.Payload, now); gerr == nil {
 				m.health.announceOpened(now)
 				m.handleGrant(g.Payload, now)
 				return
 			}
-			if sv, serr := control.OpenServices(m.nk, ep, msg.Payload, now); serr == nil {
+			if sv, serr := kr.OpenServices(ep, msg.Payload, now); serr == nil {
 				m.health.announceOpened(now)
 				m.handleServices(sv, now)
+				return
+			}
+		}
+	}
+	if err != nil {
+		// Revocations and rekeys are sealed at generation zero, deliberately.
+		// News of a revocation has to reach the nodes most likely to be behind,
+		// and a rekey that a device could only read once it had the generation
+		// would be a lock with its key inside.
+		base := m.baseKeys()
+		for _, ep := range epochs {
+			if r, rerr := base.OpenRevoke(ep, msg.Payload, now); rerr == nil {
+				m.health.announceOpened(now)
+				m.handleRevocation(r.Payload, now)
+				return
+			}
+			if rk, kerr := control.OpenRekey(m.nk, ep, msg.Payload, now); kerr == nil {
+				m.health.announceOpened(now)
+				m.handleRekey(rk, now)
 				return
 			}
 		}

@@ -574,6 +574,15 @@ type State struct {
 	// the credential.
 	Services map[string]ServiceClaim
 
+	// Generation is the announce generation this mesh is on, mirrored onto a
+	// view so the mesh that owns it can read and write it like any other
+	// per-mesh field. See MeshState for what these mean.
+	Generation       uint64
+	GenerationSecret []byte
+	PrevGeneration   uint64
+	PrevSecret       []byte
+	Rotation         []byte
+
 	// owner and view are set on a View: the state this one is a window onto,
 	// and the entry it stands for. Saving a view writes through to the owner,
 	// so one mesh cannot overwrite another's.
@@ -682,6 +691,11 @@ func (s *State) Save() error {
 		s.view.Seq = s.Seq
 		s.view.Credential = s.Credential
 		s.view.Services = s.Services
+		s.view.Generation = s.Generation
+		s.view.GenerationSecret = s.GenerationSecret
+		s.view.PrevGeneration = s.PrevGeneration
+		s.view.PrevSecret = s.PrevSecret
+		s.view.Rotation = s.Rotation
 		s.owner.mu.Unlock()
 		return s.owner.Save()
 	}
