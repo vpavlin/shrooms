@@ -63,27 +63,23 @@ func (m Master) Derive(networkID string) (*Identity, error) {
 	var wgPub WGKey
 	copy(wgPub[:], wgPubSlice)
 
-	// The control-plane sealing key. Same master, its own label, so it is
-	// unrelated to the tunnel key and to the signing key.
-	var sealPriv WGKey
-	copy(sealPriv[:], m.expand("mesh/v1/seal", networkID, 32))
-	clamp(&sealPriv)
-
-	sealPubSlice, err := curve25519.X25519(sealPriv[:], curve25519.Basepoint)
-	if err != nil {
-		return nil, fmt.Errorf("derive sealing public key: %w", err)
-	}
-	var sealPub WGKey
-	copy(sealPub[:], sealPubSlice)
-
-	return &Identity{
+	id := &Identity{
 		DevicePriv: priv,
 		DevicePub:  priv.Public().(ed25519.PublicKey),
 		WGPriv:     wgPriv,
 		WGPub:      wgPub,
-		SealPriv:   sealPriv,
-		SealPub:    sealPub,
-	}, nil
+	}
+	// The control-plane sealing key, from the device key rather than from the
+	// master. There must be exactly ONE definition of it: the state loader
+	// rebuilds an identity from the stored device and tunnel keys and has no
+	// master to hand, so a master-derived sealing key came back different after
+	// a restart — the device would advertise one key and hold another, and
+	// rekeys addressed to it would silently stop opening. It is still per-mesh,
+	// because the device key it comes from is.
+	if err := id.deriveSealing(); err != nil {
+		return nil, err
+	}
+	return id, nil
 }
 
 func (m Master) expand(label, networkID string, n int) []byte {

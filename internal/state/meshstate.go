@@ -31,6 +31,24 @@ type MeshState struct {
 	// about another, and a credential names the per-mesh device keys anyway.
 	Credential []byte
 
+	// Generation is the announce generation this device is on, and the secret
+	// that derives its keys. Zero and nil on a mesh that has never rotated,
+	// which derives exactly what it always did.
+	//
+	// Persisted, and this is the part that matters: the highest generation a
+	// device holds a secret for is its anchor against being walked backwards. A
+	// revoked device legitimately holds the previous secret through the grace
+	// window and can replay the admin's public statement for it, so an anchor
+	// that resets on restart would let it win the race and pin a rebooting node
+	// to a generation it can still read.
+	Generation       uint64
+	GenerationSecret []byte
+
+	// Rotation is the admin-signed statement naming Generation, kept so this
+	// device can serve the secret onward: every rekey envelope carries the
+	// statement its recipient needs to check the secret against.
+	Rotation []byte
+
 	// Services is what peers on this mesh last said they publish (ADR-023),
 	// keyed by peer id, kept across restarts.
 	//
@@ -140,12 +158,49 @@ func (s *State) SetMeshCredentialFor(networkID string, legacy bool, raw []byte) 
 	return s.Save()
 }
 
+// SetGenerationFor adopts an announce generation for one mesh.
+//
+// Refuses anything that is not strictly newer. This is the anchor the whole
+// rotation rests on: a revoked device holds the previous secret legitimately
+// through the grace window, and the admin's statement naming that generation is
+// public and replayable, so without a monotonic floor it could walk a node back
+// to a generation it can still read.
+//
+// The floor is "the highest generation whose SECRET I hold", which is what this
+// stores — never "the highest I have heard of". Anchoring on statements heard
+// would let anyone replay a statement for a generation whose secret never
+// arrives, leaving the node refusing every earlier one and unable to read the
+// current one: silent, permanent deafness, inducible by an outsider.
+//
+// Verification of the statement and its commitment happens before this is
+// called. This is the floor, not the check.
+func (s *State) SetGenerationFor(networkID string, legacy bool, gen uint64, secret, rotation []byte) error {
+	if gen == 0 || len(secret) == 0 {
+		return errors.New("a generation needs a number and a secret")
+	}
+	ms, err := s.MeshState(networkID, legacy)
+	if err != nil {
+		return err
+	}
+	if gen <= ms.Generation {
+		return fmt.Errorf("generation %d is not newer than %d", gen, ms.Generation)
+	}
+	ms.Generation = gen
+	ms.GenerationSecret = append([]byte(nil), secret...)
+	ms.Rotation = append([]byte(nil), rotation...)
+	return s.Save()
+}
+
 // meshStateFile is the on-disk form.
 type meshStateFile struct {
 	DevicePriv string `json:"device_priv"`
 	WGPriv     string `json:"wg_priv"`
 	Seq        uint64 `json:"seq"`
 	Credential string `json:"credential,omitempty"`
+
+	Generation       uint64 `json:"generation,omitempty"`
+	GenerationSecret string `json:"generation_secret,omitempty"`
+	Rotation         string `json:"rotation,omitempty"`
 
 	Services map[string]ServiceClaim `json:"services,omitempty"`
 }
@@ -163,6 +218,13 @@ func encodeMeshes(in map[string]*MeshState) map[string]meshStateFile {
 		}
 		if len(ms.Credential) > 0 {
 			f.Credential = base64.StdEncoding.EncodeToString(ms.Credential)
+		}
+		f.Generation = ms.Generation
+		if len(ms.GenerationSecret) > 0 {
+			f.GenerationSecret = base64.StdEncoding.EncodeToString(ms.GenerationSecret)
+		}
+		if len(ms.Rotation) > 0 {
+			f.Rotation = base64.StdEncoding.EncodeToString(ms.Rotation)
 		}
 		f.Services = ms.Services
 		out[id] = f
@@ -194,6 +256,13 @@ func decodeMeshes(in map[string]meshStateFile) (map[string]*MeshState, error) {
 			return nil, fmt.Errorf("state.json: mesh %s: %w", id, err)
 		}
 		idn.WGPub = pub
+		// The sealing key is derived, not stored: state.json predates it, and a
+		// device that derived a different one on each start could not be sent
+		// anything. Missing this leaves it zero, which is not inert — see
+		// Identity.DeriveSealing.
+		if err := idn.DeriveSealing(); err != nil {
+			return nil, fmt.Errorf("state.json: mesh %s: %w", id, err)
+		}
 
 		ms := &MeshState{Identity: idn, Seq: f.Seq, Services: f.Services}
 		if f.Credential != "" {
@@ -201,6 +270,16 @@ func decodeMeshes(in map[string]meshStateFile) (map[string]*MeshState, error) {
 			// is not: a device without a credential can still run, and losing
 			// the tunnel over it is worse than being asked to re-enrol.
 			ms.Credential, _ = base64.StdEncoding.DecodeString(f.Credential)
+		}
+		// A generation without its secret is not a generation: it would leave
+		// the node refusing every earlier one with nothing to read the current
+		// one, which is silent, permanent deafness. Anchor on what we HOLD.
+		if f.Generation > 0 && f.GenerationSecret != "" {
+			if sec, err := base64.StdEncoding.DecodeString(f.GenerationSecret); err == nil && len(sec) > 0 {
+				ms.Generation = f.Generation
+				ms.GenerationSecret = sec
+				ms.Rotation, _ = base64.StdEncoding.DecodeString(f.Rotation)
+			}
 		}
 		out[id] = ms
 	}
