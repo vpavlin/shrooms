@@ -231,12 +231,27 @@ same master under `mesh/v1/seal`. Nothing stored, nothing reused.
 
 Two ways to publish it were considered and both were wrong.
 
-*In every announce* costs too much. An announce is padded to 512 or 1024 bytes,
-`Seal` refuses anything larger, and the sender trims endpoints from the end
-until it fits. 32 bytes costs 76 on the wire, and a Core relay carrying a
-credential and a bootstrap address goes from four endpoints to one — measured,
-and pinned by `TestEndpointBudget`. One endpoint means no LAN address, so peers
-on the same wifi stop finding each other, silently.
+*In every announce* costs more than the credential does. An announce is padded to
+512 or 1024 bytes, `Seal` refuses anything larger, and the sender trims
+endpoints from the end until it fits. Measured through the real `Seal`:
+
+| announce | today | key in the credential | key as its own field |
+|---|---|---|---|
+| no credential, no boot | 20 | 20 | 17 |
+| credential, no boot | 9 | 7 | 6 |
+| **credential and boot** (a Core relay) | **4** | **3** | **2** |
+
+An earlier draft of this note said a separate field cut a Core relay to *one*
+endpoint, losing its LAN address so that peers on the same wifi would stop
+finding each other. That was a measuring error, and worth recording: the field
+was simulated by padding `Name`, which sits in the inner JSON, and the envelope
+base64-encodes that a second time — so 76 bytes read as about 101. It cuts a
+relay to two endpoints, which keeps the public address and the LAN address.
+
+The credential is still the better place: one endpoint against two, nothing at
+all on a mesh with no credentials, and admin-bound rather than self-asserted.
+But it wins on being admin-bound, not on averting a failure that was never
+there. `TestEndpointBudget` pins the "today" column.
 
 *Only while the device is behind*, triggered by the existing `Deaf` signal, does
 not work at all. `Deaf` (`internal/mesh/mesh.go:494`) skips any peer without a
