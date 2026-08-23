@@ -26,7 +26,7 @@ func TestReaderAcceptsEveryKnownPadding(t *testing.T) {
 	}
 
 	for _, size := range PaddedSizes {
-		sealed, err := sealPadded(nk, epoch, id.DevicePriv, a, size)
+		sealed, err := NewKeyring(nk, nil).sealPadded(epoch, id.DevicePriv, a, size)
 		if err != nil {
 			t.Fatalf("%d-byte padding: seal: %v", size, err)
 		}
@@ -49,7 +49,7 @@ func TestReaderRefusesAnUnknownPadding(t *testing.T) {
 	now := time.Now()
 	epoch := now.Unix() / 3600
 
-	sealed, err := sealPadded(nk, epoch, id.DevicePriv, &Announce{
+	sealed, err := NewKeyring(nk, nil).sealPadded(epoch, id.DevicePriv, &Announce{
 		Kind: KindAnnounce, DevicePub: id.DevicePub, WGPub: id.WGPub[:],
 		Name: "peer", Timestamp: now.Unix(), Seq: 1,
 	}, 768)
