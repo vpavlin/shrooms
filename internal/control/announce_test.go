@@ -245,9 +245,16 @@ func TestReplayGuardForget(t *testing.T) {
 //
 // An announce is padded to a fixed size and Seal refuses anything larger, so
 // every byte a new field adds is taken from the endpoints — and the sender
-// trims silently from the end. A node that quietly drops to one endpoint is
-// unreachable on its LAN and reads as a network fault, so the cost of adding a
-// field belongs in a test rather than in a commit message.
+// trims silently from the end. Endpoints are ordered by usefulness, so those
+// bytes are paid in LAN and local addresses: the ones two machines on the same
+// wifi need to find each other. That cost belongs in a test rather than in a
+// commit message.
+//
+// Measure a candidate field THROUGH Seal, by adding the field. Simulating it by
+// padding a string puts the bytes in the inner JSON, which the envelope
+// base64-encodes a second time, and the answer comes out about a third too
+// pessimistic — which is how a proposed field was once talked out of on numbers
+// that were wrong.
 //
 // The numbers here are what fits today. If a change moves them, that is the
 // change's real price and it should be looked at deliberately.
