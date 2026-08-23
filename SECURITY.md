@@ -315,7 +315,22 @@ defeated by dropping packets.
 
 Revocations are signed, gossiped on the control plane, verified by each node
 against the admin keys itself, and kept for however long the revocation itself
-says. That is `--keep-for`, which defaults to the standard credential life plus
+says.
+
+**What a plain revocation does and does not do.** It stops the device joining a
+tunnel: no member will peer with it. It does **not** stop it *reading* the
+control plane, because announces are sealed under the network key and a
+revocation does not change that key — so a revoked device keeps seeing names,
+addresses, endpoints and service lists indefinitely.
+
+`shrooms admin revoke --rotate` closes that. It moves the mesh to a new announce
+generation, delivered to each remaining member sealed to a key in its
+credential, after which the revoked device can see that traffic exists and can
+read none of it. Nothing renumbers. Two things to know: a device that has not
+been updated, or whose credential predates the sealing key, cannot follow the
+rotation and goes deaf — which is indistinguishable from the revoked device, by
+design; and a mesh with no admin keys cannot rotate at all, because there is
+nobody to sign the statement. That is `--keep-for`, which defaults to the standard credential life plus
 a day — **not** the actual expiry of the credential being withdrawn, which
 nothing looks up. Revoking a device that was issued a longer `--life` therefore
 needs `--keep-for 0`, or peers forget the revocation while the credential is

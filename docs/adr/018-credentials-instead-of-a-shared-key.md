@@ -130,8 +130,18 @@ announce on the mesh — names, overlay addresses, external endpoints, relay use
 bound ports, service lists, every 45 seconds — for as long as the mesh exists.
 It cannot join a tunnel. It can watch indefinitely.
 
-Plan for closing that without renumbering the mesh:
-[revocation-and-the-network-key.md](../revocation-and-the-network-key.md).
+**Closed, as of August 2026**, by `shrooms admin revoke --rotate`. The admin
+mints a generation secret and signs a statement naming it; members hand it to
+each other sealed to per-device keys carried in their credentials; announces,
+grants and service lists derive from it. The revoked device keeps the network
+key, so it still finds the mesh and still sees traffic on the topic — it simply
+cannot open any of it. Nothing renumbers: addresses and DNS names derive from
+the network key, which does not change.
+
+Without `--rotate` the old behaviour stands, and `admin revoke` says so. See
+[revocation-and-the-network-key.md](../revocation-and-the-network-key.md) for
+the design and for what it still does not fix.
+
 Found by an audit in August 2026, in a section that had asserted the opposite
 since it was written.
 
