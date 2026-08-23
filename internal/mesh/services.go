@@ -3,6 +3,7 @@ package mesh
 import (
 	"encoding/hex"
 	"net/netip"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -105,14 +106,19 @@ func (m *Mesh) publishServices(now time.Time) error {
 		return nil
 	}
 	names := make([]string, 0, len(specs))
+	var types []string
 	for _, sp := range specs {
 		names = append(names, sp.Name)
+		if sp.Type != "" {
+			types = append(types, sp.Name+"="+sp.Type)
+		}
 	}
 
 	msg := &control.Services{
 		Kind:      control.KindServices,
 		DevicePub: m.st.Identity.DevicePub,
 		Names:     names,
+		Types:     types,
 		Bound:     bound,
 		Timestamp: now.Unix(),
 	}
@@ -272,7 +278,23 @@ func (m *Mesh) handleServices(sv *control.Services, now time.Time) {
 	}
 	changed := !sameNames(m.services[id].names, names) ||
 		!sameNames(m.services[id].bound, bound)
-	m.services[id] = peerServices{names: names, bound: bound, seen: now}
+	types := map[string]string{}
+	for _, e := range sv.Types {
+		name, typ, ok := strings.Cut(e, "=")
+		// Both halves sanitised the way they will be used: the name becomes a
+		// DNS label, and the type is checked against the rules that make it
+		// registerable at all. A peer claiming a type nobody could register is
+		// claiming a type nobody else will ever match.
+		if !ok {
+			continue
+		}
+		name, typ = sanitiseName(name), strings.ToLower(strings.TrimSpace(typ))
+		if name == "" || service.ValidType(typ) != nil {
+			continue
+		}
+		types[name] = typ
+	}
+	m.services[id] = peerServices{names: names, bound: bound, types: types, seen: now}
 	m.mu.Unlock()
 
 	if changed {
@@ -301,6 +323,8 @@ const maxServiceClaims = 64
 type peerServices struct {
 	names []string
 	bound []string
+	// types maps a service name to what it is: "backup" -> "logos-storage".
+	types map[string]string
 	seen  time.Time
 }
 
@@ -418,4 +442,77 @@ func (m *Mesh) OwnServices() []string {
 		names = append(names, sp.Name)
 	}
 	return names
+}
+
+// Found is one answer to "does this mesh have a <type>?".
+type Found struct {
+	Type   string `json:"type"`
+	Name   string `json:"name"`   // the nickname it is published under
+	Device string `json:"device"` // which peer offers it
+	Port   uint16 `json:"port"`
+	URL    string `json:"url"` // scheme://<name>.<device>.<suffix>:<port>
+}
+
+// OfType answers "does this mesh have a <type>?" with somewhere to go.
+//
+// A URL rather than a host and a port, because a caller would otherwise
+// assemble one and every caller would assemble it slightly differently. The
+// name is the leftmost label, the device is the peer, and the suffix is this
+// node's — a peer does not tell us what to call it (ADR-032 and the invite that
+// used to carry a suffix).
+//
+// Only peers on the roster, which is where the membership check lives: a claim
+// from a device this mesh has not admitted is not an answer.
+func (m *Mesh) OfType(typ, suffix string, now time.Time) []Found {
+	typ = strings.ToLower(strings.TrimSpace(typ))
+	if typ == "" {
+		return nil
+	}
+	byID := map[string]PeerInfo{}
+	for _, p := range m.roster.Peers() {
+		byID[p.ID()] = p
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var out []Found
+	for id, ps := range m.services {
+		p, known := byID[id]
+		if !known || now.Sub(ps.seen) > ServicesStale {
+			continue
+		}
+		for name, t := range ps.types {
+			if t != typ {
+				continue
+			}
+			f := Found{Type: t, Name: name, Device: p.Name}
+			// The port comes from the bound list when the peer published one
+			// there; a forwarded service does not announce its port yet, and
+			// saying so is better than inventing 80.
+			for _, b := range ps.bound {
+				if bn, bp, ok := strings.Cut(b, ":"); ok && bn == name {
+					if v, err := strconv.Atoi(bp); err == nil && v > 0 && v < 65536 {
+						f.Port = uint16(v)
+					}
+				}
+			}
+			host := name + "." + p.Name
+			if suffix = strings.Trim(suffix, "."); suffix != "" {
+				host += "." + suffix
+			}
+			f.URL = "http://" + host
+			if f.Port != 0 {
+				f.URL += ":" + strconv.Itoa(int(f.Port))
+			}
+			out = append(out, f)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Device != out[j].Device {
+			return out[i].Device < out[j].Device
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
 }

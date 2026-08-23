@@ -531,6 +531,18 @@ type Services struct {
 	// prints an address that does not work.
 	Bound []string `json:"bound,omitempty"`
 
+	// Types names what some of the entries in Names actually ARE, as
+	// "name=type" — "backup=logos-storage".
+	//
+	// A separate field rather than widening Names, because an older reader
+	// takes each entry in Names as a DNS label: it would sanitise
+	// "backup=logos-storage" into something that resolves to nothing, and the
+	// service would disappear for every peer that had not been updated.
+	//
+	// Sparse. A service has a type only if one was declared, and most will not
+	// have one.
+	Types []string `json:"types,omitempty"`
+
 	Timestamp int64 `json:"ts"`
 }
 

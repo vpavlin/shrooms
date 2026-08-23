@@ -202,3 +202,81 @@ func TestStaleServicesAreNotReloaded(t *testing.T) {
 		t.Error("a claim nobody has repeated for hours came back from disk")
 	}
 }
+
+// The question this whole thing exists to answer.
+func TestOfTypeFindsAServiceByWhatItIs(t *testing.T) {
+	nk, _ := identity.NewNetworkKey()
+	self, _ := identity.New()
+	peer, _ := identity.New()
+	now := time.Now()
+
+	m := &Mesh{roster: NewRoster(nk, self.DevicePub)}
+	m.roster.Apply(newAnnounce(t, peer, "nas", nil, 1), now)
+	m.handleServices(&control.Services{
+		Kind: control.KindServices, DevicePub: peer.DevicePub,
+		// Published under a nickname that is not the type, deliberately.
+		Names:     []string{"backup"},
+		Types:     []string{"backup=logos-storage"},
+		Bound:     []string{"backup:8080"},
+		Timestamp: now.Unix(),
+	}, now)
+
+	got := m.OfType("logos-storage", "mesh.internal", now)
+	if len(got) != 1 {
+		t.Fatalf("found %d services, want 1: %+v", len(got), got)
+	}
+	if got[0].URL != "http://backup.nas.mesh.internal:8080" {
+		t.Errorf("URL is %q", got[0].URL)
+	}
+	if got[0].Device != "nas" || got[0].Name != "backup" || got[0].Port != 8080 {
+		t.Errorf("wrong answer: %+v", got[0])
+	}
+	// A type nobody published is not found.
+	if n := len(m.OfType("immich", "mesh.internal", now)); n != 0 {
+		t.Errorf("found %d for a type nobody offers", n)
+	}
+}
+
+// A claim from a device the mesh has not admitted is not an answer. The roster
+// is where the membership check lives, and OfType has to consult it.
+func TestOfTypeIgnoresAStranger(t *testing.T) {
+	nk, _ := identity.NewNetworkKey()
+	self, _ := identity.New()
+	stranger, _ := identity.New()
+	now := time.Now()
+
+	m := &Mesh{roster: NewRoster(nk, self.DevicePub)}
+	m.handleServices(&control.Services{
+		Kind: control.KindServices, DevicePub: stranger.DevicePub,
+		Names: []string{"backup"}, Types: []string{"backup=logos-storage"},
+		Bound: []string{"backup:8080"}, Timestamp: now.Unix(),
+	}, now)
+
+	if n := len(m.OfType("logos-storage", "mesh.internal", now)); n != 0 {
+		t.Errorf("answered with a service from a device that is not on the roster")
+	}
+}
+
+// A type that could never be registered is one nobody else will ever match, so
+// a peer claiming one is dropped rather than stored.
+func TestAnUnregisterableTypeIsIgnored(t *testing.T) {
+	nk, _ := identity.NewNetworkKey()
+	self, _ := identity.New()
+	peer, _ := identity.New()
+	now := time.Now()
+
+	m := &Mesh{roster: NewRoster(nk, self.DevicePub)}
+	m.roster.Apply(newAnnounce(t, peer, "nas", nil, 1), now)
+	m.handleServices(&control.Services{
+		Kind: control.KindServices, DevicePub: peer.DevicePub,
+		Names:     []string{"a", "b"},
+		Types:     []string{"a=has_underscore", "b=this-type-is-far-too-long"},
+		Timestamp: now.Unix(),
+	}, now)
+
+	for _, typ := range []string{"has_underscore", "this-type-is-far-too-long"} {
+		if n := len(m.OfType(typ, "mesh.internal", now)); n != 0 {
+			t.Errorf("stored an unregisterable type %q", typ)
+		}
+	}
+}

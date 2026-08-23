@@ -62,7 +62,26 @@ type Spec struct {
 	// Target is where connections are forwarded, as host:port.
 	// Defaults to 127.0.0.1:<Port>.
 	Target string
+
+	// Type is what this service IS, as opposed to what it is called here.
+	//
+	// Name is a nickname: chosen per install, meaningful because a human reads
+	// it. Type is agreed in advance and means the same thing on every device,
+	// which is what makes "does this mesh have a logos-storage?" a question
+	// with an answer. Written as "name:port/type=logos-storage".
+	//
+	// Empty unless declared, deliberately. Defaulting it to Name would make
+	// every existing nickname claim a type and destroy the only property that
+	// makes a type worth having — that it was agreed with somebody.
+	//
+	// The namespace is IANA's service names (RFC 6335): at most 15 characters,
+	// letters, digits and hyphens, which is the registry every DNS-SD service
+	// already uses.
+	Type string
 }
+
+// MaxTypeLen is RFC 6335's limit on a service name.
+const MaxTypeLen = 15
 
 // String renders a Spec in the config syntax that produced it.
 func (s Spec) String() string {
@@ -99,11 +118,37 @@ func ParseSpec(s string) (Spec, error) {
 		return Spec{}, errors.New("empty service")
 	}
 
-	// "/tls" anywhere in the declaration marks a service the name router may
-	// serve over HTTPS.
-	tlsFlag := false
-	if rest, ok := strings.CutSuffix(strings.TrimSpace(s), "/tls"); ok {
-		tlsFlag, s = true, rest
+	// Trailing "/" flags, in any order: "/tls" marks a service the name router
+	// may serve over HTTPS, "/type=..." says what the service is.
+	//
+	// A loop rather than one CutSuffix, so that a declaration can carry both.
+	// The old code stripped "/tls" only when it was the very last thing, which
+	// its own comment described as "anywhere in the declaration".
+	tlsFlag, svcType := false, ""
+	for {
+		s = strings.TrimSpace(s)
+		cut := strings.LastIndex(s, "/")
+		if cut < 0 {
+			break
+		}
+		flag := strings.TrimSpace(s[cut+1:])
+		switch {
+		case flag == "tls":
+			tlsFlag = true
+		case strings.HasPrefix(flag, "type="):
+			svcType = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(flag, "type=")))
+			if err := ValidType(svcType); err != nil {
+				return Spec{}, fmt.Errorf("%q: %w", s, err)
+			}
+		default:
+			// Not a flag — part of a target like "->192.168.0.1/32" would not
+			// parse anyway, but leaving it alone gives a better error below.
+			cut = -1
+		}
+		if cut < 0 {
+			break
+		}
+		s = s[:cut]
 	}
 
 	decl, target, hasTarget := strings.Cut(s, "->")
@@ -138,7 +183,8 @@ func ParseSpec(s string) (Spec, error) {
 		}
 	}
 
-	spec := Spec{Name: name, Port: uint16(port), TLS: tlsFlag, Target: defaultTarget(uint16(port))}
+	spec := Spec{Name: name, Port: uint16(port), TLS: tlsFlag, Type: svcType,
+		Target: defaultTarget(uint16(port))}
 	if hasTarget {
 		if target == "" {
 			return Spec{}, fmt.Errorf("%q: nothing after ->", s)
@@ -390,4 +436,42 @@ func (p *Publisher) Close() {
 	for _, ln := range lns {
 		ln.Close()
 	}
+}
+
+// ValidType checks a service type against IANA's rules for a service name
+// (RFC 6335): at most 15 characters, letters, digits and hyphens, at least one
+// letter, and no leading, trailing or doubled hyphen.
+//
+// Enforced rather than merely documented, because a type only means anything if
+// everybody spells it the same way, and the registry that makes that true has
+// rules. A type this rejects is one that could never be registered.
+func ValidType(t string) error {
+	if t == "" {
+		return errors.New("service type is empty")
+	}
+	if len(t) > MaxTypeLen {
+		return fmt.Errorf("service type %q is %d characters, over the %d that "+
+			"IANA allows for a service name (RFC 6335)", t, len(t), MaxTypeLen)
+	}
+	letter := false
+	for i := 0; i < len(t); i++ {
+		c := t[i]
+		switch {
+		case c >= 'a' && c <= 'z':
+			letter = true
+		case c >= '0' && c <= '9':
+		case c == '-':
+			if i == 0 || i == len(t)-1 || t[i-1] == '-' {
+				return fmt.Errorf("service type %q: a hyphen may not lead, "+
+					"trail or double", t)
+			}
+		default:
+			return fmt.Errorf("service type %q: only letters, digits and "+
+				"hyphens are allowed", t)
+		}
+	}
+	if !letter {
+		return fmt.Errorf("service type %q must contain a letter", t)
+	}
+	return nil
 }

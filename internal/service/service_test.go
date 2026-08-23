@@ -353,3 +353,67 @@ func TestTLSIsOptIn(t *testing.T) {
 		t.Errorf("%q did not round-trip: %+v (%v)", secure.String(), back, err)
 	}
 }
+
+// A type is what a service IS; a name is what it is called here. Both flags
+// have to survive in either order, and the old parser only stripped /tls when
+// it was the very last thing.
+func TestSpecCarriesATypeAlongsideTLS(t *testing.T) {
+	for _, c := range []struct {
+		in     string
+		name   string
+		port   uint16
+		tls    bool
+		typ    string
+		target string
+	}{
+		{"storage:8080/type=logos-storage", "storage", 8080, false, "logos-storage", "127.0.0.1:8080"},
+		{"immich:2283/tls", "immich", 2283, true, "", "127.0.0.1:2283"},
+		{"immich:443/tls/type=immich", "immich", 443, true, "immich", "127.0.0.1:443"},
+		{"immich:443/type=immich/tls", "immich", 443, true, "immich", "127.0.0.1:443"},
+		// The nickname and the type are free to differ, which is the point.
+		{"backup->127.0.0.1:8080/type=logos-storage", "backup", 8080, false, "logos-storage", "127.0.0.1:8080"},
+		// No type unless declared. Defaulting it to the name would make every
+		// existing nickname claim a type.
+		{"jellyfin:8096", "jellyfin", 8096, false, "", "127.0.0.1:8096"},
+	} {
+		got, err := ParseSpec(c.in)
+		if err != nil {
+			t.Errorf("%q: %v", c.in, err)
+			continue
+		}
+		if got.Name != c.name || got.Port != c.port || got.TLS != c.tls ||
+			got.Type != c.typ || got.Target != c.target {
+			t.Errorf("%q parsed as %+v", c.in, got)
+		}
+	}
+}
+
+// A type only means anything if everybody spells it the same way, and the
+// registry that makes that true has rules. A type this accepts must be one that
+// could actually be registered.
+func TestTypesFollowTheIANARules(t *testing.T) {
+	for _, good := range []string{"logos-storage", "http", "imap", "x1", "a"} {
+		if err := ValidType(good); err != nil {
+			t.Errorf("rejected %q: %v", good, err)
+		}
+	}
+	for _, bad := range []struct{ in, why string }{
+		{"", "empty"},
+		{"this-name-is-far-too-long", "over 15 characters"},
+		{"-leading", "leading hyphen"},
+		{"trailing-", "trailing hyphen"},
+		{"double--hyphen", "doubled hyphen"},
+		{"1234", "no letter"},
+		{"has_underscore", "underscore"},
+		{"has.dot", "dot"},
+		{"has space", "space"},
+	} {
+		if err := ValidType(bad.in); err == nil {
+			t.Errorf("accepted %q (%s)", bad.in, bad.why)
+		}
+	}
+	// And a bad type must fail the whole declaration rather than being dropped.
+	if _, err := ParseSpec("storage:8080/type=has_underscore"); err == nil {
+		t.Error("accepted a declaration with an unregisterable type")
+	}
+}
