@@ -56,10 +56,63 @@ The epoch is a clock, so the key already rotates in time — but any holder of t
 network key derives every epoch, which is why that rotation buys nothing against
 a former member.
 
-Give the derivation a second input: a **membership generation**, a counter that
-only current members learn.
+Give the derivation a second input: a **membership generation**, which only
+current members can learn.
 
-    announceKey = HKDF(nk, epoch ‖ generation)
+### What the generation actually is
+
+Not a counter. That is the first thing to get right, and it is easy to get
+wrong: if the generation were an integer, a revoked device holding `nk` would
+compute `HKDF(nk, epoch‖1)`, `‖2`, `‖3` and stay exactly as deaf as it is now,
+which is not at all. **The generation must be unguessable to a holder of the
+network key**, so it has to be a secret, not an index.
+
+So it is a pair:
+
+| | | |
+|---|---|---|
+| `N` | a small integer | **public.** Says *which* generation a message is under. Travels in the clear. |
+| `S_N` | 32 random bytes | **secret.** Does all the work. Delivered wrapped to each current member. |
+
+    announceKey = HKDF(nk ‖ S_N, epoch, "mesh/v1/announce")
+
+`N` is a label so a reader knows which key to try, and so a node can tell "I am
+behind" from "this is corrupt". `S_N` is what a revoked device does not have.
+
+**Where `S_N` comes from.** The admin generates it at random when revoking. It
+is not derived from anything — deriving it from `nk` or from the roster would
+defeat the point, since a revoked device knows both. It does not need to be
+derived from the admin key either, which means the admin stores nothing between
+rotations: if the current value is ever lost, mint `S_{N+1}` and wrap that.
+
+**How it reaches members.** Sealed to each current member's device key, one
+small message per member, published on the rendezvous topic. That is the
+per-recipient wrapping [ADR-020](adr/020-one-announce-many-readers.md) declined
+— see below for why the objection does not apply here.
+
+**What does *not* change.** The rendezvous topic stays `topic.Current(nk, now)`,
+derived from the network key alone. It has to: a device that missed a rotation
+must still be able to find the place where rekeys are published, and a device
+being revoked is meant to lose the ability to *read*, not the ability to see
+that a mesh exists. Splitting it this way also matches what `SECURITY.md`
+already says — rendezvous genuinely needs a shared secret, because every member
+must compute the same topic with no coordination.
+
+The revoked device therefore still finds the topic, still sees sealed traffic on
+it, and can no longer open any of it.
+
+### Catching up
+
+A device that missed generations `N+1…N+3` and is handed `S_{N+4}` cannot read
+the backlog, because the values are independent. That is fine for announces,
+which are refreshed every 45 seconds and carry no history worth recovering — it
+only needs the current one.
+
+If reading the backlog ever matters, a reverse hash chain gives it: pick a seed,
+let `S_i = H^(K−i)(seed)`, and release in reverse. Holding `S_{N+4}` then yields
+every earlier value and no later one. The cost is that the admin must keep the
+seed between rotations, and `K` bounds how many rotations a mesh can ever have.
+Not worth it for announces; noted because it is the obvious next question.
 
 - The mesh identity — prefix, addresses, DNS names — stays derived from `nk`
   alone, so **nothing renumbers** and a generation bump is invisible to users.
