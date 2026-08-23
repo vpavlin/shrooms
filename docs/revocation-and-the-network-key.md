@@ -197,6 +197,89 @@ and the network key *is* membership there ([ADR-008](adr/008-network-key.md)).
 Revocation on such a mesh means re-inviting everyone onto a new mesh, and the
 honest thing is to say so in `admin revoke` rather than implying otherwise.
 
+## The concrete protocol
+
+Enough of the pieces exist that this can be written down properly rather than
+sketched.
+
+### Which key does a member seal to
+
+This is the one real decision, and it wants deciding before anything is built.
+Three candidates, all already present:
+
+**`wg_pub`** — already X25519, already in every credential, already known to
+everyone. And already WireGuard's static key, used in Noise_IK with the same
+private half. Sharing one static across two protocols is exactly the setting
+cross-protocol attacks live in, and a domain separator in our KDF does not
+constrain what the *other* protocol does with it. **No.**
+
+**`device_pub`, mapped ed25519 → X25519.** Well-trodden — age and Signal both
+live here — but it makes one key both sign announces and perform key agreement,
+which is the pairing every guide tells you to avoid. Defensible with care.
+Doable if we want zero new fields.
+
+**A dedicated sealing key.** `identity.go` already derives every per-mesh key by
+HKDF label (`m.expand("mesh/v1/identity", networkID, …)`), so this costs one new
+label and *no new stored state* — it falls out of the seed each device already
+has. The public half rides in the announce beside `wg_pub`.
+
+**Recommended: the dedicated key.** It is the only one with no reuse argument to
+have, and the derivation machinery is already written. Cost is one new announce
+field — worth checking against `PaddedSizes`, since announces are padded to
+fixed sizes and 32 bytes plus JSON overhead has to fit inside the current one or
+this gets more expensive than it looks.
+
+### No generation number on the wire
+
+`N` does not need to be public after all. At most two generations are live at
+once — current and the one inside the grace window — so a reader tries `S_N`,
+then `S_{N-1}`. Two AEAD attempts, and the second only on failure.
+
+That is better than a cleartext `N`, which would have told an observer how many
+times a mesh has revoked somebody. `N` instead travels *inside* the sealed
+announce, where members can read it and nobody else can.
+
+### Members notice who is behind, without being told
+
+This falls out of the above and replaces the republication scheme sketched
+earlier. A peer's announce opens under `S_{N-1}` rather than `S_N`, and it says
+`N-1` inside. That *is* the signal: this peer is a current member, it is one
+generation behind, and here is its sealing key in the same message.
+
+So any member that can read it seals `S_N` to it. No admin, no timer, no
+republication — the straggler is served by whoever hears it first, within a
+minute of it waking up.
+
+### Devices absent longer than the grace window
+
+Once `S_{N-1}` is dropped, nobody can read that device's announces, so the
+mechanism above cannot see it. It asks instead: a **catch-up request** on the
+rendezvous topic — which it can still derive, since the topic stays on `nk` —
+carrying its sealing key and signed by its credential.
+
+Members verify the credential against the authority and check the revocation
+list before answering, which is the same check that already gates announces
+(`checkMembership`). A revoked device asking is refused. A member answers by
+sealing `S_N` to the key in the request.
+
+Sealed under `nk`, not under `S_N`, or the device could not read the answer.
+That means a revoked device can see catch-up requests going past. It learns that
+a device exists and is behind, which it could see anyway, and it cannot answer
+usefully because the answer is sealed to a key it does not hold.
+
+Signing the request matters for a duller reason than confidentiality: without
+it, anything holding `nk` — including a revoked device — could spray forged
+catch-up requests and have every member burn key agreements answering them.
+
+### Monotonicity
+
+Each node stores the highest `N` it has accepted and refuses anything lower, so
+a replayed rekey cannot walk a mesh back to a generation a revoked device can
+read. The admin's statement carries `not_before`, as a revocation does.
+
+If two valid statements ever share an `N` — an admin rotating twice in a hurry
+— take the lower `H(S_N)` and let it be deterministic rather than racy.
+
 ## What is cheap and should happen regardless
 
 **Correct ADR-018 now.** The claim is false today and will stay false until the
