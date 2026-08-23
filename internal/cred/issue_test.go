@@ -35,7 +35,7 @@ func TestIssueForProducesSomethingTheMeshAccepts(t *testing.T) {
 	dev, wg := device(t)
 	now := time.Now()
 
-	raw, err := IssueFor(admin, auth, dev, wg, "phone", 0, now, 7*24*time.Hour)
+	raw, err := IssueFor(admin, auth, dev, wg, nil, "phone", 0, now, 7*24*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestZeroSerialBecomesTheClock(t *testing.T) {
 	dev, wg := device(t)
 	now := time.Unix(1_700_000_000, 0)
 
-	raw, err := IssueFor(admin, auth, dev, wg, "phone", 0, now, time.Hour)
+	raw, err := IssueFor(admin, auth, dev, wg, nil, "phone", 0, now, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestAStrangerCannotIssueForThisMesh(t *testing.T) {
 	}
 	dev, wg := device(t)
 
-	if _, err := IssueFor(stranger, auth, dev, wg, "phone", 0, time.Now(), time.Hour); err == nil {
+	if _, err := IssueFor(stranger, auth, dev, wg, nil, "phone", 0, time.Now(), time.Hour); err == nil {
 		t.Fatal("an admin outside the authority issued a credential for it")
 	}
 }
@@ -123,7 +123,7 @@ func TestACardThatSignsWrongIsCaughtHere(t *testing.T) {
 	dev, wg := device(t)
 
 	card := brokenCard{pub: admin.Pub, other: impostor.Priv}
-	_, err = IssueFor(card, auth, dev, wg, "phone", 0, time.Now(), time.Hour)
+	_, err = IssueFor(card, auth, dev, wg, nil, "phone", 0, time.Now(), time.Hour)
 	if err == nil {
 		t.Fatal("a credential signed by the wrong key was returned as valid")
 	}
@@ -146,7 +146,7 @@ func TestACardRemovedMidSignatureSaysSo(t *testing.T) {
 	admin, auth := twoKeyMesh(t)
 	dev, wg := device(t)
 
-	_, err := IssueFor(deadCard{pub: admin.Pub}, auth, dev, wg, "phone", 0, time.Now(), time.Hour)
+	_, err := IssueFor(deadCard{pub: admin.Pub}, auth, dev, wg, nil, "phone", 0, time.Now(), time.Hour)
 	if err == nil {
 		t.Fatal("a lost tag produced a credential")
 	}
@@ -160,7 +160,7 @@ func TestACardRemovedMidSignatureSaysSo(t *testing.T) {
 func TestIssuingWithoutAnAuthorityIsRefused(t *testing.T) {
 	admin, _ := twoKeyMesh(t)
 	dev, wg := device(t)
-	if _, err := IssueFor(admin, nil, dev, wg, "phone", 0, time.Now(), time.Hour); err == nil {
+	if _, err := IssueFor(admin, nil, dev, wg, nil, "phone", 0, time.Now(), time.Hour); err == nil {
 		t.Fatal("a credential was issued against no authority")
 	}
 }

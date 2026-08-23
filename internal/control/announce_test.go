@@ -262,8 +262,10 @@ func TestEndpointBudget(t *testing.T) {
 	admin, _ := cred.NewAdmin()
 	auth, _ := cred.NewAuthority(admin.Pub)
 	devPub, devPriv, _ := ed25519.GenerateKey(nil)
+	// A version 2 credential, carrying a sealing key, because that is what a
+	// device will actually announce once this is deployed.
 	credRaw, err := cred.IssueFor(admin, auth, devPub, bytes.Repeat([]byte{2}, 32),
-		"home-server", 1787464532, time.Now(), 30*24*time.Hour)
+		bytes.Repeat([]byte{3}, 32), "home-server", 1787464532, time.Now(), 30*24*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,22 +295,38 @@ func TestEndpointBudget(t *testing.T) {
 		}
 		return 64
 	}
+	// Both framings, because the second is where this is going and the gap
+	// between them is the argument for flipping emitCompact.
 	for _, c := range []struct {
 		what     string
 		withCred bool
 		boot     string
-		want     int
+		want     int // legacy framing
+		compact  int
 	}{
-		{"no credential, no boot", false, "", 20},
-		{"credential, no boot", true, "", 9},
+		{"no credential, no boot", false, "", 20, 31},
+		{"credential, no boot", true, "", 7, 19},
 		// The tightest real case, and the one to watch: a Core relay carrying
-		// both. Live nodes advertise four endpoints, so this has no slack.
-		{"credential and boot", true, boot, 4},
+		// both. Live nodes advertise four endpoints, so under the legacy
+		// framing this has no slack at all — measure any new field against this
+		// row, through Seal rather than by padding a string, or the envelope's
+		// second base64 pass makes the answer about a third too pessimistic.
+		{"credential and boot", true, boot, 3, 14},
 	} {
-		if got := maxEndpoints(c.withCred, c.boot); got != c.want {
-			t.Errorf("%s: %d endpoints fit, expected %d — a field was added or "+
-				"removed; check what it costs the nodes that carry both",
-				c.what, got, c.want)
+		emitCompact = false
+		legacy := maxEndpoints(c.withCred, c.boot)
+		emitCompact = true
+		compact := maxEndpoints(c.withCred, c.boot)
+		emitCompact = false
+
+		if legacy != c.want {
+			t.Errorf("%s: %d endpoints fit under the legacy framing, expected %d "+
+				"— a field was added or removed; check what it costs the nodes "+
+				"that carry both", c.what, legacy, c.want)
+		}
+		if compact != c.compact {
+			t.Errorf("%s: %d endpoints fit under the compact framing, expected %d",
+				c.what, compact, c.compact)
 		}
 	}
 }
@@ -369,8 +387,10 @@ func TestCompactFramingBuysEndpoints(t *testing.T) {
 	admin, _ := cred.NewAdmin()
 	auth, _ := cred.NewAuthority(admin.Pub)
 	devPub, devPriv, _ := ed25519.GenerateKey(nil)
+	// A version 2 credential, carrying a sealing key, because that is what a
+	// device will actually announce once this is deployed.
 	credRaw, err := cred.IssueFor(admin, auth, devPub, bytes.Repeat([]byte{2}, 32),
-		"home-server", 1787464532, time.Now(), 30*24*time.Hour)
+		bytes.Repeat([]byte{3}, 32), "home-server", 1787464532, time.Now(), 30*24*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}

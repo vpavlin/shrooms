@@ -229,6 +229,15 @@ type Request struct {
 	// it across two protocols buys nothing and has to be argued about.
 	EphPub []byte `json:"eph_pub"`
 
+	// SealPub is this device's control-plane sealing key, which the issuer puts
+	// into the credential it signs (credential v2).
+	//
+	// Sent in the second round, where the device has already derived the
+	// per-mesh identity it will use here — the same round that carries DevicePub
+	// and WGPub, and for the same reason. Empty from an older device, which
+	// gets a version 1 credential and behaves exactly as it did.
+	SealPub []byte `json:"seal_pub,omitempty"`
+
 	// Deferred asks the holder to answer with the mesh and hold the credential
 	// back for a second request (ADR-017).
 	//

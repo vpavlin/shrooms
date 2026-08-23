@@ -114,6 +114,7 @@ func AwaitInvite(token string, timeoutSeconds int, meshLabel string) (string, er
 		Name:      req.Name,
 		DevicePub: hex.EncodeToString(req.DevicePub),
 		WGPub:     hex.EncodeToString(req.WGPub),
+		SealPub:   hex.EncodeToString(req.SealPub),
 		EphPub:    hex.EncodeToString(req.EphPub),
 	}
 	b, err := json.Marshal(out)
@@ -187,7 +188,7 @@ func AdmitWithCard(t CardTransport, configDir, pin, token, requestJSON, name str
 	// signed actually verifies all live in one place now
 	// (internal/cred/issue.go). A phone issuing credentials by different rules
 	// from a laptop would be a bug nobody found until the credentials met.
-	raw, err := cred.IssueFor(signer, auth, devPub, wgPub, name, 0, time.Now(), life)
+	raw, err := cred.IssueFor(signer, auth, devPub, wgPub, req.SealPub, name, 0, time.Now(), life)
 	if err != nil {
 		return "", err
 	}

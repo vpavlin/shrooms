@@ -264,6 +264,7 @@ func joinHere(ctx context.Context, log *slog.Logger, tr invite.Transport, cfgPat
 		base := &invite.Request{
 			DevicePub: st.Identity.DevicePub,
 			WGPub:     st.Identity.WGPub[:],
+			SealPub:   st.Identity.SealPub[:],
 			Name:      name,
 		}
 		var resp *invite.Response

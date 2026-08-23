@@ -253,6 +253,7 @@ func joinInvite(token, name, label, configDir string, timeoutSeconds int) error 
 	base := &invite.Request{
 		DevicePub: st.Identity.DevicePub,
 		WGPub:     st.Identity.WGPub[:],
+		SealPub:   st.Identity.SealPub[:],
 		Name:      name,
 	}
 	// An additional mesh takes two rounds: this device cannot derive the
@@ -276,6 +277,7 @@ func joinInvite(token, name, label, configDir string, timeoutSeconds int) error 
 				return &invite.Request{
 					DevicePub: ms.Identity.DevicePub,
 					WGPub:     ms.Identity.WGPub[:],
+					SealPub:   ms.Identity.SealPub[:],
 					Name:      name,
 				}, nil
 			})

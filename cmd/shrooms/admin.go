@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base32"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -280,7 +281,7 @@ func issueLocal(admin *cred.Admin, auth *cred.Authority, stateDir, name, network
 		return err
 	}
 	raw, err := cred.IssueFor(admin, auth, ms.Identity.DevicePub, ms.Identity.WGPub[:],
-		name, serial, time.Now(), cred.DefaultLife)
+		ms.Identity.SealPub[:], name, serial, time.Now(), cred.DefaultLife)
 	if err != nil {
 		return err
 	}
@@ -407,6 +408,7 @@ func cmdAdminIssue(args []string) error {
 	serial := fs.Uint64("serial", 0, "credential serial; must increase per device (default: now)")
 	devHex := fs.String("device", "", "the device's public key, hex (for a remote device)")
 	wgHex := fs.String("wg", "", "the device's tunnel key, hex (for a remote device)")
+	sealHex := fs.String("seal", "", "the device's control-plane sealing key, hex (optional; without it this issues a version 1 credential)")
 	write := fs.Bool("write", true, "store the credential in the device's state")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -456,7 +458,11 @@ func cmdAdminIssue(args []string) error {
 	}
 
 	now := time.Now()
-	raw, err := cred.IssueFor(admin, auth, devPub, wgPub, *name, *serial, now, *life)
+	sealPub, err := parseOptionalKey(*sealHex)
+	if err != nil {
+		return fmt.Errorf("sealing key: %w", err)
+	}
+	raw, err := cred.IssueFor(admin, auth, devPub, wgPub, sealPub, *name, *serial, now, *life)
 	if err != nil {
 		return err
 	}
@@ -702,4 +708,16 @@ func homeOf(name string) string {
 		return ""
 	}
 	return u.HomeDir
+}
+
+// parseOptionalKey decodes a hex key that may be absent.
+//
+// Absent is not an error: a device that predates the control-plane sealing key
+// has none to give, and the credential it gets is a version 1 credential, which
+// is exactly what it would have got before.
+func parseOptionalKey(h string) ([]byte, error) {
+	if h == "" {
+		return nil, nil
+	}
+	return hex.DecodeString(h)
 }

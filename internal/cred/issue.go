@@ -17,7 +17,10 @@ import (
 // in a file; a phone issues from a card held against its back. The rules about
 // serials, clock slack and which mesh id to stamp are identical and are exactly
 // the kind of thing that drifts when it is written twice.
-func IssueFor(admin Signer, auth *Authority, devPub, wgPub []byte,
+// sealPub may be empty, which issues a version 1 credential — that is what
+// every device that has not yet published a sealing key gets, and it works
+// exactly as it did before.
+func IssueFor(admin Signer, auth *Authority, devPub, wgPub, sealPub []byte,
 	name string, serial uint64, now time.Time, life time.Duration) ([]byte, error) {
 
 	if auth == nil {
@@ -37,7 +40,7 @@ func IssueFor(admin Signer, auth *Authority, devPub, wgPub []byte,
 	// is the one secret in this system whose usage pattern suits a smartcard —
 	// a handful of signatures a year, each a deliberate act by someone present
 	// — and everything above this line already works in terms of a digest.
-	c, err := IssueWith(admin, devPub, wgPub, name, serial,
+	c, err := IssueWith(admin, devPub, wgPub, sealPub, name, serial,
 		// A minute of slack, because clocks differ and a credential that is not
 		// yet valid on the machine it was just issued to is a confusing
 		// failure.
