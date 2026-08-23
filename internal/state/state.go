@@ -639,6 +639,13 @@ func LoadOrCreateState(dir string) (*State, error) {
 		return nil, fmt.Errorf("derive wireguard public key: %w", err)
 	}
 	id.WGPub = pub
+	// state.json has no field for the sealing key and predates it, so it is
+	// derived from the device key rather than loaded. Without this the legacy
+	// identity - which is the primary mesh of every existing deployment -
+	// carries a zero sealing key.
+	if err := id.DeriveSealing(); err != nil {
+		return nil, err
+	}
 
 	st := &State{dir: dir, Identity: id, Seq: sf.Seq, Services: sf.Services}
 	if sf.Master != "" {
