@@ -571,6 +571,12 @@ type serviceStatus struct {
 	Port   uint16 `json:"port"`
 	Target string `json:"target"`
 
+	// TLS and Type are carried so that `shrooms services` can rebuild the
+	// declaration it is editing rather than guessing at it. Without them an
+	// edit to one service would quietly strip the flags off every other.
+	TLS  bool   `json:"tls,omitempty"`
+	Type string `json:"type,omitempty"`
+
 	// DNSName is this device's name, so a viewer can render the full
 	// <service>.<device>.<suffix> without reimplementing the sanitising.
 	DNSName string `json:"dns_name,omitempty"`
@@ -1392,6 +1398,8 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 					Name:      sv.Name,
 					Port:      sv.Port,
 					Target:    sv.Target,
+					TLS:       sv.TLS,
+					Type:      sv.Type,
 					DNSName:   mesh.DNSName(cfg.Name, cfg.HostsSuffix),
 					Listening: sv.Listening,
 					Direct:    sv.Direct,

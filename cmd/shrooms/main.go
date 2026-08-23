@@ -53,6 +53,8 @@ func main() {
 		err = cmdBound(os.Args[2:])
 	case "paths":
 		err = cmdPaths(os.Args[2:])
+	case "services":
+		err = cmdServices(os.Args[2:])
 	case "hosts":
 		err = cmdHosts(os.Args[2:])
 	case "key":

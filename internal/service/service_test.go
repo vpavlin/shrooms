@@ -417,3 +417,30 @@ func TestTypesFollowTheIANARules(t *testing.T) {
 		t.Error("accepted a declaration with an unregisterable type")
 	}
 }
+
+// Anything that builds a declaration must build one ParseSpec accepts, or
+// `services add` writes config the daemon then refuses to load.
+func TestSpecRoundTrips(t *testing.T) {
+	for _, in := range []string{
+		"immich:2283",
+		"jellyfin:8096->127.0.0.1:8920",
+		"ha->192.168.0.116:80",
+		"immich:443/tls",
+		"backup:8080/type=logos-storage",
+		"backup:8080->127.0.0.1:9090/tls/type=logos-storage",
+	} {
+		spec, err := ParseSpec(in)
+		if err != nil {
+			t.Errorf("%q: %v", in, err)
+			continue
+		}
+		again, err := ParseSpec(spec.String())
+		if err != nil {
+			t.Errorf("%q rendered as %q, which does not parse: %v", in, spec.String(), err)
+			continue
+		}
+		if again != spec {
+			t.Errorf("%q -> %q -> %+v, want %+v", in, spec.String(), again, spec)
+		}
+	}
+}

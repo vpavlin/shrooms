@@ -167,7 +167,14 @@ func controlHandlers(mux *http.ServeMux, log *slog.Logger, cfgPath string, rl *r
 	// What this device publishes on the mesh. Validated here rather than at the
 	// next start, because a malformed spec that is only noticed on restart is a
 	// service that silently stops existing.
-	mux.HandleFunc("/config/services", writeSetting(log, cfgPath,
+	//
+	// GET returns what is CONFIGURED, which is not what /status reports.
+	// Status shows what is running, and the two differ — a service that is
+	// switched off, that failed to bind, or that was added since the last
+	// reload. An editing tool that read the running list and wrote it back
+	// would delete every configured service that happened not to be running,
+	// silently, as the ordinary result of adding an unrelated one.
+	mux.HandleFunc("/config/services", readOrWrite(configuredServices(cfgPath), writeSetting(log, cfgPath,
 		func(cfg *state.Config, in settingRequest) (string, error) {
 			was := cfg.Services
 			cfg.Services = in.Services
@@ -176,7 +183,7 @@ func controlHandlers(mux *http.ServeMux, log *slog.Logger, cfgPath string, rl *r
 				return "", err
 			}
 			return fmt.Sprintf("%d service(s) published", len(in.Services)), nil
-		}))
+		})))
 
 	// Whether this device forwards traffic for peers of a mesh that cannot
 	// reach each other (ADR-013).
@@ -473,3 +480,41 @@ func writeJSON(w http.ResponseWriter, v any) {
 // anybody. So a desktop invite flow needs the passphrase, in the user session,
 // which means running the CLI rather than teaching the socket to sign. Recorded
 // in ADR-025 rather than left as a surprise.
+
+// readOrWrite answers GET from one handler and everything else from another.
+func readOrWrite(get, rest http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			get(w, r)
+			return
+		}
+		rest(w, r)
+	}
+}
+
+// configuredServices reports the declarations in the config file, for the mesh
+// named by ?mesh= or the top-level one.
+//
+// From the file rather than from the running publisher, deliberately: this is
+// what an editing tool must read before writing back, and the running list
+// omits anything that is configured and not currently up.
+func configuredServices(cfgPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		cfg, err := state.LoadConfig(cfgPath)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		out := cfg.Services
+		if label := r.URL.Query().Get("mesh"); label != "" {
+			m, ok := cfg.MeshSet[label]
+			if !ok {
+				http.Error(w, "no mesh called "+label, http.StatusNotFound)
+				return
+			}
+			out = m.Services
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"services": out})
+	}
+}
