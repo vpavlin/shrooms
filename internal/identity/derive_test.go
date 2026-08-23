@@ -138,3 +138,60 @@ func TestSealingKeyIsItsOwnKey(t *testing.T) {
 		t.Error("SealPub is not the public half of SealPriv")
 	}
 }
+
+// Every path that produces an Identity must produce a sealing key.
+//
+// The hazard is specific and silent: PublicFromPrivate accepts an all-zero
+// scalar without error and returns an ordinary-looking public key whose private
+// half is thirty-two zero bytes. A constructor that forgot to fill this in
+// would have every device advertising the SAME sealing key, with anything
+// sealed to it readable by anybody — and nothing would fail loudly.
+func TestNoConstructorLeavesTheSealingKeyZero(t *testing.T) {
+	// The all-zero scalar's public key: what a forgotten field looks like.
+	var zero WGKey
+	zeroPub, err := PublicFromPrivate(zero)
+	if err != nil {
+		t.Fatalf("expected the zero scalar to be accepted silently: %v", err)
+	}
+
+	m, err := NewMaster()
+	if err != nil {
+		t.Fatal(err)
+	}
+	derived, err := m.Derive("mesh-one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The shape the state loader builds: fields set by hand, then filled in.
+	rebuilt := &Identity{DevicePriv: fresh.DevicePriv, DevicePub: fresh.DevicePub}
+	if err := rebuilt.DeriveSealing(); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, c := range []struct {
+		what string
+		id   *Identity
+	}{
+		{"Master.Derive", derived},
+		{"identity.New", fresh},
+		{"rebuilt from disk", rebuilt},
+	} {
+		if c.id.SealPriv == (WGKey{}) {
+			t.Errorf("%s: sealing private key is zero", c.what)
+		}
+		if c.id.SealPub == (WGKey{}) || c.id.SealPub == zeroPub {
+			t.Errorf("%s: sealing public key is the all-zero scalar's — "+
+				"every device would share it and anything sealed to it is public", c.what)
+		}
+	}
+
+	// A rebuilt identity must match the one it was rebuilt from, or a restart
+	// changes the address people seal to and rekeys stop arriving.
+	if rebuilt.SealPriv != fresh.SealPriv {
+		t.Error("the sealing key changed when the identity was rebuilt from disk")
+	}
+}

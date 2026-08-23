@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net/netip"
 
 	"golang.org/x/crypto/curve25519"
@@ -162,8 +163,48 @@ func New() (*Identity, error) {
 	var wgPub WGKey
 	copy(wgPub[:], wgPubSlice)
 
-	return &Identity{DevicePriv: priv, DevicePub: pub, WGPriv: wgPriv, WGPub: wgPub}, nil
+	id := &Identity{DevicePriv: priv, DevicePub: pub, WGPriv: wgPriv, WGPub: wgPub}
+	if err := id.deriveSealing(); err != nil {
+		return nil, err
+	}
+	return id, nil
 }
+
+// deriveSealing fills SealPriv/SealPub from the ed25519 seed.
+//
+// Derived rather than generated or stored, so that an identity rebuilt from an
+// existing state.json - which has no field for it and predates this key - comes
+// back with the same one every time. A device that derived a different sealing
+// key on each start could not be sent anything.
+//
+// From the seed by HKDF, which is one-way: this is not the signing key wearing
+// a hat, and nothing about SealPriv reveals DevicePriv.
+//
+// Every constructor must call this. Leaving it unset is not an inert omission:
+// PublicFromPrivate accepts an all-zero scalar without error and returns a
+// perfectly ordinary-looking public key whose private half is thirty-two zero
+// bytes, so every affected device would advertise the SAME key and anything
+// sealed to it would be readable by anybody.
+func (i *Identity) deriveSealing() error {
+	if len(i.DevicePriv) < ed25519.SeedSize {
+		return errors.New("identity has no device key to derive a sealing key from")
+	}
+	r := hkdf.New(sha256.New, i.DevicePriv.Seed(), nil, []byte("mesh/v1/seal/from-device"))
+	if _, err := io.ReadFull(r, i.SealPriv[:]); err != nil {
+		return fmt.Errorf("derive sealing key: %w", err)
+	}
+	clamp(&i.SealPriv)
+	pub, err := PublicFromPrivate(i.SealPriv)
+	if err != nil {
+		return fmt.Errorf("derive sealing public key: %w", err)
+	}
+	i.SealPub = pub
+	return nil
+}
+
+// DeriveSealing fills in the sealing keypair on an Identity assembled field by
+// field, as the state loader does when it rebuilds one from disk.
+func (i *Identity) DeriveSealing() error { return i.deriveSealing() }
 
 // clamp applies the standard X25519 scalar clamping WireGuard expects.
 func clamp(k *WGKey) {
