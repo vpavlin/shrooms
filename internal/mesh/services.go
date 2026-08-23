@@ -254,10 +254,18 @@ func (m *Mesh) handleServices(sv *control.Services, now time.Time) {
 	if m.services == nil {
 		m.services = map[string]peerServices{}
 	}
-	// Bounded, because this now accepts from any holder of the network key
-	// rather than only from devices already admitted. A mesh has tens of
-	// devices; anything past this is somebody being tiresome, and dropping
-	// their claim costs nothing since it would never be displayed anyway.
+	// Bounded, because this accepts from any holder of the network key rather
+	// than only from devices already admitted. A mesh has tens of devices;
+	// anything past this is somebody being tiresome, and dropping their claim
+	// costs nothing since it would never be displayed anyway.
+	//
+	// Accepting here and filtering in Services() is deliberate, not an omission
+	// - a list that arrives before its peer's first announce has to survive to
+	// be shown when the announce lands, or a reconnect shows nothing for five
+	// minutes. The membership check is real and lives at the point of display:
+	// Services() shows only devices on the roster, and revocation Forgets them.
+	// A gate here instead would drop the early list on every mesh that has an
+	// authority, which is the case the storing exists for.
 	if _, known := m.services[id]; !known && len(m.services) >= maxServiceClaims {
 		m.mu.Unlock()
 		return

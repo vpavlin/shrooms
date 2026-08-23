@@ -227,33 +227,35 @@ turned out to be; see below.
 **Decided: the dedicated key** — `Identity.SealPriv`/`SealPub`, derived from the
 same master under `mesh/v1/seal`. Nothing stored, nothing reused.
 
-**But it must not ride in every announce, and that took measuring.** An announce
-is padded to 512 or 1024 bytes, `Seal` refuses anything larger, and the sender
-trims endpoints from the end until it fits. Adding a 32-byte key costs 76 bytes
-on the wire, and those bytes come out of the endpoints:
+### How the public half reaches a sender: in the credential
 
-| announce | endpoints that fit today | with a sealing key in every one |
-|---|---|---|
-| no credential, no boot | 20 | 16 |
-| credential, no boot | 9 | 5 |
-| **credential and boot** | **4** | **1** |
+Two ways to publish it were considered and both were wrong.
 
-The last row is a Core relay, and live nodes on this mesh advertise four
-endpoints. Putting the key in every announce would silently cut the most
-important nodes to a single endpoint — no LAN address, so peers on the same
-network stop finding each other, reported as nothing at all. `TestEndpointBudget`
-in `internal/control` now pins these numbers so the next field to be added has
-to argue with them.
+*In every announce* costs too much. An announce is padded to 512 or 1024 bytes,
+`Seal` refuses anything larger, and the sender trims endpoints from the end
+until it fits. 32 bytes costs 76 on the wire, and a Core relay carrying a
+credential and a bootstrap address goes from four endpoints to one — measured,
+and pinned by `TestEndpointBudget`. One endpoint means no LAN address, so peers
+on the same wifi stop finding each other, silently.
 
-**So it is sent only while it is needed.** A node that cannot open its peers'
-announces — the existing `Deaf` signal, traffic arriving and theirs unreadable —
-is exactly a node that is behind, and it adds `seal_pub` to its own announce
-until it has been rekeyed. Steady state costs nothing. The transient costs a few
-endpoints on a node that is already cut off, for the seconds it takes somebody
-to answer.
+*Only while the device is behind*, triggered by the existing `Deaf` signal, does
+not work at all. `Deaf` (`internal/mesh/mesh.go:494`) skips any peer without a
+live WireGuard handshake — it detects "deaf to peers I already have tunnels
+with". A device that missed a rotation has an empty roster (memory-only,
+`ForgetAfter` 6h), therefore no configured WireGuard peers, therefore no
+handshakes, therefore `Deaf` returns nothing. It would never advertise the key,
+and the peers wanting to rekey it would have nothing to seal to. Worse, that
+state trips `Silent` instead, which restarts the daemon hourly and takes every
+other mesh in the process down with it.
 
-That also removes the need to broadcast anything speculatively: the key appears
-precisely when somebody needs to send to it.
+**So it goes in the credential.** It is already admin-signed, already names
+`DevicePub` and `WGPub`, and already rides in every announce. Adding 32 bytes to
+a 181-byte binary credential costs about half what a separate JSON field does,
+and it buys something a self-asserted announce field cannot: the sealing key
+becomes **admin-bound**. Nobody can substitute their own.
+
+A joining device supplies it in round two of the invite exchange, where it
+already derives its per-mesh identity before asking for a credential (ADR-017).
 
 ### No generation number on the wire
 
@@ -265,46 +267,147 @@ That is better than a cleartext `N`, which would have told an observer how many
 times a mesh has revoked somebody. `N` instead travels *inside* the sealed
 announce, where members can read it and nobody else can.
 
-### Members notice who is behind, without being told
+### Delivery: a standing envelope, not an event
 
-This falls out of the above and replaces the republication scheme sketched
-earlier. A peer's announce opens under `S_{N-1}` rather than `S_N`, and it says
-`N-1` inside. That *is* the signal: this peer is a current member, it is one
-generation behind, and here is its sealing key in the same message.
+Once per epoch, every member publishes `S_N` sealed to each roster member's
+`seal_pub`. A dozen small messages an hour, against the eighty announces an hour
+each device already sends.
 
-So any member that can read it seals `S_N` to it. No admin, no timer, no
-republication — the straggler is served by whoever hears it first, within a
-minute of it waking up.
+This project has learned this exact lesson once already and written it down.
+`republishRevocations` (`internal/mesh/mesh.go:1000`) exists because "a
+revocation used to be relayed exactly once, by whoever first heard it…
+Re-publishing on each epoch rotation makes the withdrawal a standing statement
+rather than an event." The same reasoning applies here and for the same reason.
 
-### Devices absent longer than the grace window
+A device that wakes up waits at most one epoch and finds its own envelope
+waiting. Nothing has to notice it, it does not have to ask, and there is no
+request for anyone to replay.
 
-Once `S_{N-1}` is dropped, nobody can read that device's announces, so the
-mechanism above cannot see it. It asks instead: a **catch-up request** on the
-rendezvous topic — which it can still derive, since the topic stays on `nk` —
-carrying its sealing key and signed by its credential.
+**What this replaces, and why the alternatives were worse.** An earlier draft had
+stragglers send a signed *catch-up request*. Signing stops forgery but not
+replay: a revoked device holds `nk`, so it can read and copy one genuine request
+verbatim and re-publish it, and every member then verifies a signature that
+passes, performs a key agreement, and publishes a reply. One captured message
+becomes M published ones, repeatable — on a shared public Waku shard, so the
+mesh would DoS the fleet and ADR-028's rate limiting would take our own
+publishers off the bus. The request also carried a credential and a timestamp,
+sealed under `nk`, handing the revoked device a wake/sleep log for a named
+device. A standing envelope has none of these properties because nobody has to
+send anything to receive it.
 
-Members verify the credential against the authority and check the revocation
-list before answering, which is the same check that already gates announces
-(`checkMembership`). A revoked device asking is refused. A member answers by
-sealing `S_N` to the key in the request.
+It also fixes the multi-generation case. A device at `N-2` does not need
+`S_{N-2}` to recover; it needs its envelope, which is for `S_N`. So "at most two
+generations live" stops being load-bearing, and revoking twice in one week
+— which `--rotate-now` makes easy — stops silently stranding anybody.
 
-Sealed under `nk`, not under `S_N`, or the device could not read the answer.
-That means a revoked device can see catch-up requests going past. It learns that
-a device exists and is behind, which it could see anyway, and it cannot answer
-usefully because the answer is sealed to a key it does not hold.
+`--rotate-now` becomes simply: stop publishing the previous generation's
+envelope.
 
-Signing the request matters for a duller reason than confidentiality: without
-it, anything holding `nk` — including a revoked device — could spray forged
-catch-up requests and have every member burn key agreements answering them.
+### Ordering: a rotation is bound to the revocation it enforces
+
+The admin's statement names the revocation serial it acts on, and a member must
+hold that revocation before it may serve `S_N`. Without that rule the straggler
+path guarantees the bad case: a device that was offline during the revoke comes
+back, is rekeyed, and its own revocation list is stale until the next hourly
+republish — during which it would answer the revoked device with the new secret,
+having checked a list that does not yet contain it.
+
+`N` must never repeat. An earlier draft tie-broke a collision on the lower
+`H(S_N)`, which does not converge: a node hearing only the higher-hash statement
+uses it, and nodes hearing both use the other — a permanent silent split, which
+ADR-020 says is the failure this project fears most. Binding `N` to the
+revocation serial makes reuse impossible instead of arbitrated.
 
 ### Monotonicity
 
-Each node stores the highest `N` it has accepted and refuses anything lower, so
-a replayed rekey cannot walk a mesh back to a generation a revoked device can
-read. The admin's statement carries `not_before`, as a revocation does.
+Each node **persists** the highest `N` **whose secret it holds** and refuses
+anything lower.
 
-If two valid statements ever share an `N` — an admin rotating twice in a hurry
-— take the lower `H(S_N)` and let it be deterministic rather than racy.
+Both words are load-bearing. *Persists*, because an anchor held only in memory
+is reset by every restart, and the revoked device — which legitimately holds
+`S_{N-1}` through the grace window, and can replay the admin's public statement
+for `N-1` — would win the race to pin a rebooting node back to a generation it
+can read. *Whose secret it holds*, because anchoring on statements heard instead
+would let anyone holding `nk` replay a statement for a generation whose secret
+never arrives, leaving the node refusing `S_{N-1}` for ever with no fallback:
+permanent silent deafness, inducible by an outsider.
+
+(A revocation carries `Issued` and `NotAfter`, not `NotBefore` — an earlier
+draft of this note said otherwise, which is the same mistake `cred.go:453`
+already exists to correct.)
+
+## Which messages move, and which do not
+
+Four kinds of message ride the rendezvous topic, and an earlier draft of this
+note moved only the first — which would have left the stated goal unmet. All
+four are sealed under `nk` today (`internal/mesh/mesh.go:1789-1808`).
+
+**Announces → `S_N`.** Names, addresses, endpoints, relay use. The original
+target.
+
+**Grants → `S_N`.** This is the worst of the four and the draft missed it. A
+grant carries a whole credential — `DevicePub`, `WGPub`, `Name`, `Serial`,
+`NotBefore`, `NotAfter` — and `admin renew` sweeps every device approaching
+expiry and publishes one grant each, monthly, for ever. A revoked device reading
+those reconstructs the complete current roster: every identity key, every tunnel
+key, every name. From `DevicePub` and `nk` it then recomputes every overlay
+address and every pair PSK. Rotating announces while leaving grants readable
+would have bought almost nothing.
+
+Safe to move because of the standing envelope: a device that is behind gets
+`S_N` within an epoch, and the renewal window is days.
+
+**Services → `S_N`.** Service names and bound ports — "the bound ports and
+service list" this note set out to close. The *display* side is already gated:
+`Services()` shows only devices on the roster, and revocation forgets them, so a
+revoked device cannot inject names into anybody's view. But it can still read
+everyone else's, which is the half that matters here.
+
+**Revocations stay under `nk`. Deliberately.** A revocation has to reach every
+node whatever generation it is on, including one that has not caught up yet —
+and it is the message whose late arrival does the most damage. Rotating it would
+mean the news of a revocation could not reach the nodes most likely to be out of
+date.
+
+The cost is real and small: a revoked device can read revocations, so it learns
+which devices have been withdrawn, including its own. Learning it has been
+revoked is arguably correct behaviour rather than a leak.
+
+## Migration: generation zero is what we do today
+
+The draft had no deployment story, and the obvious one is a trap: a reader that
+tries `S_N`, then `S_{N-1}`, then bare `nk` restores exactly the property being
+removed. This codebase refuses flag days — `PaddedSizes` exists so senders can
+move after readers, and the revocation v1/v2 split does the same — and mobile
+updates through F-Droid on its own schedule, so "upgrade everything at once" is
+not available.
+
+It does not need one. **Define generation zero as the empty secret**, so
+`HKDF(nk ‖ "", epoch)` is exactly today's derivation. A node that has never
+rotated is at generation 0 and nothing about its wire format changes. An updated
+node reads 0 and reads `S_N`.
+
+Deployment is then: update everything, then rotate. The first rotation is what
+makes an un-updated node deaf — correctly, because that is the same thing that
+makes a revoked device deaf, and the two cannot be distinguished by design. So
+`admin revoke --rotate` should say so plainly before it runs, and the grace
+window is what makes finding out survivable.
+
+## What this does not fix
+
+Worth stating, because the note is otherwise a list of things that work.
+
+- **A revoked device keeps `nk`**, so it keeps deriving the topic, seeing that
+  the mesh exists, counting members from the size of each epoch's envelope
+  fan-out, and timing rotations by watching the bursts. Rotation removes reading,
+  not observation.
+- **A member who wants to leak can.** Confidentiality of `S_N` rests on every
+  member refusing non-members, and a malicious member can hand over `nk` today
+  regardless.
+- **A `--no-admin` mesh cannot do any of this** — nobody signs the statement, and
+  the network key *is* membership there (ADR-008). Revocation on such a mesh
+  still means re-inviting everyone onto a new one, and `admin revoke` should say
+  so rather than implying otherwise.
 
 ## What is cheap and should happen regardless
 
