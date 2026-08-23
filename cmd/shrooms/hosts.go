@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	dnssrv "github.com/vpavlin/shrooms/internal/dns"
 	"os"
 
 	"github.com/vpavlin/shrooms/internal/hosts"
@@ -11,7 +12,7 @@ import (
 func cmdHosts(args []string) error {
 	fs := flag.NewFlagSet("hosts", flag.ExitOnError)
 	sock := fs.String("socket", DefaultSocket, "control socket path")
-	suffix := fs.String("suffix", "mesh", "domain suffix; '.internal' is the formally reserved choice")
+	suffix := fs.String("suffix", dnssrv.DefaultSuffix, "domain suffix")
 	write := fs.Bool("write", false, "update "+hosts.DefaultFile+" instead of printing")
 	file := fs.String("file", hosts.DefaultFile, "hosts file to update")
 	if err := fs.Parse(args); err != nil {

@@ -84,10 +84,11 @@ on localhost. That needs `CAP_NET_BIND_SERVICE` alongside the existing
 macOS's `/etc/resolver` supports it — but systemd-resolved does not handle it
 cleanly, so the capability is the simpler trade.
 
-**Domain choice.** `.internal` is formally reserved by ICANN for private use and
-is the correct answer; `.mesh` reads better and is what the hosts command
-defaults to. Configurable either way, and worth settling before anyone depends
-on it.
+**Domain choice.** Settled by [ADR-032](032-a-suffix-that-cannot-be-taken-away.md):
+`mesh.internal`, with `.mesh` answered alongside it. This note said `.internal`
+"is the correct answer" and that it was "worth settling before anyone depends on
+it", and then it was not settled for two years while people came to depend on
+`.mesh`. ICANN's 2026 gTLD round closing in August 2026 is what forced it.
 
 ## Consequences
 

@@ -240,3 +240,46 @@ func TestAnswersAWhenThereIsAnAlias(t *testing.T) {
 		t.Errorf("rcode %v with %d answers, want NOERROR and none", h.RCode, len(answers))
 	}
 }
+
+// Both suffixes must resolve during the transition, or changing the default
+// breaks every ssh config, bookmark and script on the network on the same day.
+func TestBothSuffixesResolve(t *testing.T) {
+	s := &Server{
+		Suffix: DefaultSuffix,
+		Also:   []string{LegacySuffix},
+	}
+	for _, c := range []struct {
+		name string
+		want string
+		ok   bool
+	}{
+		{"vps.mesh.internal", "vps", true},
+		{"vps.home.mesh.internal", "vps.home", true},
+		{"vps.mesh", "vps", true},
+		{"vps.home.mesh", "vps.home", true},
+		// Not ours: .internal is shared private space and a network already
+		// using it must not find this answering for all of it.
+		{"printer.internal", "", false},
+		{"anything.else.internal", "", false},
+		{"example.com", "", false},
+		// The suffix alone names nothing.
+		{"mesh.internal", "", false},
+		{"mesh", "", false},
+	} {
+		got, ok := s.hostWithinSuffix(c.name)
+		if ok != c.ok || got != c.want {
+			t.Errorf("hostWithinSuffix(%q) = %q,%v; want %q,%v", c.name, got, ok, c.want, c.ok)
+		}
+	}
+}
+
+// The longer suffix must win. Serving both "mesh.internal" and "mesh" must not
+// let the shorter one swallow a name that belongs to the longer.
+func TestTheLongerSuffixWins(t *testing.T) {
+	// Deliberately in the order that would go wrong if length were ignored.
+	s := &Server{Suffix: LegacySuffix, Also: []string{DefaultSuffix}}
+	got, ok := s.hostWithinSuffix("vps.mesh.internal")
+	if !ok || got != "vps" {
+		t.Errorf("got %q,%v; want \"vps\",true — the short suffix swallowed it", got, ok)
+	}
+}

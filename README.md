@@ -39,8 +39,8 @@ of them is authoritative.
 **Status: working over the real internet**, on Linux and Android, daily:
 
 ```console
-$ ssh root@vps.mesh                      # names come from the mesh, not DNS
-$ curl http://ha.jimmy-crib.mesh         # a LAN device that never joined
+$ ssh root@vps.mesh.internal             # names come from the mesh, not DNS
+$ curl http://ha.jimmy-crib.mesh.internal  # a LAN device that never joined
 $ ping fd3b:ffe9:f81:6f18:41e:c574:c529:5bbf
 4 packets transmitted, 4 received, 0% packet loss
 rtt min/avg/max/mdev = 31.883/63.188/94.992/25.589 ms
@@ -385,9 +385,9 @@ Nothing to do — the daemon runs a resolver for the mesh and registers it with
 the system on startup:
 
 ```console
-$ ssh root@vps.mesh
-$ ping6 laptop.mesh
-$ resolvectl query vps.mesh        # names shrooms0 as the link that answered
+$ ssh root@vps.mesh.internal
+$ ping6 laptop.mesh.internal
+$ resolvectl query vps.mesh.internal   # names shrooms0 as the link that answered
 ```
 
 It is authoritative for one suffix and answers nothing else: no forwarding, no

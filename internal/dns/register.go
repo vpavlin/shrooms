@@ -29,7 +29,7 @@ func Register(ctx context.Context, iface string, addr netip.Addr, suffix string)
 	}
 	suffix = strings.Trim(suffix, ".")
 	if suffix == "" {
-		suffix = "mesh"
+		suffix = DefaultSuffix
 	}
 
 	// Both, in order: the address alone gives the link a resolver but no reason

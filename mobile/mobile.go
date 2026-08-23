@@ -1054,6 +1054,7 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 		// lookups span every mesh, so one resolver address serves them all.
 		srv := &dnssrv.Server{
 			Suffix:   cfg.HostsSuffix,
+			Also:     []string{dnssrv.LegacySuffix},
 			Lookup:   resolveAll(instances, configDir),
 			Alias:    aliasAll(instances),
 			Upstream: forward,
