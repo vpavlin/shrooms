@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +33,23 @@ import (
 // Port is the only port a resolver can be told to use on most platforms.
 // Android's VpnService.Builder.addDnsServer takes an address and no port.
 const Port = 53
+
+// DefaultSuffix is the domain served unless configured otherwise.
+//
+// A label under .internal, which ICANN reserved in July 2024 and resolved will
+// never be delegated in the root zone. ".mesh" was neither reserved nor
+// special-use — a plausible-looking string nobody owned — and ICANN's 2026
+// application round closed in August 2026 with more than 1,600 applications
+// whose contents are not public until Reveal Day. See ADR-032.
+//
+// A label UNDER .internal rather than .internal itself, because that space is
+// shared: a network already using it for its own names must not find this
+// resolver answering for all of it.
+const DefaultSuffix = "mesh.internal"
+
+// LegacySuffix is what this served before DefaultSuffix, answered alongside it
+// so the change does not break every ssh config on the same day.
+const LegacySuffix = "mesh"
 
 // TTL is deliberately short. Names map to derived addresses that never change,
 // but which peer answers to a name can, and a stale cache outlives the mesh
@@ -65,8 +83,24 @@ type Lookup func(host string) (netip.Addr, bool)
 
 // Server answers queries for one suffix.
 type Server struct {
-	// Suffix is the domain served, without dots: "mesh".
+	// Suffix is the domain served, without leading or trailing dots:
+	// "mesh.internal".
+	//
+	// A label UNDER .internal rather than .internal itself. ICANN reserved
+	// .internal in July 2024 and it will never be delegated, which is what
+	// makes it safe from the public DNS — but it is shared private space, and a
+	// network already using it for its own names must not find this resolver
+	// answering for all of it. Claiming one label takes what we need and
+	// nothing else. See ADR-032.
 	Suffix string
+
+	// Also are further suffixes answered identically, for transitions.
+	//
+	// A suffix change is otherwise a flag day for every ssh config, bookmark
+	// and piece of muscle memory on the network. Serving the old one alongside
+	// the new costs one comparison per query and means nothing breaks on the
+	// day the default moves.
+	Also []string
 	// Lookup resolves a host label within the suffix.
 	Lookup Lookup
 
@@ -335,18 +369,23 @@ func (s *Server) rcode(header dnsmessage.Header, q dnsmessage.Question, code dns
 // on a device, and those are the same shape — only the mesh knows which labels
 // name what, so it is handed the whole remainder and left to work it out.
 func (s *Server) hostWithinSuffix(name string) (string, bool) {
-	suffix := strings.ToLower(strings.Trim(s.Suffix, "."))
-	if suffix == "" || name == "" {
+	if name == "" {
 		return "", false
 	}
-	if !strings.HasSuffix(name, "."+suffix) {
-		return "", false
+	// Longest first, so that serving both "mesh.internal" and "mesh" cannot
+	// have the shorter one swallow a name belonging to the longer.
+	all := append([]string{s.Suffix}, s.Also...)
+	sort.Slice(all, func(i, j int) bool { return len(all[i]) > len(all[j]) })
+	for _, raw := range all {
+		suffix := strings.ToLower(strings.Trim(raw, "."))
+		if suffix == "" || !strings.HasSuffix(name, "."+suffix) {
+			continue
+		}
+		if rest := strings.TrimSuffix(name, "."+suffix); rest != "" {
+			return rest, true
+		}
 	}
-	rest := strings.TrimSuffix(name, "."+suffix)
-	if rest == "" {
-		return "", false
-	}
-	return rest, true
+	return "", false
 }
 
 // Listen binds the resolver to an address.

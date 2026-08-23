@@ -243,6 +243,9 @@ func cmdDaemon(args []string) error {
 	} else {
 		resolver := &dnssrv.Server{
 			Suffix: cfg.HostsSuffix,
+			// The old suffix stays answerable, so a change of default does not
+			// break every ssh config and bookmark on the same day (ADR-032).
+			Also:   []string{dnssrv.LegacySuffix},
 			Lookup: resolveAcross(named(instances), knownLabels(cfg)),
 			Alias:  aliasAcross(named(instances)),
 			Log:    func(msg string, args ...any) { log.Debug(msg, args...) },

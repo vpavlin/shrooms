@@ -362,10 +362,10 @@ func mustKey(cfg state.Config) identity.NetworkKey {
 func DNSSuffix(configDir string) string {
 	cfg, _, err := load(configDir)
 	if err != nil {
-		return "mesh"
+		return dnssrv.DefaultSuffix
 	}
 	if cfg.HostsSuffix == "" {
-		return "mesh"
+		return dnssrv.DefaultSuffix
 	}
 	return cfg.HostsSuffix
 }
