@@ -460,6 +460,17 @@ above is built. It costs nothing to say what revocation actually buys — no new
 tunnels, no data-plane access — and what it does not: the former member keeps
 reading the control plane.
 
+## Status
+
+**Built, August 2026.** `shrooms admin revoke --rotate`, `cred.Rotation`,
+`control.Rekey`, `Identity.SealPriv/SealPub`, credential version 2, and the
+persisted per-mesh generation. Generation zero is the un-rotated mesh and
+derives exactly what it always did, so nothing changes until somebody rotates.
+
+Still to do: `Grant` and `Services` are sealed under the generation but a
+straggler therefore cannot read a renewal until it is rekeyed, which is fine
+while the renewal window is days and worth revisiting if it ever is not.
+
 ## Recommendation
 
 Correct the ADR immediately. Build the generation counter when there is appetite:
