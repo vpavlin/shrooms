@@ -122,6 +122,24 @@ type Identity struct {
 	DevicePub  ed25519.PublicKey
 	WGPriv     WGKey
 	WGPub      WGKey
+
+	// SealPriv/SealPub receive secrets addressed to this device on the control
+	// plane — today, a rekey of the announce generation after somebody is
+	// revoked.
+	//
+	// A third keypair rather than reusing one of the two above, and the reasons
+	// are worth keeping. WGPub is already X25519 and already in every announce,
+	// so it looks free — but it is WireGuard's static key, and sharing one
+	// static across two protocols is where cross-protocol attacks live; a
+	// domain separator in our KDF does not constrain what Noise does with it.
+	// DevicePub could be mapped ed25519 to X25519, which age and Signal both
+	// do, but it makes one key both sign announces and perform key agreement,
+	// and the conversion needs a dependency this tree does not carry.
+	//
+	// The cost of a third key is nothing stored and nothing derived twice: it
+	// falls out of the same master secret as the other two.
+	SealPriv WGKey
+	SealPub  WGKey
 }
 
 // New generates a fresh device identity.

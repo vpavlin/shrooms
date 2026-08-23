@@ -63,11 +63,26 @@ func (m Master) Derive(networkID string) (*Identity, error) {
 	var wgPub WGKey
 	copy(wgPub[:], wgPubSlice)
 
+	// The control-plane sealing key. Same master, its own label, so it is
+	// unrelated to the tunnel key and to the signing key.
+	var sealPriv WGKey
+	copy(sealPriv[:], m.expand("mesh/v1/seal", networkID, 32))
+	clamp(&sealPriv)
+
+	sealPubSlice, err := curve25519.X25519(sealPriv[:], curve25519.Basepoint)
+	if err != nil {
+		return nil, fmt.Errorf("derive sealing public key: %w", err)
+	}
+	var sealPub WGKey
+	copy(sealPub[:], sealPubSlice)
+
 	return &Identity{
 		DevicePriv: priv,
 		DevicePub:  priv.Public().(ed25519.PublicKey),
 		WGPriv:     wgPriv,
 		WGPub:      wgPub,
+		SealPriv:   sealPriv,
+		SealPub:    sealPub,
 	}, nil
 }
 
