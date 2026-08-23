@@ -408,6 +408,35 @@ makes a revoked device deaf, and the two cannot be distinguished by design. So
 `admin revoke --rotate` should say so plainly before it runs, and the grace
 window is what makes finding out survivable.
 
+### Migrating the devices that already exist
+
+New devices are straightforward: the invite carries the sealing key and the
+credential they get back is version 2.
+
+Existing devices are the awkward case, because the credential is where the key
+lives — so an admin cannot put a device's key into its credential without
+already knowing the key, and a device already on the mesh has no channel to
+publish it. `admin renew` therefore keeps issuing version 1 for them, which is
+correct rather than broken: a v1 credential works exactly as it always did.
+
+**The tempting fix was rejected.** Announces could carry `seal_pub` as a
+self-asserted field, purely so an admin could learn it, with the credential
+staying authoritative for actual sealing. After the compact framing that costs
+about one endpoint out of fourteen, so it is affordable. It was still declined:
+it puts a second, unsigned copy of a signed value on the wire, and every reader
+then has to know which copy is the real one. Vaclav's call, and the right one —
+we are the only users, so a more troublesome migration is cheaper than a wire
+format with a redundant field in it for ever.
+
+**So the migration is manual, once.** On each device:
+
+    shrooms keys
+
+which now prints the sealing key and the exact `admin issue` line to run,
+`--seal` included. Run that where the admin key is, then `shrooms credential set`
+on the device. `shrooms keys` also says so unprompted when it finds a version 1
+credential, because that is where somebody looks when a device is not behaving.
+
 ## What this does not fix
 
 Worth stating, because the note is otherwise a list of things that work.

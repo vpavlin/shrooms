@@ -31,11 +31,13 @@ func cmdKeys(args []string) error {
 
 	fmt.Printf("device  %x\n", st.Identity.DevicePub)
 	fmt.Printf("tunnel  %x\n", st.Identity.WGPub[:])
+	fmt.Printf("sealing %x\n", st.Identity.SealPub[:])
 	fmt.Println()
 	fmt.Println("Enrol this machine from wherever the admin key is:")
 	fmt.Printf("  shrooms admin issue --name <name> --serial 1 \\\n")
 	fmt.Printf("      --device %x \\\n", st.Identity.DevicePub)
-	fmt.Printf("      --wg %x\n", st.Identity.WGPub[:])
+	fmt.Printf("      --wg %x \\\n", st.Identity.WGPub[:])
+	fmt.Printf("      --seal %x\n", st.Identity.SealPub[:])
 
 	if len(st.Credential) > 0 {
 		c, err := cred.UnmarshalCredential(st.Credential)
@@ -45,6 +47,15 @@ func cmdKeys(args []string) error {
 		}
 		fmt.Printf("\ncredential  %s, serial %d, expires %s\n",
 			c.Name, c.Serial, time.Unix(c.NotAfter, 0).Format(time.RFC3339))
+		// Version 1 has no sealing key, so nothing on the control plane can be
+		// addressed to this device — which is what a rotation after a
+		// revocation needs. Said here because `keys` is where somebody looks
+		// when a device is not behaving, and the remedy is the command printed
+		// above with --seal on it.
+		if len(c.SealPub) == 0 {
+			fmt.Println("            version 1 — reissue with --seal (above) so this")
+			fmt.Println("            device can be rekeyed after a revocation")
+		}
 		if time.Now().After(time.Unix(c.NotAfter, 0)) {
 			fmt.Println("            EXPIRED — ask the admin to issue another")
 		}
