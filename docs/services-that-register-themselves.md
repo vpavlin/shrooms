@@ -209,6 +209,80 @@ mesh it gains `DELETE /data/{cid}` for every member. On a mesh where every
 device is yours that is fine and is the same trust the tunnel already assumes.
 On a mesh with a guest it is not, and nothing in shrooms would stop it.
 
+### Checked: `--api-bindaddr` exists, and it is still not enough
+
+`storage/conf.nim` has `--api-bindaddr` (default `127.0.0.1`), `--api-port`
+(default `8080`) and `--api-cors-origin`. So Logos Storage *can* be told to
+listen on the overlay address, which makes it a `Bound` service and gets its
+port announced with no shrooms change at all.
+
+It still does not answer the question, and finding out why is the useful part.
+`boundPorts` reports what is listening via `listeners.On`, and a listener's name
+comes from `WellKnown(port)` or falls back to `port-<n>`. So the phone would
+learn that `nas` has **`port-8080:8080`** — that something is listening, and
+nothing about what.
+
+**Ports can be detected. Types cannot.** Only the process itself knows it is
+Logos Storage. That is the whole argument for registration, and it is Vaclav's
+point exactly:
+
+> a storage node (or some adapter) could notice "oh there is a shrooms daemon"
+> and register `logos-storage:addr:port`, and then another app (basecamp,
+> android) could query "do we have logos-storage on the mesh?" and get a URL back
+
+## Types, not nicknames
+
+This is the design decision the rest hangs on, and today's model does not have
+it. Service names now are **nicknames**: `immich`, `ha`, `jellyfin` — chosen by
+whoever wrote the config, meaningful to that person, and not agreed with anyone.
+They work because a human reads them.
+
+"Do we have logos-storage on the mesh?" is a different kind of question. It only
+works if `logos-storage` means the same thing on every device and to every
+application, which makes it a **type** — allocated once, agreed in advance,
+never chosen per-install. DNS-SD has exactly this split (`_storage._tcp` is the
+type, the instance name is the nickname) and it is the part worth borrowing
+whatever the transport ends up being.
+
+So a registration is a triple, and the announce currently carries two of three:
+
+    type      logos-storage      well known, agreed, queryable
+    instance  nas                which device — already the roster
+    endpoint  addr:port + path   where — Bound has this, Names does not
+
+Open: who allocates a type. A short table in this repo is enough for as long as
+the answer is "Logos applications and a handful of self-hosted things", and
+reverse-DNS (`co.logos.storage`) is the escape hatch if it ever is not.
+
+## The two halves, concretely
+
+**Registration.** An adapter — or the node itself — tells the local daemon
+`type=logos-storage, port=8080, path=/api/storage/v1`. The daemon publishes it
+as a service with a type, and the existing announce carries it to peers. The
+"notice there is a shrooms daemon" part is a socket that either exists or does
+not, which is a two-line check.
+
+The awkward part is who is allowed to register a type, and it is the audit's
+squatting finding wearing a new hat. Registering `logos-storage` is a claim to
+*be* Logos Storage, and any local process could make it; the mesh would then
+send storage traffic wherever it said. A nickname collision is a nuisance, a
+type collision is a redirect. Whatever the interface, this is the part to get
+right, and SRP's keyed defence is the model.
+
+**Query.** `"any logos-storage on the mesh?"` → zero or more URLs. Three callers,
+three different answers, and they do not need the same one:
+
+- **Basecamp**, on a desktop, talks to the control socket already. A read-only
+  `GET /services?type=…` is small, and read-only is the right tier.
+- **The Android app** is in-process with the binding. It is a Go function call —
+  no socket, no permissions, nothing to design.
+- **A third-party app** has neither, and that is where DNS-SD earns its place —
+  but it is the third case, not the first, and it can follow.
+
+Returning a *URL* rather than a host and port matters more than it looks: the
+path is part of finding the thing (`/api/storage/v1`), and every caller would
+otherwise hardcode it.
+
 ## Peer discovery over mesh addresses
 
 Vaclav's second half: *"using mesh addrs for peer discovery could be useful to a
