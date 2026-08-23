@@ -77,7 +77,32 @@ public:
     std::string setModeOn(const std::string& socketPath, const std::string& mode);
 
     /**
+     * @brief The services this node has CONFIGURED, as JSON.
+     *
+     * Not the ones it is running, which is what status() reports and what the
+     * status file carries. The two differ: a service that is switched off, that
+     * failed to bind, or that was added since the last reload is absent from
+     * the running list and present here.
+     *
+     * That distinction is the reason this exists. setServices() replaces the
+     * whole list, so anything editing one service has to send the others back
+     * unchanged — and reading them from the running list would delete every
+     * configured service that happened not to be up, silently, as the ordinary
+     * result of adding an unrelated one. Read with this before writing.
+     *
+     * Needs a daemon that answers GET on /config/services; an older one
+     * refuses with "POST a setting".
+     */
+    std::string services();
+
+    /** @brief As services(), against a specific control socket. */
+    std::string servicesFrom(const std::string& socketPath);
+
+    /**
      * @brief Replaces the list of services this node advertises.
+     *
+     * REPLACES. To change one service, read services() — not status() — and
+     * send the rest back with it. See services() for why that matters.
      *
      * @param csv Comma-separated `name:port` specs, e.g. `immich:2283,jellyfin:8096`.
      * Taken as one string because that is what a single text field yields; it is

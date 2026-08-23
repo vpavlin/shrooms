@@ -482,6 +482,27 @@ std::string ShroomsCoreImpl::status()
     return errorJson("cannot read the Shrooms daemon", withPermissionHint(firstErr));
 }
 
+std::string ShroomsCoreImpl::servicesFrom(const std::string& socketPath)
+{
+    std::string body, err;
+    if (httpGetUnix(socketPath, "/config/services", body, err) == RequestOutcome::Ok) {
+        return body;
+    }
+    return errorJson("cannot read the configured services", err);
+}
+
+std::string ShroomsCoreImpl::services()
+{
+    std::string body, err, firstErr;
+    for (const char* path : {kSocket, kLegacySocket}) {
+        if (httpGetUnix(path, "/config/services", body, err) == RequestOutcome::Ok) {
+            return body;
+        }
+        if (firstErr.empty()) firstErr = err;
+    }
+    return errorJson("cannot read the configured services", withPermissionHint(firstErr));
+}
+
 std::string ShroomsCoreImpl::setNameOn(const std::string& socketPath, const std::string& name)
 {
     return postToSocket(socketPath, "/config/name", "{\"name\":" + jsonString(name) + "}");
