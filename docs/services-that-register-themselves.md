@@ -122,8 +122,43 @@ declare. Neat on a systemd host, useless on the phone and in containers.
    second open question — shrooms as transport for other Logos applications —
    which is recorded as still open and compatible with the current direction. It
    would be the first feature aimed at a consumer that is not a person at a
-   terminal. (I do not know what Logos Storage's own discovery story is; that is
-   worth checking before assuming this is the missing piece.)
+   terminal.
+
+## What Logos Storage actually needs, having looked
+
+Logos Storage is Codex, renamed in April 2026
+([logos-storage/logos-storage-nim](https://github.com/logos-storage/logos-storage-nim)).
+The check was worth doing, because it already has a discovery mechanism — and
+it turns out to be a different one from the one this note is about.
+
+**It discovers content, not neighbours.** CODEX-DHT is a Kademlia DHT that maps
+content IDs to the providers holding them, across the whole network. That is the
+question "who has this dataset", and shrooms has nothing useful to add to it.
+
+**It has no local-node discovery at all.** A node exposes a REST API on
+`http://localhost:8080/api/storage/v1/` — `GET /peerid`, `GET /spr` for its
+Service Peer Record, `GET /connect/{peerId}` which takes supplied multiaddrs,
+and the data endpoints. Nothing in it answers "which machine near me is running
+one, and on what port". That is exactly the gap.
+
+So the two are complements rather than alternatives, and the integration is
+concrete enough to describe:
+
+    _storage._tcp.home.mesh.internal        PTR   nas._storage._tcp....
+    nas._storage._tcp.home.mesh.internal    SRV   0 0 8080 nas.home.mesh.internal
+                                            TXT   spr=... peerid=... api=/api/storage/v1
+
+An app then resolves that with a stock DNS-SD library, reaches the API over the
+mesh, and — the interesting part — hands the peer's SPR to `/connect/{peerId}`
+so two of *your* storage nodes peer **over the overlay**: stable addresses,
+already authenticated, no NAT traversal and no dependence on the public DHT
+finding them. That is a real thing shrooms provides that Codex's own discovery
+does not, rather than a duplicate of it.
+
+One practical snag: 8080 is a crowded port. `storage:8080` as a service spec
+will collide on any machine already serving something there, and the audit's
+finding applies — the daemon reports a port it did not bind as being held by
+"another process" and does not check which.
 
 ## How others do it
 
