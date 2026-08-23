@@ -16,7 +16,7 @@ and the cheaper thing that gets most of the value.
 
 That is false as written. It presumes announces are wrapped per recipient, so
 that dropping a device from the roster drops its ability to decrypt.
-Per-recipient wrapping was never built — [ADR-020](adr/020-one-announce-many-readers.md)
+Per-recipient wrapping was never built — [ADR-020](adr/020-membership-is-a-seam.md)
 records the decision not to, and ADR-018's own scope note says so — but the
 revocation section was never reconciled with it.
 
@@ -87,7 +87,7 @@ rotations: if the current value is ever lost, mint `S_{N+1}` and wrap that.
 
 **How it reaches members.** Sealed to each current member's device key, one
 small message per member, published on the rendezvous topic. That is the
-per-recipient wrapping [ADR-020](adr/020-one-announce-many-readers.md) declined
+per-recipient wrapping [ADR-020](adr/020-membership-is-a-seam.md) declined
 — see below for why the objection does not apply here.
 
 **What does *not* change.** The rendezvous topic stays `topic.Current(nk, now)`,
