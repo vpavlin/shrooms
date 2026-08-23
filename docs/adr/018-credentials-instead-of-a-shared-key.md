@@ -120,7 +120,7 @@ tunnel with it. That is the data plane, and it is the half that works.
 **What it does not buy, corrected.** An earlier version of this section said the
 device "stops receiving announces, so it cannot follow anyone who moves". That
 was never true. It presumed announce keys were wrapped per recipient, which
-[ADR-020](020-one-announce-many-readers.md) decided against and the scope note
+[ADR-020](020-membership-is-a-seam.md) decided against and the scope note
 above already says is not built. Announces are sealed under the shared network
 key, and revocation does not rotate it — revocation removes the device from
 *our* roster and refuses *its* announces, the inbound direction only.
