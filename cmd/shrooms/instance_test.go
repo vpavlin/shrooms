@@ -165,3 +165,36 @@ func TestBoundNameCarriesTheMeshLabel(t *testing.T) {
 		})
 	}
 }
+
+// The fingerprint must be stable when nothing has changed, or the daemon reads
+// its own polling as a network change and restarts on a timer.
+func TestLocalUnderlayIsStable(t *testing.T) {
+	a := localUnderlay(nil)
+	if b := localUnderlay(nil); a != b {
+		t.Errorf("fingerprint moved with nothing changing:\n%q\n%q", a, b)
+	}
+}
+
+// The mesh's own interfaces must be excluded. They are torn down and rebuilt by
+// the restart this feeds, so counting them would make recovery look like a
+// fresh network change and restart again — a loop, on a machine that had one
+// wifi blip.
+func TestLocalUnderlayIgnoresOurOwnInterfaces(t *testing.T) {
+	all := localUnderlay(nil)
+	if all == "" {
+		t.Skip("no non-loopback interfaces with addresses here")
+	}
+	// Whichever interface the first entry belongs to, claim it as a mesh
+	// device: its addresses must then disappear from the fingerprint.
+	name, _, ok := strings.Cut(strings.Split(all, ",")[0], "=")
+	if !ok {
+		t.Fatalf("unexpected fingerprint shape: %q", all)
+	}
+	got := localUnderlay([]*instance{{iface: name}})
+	if strings.Contains(got, name+"=") {
+		t.Errorf("interface %q is ours and still counted:\n%q", name, got)
+	}
+	if got == all {
+		t.Errorf("excluding %q changed nothing:\n%q", name, got)
+	}
+}

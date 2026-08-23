@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/netip"
+	"sort"
+	"strings"
 
 	"golang.zx2c4.com/wireguard/device"
 
@@ -302,4 +305,41 @@ func knownLabels(cfg state.Config) map[string]bool {
 		}
 	}
 	return out
+}
+
+// localUnderlay fingerprints the addresses this node has on the real network.
+//
+// The mesh's own interfaces are excluded deliberately. They are torn down and
+// rebuilt by the very restart this feeds, so counting them would make the
+// daemon detect its own recovery as a fresh network change and restart again.
+func localUnderlay(instances []*instance) string {
+	ours := map[string]bool{}
+	for _, in := range instances {
+		if in.iface != "" {
+			ours[in.iface] = true
+		}
+	}
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+	var addrs []string
+	for _, ifc := range ifaces {
+		if ours[ifc.Name] || ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		list, err := ifc.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range list {
+			p, err := netip.ParsePrefix(a.String())
+			if err != nil || p.Addr().IsLinkLocalUnicast() {
+				continue
+			}
+			addrs = append(addrs, ifc.Name+"="+p.Addr().String())
+		}
+	}
+	sort.Strings(addrs)
+	return strings.Join(addrs, ",")
 }
