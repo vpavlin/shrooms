@@ -302,21 +302,69 @@ private peering shortcut, not a discovery layer.
 
 ## How others do it
 
-- **mDNS / DNS-SD (Bonjour, Avahi)** — the default on every LAN. Apps register
-  through a local daemon over D-Bus or a C API; browsing is multicast. The data
-  model is the part to take; the multicast transport is the part to leave, since
-  a mesh has no broadcast domain.
-- **SRP (RFC 9665)** — the same data model over unicast, with keyed defence of a
-  registration. Designed for Thread and low-power networks, and a close fit for
-  an overlay where there is no multicast either.
-- **Tailscale Services** (beta through 2026) — each service is a resource with
-  its own virtual IP; hosts advertise endpoints matching it, auto-advertising on
-  startup. Two things to note: the service is defined *centrally* in the tailnet,
-  which needs the coordination server this project does not have; and hosts
-  reject packets to service IPs on ports they do not advertise, which is a
-  cleaner story than our "something else already has the port" case.
-- **Consul, etcd** — a registry as a service. Needs a coordinator; against
-  everything this project is for.
+There is a lot of prior art, and it falls into three families. The encouraging
+thing is that the shape Vaclav described — register with the *local* daemon, let
+it handle propagation — is the one all three converged on independently.
+
+### The DNS-SD family, which is the closest fit
+
+**mDNS / DNS-SD (Bonjour, Avahi, systemd-resolved).** The de facto standard for
+exactly this, and it is everywhere: printers (IPP), AirPlay, Chromecast,
+HomeKit, Syncthing, Plex. Take the data model; leave the multicast transport,
+since a mesh has no broadcast domain.
+
+**Avahi's registration interface is worth copying wholesale**, because it is
+already the two-track split proposed above and for the same reasons:
+
+- `/etc/avahi/services/*.service` — static XML files, for packages and things
+  that are simply always there.
+- The **D-Bus `EntryGroup` API** — dynamic registration for a running process,
+  with the registration disappearing when the client disconnects.
+
+That second property is the one that matters and that a config file cannot give:
+**the registration is tied to the connection**, so a crashed service stops being
+advertised without needing a timeout to notice. If a socket API gets built here,
+that is the semantics to copy.
+
+**SRP (RFC 9665)** — the same data model over unicast, with SIG(0) keys so a
+service can defend its registration. Built for Thread and Matter, which have the
+same "no multicast" problem an overlay does.
+
+**And it answers "who allocates a type".** DNS-SD service types come from
+IANA's Service Name and Transport Protocol Port Number Registry
+([RFC 6335](https://www.rfc-editor.org/rfc/rfc6335)) — names are at most **15
+characters**, letters, digits and hyphens. `logos-storage` is 13 and fits. So
+the type namespace does not have to be invented: there is a registry, it is the
+one every other DNS-SD service uses, and registering in it is a form somebody
+fills in rather than a design problem.
+
+### The registry-with-agent family
+
+**Consul.** `consul services register` registers with the **local agent**, which
+syncs to the servers — the same "tell the daemon on your own machine" shape, and
+health checks are first-class rather than bolted on. **Kubernetes** is the same
+idea with the API server in the middle. **etcd, ZooKeeper, Eureka, Nacos** all
+sit here too.
+
+All of them need a coordinator, which is against everything this project is for.
+But the *local agent* half is precisely the pattern being proposed, and it is
+worth knowing that the microservice world landed on it as well.
+
+### The rest, for completeness
+
+**SSDP / UPnP** (DLNA, routers, media servers) and **WS-Discovery** (ONVIF
+cameras, Windows printers) both still ship in enormous numbers and are both
+multicast-shaped and elderly. **D-Bus activation** is desktop-local. **Bluetooth
+SDP** solves a different problem with a similar name.
+
+### Tailscale, as the closest peer
+
+**Tailscale Services** (beta through 2026) — each service is a resource with its
+own virtual IP; hosts advertise endpoints matching it, auto-advertising on
+startup. Two things to note: the service is defined *centrally* in the tailnet,
+which needs the coordination server this project does not have; and hosts reject
+packets to service IPs on ports they do not advertise, which is a cleaner story
+than our "something else already has the port" case.
 
 ## Recommendation
 
