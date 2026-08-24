@@ -196,6 +196,16 @@ fun KeycardSetting(dir: String) {
             )
         }
 
+        // First, because it answers what state the card is in and costs
+        // nothing: SELECT needs no pairing slot, no PIN and no password.
+        Spacer(Modifier.height(14.dp))
+        Action(
+            text = if (waiting) "hold the card to the back" else "Check this card",
+            enabled = !waiting,
+        ) {
+            run("checking") { Mobile.cardStatus(it) }
+        }
+
         Spacer(Modifier.height(14.dp))
         KeyField(pairing, singleLine = true) { pairing = it.trim() }
 
