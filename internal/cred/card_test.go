@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"testing"
 
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
@@ -231,5 +233,84 @@ func TestRepairCardSignature(t *testing.T) {
 	// Nonsense is refused rather than searched into something plausible.
 	if _, ok := RepairCardSignature(pub, digest, make([]byte, 64)); ok {
 		t.Error("recovered a signature from zeroes")
+	}
+}
+
+// mangle reproduces what keycard-go does to a signature on the way back.
+func mangle(good []byte) []byte {
+	broken := append([]byte(nil), good...)
+	copy(broken[32:62], good[34:64])
+	broken[62], broken[63] = 0x01, 0xd2 // whatever followed s in the buffer
+	return broken
+}
+
+// The repair used to be a search, which could not return a wrong answer because
+// it tried each candidate against the card's own key. Solving for the missing
+// bytes instead is faster by two orders of magnitude and is arithmetic, so it
+// could in principle be subtly wrong in a way that a single fixture would not
+// show. This checks it against the truth over many signatures.
+//
+// Every one of these would have taken three to five seconds under the search.
+//
+// Run in parallel and kept to a few dozen because -race makes elliptic curve
+// arithmetic about seventeen times slower, and a correctness test nobody will
+// sit through is a correctness test somebody eventually deletes.
+func TestRepairRecoversManySignatures(t *testing.T) {
+	for i := 0; i < 32; i++ {
+		t.Run(fmt.Sprintf("signature %d", i), func(t *testing.T) {
+			t.Parallel()
+			priv, err := secp256k1.GeneratePrivateKey()
+			if err != nil {
+				t.Fatal(err)
+			}
+			pub := priv.PubKey().SerializeCompressed()
+			digest := sha256.Sum256([]byte(fmt.Sprintf("signature %d", i)))
+			sig := ecdsa.Sign(priv, digest[:])
+			r, sc := sig.R(), sig.S()
+			rb, sb := r.Bytes(), sc.Bytes()
+			good := append(append([]byte(nil), rb[:]...), sb[:]...)
+
+			got, ok := RepairCardSignature(pub, digest, mangle(good))
+			if !ok {
+				t.Fatal("could not recover")
+			}
+			if !bytes.Equal(got, good) {
+				t.Fatalf("recovered %x, want %x", got, good)
+			}
+		})
+	}
+}
+
+// A signature whose s begins with two zero bytes: the missing value is zero, so
+// the answer is the point at infinity and it is the very first thing compared.
+// Roughly one signature in sixty-five thousand, found by hunting for it — the
+// randomised test above will not produce one this decade, and the arithmetic
+// treats it specially, which is exactly the shape of thing that breaks in the
+// field a year later.
+func TestRepairRecoversZeroPrefix(t *testing.T) {
+	keyBytes, err := hex.DecodeString("52504319ebc1d1d94534de4511ba8d15b26903f71ae73a9cf631af1f65af4416")
+	if err != nil {
+		t.Fatal(err)
+	}
+	priv := secp256k1.PrivKeyFromBytes(keyBytes)
+	pub := priv.PubKey().SerializeCompressed()
+	digest := sha256.Sum256([]byte("zero-prefix hunt 62052"))
+
+	// Deterministic signing (RFC 6979), so this reproduces rather than
+	// depending on the fixture having recorded r and s correctly.
+	sig := ecdsa.Sign(priv, digest[:])
+	r, sc := sig.R(), sig.S()
+	rb, sb := r.Bytes(), sc.Bytes()
+	good := append(append([]byte(nil), rb[:]...), sb[:]...)
+	if good[32] != 0 || good[33] != 0 {
+		t.Fatalf("s is %x, want a zero prefix; the fixture no longer holds", good[32:64])
+	}
+
+	got, ok := RepairCardSignature(pub, digest, mangle(good))
+	if !ok {
+		t.Fatal("could not recover a signature whose missing bytes are zero")
+	}
+	if !bytes.Equal(got, good) {
+		t.Errorf("recovered %x, want %x", got, good)
 	}
 }

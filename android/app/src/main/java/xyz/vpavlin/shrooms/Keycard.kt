@@ -64,7 +64,11 @@ private class IsoTransport(private val iso: IsoDep) : mobile.CardTransport {
  * The reader callback arrives on a binder thread, which is what we want — the
  * Go call is blocking and a card conversation is many round trips.
  */
-internal suspend fun <T> onCardTap(activity: Activity, block: (mobile.CardTransport) -> T): T =
+internal suspend fun <T> onCardTap(
+    activity: Activity,
+    onDetected: () -> Unit = {},
+    block: (mobile.CardTransport) -> T,
+): T =
     suspendCancellableCoroutine { cont ->
         val adapter = NfcAdapter.getDefaultAdapter(activity)
         if (adapter == null) {
@@ -89,6 +93,12 @@ internal suspend fun <T> onCardTap(activity: Activity, block: (mobile.CardTransp
                 // a pairing half way, which costs a slot.
                 iso.timeout = 15_000
                 iso.connect()
+                // The card is answering. Say so before the work starts: what
+                // follows is a secure channel and several round trips, seconds
+                // of it, and a screen still asking for a card that is already
+                // on the glass reads as nothing having happened — which is how
+                // somebody comes to move it away half way through.
+                activity.runOnUiThread(onDetected)
                 cont.resume(block(IsoTransport(iso)))
             } catch (e: Throwable) {
                 if (cont.isActive) cont.resumeWithException(e)
@@ -139,7 +149,12 @@ fun KeycardSetting(dir: String) {
             val result = runCatching {
                 // Off the main thread: this blocks for as long as the card
                 // takes, and on the main thread that is an ANR.
-                withContext(Dispatchers.IO) { onCardTap(activity) { block(it) } }
+                withContext(Dispatchers.IO) {
+                    onCardTap(
+                        activity,
+                        onDetected = { status = "$what — hold the card still" },
+                    ) { block(it) }
+                }
             }
             waiting = false
             result

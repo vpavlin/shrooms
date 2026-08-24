@@ -198,7 +198,10 @@ fun InviteScreen(dir: String, meshLabel: String, onClose: () -> Unit) {
         scope.launch {
             val result = runCatching {
                 withContext(Dispatchers.IO) {
-                    onCardTap(activity) {
+                    onCardTap(
+                        activity,
+                        onDetected = { status = "signing — hold the card still" },
+                    ) {
                         Mobile.admitWithCard(it, dir, pin, token, requestJSON, joiner, 0L, chosen)
                     }
                 }

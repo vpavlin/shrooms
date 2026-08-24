@@ -181,13 +181,15 @@ func recoverCandidates(digest [32]byte, sig []byte) ([][]byte, error) {
 // correct copy and the append does not reach backwards over r.
 //
 // So the first thirty bytes of the real s are the last thirty of what we were
-// given, and the first two are gone. Sixty-five thousand possibilities, each
-// checked against the card's own key — this cannot return a signature that does
-// not verify, which is what makes a repair by search defensible rather than a
-// guess. It is also fast: a wrong candidate fails at the first verification.
+// given, and the first two are gone — and they can be solved for rather than
+// guessed, because s enters ECDSA verification linearly. See solvePrefix.
+//
+// The result is verified before it is returned, so this cannot hand back a
+// signature that does not check out. That is what makes repairing a signature
+// defensible rather than a guess: the card's own key decides, not this code.
 //
 // Remove this when the library is fixed. VerifyDigest is tried first, so a
-// correct signature costs one verification and never reaches the search.
+// correct signature costs one verification and never reaches the repair.
 func RepairCardSignature(pub ed25519.PublicKey, digest [32]byte, sig []byte) ([]byte, bool) {
 	if len(sig) != secp256k1SigSize {
 		return nil, false
@@ -198,13 +200,120 @@ func RepairCardSignature(pub ed25519.PublicKey, digest [32]byte, sig []byte) ([]
 	fixed := make([]byte, secp256k1SigSize)
 	copy(fixed, sig[:32])        // r is intact
 	copy(fixed[34:], sig[32:62]) // the surviving thirty bytes of s
-	for hi := 0; hi < 256; hi++ {
-		for lo := 0; lo < 256; lo++ {
-			fixed[32], fixed[33] = byte(hi), byte(lo)
-			if VerifyDigest(pub, digest, fixed) {
-				return append([]byte(nil), fixed...), true
+	hi, lo, ok := solvePrefix(pub, digest[:], fixed[:32], fixed[34:])
+	if !ok {
+		return nil, false
+	}
+	fixed[32], fixed[33] = hi, lo
+	if !VerifyDigest(pub, digest, fixed) {
+		return nil, false
+	}
+	return fixed, true
+}
+
+// solvePrefix recovers the two bytes of s that keycard-go destroyed.
+//
+// It used to guess them: sixty-five thousand candidates, each put through a
+// full ECDSA verification — two scalar multiplications apiece, three to five
+// seconds while somebody holds a card against the back of a phone. Correct,
+// and long enough that the first person to run it thought it had hung.
+//
+// It does not have to be a search. The missing bytes are the top of s, and s
+// enters verification linearly, so they can be solved for. Verification accepts
+// (r, s) when the nonce point R satisfies
+//
+//	s·R = e·G + r·Q
+//
+// where e is the digest, Q the card's key, and R.x ≡ r. Every term there is
+// public: R is one of the two curve points with x = r, and e·G + r·Q needs
+// nothing secret. Writing the unknown two bytes as A and the surviving thirty
+// as B, s = A·2^240 + B, so
+//
+//	A·(2^240·R) = (e·G + r·Q) − B·R
+//
+// Both sides are computable without knowing A. So finding A is walking the
+// multiples of one fixed point until one matches — sixty-five thousand point
+// additions rather than sixty-five thousand verifications, which is roughly two
+// orders of magnitude, and the wait stops being a thing anybody notices.
+//
+// The caller verifies the result, so a wrong answer here cannot escape; the
+// worst this can do is fail to find one. It gives up rather than trying the
+// x = r + n form of R, which is legal and occurs with probability around 2^-127
+// — a card would have to be tapped for longer than the universe has run to see
+// it once, and the honest failure is a retry.
+func solvePrefix(pub, digest, r, tail []byte) (hi, lo byte, ok bool) {
+	if len(pub) != secp256k1PubKeySize || len(digest) != 32 || len(r) != 32 || len(tail) != 30 {
+		return 0, 0, false
+	}
+	q, err := secp256k1.ParsePubKey(pub)
+	if err != nil {
+		return 0, 0, false
+	}
+	var rs, es, bs secp256k1.ModNScalar
+	// Overflow in r is a malformed signature. In e it is ordinary: the digest
+	// is reduced mod n by definition, and verification does the same.
+	if rs.SetByteSlice(r) {
+		return 0, 0, false
+	}
+	es.SetByteSlice(digest)
+	var b [32]byte
+	copy(b[2:], tail) // B is s with the two missing bytes read as zero
+	bs.SetByteSlice(b[:])
+
+	// P = e·G + r·Q, the right-hand side, fixed for the whole search.
+	var eG, qj, rQ, p secp256k1.JacobianPoint
+	secp256k1.ScalarBaseMultNonConst(&es, &eG)
+	q.AsJacobian(&qj)
+	secp256k1.ScalarMultNonConst(&rs, &qj, &rQ)
+	secp256k1.AddNonConst(&eG, &rQ, &p)
+
+	var step secp256k1.ModNScalar
+	var stepBytes [32]byte
+	stepBytes[1] = 1 // 2^240: one, thirty bytes up
+	step.SetByteSlice(stepBytes[:])
+
+	// R is the point with x = r. Which of the two parities it has is not
+	// recorded anywhere this code can reach — keycard-go's v would say, but v
+	// is computed from the corrupted s — so both are tried.
+	for _, parity := range []byte{0x02, 0x03} {
+		rp, err := secp256k1.ParsePubKey(append([]byte{parity}, r...))
+		if err != nil {
+			continue // x = r is not on the curve for either parity
+		}
+		var rj, u, bR, target secp256k1.JacobianPoint
+		rp.AsJacobian(&rj)
+		secp256k1.ScalarMultNonConst(&step, &rj, &u)
+		secp256k1.ScalarMultNonConst(&bs, &rj, &bR)
+		bR.ToAffine()
+		bR.Y.Negate(1).Normalize() // subtracting B·R is adding its negation
+		secp256k1.AddNonConst(&p, &bR, &target)
+		target.ToAffine()
+
+		var acc, next secp256k1.JacobianPoint // A = 0 is the point at infinity
+		for a := 0; a < 1<<16; a++ {
+			if samePoint(&acc, &target) {
+				return byte(a >> 8), byte(a), true
 			}
+			secp256k1.AddNonConst(&acc, &u, &next)
+			acc = next
 		}
 	}
-	return nil, false
+	return 0, 0, false
+}
+
+// samePoint compares a Jacobian point against an affine one without inverting.
+//
+// An inversion per step would cost more than the addition it is checking, so
+// the affine point is scaled up into the other's frame instead: (X, Y) matches
+// (X′, Y′, Z) when X·Z² = X′ and Y·Z³ = Y′.
+func samePoint(acc, affine *secp256k1.JacobianPoint) bool {
+	if acc.Z.IsZero() || (acc.X.IsZero() && acc.Y.IsZero()) {
+		return affine.Z.IsZero() || (affine.X.IsZero() && affine.Y.IsZero())
+	}
+	var z2, z3, x, y secp256k1.FieldVal
+	z2.SquareVal(&acc.Z)
+	z3.Mul2(&z2, &acc.Z)
+	x.Mul2(&affine.X, &z2)
+	y.Mul2(&affine.Y, &z3)
+	return x.Normalize().Equals(acc.X.Normalize()) && y.Normalize().Equals(acc.Y.Normalize())
 }
