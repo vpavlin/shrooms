@@ -1,9 +1,8 @@
 # 022. A Keycard for the admin key
 
-**Status:** accepted and built. First contact with a physical card was
-2026-08-24: the card signs correctly, the last known defect is explained and
-worked around, and a successful end-to-end enrolment has **not yet been
-observed**.
+**Status:** accepted, built, and **proven against a physical card on
+2026-08-24** — a digest signed on the card, verified by the same function a peer
+uses on a credential.
 
 `cred.Signer` exists and the admin tooling signs through it, so the file-backed
 key and a card are interchangeable above that line. The question this ADR
@@ -29,11 +28,11 @@ no hardware at all: sign anything locally, wrap it in a legacy signature
 template, hand it to `ParseSignature`, and compare `s` in and out.
 
 `cred.RepairCardSignature` recovers the two lost bytes and is documented there.
-So the seam works and the card's own signatures are correct — but the honest
-statement is narrower than "the card works": what has been proven is that the
-card produces a valid signature and that the library damages it on the way back.
-The repair is tested against signatures made locally, not yet against one that
-came off a card. Say so until somebody has watched an enrolment succeed.
+So the seam works and the card works. The repair was written against signatures
+made locally and then met a real one the same day: `CardSelfTest` signs on the
+card and verifies with the same function a peer applies to a credential, and it
+passes. That is the whole path — pairing, PIN, secure channel, on-card signing,
+both conversions, and the repair — exercised at once.
 
 The workaround should be removed when the library is fixed. Upstream has not
 been told.

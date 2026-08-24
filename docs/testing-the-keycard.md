@@ -114,8 +114,10 @@ public key — so enrolment signs a fixed digest and takes the key from the
 answer, which is how `loam-keycard` (extracted from scala) does it. One exchange
 proves pairing, PIN, on-card signing and both conversions.
 
-**If stage 1 passes, ADR-022's central claim is proven** and the rest is
-plumbing. If it fails, everything below is moot.
+**Stage 1 passed on 2026-08-24.** A digest signed on the card verified against
+the card's own key, which settles ADR-022's central claim: the admin key can
+live on a smartcard and this project can check what it signs. Everything below
+is plumbing on top of a path that is now known to work.
 
 ## Stage 2 — a mesh whose admin is the card. **Blocked; needs a small change.**
 
