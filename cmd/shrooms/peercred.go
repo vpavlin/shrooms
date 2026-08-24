@@ -90,3 +90,35 @@ func requireRoot(h http.HandlerFunc) http.HandlerFunc {
 		h(w, r)
 	}
 }
+
+// callerIsRoot reports whether the connection is from root, or from the user
+// this daemon itself runs as.
+//
+// The same test requireRoot applies, exposed so a handler can decide for itself
+// rather than being refused before it has seen what it was asked to do. Used by
+// /invite/reply, which is root by default and reachable from the socket group
+// only when what it carries proves the admin approved it (ADR-033).
+func callerIsRoot(r *http.Request) bool {
+	cred, _ := r.Context().Value(peerCredKey{}).(*syscall.Ucred)
+	return cred != nil && (cred.Uid == 0 || cred.Uid == uint32(os.Getuid()))
+}
+
+// requireIdentified refuses a caller the kernel will not vouch for.
+//
+// Separate from requireRoot because an endpoint can be open to the socket group
+// and still need to know who is asking — /invite/reply decides what it will do
+// from the caller's uid, so "no uid at all" is not a group member, it is a
+// question this daemon cannot answer.
+//
+// Without it such a caller fell through to the body, and a malformed request
+// answered 400 where the boundary should have answered 403: an error about
+// syntax where the truthful one is about identity.
+func requireIdentified(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := r.Context().Value(peerCredKey{}).(*syscall.Ucred); !ok {
+			http.Error(w, "cannot determine who is calling", http.StatusForbidden)
+			return
+		}
+		h(w, r)
+	}
+}
