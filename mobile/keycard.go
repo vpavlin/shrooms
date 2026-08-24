@@ -128,7 +128,7 @@ func decodePairing(s string) (*ktypes.Pairing, error) {
 // Sparrow reaches for autoPair for the same reason. Calling the V1 path directly
 // meant a modern card could not be paired whatever password was typed — a
 // failure that would have read as "wrong password" while burning slots.
-func CardEnrol(t CardTransport, configDir, pairingPassword string) (string, error) {
+func CardEnrol(t CardTransport, configDir, pairingPassword, pin string) (string, error) {
 	if t == nil {
 		return "", errors.New("no card transport")
 	}
@@ -155,6 +155,15 @@ func CardEnrol(t CardTransport, configDir, pairingPassword string) (string, erro
 	if err := os.WriteFile(pairingFile(configDir), []byte(encodePairing(cs.Pairing())), 0o600); err != nil {
 		return "", fmt.Errorf("paired but could not store the pairing: %w", err)
 	}
+	// The PIN before the key, because EXPORT KEY needs an authenticated
+	// session. Without it the card answers 6985 — conditions of use not
+	// satisfied — and the message blamed the path, which is the one part that
+	// was fine. The pairing above is already stored by this point, so a wrong
+	// PIN here costs an attempt and not a slot.
+	if err := cs.VerifyPIN(pin); err != nil {
+		return "", fmt.Errorf("paired, and the PIN was refused — the pairing is "+
+			"saved, so try \"Read key\" rather than pairing again: %w", err)
+	}
 	return cardPublicKey(cs)
 }
 
@@ -172,10 +181,16 @@ func cardPublicKey(cs *keycard.CommandSet) (string, error) {
 }
 
 // CardPublicKey reads the authority key from an already-enrolled card.
-func CardPublicKey(t CardTransport, configDir string) (string, error) {
+//
+// Needs the PIN: EXPORT KEY is only allowed inside an authenticated session, and
+// without one the card answers 6985.
+func CardPublicKey(t CardTransport, configDir, pin string) (string, error) {
 	s, err := openCard(t, configDir)
 	if err != nil {
 		return "", err
+	}
+	if err := s.cs.VerifyPIN(pin); err != nil {
+		return "", fmt.Errorf("PIN refused: %w", err)
 	}
 	return cardPublicKey(s.cs)
 }

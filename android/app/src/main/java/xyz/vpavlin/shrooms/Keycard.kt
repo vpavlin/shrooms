@@ -208,14 +208,25 @@ fun KeycardSetting(dir: String) {
 
         Spacer(Modifier.height(14.dp))
         KeyField(pairing, singleLine = true) { pairing = it.trim() }
+        Spacer(Modifier.height(14.dp))
+        Text(
+            "PIN",
+            style = MaterialTheme.typography.labelSmall,
+            color = Palette.Ash,
+        )
+        Spacer(Modifier.height(4.dp))
+        KeyField(pin, singleLine = true) { pin = it.trim() }
 
         Spacer(Modifier.height(10.dp))
         Row {
             Action(
                 text = if (waiting) "hold the card to the back" else "Pair this phone",
-                enabled = !waiting && pairing.isNotEmpty(),
+                // The PIN too: reading the authority key needs an
+                // authenticated session, so pairing without one gets as far as
+                // storing the pairing and then fails at the last step.
+                enabled = !waiting && pairing.isNotEmpty() && pin.isNotEmpty(),
             ) {
-                run("pairing") { Mobile.cardEnrol(it, dir, pairing) }
+                run("pairing") { Mobile.cardEnrol(it, dir, pairing, pin) }
             }
             Spacer(Modifier.width(12.dp))
             Action(
@@ -232,19 +243,14 @@ fun KeycardSetting(dir: String) {
 
         Spacer(Modifier.height(10.dp))
         Row {
-            Action(text = if (waiting) "hold the card to the back" else "Read key", enabled = !waiting) {
-                run("read") { Mobile.cardPublicKey(it, dir) }
+            Action(
+                text = if (waiting) "hold the card to the back" else "Read key",
+                enabled = !waiting && pin.isNotEmpty(),
+            ) {
+                run("read") { Mobile.cardPublicKey(it, dir, pin) }
             }
         }
 
-        Spacer(Modifier.height(14.dp))
-        Text(
-            "PIN",
-            style = MaterialTheme.typography.labelSmall,
-            color = Palette.Ash,
-        )
-        Spacer(Modifier.height(4.dp))
-        KeyField(pin, singleLine = true) { pin = it.trim() }
         Spacer(Modifier.height(10.dp))
         // Signs a digest and checks it against the card's own key, using the
         // same check a peer runs on a credential. A card that returns something
