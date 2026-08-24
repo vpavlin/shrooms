@@ -1,6 +1,6 @@
 # 033. The card is the admin, not the uid
 
-**Status:** proposed — refines the tiers in [ADR-025](025-control-from-a-desktop-app.md)
+**Status:** accepted, built — refines the tiers in [ADR-025](025-control-from-a-desktop-app.md)
 
 ## Context
 
@@ -178,6 +178,34 @@ mattering once the window is short.
   the part to write carefully and test adversarially: a credential for a
   different device, for a different mesh, expired, or signed by a key that is
   not this mesh's authority must all be refused before anything is published.
+
+## As built
+
+`groupMayReply` in `cmd/shrooms/invitegate.go`, called from `/invite/reply` when
+the caller is not root. Four conditions in order, each refused with its reason:
+a card-only authority, a credential present and readable, one that verifies
+against this mesh's admin keys inside its validity window, and one naming both
+the device key and the tunnel key this exchange is admitting.
+
+`HoldInvite` now records the device it handed out (`rememberAdmitting`), kept
+for the token's remaining life, which is what makes the fourth condition
+possible at all.
+
+Both endpoints refuse a caller the kernel will not vouch for, which is not the
+same as refusing a group member: `requireIdentified` answers 403 for "no uid at
+all" rather than falling through to the body. That regressed the moment they
+stopped being wrapped in `requireRoot` — an existing test caught it, answering
+400 where the truthful answer is about identity rather than syntax.
+
+Ten tests, one per way in. The one that matters most is the positive case: a
+gate that refuses everything satisfies every refusal test written for it.
+
+One thing found while writing them, and worth recording because it is the shape
+of mistake this project keeps meeting: the first version of the fixture built
+its authority with `cred.NewAdmin`, which is ed25519. `CardOnly` was therefore
+false, every case was refused at the first condition, and six tests passed
+without exercising anything they claimed to. The fixture now asserts
+`auth.CardOnly()` before the tests run.
 
 ## What would change our mind
 

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/vpavlin/shrooms/internal/cred"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -23,6 +24,13 @@ type fakeHolder struct {
 	req     *invite.Request
 	held    invite.Secret
 	holdErr error
+
+	// auth and admitting stand in for what a real mesh knows: who may sign for
+	// it, and which device the exchange in progress is admitting (ADR-033).
+	auth       *cred.Authority
+	admitDev   []byte
+	admitWG    []byte
+	admitKnown bool
 
 	gotSecret     invite.Secret
 	gotEph        []byte
@@ -245,4 +253,10 @@ func TestWaitingDaemonServesNoInviteHold(t *testing.T) {
 		t.Fatalf("/invite/hold returned %d; this test exists because it 404s", hold.StatusCode)
 	}
 	// So the CLI must decide from the status, before it prompts for anything.
+}
+
+func (h *fakeHolder) Authority() *cred.Authority { return h.auth }
+
+func (h *fakeHolder) Admitting(string) ([]byte, []byte, bool) {
+	return h.admitDev, h.admitWG, h.admitKnown
 }

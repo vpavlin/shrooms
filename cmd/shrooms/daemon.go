@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/vpavlin/shrooms/internal/cred"
 	dnssrv "github.com/vpavlin/shrooms/internal/dns"
 	"github.com/vpavlin/shrooms/internal/invite"
 	"github.com/vpavlin/shrooms/internal/logtail"
@@ -686,6 +687,11 @@ type peerStatus struct {
 type inviteHolder interface {
 	HoldInvite(ctx context.Context, s invite.Secret) (*invite.Request, error)
 	ReplyInvite(s invite.Secret, req *invite.Request, credential []byte) error
+
+	// Authority and Admitting are what lets a non-root caller be judged on what
+	// it carries rather than on its uid (ADR-033). See groupMayReply.
+	Authority() *cred.Authority
+	Admitting(topic string) (devicePub, wgPub []byte, ok bool)
 }
 
 // inviteHandlers registers the enrolment endpoints.
@@ -702,7 +708,11 @@ func inviteHandlers(mux *http.ServeMux, pick func(string) inviteHolder) {
 	// not here. /invite/hold blocks until a request arrives and returns it; the
 	// CLI signs; /invite/reply publishes what it signed. The token is what
 	// names the exchange, so this cannot be used to publish on any other topic.
-	mux.HandleFunc("/invite/hold", requireRoot(func(w http.ResponseWriter, r *http.Request) {
+	// Holding is not admitting (ADR-033). This subscribes to a topic the token
+	// names, waits, and reports the joining device's public keys. It hands over
+	// no secret and grants nothing, so it does not need root — and Basecamp,
+	// which runs as the user, cannot drive an enrolment without it.
+	mux.HandleFunc("/invite/hold", requireIdentified(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Token string `json:"token"`
 			TTLS  int    `json:"ttl_s"`
@@ -750,7 +760,16 @@ func inviteHandlers(mux *http.ServeMux, pick func(string) inviteHolder) {
 		})
 	}))
 
-	mux.HandleFunc("/invite/reply", requireRoot(func(w http.ResponseWriter, r *http.Request) {
+	// Replying IS admitting, and this is the one endpoint where that is true of
+	// the message rather than of the caller: the response carries the mesh's
+	// NETWORK KEY, because the joining device needs it, and nothing about that
+	// is admin-signed for a peer to check later.
+	//
+	// So root may always call it, and the socket group may call it only when
+	// what it carries proves the admin approved this exact enrolment (ADR-033).
+	// The conditions are checked below, in order, and each one is refused with
+	// the reason — a boundary that fails quietly is a boundary nobody trusts.
+	mux.HandleFunc("/invite/reply", requireIdentified(func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
 			Token      string `json:"token"`
 			EphPub     string `json:"eph_pub"`
@@ -783,6 +802,12 @@ func inviteHandlers(mux *http.ServeMux, pick func(string) inviteHolder) {
 		if m == nil {
 			http.Error(w, "no mesh called "+in.Mesh+" on this node", http.StatusBadRequest)
 			return
+		}
+		if !callerIsRoot(r) {
+			if err := groupMayReply(m, secret, credential); err != nil {
+				http.Error(w, err.Error(), http.StatusForbidden)
+				return
+			}
 		}
 		if err := m.ReplyInvite(secret, &invite.Request{EphPub: eph, Name: in.Name}, credential); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)

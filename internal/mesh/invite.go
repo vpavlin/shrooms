@@ -28,6 +28,18 @@ import (
 type invites struct {
 	mu sync.Mutex
 	by map[string]*heldInvite
+
+	// admitting is which device each open exchange is admitting, kept after
+	// HoldInvite has returned so a credential offered later can be checked
+	// against it. See rememberAdmitting.
+	admitting map[string]admitting
+}
+
+// admitting is the device keys one exchange handed out, and when to forget them.
+type admitting struct {
+	devicePub []byte
+	wgPub     []byte
+	until     time.Time
 }
 
 type heldInvite struct {
@@ -79,8 +91,59 @@ func (m *Mesh) HoldInvite(ctx context.Context, s invite.Secret) (*invite.Request
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case req := <-held.reqs:
+		m.rememberAdmitting(name, req)
 		return req, nil
 	}
+}
+
+// rememberAdmitting records which device an exchange is admitting.
+//
+// HoldInvite deletes the held entry as it returns, so without this the daemon
+// forgets the request the moment it hands it to whoever will sign for it — and
+// has no way to tell, when a credential comes back, whether it names the device
+// that actually asked to join.
+//
+// That check is what lets /invite/reply be reachable from the socket group
+// (ADR-033). Anybody may mint a token and walk a device of their own through
+// the exchange, so the question is not who is calling but whether the admin
+// signed for the device in front of us.
+//
+// Kept for the token's remaining life, keyed by topic because the token is what
+// names the exchange and both ends already derive it.
+func (m *Mesh) rememberAdmitting(topic string, req *invite.Request) {
+	if req == nil {
+		return
+	}
+	m.inv.mu.Lock()
+	defer m.inv.mu.Unlock()
+	if m.inv.admitting == nil {
+		m.inv.admitting = map[string]admitting{}
+	}
+	now := time.Now()
+	// Swept here rather than on a timer: this runs once per enrolment, which is
+	// rare, and an entry nobody asks about costs two keys until the next one.
+	for t, a := range m.inv.admitting {
+		if now.After(a.until) {
+			delete(m.inv.admitting, t)
+		}
+	}
+	m.inv.admitting[topic] = admitting{
+		devicePub: append([]byte(nil), req.DevicePub...),
+		wgPub:     append([]byte(nil), req.WGPub...),
+		until:     now.Add(invite.DefaultTTL),
+	}
+}
+
+// Admitting reports the device keys this node handed out for a token's
+// exchange, so a credential offered for it can be checked against them.
+func (m *Mesh) Admitting(topic string) (devicePub, wgPub []byte, ok bool) {
+	m.inv.mu.Lock()
+	defer m.inv.mu.Unlock()
+	a, ok := m.inv.admitting[topic]
+	if !ok || time.Now().After(a.until) {
+		return nil, nil, false
+	}
+	return a.devicePub, a.wgPub, true
 }
 
 // answerDeferred replies to a first-round request with enough to identify the

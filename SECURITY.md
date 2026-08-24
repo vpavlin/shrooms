@@ -141,17 +141,32 @@ also has a group of the same name, which is why the examples read that way; on
 a system where it does not, this refuses rather than falling back to your
 primary group, which may be shared with every account on the machine.
 
-What it cannot do is admit anybody — including by invite, which an earlier
-version of this note said it could. Both halves of the exchange (`/invite/hold`
-and `/invite/reply`) are root-gated by SO_PEERCRED, and the `shrooms invite`
-command reads the network key from a 0600 root-owned config, so a group member
-who is not root cannot mint one. On a mesh with `admin_keys` it would not help
-if they could: membership is a credential signed by a key the daemon has never
-held.
-→ Deliberate, and documented rather than minimised: the same shape as the
-`docker` group, with a smaller blast radius. Set it to a group you would trust
-with your mesh's metadata, which on a personal machine means your own login, and
-leave it unset on a shared one ([ADR-025](docs/adr/025-control-from-a-desktop-app.md)).
+What it cannot do is admit anybody **the admin has not signed for**.
+
+That sentence used to read "cannot admit anybody", and it was true when both
+halves of the invite exchange were root-gated. [ADR-033](docs/adr/033-the-card-is-the-admin-not-the-uid.md)
+changed it, because a uid stopped being what makes somebody an admin the moment
+the admin key moved to a Keycard: gating on root protects nothing from whoever
+holds the card, and blocks a legitimate holder running a desktop app.
+
+So the tiers now follow what protects an operation rather than how it sounds:
+
+- **`/invite/hold`** is reachable from the group. It subscribes to a topic a
+  token names, waits, and reports the joining device's public keys. It hands
+  over no secret.
+- **`/invite/reply`** publishes the mesh's **network key**, which is the one
+  thing here the daemon gives away rather than relays — a peer checks a
+  credential's signature for itself, and nothing downstream can check a network
+  key. Root may always call it. A group member may call it only when all four
+  of these hold: this mesh's admin keys are **card** keys (a file key lives in a
+  user's session, so "the admin signed it" and "the caller could have signed it"
+  stop being different questions); the credential **verifies** against them and
+  is **within its validity window**; and it **names the device this exchange is
+  admitting**, which the daemon knows because it held the exchange itself.
+
+The last condition is the one that does the work. Anybody can mint an invite
+token — it needs no daemon — and walk a device of their own through the
+exchange. Every credential they might offer names somebody else's keys.
 
 **A service bound to the mesh address is reachable by every member, and by
 nobody else.** Worth stating as the positive case, because it is the one
