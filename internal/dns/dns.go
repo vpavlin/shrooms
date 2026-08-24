@@ -19,6 +19,7 @@ package dns
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -36,16 +37,20 @@ const Port = 53
 
 // DefaultSuffix is the domain served unless configured otherwise.
 //
-// A label under .internal, which ICANN reserved in July 2024 and resolved will
-// never be delegated in the root zone. ".mesh" was neither reserved nor
-// special-use — a plausible-looking string nobody owned — and ICANN's 2026
-// application round closed in August 2026 with more than 1,600 applications
-// whose contents are not public until Reveal Day. See ADR-032.
+// .internal, which ICANN reserved in July 2024 and resolved will never be
+// delegated in the root zone. ".mesh" was neither reserved nor special-use — a
+// plausible-looking string nobody owned — and ICANN's 2026 application round
+// closed in August 2026 with more than 1,600 applications whose contents are
+// not public until Reveal Day. See ADR-032.
 //
-// A label UNDER .internal rather than .internal itself, because that space is
-// shared: a network already using it for its own names must not find this
-// resolver answering for all of it.
-const DefaultSuffix = "mesh.internal"
+// An earlier draft used "mesh.internal", to claim one label rather than the
+// whole of a shared private space. It was the wrong trade: names here are
+// already four labels deep — ai.k11.home.mesh — and mesh.internal made that
+// twenty-five characters to keep a word that does no work once .internal is
+// there. Claiming .internal outright costs a conflict with a network already
+// using it for its own names, which is a real risk and a narrow one, and which
+// hosts_suffix exists to let somebody step around.
+const DefaultSuffix = "internal"
 
 // LegacySuffix is what this served before DefaultSuffix, answered alongside it
 // so the change does not break every ssh config on the same day.
@@ -407,3 +412,68 @@ func Listen(addr netip.Addr) (net.PacketConn, error) {
 // Deadline is how long a query may take before it is abandoned. Nothing here
 // blocks, so this only bounds a pathological client.
 const Deadline = 2 * time.Second
+
+// ValidSuffix checks a domain suffix, and says what is wrong with a bad one.
+//
+// Checked because this decides what the resolver is authoritative for, and the
+// resolver answers for everything below it and forwards everything else. A
+// suffix of "com" makes a machine answer for all of .com out of a mesh roster;
+// an empty one, or ".", makes it answer for nothing and forward the lot. Both
+// are a few keystrokes away from somebody trying to shorten a name.
+//
+// Returns a warning separately from an error: a structurally valid suffix that
+// is somebody else's namespace is the operator's business, and refusing it
+// outright would make this the one setting that argues back. Say so and let
+// them decide.
+func ValidSuffix(suffix string) (warning string, err error) {
+	s := strings.ToLower(strings.Trim(strings.TrimSpace(suffix), "."))
+	if s == "" {
+		return "", errors.New("a domain suffix cannot be empty: the resolver " +
+			"would answer for nothing and forward every query")
+	}
+	if len(s) > 253 {
+		return "", fmt.Errorf("domain suffix is %d characters, over the 253 a name may be", len(s))
+	}
+	for _, label := range strings.Split(s, ".") {
+		if label == "" {
+			return "", fmt.Errorf("%q has an empty label", suffix)
+		}
+		if len(label) > 63 {
+			return "", fmt.Errorf("label %q is %d characters, over the 63 a label may be", label, len(label))
+		}
+		for i := 0; i < len(label); i++ {
+			c := label[i]
+			switch {
+			case c >= 'a' && c <= 'z', c >= '0' && c <= '9':
+			case c == '-':
+				if i == 0 || i == len(label)-1 {
+					return "", fmt.Errorf("label %q may not begin or end with a hyphen", label)
+				}
+			default:
+				return "", fmt.Errorf("label %q may only contain letters, digits and hyphens", label)
+			}
+		}
+	}
+
+	// Reserved, and therefore safe: .internal will never be delegated
+	// (ICANN, July 2024), and the RFC 6761 and RFC 8375 names are set aside too.
+	switch {
+	case s == "internal" || strings.HasSuffix(s, ".internal"):
+	case s == "home.arpa" || strings.HasSuffix(s, ".home.arpa"):
+	case s == "local" || strings.HasSuffix(s, ".local"):
+		warning = "\".local\" belongs to mDNS (RFC 6762). Avahi or " +
+			"systemd-resolved will also answer for it, and which one wins is " +
+			"not something this daemon decides."
+	case !strings.Contains(s, "."):
+		warning = fmt.Sprintf("%q is a single label that nobody has reserved. "+
+			"ICANN's 2026 round closed in August 2026 with more than 1,600 "+
+			"applications, so it may become a real top-level domain — and this "+
+			"machine would then answer for it out of a mesh roster. "+
+			"%q is the string reserved for exactly this (ADR-032).", s, DefaultSuffix)
+	default:
+		warning = fmt.Sprintf("%q is under a domain somebody else may own. That "+
+			"is fine if it is yours; if it is not, this machine will answer for "+
+			"names in it that the rest of the internet answers differently.", s)
+	}
+	return warning, nil
+}

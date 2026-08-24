@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	dnssrv "github.com/vpavlin/shrooms/internal/dns"
 	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/vpavlin/shrooms/internal/logtail"
@@ -183,6 +185,49 @@ func controlHandlers(mux *http.ServeMux, log *slog.Logger, cfgPath string, rl *r
 				return "", err
 			}
 			return fmt.Sprintf("%d service(s) published", len(in.Services)), nil
+		})))
+
+	// The domain this device answers for (ADR-032).
+	//
+	// Settable over the socket because it is the one naming decision an
+	// operator may actually need to change — .internal is shared private space,
+	// and a machine that is also on a corporate .internal has to step around
+	// it. Editing a config file by hand to do that is the sort of thing that
+	// ends with a resolver claiming ".".
+	//
+	// Warns rather than refuses on a suffix that is somebody else's namespace:
+	// structurally valid is this daemon's business, and whose domain it is, is
+	// the operator's.
+	mux.HandleFunc("/config/hosts-suffix", readOrWrite(
+		func(w http.ResponseWriter, r *http.Request) {
+			cfg, err := state.LoadConfig(cfgPath)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			suffix := cfg.HostsSuffix
+			if suffix == "" {
+				suffix = dnssrv.DefaultSuffix
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"hosts_suffix": suffix,
+				"default":      dnssrv.DefaultSuffix,
+				"legacy":       dnssrv.LegacySuffix,
+			})
+		},
+		writeSetting(log, cfgPath, func(cfg *state.Config, in settingRequest) (string, error) {
+			warn, err := dnssrv.ValidSuffix(in.HostsSuffix)
+			if err != nil {
+				return "", err
+			}
+			cfg.HostsSuffix = strings.ToLower(strings.Trim(strings.TrimSpace(in.HostsSuffix), "."))
+			msg := "names are now answered under ." + cfg.HostsSuffix +
+				" (a restart is needed for the resolver to be told)"
+			if warn != "" {
+				msg += "\n\nwarning: " + warn
+			}
+			return msg, nil
 		})))
 
 	// Whether this device forwards traffic for peers of a mesh that cannot
@@ -396,8 +441,10 @@ type settingRequest struct {
 	Name     string   `json:"name,omitempty"`
 	Mode     string   `json:"mode,omitempty"`
 	Services []string `json:"services,omitempty"`
-	Label    string   `json:"label,omitempty"`
-	Enabled  bool     `json:"enabled,omitempty"`
+	// HostsSuffix is the domain this device answers for (ADR-032).
+	HostsSuffix string `json:"hosts_suffix,omitempty"`
+	Label       string `json:"label,omitempty"`
+	Enabled     bool   `json:"enabled,omitempty"`
 }
 
 // rejected marks a change the caller got wrong, as opposed to one this daemon

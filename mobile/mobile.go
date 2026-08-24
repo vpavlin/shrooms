@@ -743,6 +743,44 @@ func SetAnnounceServices(configDir string, on bool) error {
 	return state.WriteConfig(cfgPath, cfg)
 }
 
+// SetDNSSuffix sets the domain this device answers for (ADR-032).
+//
+// Returns a warning rather than an error for a suffix that is valid and
+// somebody else's: whose domain it is, is the user's business, and the phone
+// should say so rather than refuse. An empty string restores the default, which
+// is what a form's "reset" wants and saves the app knowing what the default is.
+//
+// Takes effect when the tunnel is next started, because the search domain is
+// handed to VpnService.Builder as the interface is built.
+func SetDNSSuffix(configDir, suffix string) (string, error) {
+	suffix = strings.ToLower(strings.Trim(strings.TrimSpace(suffix), "."))
+	warn := ""
+	if suffix != "" {
+		var err error
+		if warn, err = dnssrv.ValidSuffix(suffix); err != nil {
+			return "", err
+		}
+	}
+	cfg, _, err := load(configDir)
+	if err != nil {
+		return "", err
+	}
+	cfg.HostsSuffix = suffix
+	cfgPath, _ := paths(configDir)
+	if err := state.WriteConfig(cfgPath, cfg); err != nil {
+		return "", err
+	}
+	return warn, nil
+}
+
+// DefaultDNSSuffix is what the app should offer as the default, so it does not
+// have to carry its own copy of the answer.
+func DefaultDNSSuffix() string { return dnssrv.DefaultSuffix }
+
+// LegacyDNSSuffix is the suffix still answered alongside the configured one, so
+// a settings screen can say that old names keep working.
+func LegacyDNSSuffix() string { return dnssrv.LegacySuffix }
+
 // lifecycle serialises starting and stopping a session, end to end. See Start
 // for what interleaving them did.
 var lifecycle sync.Mutex
