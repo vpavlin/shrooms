@@ -208,6 +208,20 @@ fun KeycardSetting(dir: String) {
                 run("pairing") { Mobile.cardEnrol(it, dir, pairing) }
             }
             Spacer(Modifier.width(12.dp))
+            Action(
+                text = if (waiting) "hold the card to the back" else "Forget other devices",
+                enabled = !waiting,
+            ) {
+                // Frees the four slots this phone is not using. Only possible
+                // once this phone is paired, because unpairing happens inside
+                // the channel a pairing opens — which is why a card with no
+                // free slots and no pairing here cannot be rescued from the app.
+                run("unpairing") { Mobile.cardUnpairOthers(it, dir) }
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+        Row {
             Action(text = if (waiting) "hold the card to the back" else "Read key", enabled = !waiting) {
                 run("read") { Mobile.cardPublicKey(it, dir) }
             }

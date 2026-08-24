@@ -379,7 +379,11 @@ site-adrs:
 	python3 scripts/render-adrs.py
 
 fmt:
-	gofmt -w ./cmd ./internal
+	@# ./mobile too, though `make test` has always CHECKED it: the check listed
+	@# a directory the fix did not touch, so a mobile file could only ever be
+	@# fixed by running gofmt by hand — which is the sort of thing somebody
+	@# discovers while trying to commit something else.
+	gofmt -w ./cmd ./internal ./mobile
 
 clean:
 	rm -rf bin dist docker/build docker/run
