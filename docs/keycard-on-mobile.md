@@ -272,6 +272,19 @@ screen, under two settings most people never change, which produced *"Where do I
 find this keycard screen? I see 'invite a device', but nothing on keycard
 explicitly"*. It is now above the blind relay.
 
+### A refused PIN says what it costs
+
+A Keycard blocks after three wrong PINs and then needs its PUK. keycard-go
+returns the remaining attempt count, and it arrives inside a sentence that reads
+like a footnote — *"wrong pin. remaining attempts: 2"*. It is not a footnote: it
+is the only warning there is before somebody needs a PUK they probably do not
+have to hand. The app now says how many are left, and what running out means.
+
+Unblocking is deliberately not offered. It spends the PUK, and a PUK entered
+wrong ten times destroys the key on the card permanently — which puts it in the
+same category as INIT and key generation: irreversible, and not something to
+reach from a VPN's settings screen.
+
 ### What is on disk
 
 | file | mode | what it is |

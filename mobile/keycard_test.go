@@ -5,8 +5,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	keycard "github.com/keycard-tech/keycard-go/v4"
 	ktypes "github.com/keycard-tech/keycard-go/v4/types"
 )
 
@@ -267,5 +269,34 @@ func TestEnrolmentIsAnsweredFromDisk(t *testing.T) {
 	// anything behind it.
 	if err := CardForget(dir); err != nil {
 		t.Errorf("forgetting an already-forgotten card failed: %v", err)
+	}
+}
+
+// A Keycard blocks after three wrong PINs and then needs its PUK. The count is
+// the only warning there is, and keycard-go delivers it inside a sentence that
+// reads like a footnote.
+func TestARefusedPinSaysWhatItCosts(t *testing.T) {
+	for _, c := range []struct {
+		left int
+		want string
+	}{
+		{2, "2 attempts left"},
+		{1, "ONE attempt left"},
+		{0, "now blocked"},
+	} {
+		got := pinError(&keycard.WrongPINError{RemainingAttempts: c.left}).Error()
+		if !strings.Contains(got, c.want) {
+			t.Errorf("%d attempts left produced %q, want it to contain %q", c.left, got, c.want)
+		}
+		if !strings.Contains(got, "PUK") {
+			t.Errorf("%d attempts left produced %q, which never mentions the PUK", c.left, got)
+		}
+	}
+
+	// Anything that is not a wrong PIN passes through untouched: a lost tag is
+	// not a PIN problem and must not be described as one.
+	other := errors.New("tag lost")
+	if pinError(other) != other {
+		t.Error("a non-PIN failure was rewritten as a PIN failure")
 	}
 }

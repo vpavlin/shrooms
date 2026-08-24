@@ -106,7 +106,7 @@ What each failure would mean:
 |---|---|
 | card not detected | NFC, the applet, or the transport — not this codebase |
 | pairing fails | wrong pairing password, or slots exhausted |
-| PIN rejected | the PIN, and **count the attempts** |
+| PIN rejected | the PIN — the app now says how many attempts remain, and what running out costs |
 | signs but does not verify | keycard-go's mangled `s`, repaired automatically; if it survives the repair, then the conversions in `internal/cred/card.go` |
 | signature is not 64 bytes | `CompactSig` padding, or keycard-go returning a different shape |
 

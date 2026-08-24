@@ -194,9 +194,8 @@ func CardEnrol(t CardTransport, configDir, pairingPassword, pin string) (string,
 	// was fine. The pairing above is already stored by this point, so a wrong
 	// PIN here costs an attempt and not a slot.
 	if err := cs.VerifyPIN(pin); err != nil {
-		return "", fmt.Errorf("paired, and the PIN was refused — the pairing is "+
-			"saved, so this card does not need pairing again, only the right "+
-			"PIN: %w", err)
+		return "", fmt.Errorf("paired, and %w. The pairing is saved, so this "+
+			"card does not need pairing again — only the right PIN", pinError(err))
 	}
 	key, err := cardPublicKey(cs, rec)
 	if err != nil {
@@ -310,7 +309,7 @@ func CardPublicKey(t CardTransport, configDir, pin string) (string, error) {
 		return "", err
 	}
 	if err := s.cs.VerifyPIN(pin); err != nil {
-		return "", fmt.Errorf("PIN refused: %w", err)
+		return "", pinError(err)
 	}
 	return cardPublicKey(s.cs, s.rec)
 }
@@ -335,7 +334,7 @@ func newCardSigner(t CardTransport, configDir, pin string) (*cardSigner, error) 
 		return nil, err
 	}
 	if err := s.cs.VerifyPIN(pin); err != nil {
-		return nil, fmt.Errorf("PIN refused: %w", err)
+		return nil, pinError(err)
 	}
 	hexPub, err := cardPublicKey(s.cs, s.rec)
 	if err != nil {
@@ -416,6 +415,35 @@ func CardSelfTest(t CardTransport, configDir, pin string) (string, error) {
 			"the conversion between what the card returns and what this project checks is wrong")
 	}
 	return hex.EncodeToString(s.pub), nil
+}
+
+// pinError says what a refused PIN costs, which is the part that matters.
+//
+// keycard-go returns the remaining attempt count, and it arrives inside a
+// sentence that reads like a detail: "wrong pin. remaining attempts: 2". It is
+// not a detail. A Keycard blocks after three wrong PINs and then needs its PUK,
+// which somebody who has been typing guesses is unlikely to have to hand — and
+// that count is the only warning there is before it happens.
+//
+// Unblocking is deliberately not offered here: it spends the PUK, and a PUK
+// entered wrong ten times destroys the key on the card for good.
+func pinError(err error) error {
+	var wrong *keycard.WrongPINError
+	if !errors.As(err, &wrong) {
+		return err
+	}
+	switch n := wrong.RemainingAttempts; {
+	case n <= 0:
+		return errors.New("wrong PIN, and that was the last attempt — this card " +
+			"is now blocked and needs its PUK. keycard-cli and the Keycard app " +
+			"can unblock it; this app deliberately cannot")
+	case n == 1:
+		return errors.New("wrong PIN. ONE attempt left before this card blocks " +
+			"and needs its PUK")
+	default:
+		return fmt.Errorf("wrong PIN. %d attempts left before this card blocks "+
+			"and needs its PUK", n)
+	}
 }
 
 // pairingError says what a pairing failure means, where the card says 6a84.
