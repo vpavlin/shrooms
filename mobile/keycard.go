@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	keycard "github.com/keycard-tech/keycard-go/v4"
 	kio "github.com/keycard-tech/keycard-go/v4/io"
@@ -136,8 +137,7 @@ func CardEnrol(t CardTransport, configDir, pairingPassword string) (string, erro
 		return "", fmt.Errorf("no Keycard applet on this card: %w", err)
 	}
 	if err := cs.AutoPairWithMode(pairingPassword, keycard.P2PairAny); err != nil {
-		return "", fmt.Errorf("pairing refused — wrong pairing password, or no free "+
-			"slots on the card (a card has %d): %w", keycard.PairingMaxClientCount, err)
+		return "", fmt.Errorf("%w", pairingError(err))
 	}
 	if err := cs.AutoOpenSecureChannel(); err != nil {
 		return "", fmt.Errorf("paired but could not open a secure channel: %w", err)
@@ -261,4 +261,53 @@ func CardSelfTest(t CardTransport, configDir, pin string) (string, error) {
 			"the conversion between what the card returns and what this project checks is wrong")
 	}
 	return hex.EncodeToString(s.pub), nil
+}
+
+// pairingError says what a pairing failure means, where the card says 6a84.
+//
+// The library maps that status word to a readable error, but only inside Pair()
+// — the version 1 path. AutoPairWithMode goes a different way and the status
+// word comes back raw, as "bad response 6a84: PAIR step 1 failed", which names
+// the step and not the problem.
+//
+// The problem is that the card is full. A Keycard has five pairing slots and
+// they are consumed by every device that has ever paired with it, including
+// this app on a previous install and any attempt that got half way. Nothing
+// about it is a wrong password, which is what somebody will otherwise try next.
+func pairingError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "6a84") ||
+		errors.Is(err, keycard.ErrNoAvailablePairingSlots) {
+		return fmt.Errorf("this card has no free pairing slots — it has %d and "+
+			"they are all taken, by other devices or by earlier attempts from "+
+			"this one. Free one with \"forget other devices\" if this phone is "+
+			"already paired, or unpair elsewhere. The pairing password is not "+
+			"the problem: %w", keycard.PairingMaxClientCount, err)
+	}
+	return fmt.Errorf("pairing refused — wrong pairing password, or the card "+
+		"refused the request: %w", err)
+}
+
+// CardUnpairOthers frees every pairing slot except this phone's.
+//
+// Needs this phone to be paired already, because unpairing happens inside the
+// secure channel a pairing opens — a card with no slots left and no pairing
+// here cannot be recovered from this app, and needs keycard-cli or another tool
+// that still holds one.
+//
+// Kept separate from enrolment and named for what it does to somebody else's
+// pairing, because it is not undoable: every other device that was paired with
+// this card stops being able to use it.
+func CardUnpairOthers(t CardTransport, configDir string) (string, error) {
+	s, err := openCard(t, configDir)
+	if err != nil {
+		return "", err
+	}
+	if err := s.cs.UnpairOthers(); err != nil {
+		return "", fmt.Errorf("could not free the other pairing slots: %w", err)
+	}
+	return fmt.Sprintf("freed the other slots; this phone is still paired (%d in total)",
+		keycard.PairingMaxClientCount), nil
 }
