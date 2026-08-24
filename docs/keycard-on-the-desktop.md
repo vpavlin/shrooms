@@ -81,26 +81,55 @@ down rather than inferred from a diff.
 
 ## Where the card code should live
 
-Vaclav notes Keycard integration already works for Scala. That matters for the
-shape rather than the code: if Basecamp has, or could have, a **Keycard module**
-that exposes card access to other modules, then shrooms should use that rather
-than opening a reader itself — two modules fighting over one card reader is a
-bad afternoon, and PC/SC does not enjoy being opened twice.
+The module is [`xAlisher/keycard-basecamp`](https://github.com/xAlisher/keycard-basecamp),
+"Keycard smartcard authentication module for Logos Basecamp", forked at
+`vpavlin/keycard-basecamp`. It is a C++ Logos module reached the ordinary way —
+`logos.callModule("keycard", ...)` — which is exactly the shape hoped for above:
+shrooms would not open a reader itself, and two modules would not fight over
+one.
 
-Looked, and could not find it. `vpavlin/logos-basecamp-modules` is an empty
-catalog — its `.gitmodules` still has only the instructions for adding one.
-`vpavlin/loam-keycard` is the one this codebase already nods to, and it is
-TypeScript over raw NFC, which is neither the language nor the transport a
-desktop module needs. The Scala fork is presumably private or under an
-organisation a public search does not reach.
+**But its current API is the wrong shape for this, and its own documentation
+says so.** Today it is an auth and key-derivation service: `requestAuth(domain,
+caller)` derives a domain-scoped secp256k1 key on-card and **returns the raw
+32-byte private key to the calling module**.
 
-So the question to settle before writing any PC/SC code, and it needs the URL:
-**does the Scala integration expose a reusable module, or is it internal to that
-app?** If the
-former, `shrooms_core` gains a dependency and a `CardTransport` that forwards to
-it. If the latter, shrooms carries its own reader and the two applications must
-not be used with the same card at the same time — worth saying out loud in the
-UI if that is where this lands.
+Shrooms must not use that. The whole point of
+[ADR-022](adr/022-keycard-for-the-admin-key.md) is that the mesh's authority key
+never leaves the card — a card signs a digest and the key stays put. A call that
+hands back the private key would put the authority for a mesh into
+`shrooms_core`'s memory, which is worse than the passphrase-protected file it
+was meant to improve on.
+
+`KEYCARD_SIGNING_MODES.md` in that repo already makes this argument, quoting
+guylouis: *"keycard-basecamp needs to be more than an auth/key-derivation
+service — it also needs to sign request for signature coming from LEZ wallet (or
+other modules)"*, and noting that handing raw keys to consumers "distributes the
+surface across every consumer module". Status there is **"Research complete,
+implementation not yet started."**
+
+**The good news is that what shrooms needs is the already-supported path, not
+the unmerged one.** That document is mostly about BIP340 Schnorr for LEZ, which
+needs an applet branch mikkoph distributes by hand. Shrooms needs plain
+**secp256k1 ECDSA over a 32-byte digest** — `SIGN P2=0x00`, the current
+behaviour — and the vendored `keycard-qt` SDK already exposes it:
+
+> `signWithPath()` returns 65 bytes: R(32) ‖ S(32) ‖ V(1)
+
+`internal/cred/card.go` already turns exactly that into what this codebase
+verifies. So no new cryptography, no new applet, no waiting for Schnorr.
+
+**Which makes the ask small and worth contributing upstream:** a `signDigest`
+alongside `requestAuth`, taking a derivation path and a digest and returning a
+signature — not a key. That is the thing keycard-basecamp's own roadmap says it
+should have, it is what its "single audited security surface" principle implies,
+and shrooms would be its second consumer after LEZ rather than the reason for it.
+
+**One constraint to carry into the UI**, from the same document: a card is
+loaded in one mode or the other, standard BIP32 or LEE, and only one at a time.
+A card set up for LEZ cannot produce the keys used here, and a user who wants
+both needs two cards. That is a property of the applet rather than a choice
+anybody made, and it is exactly the sort of thing that presents as "my card
+stopped working".
 
 ## Suggested order
 
@@ -108,7 +137,8 @@ UI if that is where this lands.
    own, and everything else depends on it.
 2. **Settle the tier**, in an ADR: may the group tier hold and relay an invite,
    given that the signature is off-daemon?
-3. **Settle where the card lives**: the Scala module, or a reader of our own.
+3. **Get `signDigest` into keycard-basecamp**, rather than a reader of our own
+   or `requestAuth`. Its absence, not the transport, is what blocks this.
 4. **Then the transport and the UI**, which is the smallest part of this.
 
 ## One thing this does not change
