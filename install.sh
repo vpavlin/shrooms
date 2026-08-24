@@ -93,12 +93,12 @@ command -v docker >/dev/null || { echo "docker is not installed"; exit 1; }
 command -v systemctl >/dev/null || { echo "no systemd; see docker/compose-node.yml to run it yourself"; exit 1; }
 echo "  docker $(docker version --format '{{.Server.Version}}' 2>/dev/null || echo '?'), /dev/net/tun present"
 
-# SELinux relabels bind mounts; without :Z the container cannot read its config
-# and reports it as missing rather than as a permission problem.
+# SELinux relabels bind mounts; without a label the container cannot read its
+# config and reports it as missing rather than as a permission problem.
 Z=""
-if command -v getenforce >/dev/null && [ "$(getenforce 2>/dev/null)" = "Enforcing" ]; then
-    Z=":Z"
-    echo "  SELinux enforcing, relabelling mounts"
+if [ -e /sys/fs/selinux/enforce ]; then
+    Z=":z"
+    echo "  SELinux enabled, relabelling mounts (shared)"
 fi
 
 # The image is :latest by default, and that is a trust decision worth naming
@@ -172,7 +172,7 @@ ExecStart=/usr/bin/docker run --rm --name shrooms \\
     --device /dev/net/tun \\
     -v /etc/shrooms:/etc/shrooms$Z \\
     -v /var/lib/shrooms:/var/lib/shrooms$Z \\
-    -v /run/shrooms:/run/shrooms \\
+    -v /run/shrooms:/run/shrooms$Z \\
     $IMAGE daemon --socket /run/shrooms/shrooms.sock
 ExecStop=/usr/bin/docker stop shrooms
 Restart=always

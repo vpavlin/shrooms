@@ -113,15 +113,15 @@ if [ "$(basename "$RUNTIME")" = docker ]; then
     AFTER="docker.service network-online.target"
 fi
 
-# SELinux relabels bind mounts; without :Z the container cannot read its config
-# and reports it as missing rather than as a permission problem.
+# SELinux relabels bind mounts; without a label the container cannot read its
+# config and reports it as missing rather than as a permission problem.
 #
 # Every mount, including /run. That one was missed, and it is the one that
 # fails hardest: the daemon cannot bind its control socket, exits, and systemd
 # restarts it forever. "bind: permission denied" on a path root owns reads as
 # nonsense until you remember SELinux is in the way.
 Z=""
-if command -v getenforce >/dev/null && [ "$(getenforce 2>/dev/null)" = "Enforcing" ]; then
+if [ -e /sys/fs/selinux/enforce ]; then
     # :z, the shared label — NOT :Z.
     #
     # :Z applies a *private* label, with MCS categories unique to the container
@@ -131,7 +131,7 @@ if command -v getenforce >/dev/null && [ "$(getenforce 2>/dev/null)" = "Enforcin
     # categories and is refused access to files the first created, which
     # surfaces as "write config: permission denied" on a file root owns.
     Z=":z"
-    echo "  SELinux enforcing, relabelling mounts (shared)"
+    echo "  SELinux enabled, relabelling mounts (shared)"
 fi
 
 echo "==> fetching $IMAGE"
