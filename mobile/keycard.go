@@ -84,7 +84,10 @@ func openCard(t CardTransport, configDir string) (*cardSession, error) {
 		return nil, err
 	}
 	cs.SetPairing(p)
-	if err := cs.OpenSecureChannel(); err != nil {
+	// Version-agnostic, for the same reason CardEnrol pairs that way: a card
+	// running applet 4.0 or later opens its channel differently, and the V1
+	// call fails there in a way that reads as the wrong card.
+	if err := cs.AutoOpenSecureChannel(); err != nil {
 		return nil, fmt.Errorf("could not open a secure channel — is this the card that was enrolled? %w", err)
 	}
 	return &cardSession{cs: cs}, nil
@@ -111,6 +114,19 @@ func decodePairing(s string) (*ktypes.Pairing, error) {
 //
 // The pairing password is the card's, set when it was initialised. It is used
 // here and not stored: what is stored is the pairing it produces.
+//
+// `KeycardDefaultPairing` is the factory default for a card initialised without
+// one being chosen — keycard-cli's `internal/secrets.go` defines it, and its
+// examples pair with PIN 123456 and PUK 123456789012 alongside. A card somebody
+// has set up properly will have its own.
+//
+// Paired through the Auto* calls rather than Pair/OpenSecureChannel, because
+// those are the version 1 path. A card running applet 4.0 or later authenticates
+// with an X.509 certificate against the Status CA and needs no pairing password
+// at all; keycard-go's own README says to use the version-agnostic calls, and
+// Sparrow reaches for autoPair for the same reason. Calling the V1 path directly
+// meant a modern card could not be paired whatever password was typed — a
+// failure that would have read as "wrong password" while burning slots.
 func CardEnrol(t CardTransport, configDir, pairingPassword string) (string, error) {
 	if t == nil {
 		return "", errors.New("no card transport")
@@ -119,10 +135,11 @@ func CardEnrol(t CardTransport, configDir, pairingPassword string) (string, erro
 	if err := cs.Select(); err != nil {
 		return "", fmt.Errorf("no Keycard applet on this card: %w", err)
 	}
-	if err := cs.Pair(pairingPassword); err != nil {
-		return "", fmt.Errorf("pairing refused — wrong pairing password, or no free slots on the card: %w", err)
+	if err := cs.AutoPairWithMode(pairingPassword, keycard.P2PairAny); err != nil {
+		return "", fmt.Errorf("pairing refused — wrong pairing password, or no free "+
+			"slots on the card (a card has %d): %w", keycard.PairingMaxClientCount, err)
 	}
-	if err := cs.OpenSecureChannel(); err != nil {
+	if err := cs.AutoOpenSecureChannel(); err != nil {
 		return "", fmt.Errorf("paired but could not open a secure channel: %w", err)
 	}
 	if err := os.MkdirAll(configDir, 0o700); err != nil {
