@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -46,6 +47,9 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -759,11 +763,22 @@ private fun CardOpDialog(op: CardOp, onDismiss: () -> Unit) {
 @Composable
 fun KeycardSetting(dir: String) {
     val ctx = LocalContext.current
-    // Re-read on every composition rather than remembered: somebody sent to
-    // Android's NFC settings comes back to this screen, and a panel still
-    // saying "NFC is switched off" after they switched it on is worse than not
-    // having said anything.
-    val nfc = nfcState(ctx)
+    // Re-read when the screen comes back to the front.
+    //
+    // Somebody sent to Android's NFC settings by the button below returns to
+    // this panel, and returning does not recompose on its own — so a panel that
+    // read the state once would still be saying "NFC is switched off" after
+    // they had just switched it on, with a button offering to send them back
+    // where they came from.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var nfc by remember { mutableStateOf(nfcState(ctx)) }
+    DisposableEffect(lifecycleOwner) {
+        val watch = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) nfc = nfcState(ctx)
+        }
+        lifecycleOwner.lifecycle.addObserver(watch)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(watch) }
+    }
     var enrolled by remember { mutableStateOf(false) }
     var key by remember { mutableStateOf("") }
     var setup by remember { mutableStateOf(false) }
