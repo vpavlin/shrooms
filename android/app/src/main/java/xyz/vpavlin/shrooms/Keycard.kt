@@ -1,6 +1,8 @@
 package xyz.vpavlin.shrooms
 
 import android.app.Activity
+import android.content.Intent
+import android.provider.Settings as AndroidSettings
 import android.util.Log
 import android.nfc.NfcAdapter
 import android.nfc.Tag
@@ -189,6 +191,21 @@ private fun cardReportOf(json: String): CardReport = JSONObject(json).let {
  */
 private fun why(t: Throwable): String =
     t.message?.takeIf { it.isNotBlank() } ?: t::class.simpleName ?: "unknown error"
+
+/** What this phone can do about NFC at all. */
+private enum class Nfc { Missing, Off, Ready }
+
+/**
+ * Asked before offering anything, rather than discovered by failing.
+ *
+ * Both of these used to surface as an exception thrown from the middle of a
+ * tap — which is to say, after somebody had opened a ceremony, typed a PIN and
+ * held a card against a phone that was never going to read it.
+ */
+private fun nfcState(ctx: android.content.Context): Nfc {
+    val adapter = NfcAdapter.getDefaultAdapter(ctx) ?: return Nfc.Missing
+    return if (adapter.isEnabled) Nfc.Ready else Nfc.Off
+}
 
 /** A Keycard PIN is exactly six digits. */
 private const val PinLength = 6
@@ -741,6 +758,12 @@ private fun CardOpDialog(op: CardOp, onDismiss: () -> Unit) {
  */
 @Composable
 fun KeycardSetting(dir: String) {
+    val ctx = LocalContext.current
+    // Re-read on every composition rather than remembered: somebody sent to
+    // Android's NFC settings comes back to this screen, and a panel still
+    // saying "NFC is switched off" after they switched it on is worse than not
+    // having said anything.
+    val nfc = nfcState(ctx)
     var enrolled by remember { mutableStateOf(false) }
     var key by remember { mutableStateOf("") }
     var setup by remember { mutableStateOf(false) }
@@ -767,7 +790,30 @@ fun KeycardSetting(dir: String) {
         )
 
         Spacer(Modifier.height(16.dp))
-        if (!enrolled) {
+        when (nfc) {
+            Nfc.Missing -> Text(
+                "This phone has no NFC, so it cannot use a card. The card can " +
+                    "still hold the admin key — another device has to do the tapping.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Palette.Amber,
+            )
+            Nfc.Off -> {
+                Text(
+                    "NFC is switched off, so a card cannot be read.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Palette.Amber,
+                )
+                Spacer(Modifier.height(14.dp))
+                Action(text = "Open NFC settings", enabled = true) {
+                    runCatching {
+                        ctx.startActivity(Intent(AndroidSettings.ACTION_NFC_SETTINGS))
+                    }
+                }
+            }
+            Nfc.Ready -> Unit
+        }
+
+        if (nfc == Nfc.Ready && !enrolled) {
             Text(
                 "This phone is not set up with a card.",
                 style = MaterialTheme.typography.bodyMedium,
@@ -775,7 +821,7 @@ fun KeycardSetting(dir: String) {
             )
             Spacer(Modifier.height(14.dp))
             Action(text = "Set up a card", enabled = true) { setup = true }
-        } else {
+        } else if (enrolled) {
             Text(
                 "This phone signs with a card.",
                 style = MaterialTheme.typography.bodyMedium,
@@ -787,7 +833,7 @@ fun KeycardSetting(dir: String) {
                 AuthorityKey(key) { clipboard.setText(AnnotatedString(key)) }
             }
             Spacer(Modifier.height(16.dp))
-            Action(text = "Check the card", enabled = true) {
+            Action(text = "Check the card", enabled = nfc == Nfc.Ready) {
                 op = CardOp(
                     title = "Check the card",
                     // Signs a digest and verifies it against the card's own
@@ -802,7 +848,7 @@ fun KeycardSetting(dir: String) {
                 ) { t, pin -> Mobile.cardSelfTest(t, dir, pin) }
             }
             Spacer(Modifier.height(10.dp))
-            Action(text = "Free the other pairing slots", enabled = true) {
+            Action(text = "Free the other pairing slots", enabled = nfc == Nfc.Ready) {
                 op = CardOp(
                     title = "Free the other slots",
                     explain = "A card has five pairing slots and every device that " +

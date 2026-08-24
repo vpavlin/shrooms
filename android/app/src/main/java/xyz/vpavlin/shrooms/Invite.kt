@@ -133,6 +133,17 @@ fun InviteScreen(dir: String, meshLabel: String, onClose: () -> Unit) {
 
     val qr = remember(uri) { if (uri.isEmpty()) null else qrBitmap(uri) }
 
+    // Whether this phone has a card to sign with, asked before an invite is
+    // minted rather than at the tap.
+    //
+    // Without one the flow used to run its whole length — mint a token, show a
+    // QR, have somebody scan it, take their request — and fail at the last
+    // step, by which point the other person has to be asked to do it again.
+    val ready = remember {
+        runCatching { JSONObject(Mobile.cardEnrolment(dir)).optBoolean("paired", false) }
+            .getOrDefault(false)
+    }
+
     /**
      * Mint a token and start waiting in the same step.
      *
@@ -265,6 +276,16 @@ fun InviteScreen(dir: String, meshLabel: String, onClose: () -> Unit) {
                 }
             }
 
+            if (!ready) {
+                Spacer(Modifier.height(18.dp))
+                Text(
+                    "This phone is not set up with a card, so it cannot sign a " +
+                        "credential. Settings → Keycard → Set up a card.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Palette.Amber,
+                )
+            }
+
             if (stage == Stage.Showing && qr != null) {
                 Spacer(Modifier.height(18.dp))
                 Image(
@@ -313,7 +334,7 @@ fun InviteScreen(dir: String, meshLabel: String, onClose: () -> Unit) {
             Spacer(Modifier.height(14.dp))
             Row {
                 when (stage) {
-                    Stage.Idle -> Action(text = "Create an invite", enabled = true) { open() }
+                    Stage.Idle -> Action(text = "Create an invite", enabled = ready) { open() }
                     Stage.Showing -> Action(text = "waiting…", enabled = false) {}
                     // No action of its own: the PIN pad above is the action,
                     // and its last digit is the tap prompt.

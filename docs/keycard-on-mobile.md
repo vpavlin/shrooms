@@ -255,6 +255,23 @@ setting up again takes another slot. Freeing one needs the card present and a
 pairing already held, which is what "Free the other pairing slots" is for. The
 dialog says so, because the opposite assumption is the natural one.
 
+### Three things asked before, not discovered by failing
+
+**Whether this phone has NFC, and whether it is on.** Both used to surface as an
+exception thrown from the middle of a tap — after somebody had opened the
+ceremony, typed a PIN and held a card against a phone that was never going to
+read it. The panel says so up front, and offers Android's NFC settings.
+
+**Whether this phone is set up with a card, on the invite screen.** Without one
+the flow used to run its whole length — mint a token, show a QR, have somebody
+scan it, take their request — and fail at the tap, by which point the other
+person has to be asked to do it all again.
+
+**Where the screen is.** It was the fourth section of a scrolling settings
+screen, under two settings most people never change, which produced *"Where do I
+find this keycard screen? I see 'invite a device', but nothing on keycard
+explicitly"*. It is now above the blind relay.
+
 ### What is on disk
 
 | file | mode | what it is |

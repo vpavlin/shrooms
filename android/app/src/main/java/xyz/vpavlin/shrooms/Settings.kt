@@ -57,11 +57,15 @@ fun SettingsScreen(
         Spacer(Modifier.height(28.dp))
         ModeSetting(dir, connected = connected)
 
-        Spacer(Modifier.height(28.dp))
-        BlindRelaySetting(dir)
-
+        // Above the blind relay, because it is the one somebody goes looking
+        // for. "Where do I find this keycard screen? I see 'invite a device',
+        // but nothing on keycard explicitly" — it was the fourth section of a
+        // scrolling screen, under two settings most people never change.
         Spacer(Modifier.height(28.dp))
         KeycardSetting(dir)
+
+        Spacer(Modifier.height(28.dp))
+        BlindRelaySetting(dir)
 
         // No SERVICES section here, deliberately.
         //
