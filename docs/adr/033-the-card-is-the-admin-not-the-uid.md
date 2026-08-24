@@ -47,9 +47,10 @@ group-tier caller who could reach it could mint a token, hold, reply, and hand
 the network key to a device of their choosing — full membership on a
 `--no-admin` mesh, and the whole control plane on any other.
 
-**So `/invite/reply` moves to the group tier only under two conditions:** the
+**So `/invite/reply` moves to the group tier only under three conditions:** the
 credential it carries must verify against this mesh's authority and name the
-joining device, and that authority must be card-only (see below). The daemon cannot *make* a credential; it can *check* one. With
+joining device, that authority must be card-only, and the credential's signed
+`NotBefore` must be recent (see below). The daemon cannot *make* a credential; it can *check* one. With
 that check, releasing the network key stops being the caller's decision and
 becomes the card holder's, which is what everybody meant by "admin" all along.
 
@@ -91,12 +92,39 @@ authority must be card-only. `Every` key rather than `any`, because a mesh
 mixing the two can be signed for with the file, and the weaker key sets the
 guarantee.
 
-**One thing this does not establish, and should not be described as if it did.**
-A signature made last month verifies exactly like one made a second ago. This
-proves the admin approved *this device*, not that anybody is holding a card
-while the check runs. That is the right property for a credential and the wrong
-word for presence — and the difference is worth keeping straight in any UI that
-says "approved on card".
+### The timestamp is signed, so freshness is checkable too
+
+An earlier version of this section said a signature made last month verifies
+exactly like one made a second ago, and therefore that none of this establishes
+presence. Vaclav: *"but don't we have a timestamp in the message represented by
+the digest?"* We do, and it changes the conclusion.
+
+`signedBytes` appends `Serial`, `NotBefore` and `NotAfter` before the digest is
+taken, so all three are covered by the signature. `IssueFor` sets `NotBefore` to
+the moment of issue less a minute of clock slack, and a `Serial` of zero becomes
+unix seconds. A credential signed a month ago says so, and **editing it to say
+otherwise breaks the signature** — which is the whole point of it being inside
+the digest.
+
+So the gate gains a third condition worth having: the credential's `NotBefore`
+must be recent. That closes the replay case directly. A group-tier caller
+without the card can only present credentials the admin signed at some earlier
+point, and every one of those carries an old timestamp it cannot rewrite.
+
+What remains, stated precisely rather than waved at:
+
+- **The signer stamps the time.** The card holder could backdate or postdate
+  deliberately. They are the admin; that is their prerogative and not a hole.
+- **Clocks differ**, which is why `IssueFor` already allows a minute either way,
+  and why the freshness window should be minutes rather than seconds.
+- **A fresh credential names one device.** Intercepting one and using it admits
+  exactly the device the admin has just approved, which gains nothing.
+
+So the honest claim is stronger than the earlier draft allowed: with a card-only
+authority and a recent signed timestamp, the exchange was authorised by somebody
+holding the card, for this device, now. "Approved on card, a moment ago" is
+defensible. "The card is present" still is not, and the difference stops
+mattering once the window is short.
 
 ## Consequences
 
