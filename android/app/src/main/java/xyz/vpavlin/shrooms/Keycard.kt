@@ -1,6 +1,7 @@
 package xyz.vpavlin.shrooms
 
 import android.app.Activity
+import android.util.Log
 import android.nfc.NfcAdapter
 import android.nfc.Tag
 import android.nfc.tech.IsoDep
@@ -148,7 +149,16 @@ fun KeycardSetting(dir: String) {
                 }
                 .onFailure {
                     failed = true
-                    status = it.message ?: "$what failed"
+                    // The class name when there is no message, because several
+                    // of the ways this fails carry none — a card moved away
+                    // mid-conversation throws TagLostException with a null
+                    // message, and "pairing failed" on its own tells somebody
+                    // holding a card exactly nothing.
+                    val why = it.message?.takeIf { m -> m.isNotBlank() }
+                        ?: it::class.simpleName
+                        ?: "unknown error"
+                    status = "$what failed: $why"
+                    Log.w("shrooms", "keycard $what failed", it)
                 }
         }
     }
@@ -170,18 +180,35 @@ fun KeycardSetting(dir: String) {
             color = Palette.Ash,
         )
         Spacer(Modifier.height(4.dp))
+        // Directly under the description, not at the foot of the section.
+        //
+        // It used to be last, below the pairing field, both actions and the PIN
+        // field — which on a phone, in the fourth section of a scrolling
+        // settings screen, is off the bottom of the display. So the prompt to
+        // present the card was invisible, and so was every error: tapping
+        // "Pair this phone" appeared to do nothing at all, twice over.
+        if (status.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            Text(
+                status,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (failed) Palette.Amber else Palette.Phosphor,
+            )
+        }
+
+        Spacer(Modifier.height(14.dp))
         KeyField(pairing, singleLine = true) { pairing = it.trim() }
 
         Spacer(Modifier.height(10.dp))
         Row {
             Action(
-                text = if (waiting) "waiting…" else "Pair this phone",
+                text = if (waiting) "hold the card to the back" else "Pair this phone",
                 enabled = !waiting && pairing.isNotEmpty(),
             ) {
                 run("pairing") { Mobile.cardEnrol(it, dir, pairing) }
             }
             Spacer(Modifier.width(12.dp))
-            Action(text = "Read key", enabled = !waiting) {
+            Action(text = if (waiting) "hold the card to the back" else "Read key", enabled = !waiting) {
                 run("read") { Mobile.cardPublicKey(it, dir) }
             }
         }
@@ -200,20 +227,12 @@ fun KeycardSetting(dir: String) {
         // plausible and unverifiable is exactly what this is for, and it cannot
         // be found without a card in the field.
         Action(
-            text = if (waiting) "waiting…" else "Test a signature",
+            text = if (waiting) "hold the card to the back" else "Test a signature",
             enabled = !waiting && pin.isNotEmpty(),
         ) {
             run("signature") { Mobile.cardSelfTest(it, dir, pin) }
         }
 
-        if (status.isNotEmpty()) {
-            Spacer(Modifier.height(8.dp))
-            Text(
-                status,
-                style = MaterialTheme.typography.bodySmall,
-                color = if (failed) Palette.Amber else Palette.Phosphor,
-            )
-        }
         if (key.isNotEmpty()) {
             Spacer(Modifier.height(8.dp))
             Text(
