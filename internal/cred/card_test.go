@@ -3,6 +3,7 @@ package cred
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"testing"
 
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
@@ -130,5 +131,57 @@ func TestAdaptedSignatureVerifies(t *testing.T) {
 
 	if !verifyKey(pub, digest[:], compact) {
 		t.Error("a signature through the card adapters did not verify")
+	}
+}
+
+// The signing key can be found from two signatures, without trusting whatever
+// key a card claims to have used.
+//
+// A real Keycard reported 04681f8e… while its signature recovered to
+// 02e6242f… or 03970770… — neither being the reported key. What verifies a
+// credential is the key that signed, so that is the one to find.
+func TestSignerOfFindsTheKeyThatSigned(t *testing.T) {
+	priv, err := secp256k1.GeneratePrivateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := priv.PubKey().SerializeCompressed()
+
+	sign := func(d [32]byte) []byte {
+		sig := ecdsa.Sign(priv, d[:])
+		r, sc := sig.R(), sig.S()
+		rb, sb := r.Bytes(), sc.Bytes()
+		out := append([]byte(nil), rb[:]...)
+		return append(out, sb[:]...)
+	}
+	_ = sign
+	a := sha256.Sum256([]byte("one"))
+	b := sha256.Sum256([]byte("two"))
+
+	got, err := SignerOf(a, sign(a), b, sign(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("found %x, want %x", got, want)
+	}
+
+	// Two signatures from different keys share no candidate, and saying so is
+	// better than picking one: it means the card is not behaving as assumed.
+	other, err := secp256k1.GeneratePrivateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sigOther := ecdsa.Sign(other, b[:])
+	or, os := sigOther.R(), sigOther.S()
+	rb, sb := or.Bytes(), os.Bytes()
+	mixed := append(append([]byte(nil), rb[:]...), sb[:]...)
+	if _, err := SignerOf(a, sign(a), b, mixed); err == nil {
+		t.Error("accepted two signatures made by different keys")
+	}
+
+	// A malformed signature is refused rather than guessed at.
+	if _, err := SignerOf(a, []byte("short"), b, sign(b)); err == nil {
+		t.Error("accepted a signature of the wrong length")
 	}
 }
