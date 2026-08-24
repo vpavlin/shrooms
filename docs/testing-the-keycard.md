@@ -25,6 +25,29 @@ cannot be changed afterwards, so anything done here is permanent for that mesh.
 Multi-mesh support ([ADR-015](adr/015-multiple-meshes-one-daemon.md)) exists
 precisely so this need not touch the mesh you rely on.
 
+## The dev-card defaults, since the example app offers them
+
+For a card initialised without anybody choosing its secrets — which is what a
+development card is — the factory values are:
+
+| | |
+|---|---|
+| pairing password | `KeycardDefaultPairing` |
+| PIN | `123456` |
+| PUK | `123456789012` |
+
+`keycard-cli` defines the first as a constant in `internal/secrets.go` and its
+examples use all three together. A card somebody has set up properly will have
+its own, and these are worth trying only on a card that has never been
+initialised for real.
+
+**The pairing password is a version 1 concept.** A card running applet 4.0 or
+later authenticates the secure channel with an X.509 certificate against the
+Status CA and needs no password at all. `CardEnrol` used to call the V1 pairing
+directly, which would have failed on such a card whatever was typed — reading as
+"wrong password" while consuming attempts. It now uses the version-agnostic
+calls, as keycard-go's own README recommends.
+
 ## Stage 1 — the card signs, and we can check it
 
 **Nothing to build. Do this first.** The app already has a Keycard screen that
