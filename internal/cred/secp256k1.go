@@ -116,3 +116,34 @@ func verifySecp256k1(pub, digest, sig []byte) bool {
 func VerifyDigest(pub ed25519.PublicKey, digest [32]byte, sig []byte) bool {
 	return verifyKey(pub, digest[:], sig)
 }
+
+// CardOnly reports whether every key in an authority is a card key.
+//
+// The two admin key types are distinguishable by length, and that distinction
+// carries a fact worth acting on: a secp256k1 key here is a Keycard's, and its
+// private half has never existed outside the card. An ed25519 key is a file in
+// somebody's session, which whoever runs as that user can read.
+//
+// So "did the admin sign this" and "could the caller have signed this" are the
+// same question for a file key and different questions for a card. That is what
+// lets an operation be gated on the card having been used (ADR-033).
+//
+// Every key rather than any: a mesh whose authority mixes the two can be signed
+// for with the file, so the weaker key sets the guarantee.
+//
+// What this does NOT establish is that the card is present now. A signature made
+// last month verifies the same as one made a second ago. It proves the admin
+// approved this thing, not that anybody is holding a card while it is checked —
+// which is the right property for a credential and the wrong one to describe as
+// presence.
+func (a *Authority) CardOnly() bool {
+	if a == nil || len(a.Keys) == 0 {
+		return false
+	}
+	for _, k := range a.Keys {
+		if len(k) != secp256k1PubKeySize {
+			return false
+		}
+	}
+	return true
+}

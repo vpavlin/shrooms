@@ -175,3 +175,30 @@ func TestValidAdminKeyAcceptsBothTypes(t *testing.T) {
 		}
 	}
 }
+
+// Whether an operation can be gated on the card having been used comes down to
+// this: a secp256k1 key's private half has never left the card, and an ed25519
+// admin key is a file somebody can read.
+func TestCardOnlyDistinguishesCardFromFile(t *testing.T) {
+	card := make([]byte, secp256k1PubKeySize)
+	file := make([]byte, ed25519.PublicKeySize)
+
+	if a := (&Authority{Keys: []ed25519.PublicKey{card}}); !a.CardOnly() {
+		t.Error("a card-only authority was not recognised")
+	}
+	if a := (&Authority{Keys: []ed25519.PublicKey{file}}); a.CardOnly() {
+		t.Error("a file key was taken for a card")
+	}
+	// Mixed: the file key can sign for the mesh, so the weaker one decides.
+	if a := (&Authority{Keys: []ed25519.PublicKey{card, file}}); a.CardOnly() {
+		t.Error("a mixed authority claimed to be card-only; the file key still signs")
+	}
+	// Nothing to reason about is not a card.
+	if (&Authority{}).CardOnly() {
+		t.Error("an empty authority claimed to be card-only")
+	}
+	var nilAuth *Authority
+	if nilAuth.CardOnly() {
+		t.Error("a nil authority claimed to be card-only")
+	}
+}
