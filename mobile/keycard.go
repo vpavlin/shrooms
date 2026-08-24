@@ -66,6 +66,8 @@ func pairingFile(configDir string) string {
 // cardSession is an open, authenticated conversation with the card.
 type cardSession struct {
 	cs *keycard.CommandSet
+	// rec keeps the last exchange, so a failure can show what the card said.
+	rec *recorder
 }
 
 // openCard selects the applet and restores the stored pairing.
@@ -73,7 +75,8 @@ func openCard(t CardTransport, configDir string) (*cardSession, error) {
 	if t == nil {
 		return nil, errors.New("no card transport")
 	}
-	cs := keycard.NewCommandSet(kio.NewNormalChannel(t))
+	rec := &recorder{inner: t}
+	cs := keycard.NewCommandSet(kio.NewNormalChannel(rec))
 	if err := cs.Select(); err != nil {
 		return nil, fmt.Errorf("no Keycard applet on this card: %w", err)
 	}
@@ -100,7 +103,7 @@ func openCard(t CardTransport, configDir string) (*cardSession, error) {
 			"card clears its pairing slots, so a pairing from before that is "+
 			"dead. Pair this phone again to replace it: %w", err)
 	}
-	return &cardSession{cs: cs}, nil
+	return &cardSession{cs: cs, rec: rec}, nil
 }
 
 func encodePairing(p *ktypes.Pairing) string {
@@ -141,7 +144,8 @@ func CardEnrol(t CardTransport, configDir, pairingPassword, pin string) (string,
 	if t == nil {
 		return "", errors.New("no card transport")
 	}
-	cs := keycard.NewCommandSet(kio.NewNormalChannel(t))
+	rec := &recorder{inner: t}
+	cs := keycard.NewCommandSet(kio.NewNormalChannel(rec))
 	if err := cs.Select(); err != nil {
 		return "", fmt.Errorf("no Keycard applet on this card: %w", err)
 	}
@@ -173,10 +177,33 @@ func CardEnrol(t CardTransport, configDir, pairingPassword, pin string) (string,
 		return "", fmt.Errorf("paired, and the PIN was refused — the pairing is "+
 			"saved, so try \"Read key\" rather than pairing again: %w", err)
 	}
-	return cardPublicKey(cs)
+	return cardPublicKey(cs, rec)
 }
 
 // cardPublicKey exports the authority's public half, compressed.
+// recorder wraps a transport and keeps the last exchange, so a failure can show
+// what the card actually said.
+//
+// The library parses a signature response one of two ways depending on which
+// TLV tag the card used, and the two produce the public key from different
+// places — one reads it, the other recovers it. Reasoning about which happened
+// from the parsed values alone has already produced one wrong conclusion; the
+// bytes settle it.
+type recorder struct {
+	inner CardTransport
+	last  []byte
+	sent  []byte
+}
+
+func (r *recorder) Transmit(apdu []byte) ([]byte, error) {
+	r.sent = append([]byte(nil), apdu...)
+	out, err := r.inner.Transmit(apdu)
+	if err == nil {
+		r.last = append([]byte(nil), out...)
+	}
+	return out, err
+}
+
 // enrolDigest is what a card signs to prove itself during enrolment.
 //
 // Fixed and domain-separated: this is not a credential and must never be
@@ -196,7 +223,7 @@ var enrolDigest = sha256.Sum256([]byte("shrooms/keycard/enrol/v1"))
 // The signature is verified before the key is believed. A card that returns a
 // plausible key and an unverifiable signature is the failure worth catching,
 // and it cannot be caught by exporting a key.
-func cardPublicKey(cs *keycard.CommandSet) (string, error) {
+func cardPublicKey(cs *keycard.CommandSet, rec *recorder) (string, error) {
 	sig, err := cs.SignWithPath(enrolDigest[:], KeycardPath)
 	if err != nil {
 		return "", fmt.Errorf("the card would not sign at %s — it may hold no key "+
@@ -224,12 +251,16 @@ func cardPublicKey(cs *keycard.CommandSet) (string, error) {
 		// recoverable signature does NOT, so the library recovers it from the
 		// signature and the recovery byte. A recovered key that is wrong
 		// verifies nothing, and looks exactly like a conversion bug from here.
+		raw := ""
+		if rec != nil {
+			raw = fmt.Sprintf("\nraw response: %x", rec.last)
+		}
 		return "", fmt.Errorf("the card signed, but the signature does not verify "+
 			"against the key it returned.\n\n"+
 			"pub %d bytes: %x\ncompressed: %x\nr %d bytes: %x\ns %d bytes: %x\nv: %02x\n"+
-			"digest: %x",
+			"digest: %x%s",
 			len(sig.PubKey()), sig.PubKey(), c,
-			len(sig.R()), sig.R(), len(sig.S()), sig.S(), sig.V(), enrolDigest)
+			len(sig.R()), sig.R(), len(sig.S()), sig.S(), sig.V(), enrolDigest, raw)
 	}
 	return hex.EncodeToString(c), nil
 }
@@ -246,7 +277,7 @@ func CardPublicKey(t CardTransport, configDir, pin string) (string, error) {
 	if err := s.cs.VerifyPIN(pin); err != nil {
 		return "", fmt.Errorf("PIN refused: %w", err)
 	}
-	return cardPublicKey(s.cs)
+	return cardPublicKey(s.cs, s.rec)
 }
 
 // cardSigner is cred.Signer backed by the card.
@@ -271,7 +302,7 @@ func newCardSigner(t CardTransport, configDir, pin string) (*cardSigner, error) 
 	if err := s.cs.VerifyPIN(pin); err != nil {
 		return nil, fmt.Errorf("PIN refused: %w", err)
 	}
-	hexPub, err := cardPublicKey(s.cs)
+	hexPub, err := cardPublicKey(s.cs, s.rec)
 	if err != nil {
 		return nil, err
 	}

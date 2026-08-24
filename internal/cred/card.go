@@ -1,8 +1,10 @@
 package cred
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"github.com/decred/dcrd/dcrec/secp256k1/v4/ecdsa"
 
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 )
@@ -90,5 +92,73 @@ func pad32(b []byte) ([]byte, error) {
 	}
 	out := make([]byte, 32)
 	copy(out[32-len(b):], b)
+	return out, nil
+}
+
+// SignerOf works out which key actually produced a pair of signatures.
+//
+// A Keycard has been observed reporting one public key in its signature
+// response while signing with another — 04681f8e… reported, while the signature
+// recovers to 02e6242f… or 03970770…, and neither is the reported key. Whatever
+// the reason, the key that will verify a credential is the one that SIGNED, not
+// the one the card mentioned, and this finds it without trusting either.
+//
+// ECDSA recovery yields two candidate keys per signature and both verify it, so
+// one signature cannot say which is real. Two signatures over different digests
+// can: the signing key is a candidate for both, and any other candidate is a
+// coincidence of one. Two is enough in practice and the check below insists on
+// exactly one survivor rather than taking the first.
+//
+// Nothing here trusts a reported key, so a card that reports the wrong one, or
+// none at all, is handled the same way.
+func SignerOf(digestA [32]byte, sigA []byte, digestB [32]byte, sigB []byte) ([]byte, error) {
+	candA, err := recoverCandidates(digestA, sigA)
+	if err != nil {
+		return nil, err
+	}
+	candB, err := recoverCandidates(digestB, sigB)
+	if err != nil {
+		return nil, err
+	}
+	var common [][]byte
+	for _, a := range candA {
+		for _, b := range candB {
+			if bytes.Equal(a, b) {
+				common = append(common, a)
+			}
+		}
+	}
+	switch len(common) {
+	case 1:
+		return common[0], nil
+	case 0:
+		return nil, errors.New("no key signed both digests — the card is not signing " +
+			"with one key, or a signature was mangled on the way back")
+	default:
+		return nil, fmt.Errorf("%d keys could have signed both digests, which should "+
+			"not happen; sign again", len(common))
+	}
+}
+
+// recoverCandidates returns every public key that could have produced a
+// signature over a digest. There are at most two.
+func recoverCandidates(digest [32]byte, sig []byte) ([][]byte, error) {
+	if len(sig) != secp256k1SigSize {
+		return nil, fmt.Errorf("signature is %d bytes, want %d", len(sig), secp256k1SigSize)
+	}
+	var out [][]byte
+	for recid := 0; recid < 2; recid++ {
+		c := make([]byte, 65)
+		c[0] = byte(27 + recid)
+		copy(c[1:], sig)
+		pub, _, err := ecdsa.RecoverCompact(c, digest[:])
+		if err != nil {
+			continue
+		}
+		out = append(out, pub.SerializeCompressed())
+	}
+	if len(out) == 0 {
+		return nil, errors.New("no key could have produced that signature")
+	}
 	return out, nil
 }

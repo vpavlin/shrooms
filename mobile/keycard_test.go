@@ -49,7 +49,7 @@ func (deadCard) Transmit([]byte) ([]byte, error) { return nil, errors.New("tag l
 // The pairing file is what enrolment produces, so its absence is the check.
 func TestUnenrolledCardIsReportedBeforeUse(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := CardPublicKey(deadCard{}, dir); err == nil {
+	if _, err := CardPublicKey(deadCard{}, dir, "123456"); err == nil {
 		t.Error("an unenrolled card produced a public key")
 	}
 	// And with a pairing present, the failure comes from the card rather than
@@ -58,7 +58,7 @@ func TestUnenrolledCardIsReportedBeforeUse(t *testing.T) {
 		[]byte(encodePairing(ktypes.NewPairing([32]byte{1}, 0))), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := CardPublicKey(deadCard{}, dir); err == nil {
+	if _, err := CardPublicKey(deadCard{}, dir, "123456"); err == nil {
 		t.Error("a dead transport produced a public key")
 	}
 }
@@ -66,7 +66,7 @@ func TestUnenrolledCardIsReportedBeforeUse(t *testing.T) {
 // A nil transport is a programming error on the Kotlin side and must not panic
 // inside the card library.
 func TestNilTransportIsAnError(t *testing.T) {
-	if _, err := CardEnrol(nil, t.TempDir(), "x"); err == nil {
+	if _, err := CardEnrol(nil, t.TempDir(), "x", "123456"); err == nil {
 		t.Error("a nil transport was accepted")
 	}
 }
