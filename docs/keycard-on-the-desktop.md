@@ -87,8 +87,16 @@ that exposes card access to other modules, then shrooms should use that rather
 than opening a reader itself — two modules fighting over one card reader is a
 bad afternoon, and PC/SC does not enjoy being opened twice.
 
-So the question to settle before writing any PC/SC code: **does the Scala
-integration expose a reusable module, or is it internal to that app?** If the
+Looked, and could not find it. `vpavlin/logos-basecamp-modules` is an empty
+catalog — its `.gitmodules` still has only the instructions for adding one.
+`vpavlin/loam-keycard` is the one this codebase already nods to, and it is
+TypeScript over raw NFC, which is neither the language nor the transport a
+desktop module needs. The Scala fork is presumably private or under an
+organisation a public search does not reach.
+
+So the question to settle before writing any PC/SC code, and it needs the URL:
+**does the Scala integration expose a reusable module, or is it internal to that
+app?** If the
 former, `shrooms_core` gains a dependency and a `CardTransport` that forwards to
 it. If the latter, shrooms carries its own reader and the two applications must
 not be used with the same card at the same time — worth saying out loud in the
