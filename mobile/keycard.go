@@ -2,6 +2,7 @@ package mobile
 
 import (
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -89,7 +90,15 @@ func openCard(t CardTransport, configDir string) (*cardSession, error) {
 	// running applet 4.0 or later opens its channel differently, and the V1
 	// call fails there in a way that reads as the wrong card.
 	if err := cs.AutoOpenSecureChannel(); err != nil {
-		return nil, fmt.Errorf("could not open a secure channel — is this the card that was enrolled? %w", err)
+		// Usually a stale pairing rather than the wrong card, and the two look
+		// identical from here. Initialising a card wipes every pairing slot on
+		// it, so a pairing saved before an INIT — or from a different card —
+		// opens nothing. Pairing again replaces what is stored, which is the
+		// fix and not something anybody would guess from "wrong card".
+		return nil, fmt.Errorf("could not open a secure channel. Either this is "+
+			"a different card, or the saved pairing is stale — initialising a "+
+			"card clears its pairing slots, so a pairing from before that is "+
+			"dead. Pair this phone again to replace it: %w", err)
 	}
 	return &cardSession{cs: cs}, nil
 }
@@ -168,14 +177,46 @@ func CardEnrol(t CardTransport, configDir, pairingPassword, pin string) (string,
 }
 
 // cardPublicKey exports the authority's public half, compressed.
+// enrolDigest is what a card signs to prove itself during enrolment.
+//
+// Fixed and domain-separated: this is not a credential and must never be
+// mistaken for one, so it is a string that says what it is rather than a
+// random challenge or an empty buffer.
+var enrolDigest = sha256.Sum256([]byte("shrooms/keycard/enrol/v1"))
+
+// cardPublicKey reads the authority key by SIGNING with it, not by exporting it.
+//
+// EXPORT KEY needs conditions a card may not grant — it answered 6985 on a
+// freshly initialised card even inside an authenticated session — and it asks
+// for a capability that is not needed here. A signature response already
+// carries the public key, so signing a fixed digest yields the key AND proves
+// the whole path in one exchange: pairing, PIN, on-card signing, and both
+// conversions. loam-keycard, extracted from scala, enrols exactly this way.
+//
+// The signature is verified before the key is believed. A card that returns a
+// plausible key and an unverifiable signature is the failure worth catching,
+// and it cannot be caught by exporting a key.
 func cardPublicKey(cs *keycard.CommandSet) (string, error) {
-	_, pub, err := cs.ExportKey(true, false, true, KeycardPath)
+	sig, err := cs.SignWithPath(enrolDigest[:], KeycardPath)
 	if err != nil {
-		return "", fmt.Errorf("could not read the key at %s: %w", KeycardPath, err)
+		return "", fmt.Errorf("the card would not sign at %s — it may hold no key "+
+			"yet, which INIT does not create: %w", KeycardPath, err)
 	}
-	c, err := cred.CompressPoint(pub)
+	if len(sig.PubKey()) == 0 {
+		return "", errors.New("the card signed but returned no public key with it")
+	}
+	c, err := cred.CompressPoint(sig.PubKey())
 	if err != nil {
 		return "", err
+	}
+	compact, err := cred.CompactSig(sig.R(), sig.S())
+	if err != nil {
+		return "", err
+	}
+	if !cred.VerifyDigest(c, enrolDigest, compact) {
+		return "", errors.New("the card signed, but the signature does not verify " +
+			"against the key it returned — the conversion between what the card " +
+			"produces and what this project checks is wrong")
 	}
 	return hex.EncodeToString(c), nil
 }
