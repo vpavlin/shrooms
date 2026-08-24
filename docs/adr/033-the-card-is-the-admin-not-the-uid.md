@@ -48,9 +48,10 @@ the network key to a device of their choosing — full membership on a
 `--no-admin` mesh, and the whole control plane on any other.
 
 **So `/invite/reply` moves to the group tier only under three conditions:** the
-credential it carries must verify against this mesh's authority and name the
-joining device, that authority must be card-only, and the credential's signed
-`NotBefore` must be recent (see below). The daemon cannot *make* a credential; it can *check* one. With
+credential must verify against this mesh's authority, it must name the device
+**this exchange** is admitting, and that authority must be card-only. Its signed
+timestamp gives a fourth check for nothing, though the second condition already
+does the work — see below. The daemon cannot *make* a credential; it can *check* one. With
 that check, releasing the network key stops being the caller's decision and
 becomes the card holder's, which is what everybody meant by "admin" all along.
 
@@ -91,6 +92,41 @@ So the widening is gated twice: the credential must verify, **and** the mesh's
 authority must be card-only. `Every` key rather than `any`, because a mesh
 mixing the two can be signed for with the file, and the weaker key sets the
 guarantee.
+
+### Which step is being gated, and what that simplifies
+
+Worth being exact, because the answer removes most of the difficulty. Vaclav:
+*"are we talking about invite or about actually issuing the credential after the
+invitee called join?"*
+
+The credential is signed at the **end**. The exchange runs: mint a token, hold
+it open, the joining device redeems and sends its per-mesh keys, `/invite/hold`
+returns those keys, **the card signs a credential for them**, `/invite/reply`
+publishes it along with the network key.
+
+So an invite credential **cannot pre-exist**. It names keys nobody knew until
+the joiner called in. That makes it inherently fresh, and makes the timestamp
+check below a second line rather than the first.
+
+**The first line is that the credential must name the device from *this*
+exchange** — the keys this daemon itself received and handed out. That defeats
+the attack that matters: a group-tier caller can mint their own token whenever
+they like (`MintInvite` needs no daemon), run their own device through the
+exchange, and call `/invite/reply` with any credential they can lay hands on.
+Every one of those credentials names some other device. Requiring a match means
+they cannot obtain the network key without the card signing for the device
+actually joining.
+
+**This needs one small change.** `HoldInvite` deletes the held entry as it
+returns, so the daemon forgets the request the moment it hands it over and
+cannot match anything against it later. It would have to keep the request for
+the token's remaining life — which is bounded already, since `DefaultTTL` is
+fifteen minutes.
+
+**And it puts the fifteen minutes in its place.** The TTL protects a legitimate
+invite from being scanned an hour later. It does not bound an attacker, who
+mints their own token. What bounds them is whether the daemon will hand over the
+network key, which is the whole subject here.
 
 ### The timestamp is signed, so freshness is checkable too
 
