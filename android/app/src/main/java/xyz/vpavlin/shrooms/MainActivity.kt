@@ -161,10 +161,12 @@ class MainActivity : ComponentActivity() {
                         BackHandler { inviting = false }
                         InviteScreen(
                             dir = dir,
-                            // The first mesh, which is what a phone with one
-                            // mesh means. Inviting to a specific one of several
-                            // needs a picker; until there is one, this admits
-                            // to the mesh the phone thinks of as its own.
+                            // Empty means "no preference": the screen picks the
+                            // first running mesh, and offers a choice when there
+                            // is more than one. It used to admit to whichever
+                            // the config listed first with nothing said, which
+                            // on a phone with several meshes put the joining
+                            // device somewhere nobody chose.
                             meshLabel = "",
                             onClose = { inviting = false },
                         )
