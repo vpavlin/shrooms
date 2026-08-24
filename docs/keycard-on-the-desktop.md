@@ -118,11 +118,21 @@ behaviour — and the vendored `keycard-qt` SDK already exposes it:
 `internal/cred/card.go` already turns exactly that into what this codebase
 verifies. So no new cryptography, no new applet, no waiting for Schnorr.
 
-**Which makes the ask small and worth contributing upstream:** a `signDigest`
-alongside `requestAuth`, taking a derivation path and a digest and returning a
-signature — not a key. That is the thing keycard-basecamp's own roadmap says it
-should have, it is what its "single audited security surface" principle implies,
-and shrooms would be its second consumer after LEZ rather than the reason for it.
+**So this is a patch to write, not a request to make.** The module's whole
+exposed surface is `requestAuth`, `checkAuthStatus` and `getCardPresence` for
+consumers, plus a UI-only set — `deriveKey(domain)` is the closest thing to
+signing and it derives. Nothing in it signs. But the card signs, the vendored
+SDK exposes `signWithPath()`, and there is already a fork with changes in it.
+
+A `signDigest(path, digest)` alongside `requestAuth` — returning a signature,
+not a key — is a thin passthrough to a call that is already there. Add it to the
+fork, use it, offer it upstream when convenient. It is the thing
+keycard-basecamp's own roadmap says it should have, so upstream is a
+conversation about timing rather than about whether.
+
+What cannot be skipped is the method itself: `requestAuth` hands back a private
+key, and shrooms cannot accept one. Something has to sign on the card, and
+today nothing in the module's API does.
 
 **One constraint to carry into the UI**, from the same document: a card is
 loaded in one mode or the other, standard BIP32 or LEE, and only one at a time.
@@ -137,8 +147,9 @@ stopped working".
    own, and everything else depends on it.
 2. **Settle the tier**, in an ADR: may the group tier hold and relay an invite,
    given that the signature is off-daemon?
-3. **Get `signDigest` into keycard-basecamp**, rather than a reader of our own
-   or `requestAuth`. Its absence, not the transport, is what blocks this.
+3. **Add `signDigest` to the keycard-basecamp fork** — a passthrough to
+   `signWithPath()`, which is already vendored. Its absence, not the transport
+   and not the card, is what blocks this.
 4. **Then the transport and the UI**, which is the smallest part of this.
 
 ## One thing this does not change
