@@ -36,23 +36,38 @@ purpose. There was not when `.mesh` was chosen.
 
 ## Decision
 
-**Serve `mesh.internal` by default, and keep answering `.mesh` alongside it.**
+**Serve `.internal` by default, and keep answering `.mesh` alongside it.**
+Make the suffix settable from the CLI and from both front-ends.
 
-A label *under* `.internal`, not `.internal` itself. That space is shared
-private space: a network already using `.internal` for its own names must not
-find this resolver authoritative for all of it. Claiming one label takes what we
-need and nothing else — and answering for a whole reserved space we do not own
-is precisely the "a VPN that quietly becomes the system resolver" failure
-[ADR-013](013-name-resolution.md) refuses.
+    vps.mesh          ->  vps.internal
+    ai.k11.home.mesh  ->  ai.k11.home.internal
 
-Names change shape as little as possible:
+`hosts_suffix` was already configurable by editing a file. It is now a setting
+on the control socket (`shrooms config set hosts-suffix`, `/config/hosts-suffix`
+for read and write), exposed by Basecamp's core module and by the Android
+binding — because this is the one naming decision an operator may genuinely need
+to change, and the alternative to a form is hand-editing the value that decides
+what a machine is authoritative for.
 
-    vps.mesh          ->  vps.mesh.internal
-    vps.home.mesh     ->  vps.home.mesh.internal
+The daemon validates a suffix and **warns rather than refuses** when it is
+structurally fine and belongs to somebody else. Whether `example.com` is yours
+is not something this daemon can know, and a setting that argues back gets
+worked around. Refused outright: empty, `.`, empty or over-long labels, and
+characters that cannot appear in a hostname — a resolver claiming `.` answers
+for nothing and forwards everything, which reads as a broken network.
 
-The resolver takes a list of suffixes, longest matched first, so both work.
-`hosts_suffix` was already configurable, so this is a change of default rather
-than a rewrite.
+### An earlier draft said `mesh.internal`, and it was the wrong trade
+
+The reasoning was that `.internal` is *shared* private space, so claiming one
+label under it takes what we need and nothing else. That reasoning is sound and
+the conclusion was still wrong: names here are already four labels deep, and
+`ai.k11.home.mesh` becoming `ai.k11.home.mesh.internal` is twenty-five
+characters to keep a word that does no work once `.internal` is there.
+
+So `.internal` outright, and the conflict it risks — a network already using
+`.internal` for its own names — is what the setting exists for. That is a real
+risk and a narrow one, and it is the operator's to judge, which is exactly the
+sort of thing a config value is for and a default is not.
 
 ## Why not the alternatives
 
@@ -91,8 +106,10 @@ in an ssh config, a bookmark, and somebody's fingers.
 
 ## What would change our mind
 
-Nothing about `.internal` — it cannot be un-reserved. The open question is
-whether `mesh.internal` is the right label under it, and the honest answer is
-that it is a compromise for continuity: it keeps the word people already type.
-`shrooms.internal` would be more accurate and less familiar. Worth revisiting
-only before there is a body of names to migrate, which is now.
+Nothing about `.internal` — it cannot be un-reserved.
+
+The live question is the one the setting now answers: a machine that is also on
+a corporate `.internal` will see this daemon answer for names its employer
+resolves differently. That is not hypothetical for anyone who takes a work
+laptop home, and the answer is a suffix of their own rather than a different
+default for everybody.

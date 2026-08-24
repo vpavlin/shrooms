@@ -104,6 +104,13 @@ func settings() []setting {
 			},
 		},
 		{
+			name: "hosts-suffix", path: "/config/hosts-suffix", value: "<domain>",
+			help: "the domain this device answers for, e.g. internal (ADR-032)",
+			body: func(v string) (any, error) {
+				return map[string]any{"hosts_suffix": strings.TrimSpace(v)}, nil
+			},
+		},
+		{
 			name: "relay", path: "/config/relay", value: "on|off",
 			choices: []string{"on", "off"},
 			help:    "forward for peers of this mesh that cannot reach each other",

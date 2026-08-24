@@ -77,6 +77,34 @@ public:
     std::string setModeOn(const std::string& socketPath, const std::string& mode);
 
     /**
+     * @brief The domain this device answers for, as JSON.
+     *
+     * Reports the configured value, the built-in default, and the legacy
+     * suffix still answered alongside it (ADR-032), so a form can offer the
+     * default rather than making somebody remember it.
+     */
+    std::string hostsSuffix();
+
+    /** @brief As hostsSuffix(), against a specific control socket. */
+    std::string hostsSuffixFrom(const std::string& socketPath);
+
+    /**
+     * @brief Sets the domain this device answers for.
+     *
+     * The daemon validates it and may answer with a warning as well as
+     * success: a structurally valid suffix that belongs to somebody else is
+     * allowed, because whose domain it is, is the operator's business. Show
+     * the warning — it is the difference between naming your own machines and
+     * answering for all of .com out of a mesh roster.
+     *
+     * Needs a restart before the resolver is told, which the daemon says.
+     */
+    std::string setHostsSuffix(const std::string& suffix);
+
+    /** @brief As setHostsSuffix(), against a specific control socket. */
+    std::string setHostsSuffixOn(const std::string& socketPath, const std::string& suffix);
+
+    /**
      * @brief The services this node has CONFIGURED, as JSON.
      *
      * Not the ones it is running, which is what status() reports and what the

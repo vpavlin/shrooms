@@ -482,6 +482,40 @@ std::string ShroomsCoreImpl::status()
     return errorJson("cannot read the Shrooms daemon", withPermissionHint(firstErr));
 }
 
+std::string ShroomsCoreImpl::hostsSuffixFrom(const std::string& socketPath)
+{
+    std::string body, err;
+    if (httpGetUnix(socketPath, "/config/hosts-suffix", body, err) == RequestOutcome::Ok) {
+        return body;
+    }
+    return errorJson("cannot read the domain suffix", err);
+}
+
+std::string ShroomsCoreImpl::hostsSuffix()
+{
+    std::string body, err, firstErr;
+    for (const char* path : {kSocket, kLegacySocket}) {
+        if (httpGetUnix(path, "/config/hosts-suffix", body, err) == RequestOutcome::Ok) {
+            return body;
+        }
+        if (firstErr.empty()) firstErr = err;
+    }
+    return errorJson("cannot read the domain suffix", withPermissionHint(firstErr));
+}
+
+std::string ShroomsCoreImpl::setHostsSuffixOn(const std::string& socketPath,
+                                              const std::string& suffix)
+{
+    return postToSocket(socketPath, "/config/hosts-suffix",
+                        "{\"hosts_suffix\":" + jsonString(suffix) + "}");
+}
+
+std::string ShroomsCoreImpl::setHostsSuffix(const std::string& suffix)
+{
+    return postToDaemon("/config/hosts-suffix",
+                        "{\"hosts_suffix\":" + jsonString(suffix) + "}");
+}
+
 std::string ShroomsCoreImpl::servicesFrom(const std::string& socketPath)
 {
     std::string body, err;

@@ -253,17 +253,16 @@ func TestBothSuffixesResolve(t *testing.T) {
 		want string
 		ok   bool
 	}{
-		{"vps.mesh.internal", "vps", true},
-		{"vps.home.mesh.internal", "vps.home", true},
+		{"vps.internal", "vps", true},
+		{"vps.home.internal", "vps.home", true},
 		{"vps.mesh", "vps", true},
 		{"vps.home.mesh", "vps.home", true},
-		// Not ours: .internal is shared private space and a network already
-		// using it must not find this answering for all of it.
-		{"printer.internal", "", false},
-		{"anything.else.internal", "", false},
+		// Everything under .internal is ours now, which is the cost of the
+		// shorter name: a network already using .internal for its own names
+		// has to set hosts_suffix to something else (ADR-032).
+		{"printer.internal", "printer", true},
 		{"example.com", "", false},
 		// The suffix alone names nothing.
-		{"mesh.internal", "", false},
 		{"mesh", "", false},
 	} {
 		got, ok := s.hostWithinSuffix(c.name)
@@ -277,9 +276,42 @@ func TestBothSuffixesResolve(t *testing.T) {
 // let the shorter one swallow a name that belongs to the longer.
 func TestTheLongerSuffixWins(t *testing.T) {
 	// Deliberately in the order that would go wrong if length were ignored.
-	s := &Server{Suffix: LegacySuffix, Also: []string{DefaultSuffix}}
+	s := &Server{Suffix: LegacySuffix, Also: []string{"mesh." + DefaultSuffix}}
 	got, ok := s.hostWithinSuffix("vps.mesh.internal")
 	if !ok || got != "vps" {
 		t.Errorf("got %q,%v; want \"vps\",true — the short suffix swallowed it", got, ok)
+	}
+}
+
+// A suffix decides what this resolver is authoritative for, so a bad one is not
+// a cosmetic problem: it answers for everything below itself and forwards
+// everything else.
+func TestValidSuffix(t *testing.T) {
+	for _, bad := range []string{"", ".", "..", "a..b", "-lead.internal",
+		"trail-.internal", "under_score", "has space"} {
+		if _, err := ValidSuffix(bad); err == nil {
+			t.Errorf("accepted %q", bad)
+		}
+	}
+	// Reserved, so no warning: these cannot be taken away.
+	for _, quiet := range []string{"internal", "mesh.internal", "home.arpa", "k11.home.arpa"} {
+		warn, err := ValidSuffix(quiet)
+		if err != nil {
+			t.Errorf("%q: %v", quiet, err)
+		}
+		if warn != "" {
+			t.Errorf("%q warned unnecessarily: %s", quiet, warn)
+		}
+	}
+	// Valid, and somebody else's. Allowed, with a word about it — refusing
+	// would make this the one setting that argues back.
+	for _, loud := range []string{"mesh", "com", "example.com", "local"} {
+		warn, err := ValidSuffix(loud)
+		if err != nil {
+			t.Errorf("%q was refused rather than flagged: %v", loud, err)
+		}
+		if warn == "" {
+			t.Errorf("%q passed without a word about whose namespace it is", loud)
+		}
 	}
 }
