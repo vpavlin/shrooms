@@ -1,6 +1,9 @@
 # 022. A Keycard for the admin key
 
-**Status:** accepted, and built up to the card itself.
+**Status:** accepted and built. First contact with a physical card was
+2026-08-24: the card signs correctly, the last known defect is explained and
+worked around, and a successful end-to-end enrolment has **not yet been
+observed**.
 
 `cred.Signer` exists and the admin tooling signs through it, so the file-backed
 key and a card are interchangeable above that line. The question this ADR
@@ -10,10 +13,30 @@ Every node now verifies both key types (`internal/cred/secp256k1.go`), and
 signing happens through a detached signer (`--sign-with`, or a digest read off
 the terminal) so no card driver is linked into shrooms at all.
 
-What remains is a live defect rather than a design question: signatures
-produced by `keycard-cli` do not verify against the public key that same tool
-exports. Until that is resolved with the Keycard developers, the seam works and
-the card does not.
+**That defect is now explained, and it was never the card.** This ADR recorded
+that signatures from `keycard-cli` did not verify against the public key the
+same tool exported, and left it for the Keycard developers. It did not need
+them. `keycard-cli` is built on `keycard-go`, and `keycard-go` corrupts the `s`
+of every signature it parses: `calculateV` does `rs := append(r, s...)` where
+`r` is a slice into the response buffer, so the append writes `s` over the two
+DER header bytes between `r` and `s` while the `s` slice still points at the old
+offset. What the caller receives is `s` shifted two bytes left. The public key,
+`r` and `v` all survive, which is why the symptom looked like a key that did not
+match its own signatures.
+
+Found 2026-08-24, the first time a physical card was used, and reproducible with
+no hardware at all: sign anything locally, wrap it in a legacy signature
+template, hand it to `ParseSignature`, and compare `s` in and out.
+
+`cred.RepairCardSignature` recovers the two lost bytes and is documented there.
+So the seam works and the card's own signatures are correct — but the honest
+statement is narrower than "the card works": what has been proven is that the
+card produces a valid signature and that the library damages it on the way back.
+The repair is tested against signatures made locally, not yet against one that
+came off a card. Say so until somebody has watched an enrolment succeed.
+
+The workaround should be removed when the library is fixed. Upstream has not
+been told.
 
 ## Context
 

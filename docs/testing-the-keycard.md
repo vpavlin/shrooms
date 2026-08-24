@@ -3,10 +3,25 @@
 Vaclav, 2026-08-24: *"we have not tested the Keycard integration at all — so,
 what is the plan?"*
 
-None of this has met hardware. The conversions are tested against vectors
-(`internal/cred/card.go`), which proves the arithmetic and nothing about a card.
-What follows is ordered so that each step is worth doing on its own and the
-cheap failures happen first.
+**Updated 2026-08-24, after the first contact with a card.** What follows is
+ordered so the cheap failures happen first, and now records what each wall
+actually looked like — every one of them presented as something other than what
+it was.
+
+The headline: **the card was never the problem.** Four separate failures, in
+order, and none of them meant a bad card:
+
+| what it said | what it was |
+|---|---|
+| `6a84` on pairing | all five pairing slots taken |
+| `6d00` on pairing | the applet had no secure-channel capability |
+| `6985` reading the key | no PIN verified — EXPORT KEY needs a session |
+| "signed, but does not verify" | **keycard-go corrupts `s`** — see below |
+
+The last one is the interesting one and had been sitting in ADR-022 for months
+as a defect blamed on `keycard-cli` and left for the Keycard developers. It is a
+slice-aliasing bug in `keycard-go`'s own signature parser, reproducible with no
+hardware, and worked around in `cred.RepairCardSignature`.
 
 ## Before touching anything
 
@@ -48,10 +63,30 @@ directly, which would have failed on such a card whatever was typed — reading 
 "wrong password" while consuming attempts. It now uses the version-agnostic
 calls, as keycard-go's own README recommends.
 
+## Stage 0 — ask the card what it is. Costs nothing.
+
+**"Check this card"** runs `SELECT` and nothing else: no pairing slot, no PIN
+attempt, no password. It reports whether the applet is initialised, whether it
+holds a key, how many pairing slots are free, and what it is capable of.
+
+Do this first on any unfamiliar card. It answers three of the four failures in
+the table above in one tap, and it is the step whose absence cost the most time.
+
+**A card needs two one-time acts before shrooms is any use, and shrooms performs
+neither** — deliberately, because they decide what a card *is* and are
+irreversible:
+
+1. **INIT** — sets the PIN, PUK and pairing password. Before this there is no
+   password that works, because there is no password.
+2. **Generate or load a key.** A card can be initialised and *empty*. INIT does
+   not create a key, and without one there is nothing to sign with.
+
+Both with `keycard-cli` or the Keycard app.
+
 ## Stage 1 — the card signs, and we can check it
 
-**Nothing to build. Do this first.** The app already has a Keycard screen that
-runs three steps against a real card: pair, read the key, self-test.
+**Nothing to build. Do this first after stage 0.** The app's Keycard screen
+pairs and reads the authority key.
 
 `CardSelfTest` is the one that matters. It opens a session with the PIN, signs a
 fixed digest on the card, and verifies the result **with the same function a
@@ -67,11 +102,17 @@ What each failure would mean:
 | card not detected | NFC, the applet, or the transport — not this codebase |
 | pairing fails | wrong pairing password, or slots exhausted |
 | PIN rejected | the PIN, and **count the attempts** |
-| signs but does not verify | the conversions in `internal/cred/card.go` — the failure this test exists to find |
+| signs but does not verify | keycard-go's mangled `s`, repaired automatically; if it survives the repair, then the conversions in `internal/cred/card.go` |
 | signature is not 64 bytes | `CompactSig` padding, or keycard-go returning a different shape |
 
 A fixed digest rather than a random one, deliberately, so a failure that only
 happens for some inputs can be repeated.
+
+Reading the key no longer exports it. `EXPORT KEY` needs conditions a freshly
+initialised card may not grant, and a signature response already carries the
+public key — so enrolment signs a fixed digest and takes the key from the
+answer, which is how `loam-keycard` (extracted from scala) does it. One exchange
+proves pairing, PIN, on-card signing and both conversions.
 
 **If stage 1 passes, ADR-022's central claim is proven** and the rest is
 plumbing. If it fails, everything below is moot.
