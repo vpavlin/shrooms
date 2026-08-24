@@ -65,12 +65,16 @@ calls, as keycard-go's own README recommends.
 
 ## Stage 0 — ask the card what it is. Costs nothing.
 
-**"Check this card"** runs `SELECT` and nothing else: no pairing slot, no PIN
-attempt, no password. It reports whether the applet is initialised, whether it
-holds a key, how many pairing slots are free, and what it is capable of.
+This is no longer a step anybody has to remember: **Settings → Keycard → "Set up
+a card"** starts with it. The first thing the ceremony does is **"Look at the
+card"**, which runs `SELECT` and nothing else — no pairing slot, no PIN attempt,
+no password. It reports whether the applet is initialised, whether it holds a
+key, how many pairing slots are free, and what it is capable of, and only then
+does it ask for anything.
 
-Do this first on any unfamiliar card. It answers three of the four failures in
-the table above in one tap, and it is the step whose absence cost the most time.
+It answers three of the four failures in the table above in one free tap, and it
+is the step whose absence cost the most time. Making it optional was the mistake;
+it is now the first thing that happens.
 
 **A card needs two one-time acts before shrooms is any use, and shrooms performs
 neither** — deliberately, because they decide what a card *is* and are
@@ -85,8 +89,9 @@ Both with `keycard-cli` or the Keycard app.
 
 ## Stage 1 — the card signs, and we can check it
 
-**Nothing to build. Do this first after stage 0.** The app's Keycard screen
-pairs and reads the authority key.
+**Nothing to build.** Setting up a card ends by reading the authority key off
+it; **"Check the card"** on an already-enrolled phone runs the self-test on
+demand.
 
 `CardSelfTest` is the one that matters. It opens a session with the PIN, signs a
 fixed digest on the card, and verifies the result **with the same function a

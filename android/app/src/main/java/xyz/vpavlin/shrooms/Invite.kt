@@ -105,6 +105,7 @@ fun InviteScreen(dir: String, meshLabel: String, onClose: () -> Unit) {
     var joiner by remember { mutableStateOf("") }
     var pin by remember { mutableStateOf("") }
     var status by remember { mutableStateOf("") }
+    var detail by remember { mutableStateOf("") }
     var failed by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
 
@@ -191,22 +192,27 @@ fun InviteScreen(dir: String, meshLabel: String, onClose: () -> Unit) {
     }
 
     /** The tap. Everything before this was arranging for something to sign. */
-    fun admit() {
+    fun admit(withPin: String) {
         busy = true
         failed = false
-        status = "hold your card to the back of the phone"
+        status = ""
+        detail = "hold your card flat against the back of the phone"
         scope.launch {
             val result = runCatching {
                 withContext(Dispatchers.IO) {
                     onCardTap(
                         activity,
-                        onDetected = { status = "signing — hold the card still" },
+                        onDetected = { detail = "signing — hold the card still" },
                     ) {
-                        Mobile.admitWithCard(it, dir, pin, token, requestJSON, joiner, 0L, chosen)
+                        Mobile.admitWithCard(it, dir, withPin, token, requestJSON, joiner, 0L, chosen)
                     }
                 }
             }
             busy = false
+            // Cleared either way: on success it is spent, and on failure the
+            // usual cause is a mistyped one, which is retyped rather than
+            // corrected.
+            pin = ""
             result
                 .onSuccess {
                     stage = Stage.Done
@@ -281,10 +287,27 @@ fun InviteScreen(dir: String, meshLabel: String, onClose: () -> Unit) {
                     style = MaterialTheme.typography.bodyMedium,
                     color = Palette.Phosphor,
                 )
-                Spacer(Modifier.height(10.dp))
-                Text("PIN", style = MaterialTheme.typography.labelSmall, color = Palette.Ash)
-                Spacer(Modifier.height(4.dp))
-                KeyField(pin, singleLine = true) { pin = it.trim() }
+                if (busy) {
+                    Waiting("Signing their credential", detail)
+                } else {
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "Enter the card's PIN to admit them.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Palette.Bone,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Six digits. You will be asked for the card as soon as " +
+                            "the last one is in.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Palette.Ash,
+                    )
+                    // The last digit signs. There is no separate approve
+                    // button, because there was nothing left to decide by the
+                    // time somebody had typed six digits into this screen.
+                    PinPad(pin, onChange = { pin = it }, onComplete = { admit(it) })
+                }
             }
 
             Spacer(Modifier.height(14.dp))
@@ -292,10 +315,9 @@ fun InviteScreen(dir: String, meshLabel: String, onClose: () -> Unit) {
                 when (stage) {
                     Stage.Idle -> Action(text = "Create an invite", enabled = true) { open() }
                     Stage.Showing -> Action(text = "waiting…", enabled = false) {}
-                    Stage.Asked -> Action(
-                        text = if (busy) "hold the card…" else "Approve with card",
-                        enabled = !busy && pin.isNotEmpty(),
-                    ) { admit() }
+                    // No action of its own: the PIN pad above is the action,
+                    // and its last digit is the tap prompt.
+                    Stage.Asked -> Unit
                     Stage.Done -> Action(text = "Invite another", enabled = true) {
                         stage = Stage.Idle
                         token = ""; uri = ""; requestJSON = ""; joiner = ""; status = ""

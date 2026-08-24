@@ -1,6 +1,9 @@
 # Keycard as the mesh authority, from a phone
 
-**Status:** assessment, not a decision. Two questions at the end are Vaclav's.
+**Status:** built. The assessment below is kept because its reasoning still
+holds and the format analysis is still the reason this works at all; "The
+screen, as built" near the end describes what actually shipped, and stage 1
+passed against a physical card on 2026-08-24.
 
 The goal: issue invites and revocations from a phone, with the admin key on a
 Keycard rather than on any device. The phone is the machine always within reach,
@@ -192,6 +195,72 @@ phone, the mesh's authority is a physical object in a pocket, the phone is only
 a reader, and losing the phone loses nothing. That is a stronger claim than the
 one the project makes now, and it is the natural end of ADR-018's argument that
 the authority should not live on the always-on node.
+
+## The screen, as built
+
+Settings → Keycard shows **one** thing: whether this phone is set up with a
+card, and which key it signs with if it is. Everything else is behind the action
+that applies.
+
+It did not start there. The first version was the protocol laid out flat — five
+buttons and two text fields, all always visible and always enabled: check, pair,
+forget other devices, read key, test a signature. Every one of them was a real
+operation and the screen never said which one you were on. The verdict after an
+evening with a real card was *"I have no clue what we are doing and what the
+flow should be"*, which was a fair description.
+
+**Setting up is one guided sequence**, and the order is the point:
+
+1. **Look at the card.** `SELECT` only — no slot, no PIN attempt, no password,
+   nothing on the card changed. This answers three of the four ways setup can
+   fail before anything has been spent.
+2. **The verdict.** A card with no secure channel, no initialisation or no key
+   is a dead end, and says which, in a sentence rather than a status word.
+   Shrooms will not `INIT` a card or generate a key on one: both are
+   irreversible and decide what the card *is*.
+3. **A pairing password, only if this card has one.** Applet 4.0 and later
+   authenticates with a certificate, so the field is not shown there at all. The
+   factory default is filled in when it is shown, because it is not a secret in
+   any useful sense and getting it wrong costs a slot.
+4. **The PIN, as six dots and a keypad**, because a Keycard PIN is exactly six
+   digits. The last digit is the action — no separate approve button, because
+   by then there was nothing left to decide.
+5. **The tap**, with the card asked for and the screen saying so.
+
+`CardStatus` answers with JSON rather than a sentence for exactly this: the
+screen has decisions to make from it. Whether to ask for a password, whether
+there is any point asking for a PIN, whether freeing the other slots would help
+— all of that used to be in prose and unreachable, so the screen showed every
+button always.
+
+### Three decisions worth naming
+
+**A refused PIN does not restart the ceremony.** `CardEnrol` stores the pairing
+the moment it succeeds and checks the PIN afterwards, so a mistyped PIN leaves
+the phone paired. Going round again would spend a second of five slots to fix a
+typo, so the retry offers the pad and reads the key with the pairing already
+held.
+
+**The PIN is not cached.** loam-keycard caches it, and the flow that comes of it
+— enrol once, then tap-per-sign — is nicer. It also means anybody holding an
+unlocked phone and the card can sign without knowing the PIN, which is most of
+what the PIN is for. The operations that need one here are occasional (setting
+up, admitting a device, a self-test), so the pad every time costs little. **Open
+for Vaclav**: a short in-memory window, cleared on background, would be a
+defensible middle if admitting several devices at once becomes normal.
+
+**"Forget this card" does not free the slot on the card.** It deletes this
+phone's pairing locally; the card still counts this phone among its five and
+setting up again takes another slot. Freeing one needs the card present and a
+pairing already held, which is what "Free the other pairing slots" is for. The
+dialog says so, because the opposite assumption is the natural one.
+
+### What is on disk
+
+| file | mode | what it is |
+|---|---|---|
+| `keycard-pairing` | 0600 | the pairing, base64. Not a secret that admits anybody — it opens an encrypted channel and the PIN is still needed to sign — but one of the two things an attacker would need. |
+| `keycard-key` | 0600 | the authority's public half, so the screen can say what this phone signs with without asking for a card and a PIN. Public; losing it costs one tap. |
 
 ## Two questions
 

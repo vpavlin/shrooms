@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -48,6 +49,25 @@ type CardTransport interface {
 // identity presents the same key here. That is a convenience, not a
 // requirement: the authority is whatever public key the mesh was minted with.
 const KeycardPath = "m/44'/60'/0'/0"
+
+// CardDefaultPairingPassword is what a card initialised without a chosen
+// pairing password will have.
+//
+// keycard-cli's internal/secrets.go defines it, and the Keycard demo app offers
+// it as "use default pairing password" — which is where somebody holding a card
+// they set up with that app will have got theirs. Offered in the UI as a
+// default rather than typed from memory, because it is not a secret in any
+// useful sense and getting it wrong costs a pairing slot.
+const CardDefaultPairingPassword = "KeycardDefaultPairing"
+
+// cardKeyFile is where the authority key this phone enrolled with is kept.
+//
+// The public half only, and only so the settings screen can say which key this
+// phone signs with without asking anybody to find a card and type a PIN. Losing
+// it costs one tap to recover.
+func cardKeyFile(configDir string) string {
+	return filepath.Join(configDir, "keycard-key")
+}
 
 // pairingFile is where the pairing for this card is kept.
 //
@@ -175,9 +195,17 @@ func CardEnrol(t CardTransport, configDir, pairingPassword, pin string) (string,
 	// PIN here costs an attempt and not a slot.
 	if err := cs.VerifyPIN(pin); err != nil {
 		return "", fmt.Errorf("paired, and the PIN was refused — the pairing is "+
-			"saved, so try \"Read key\" rather than pairing again: %w", err)
+			"saved, so this card does not need pairing again, only the right "+
+			"PIN: %w", err)
 	}
-	return cardPublicKey(cs, rec)
+	key, err := cardPublicKey(cs, rec)
+	if err != nil {
+		return "", err
+	}
+	// Best effort: the enrolment succeeded whether or not this lands, and
+	// failing here would report a failure that did not happen.
+	_ = os.WriteFile(cardKeyFile(configDir), []byte(key), 0o600)
+	return key, nil
 }
 
 // cardPublicKey exports the authority's public half, compressed.
@@ -466,6 +494,7 @@ func CardStatus(t CardTransport) (string, error) {
 	if t == nil {
 		return "", errors.New("no card transport")
 	}
+	rep := cardReport{MaxSlots: keycard.PairingMaxClientCount, FreeSlots: -1}
 	cs := keycard.NewCommandSet(kio.NewNormalChannel(t))
 	if err := cs.Select(); err != nil {
 		return "", fmt.Errorf("no Keycard applet on this card: %w", err)
@@ -478,10 +507,23 @@ func CardStatus(t CardTransport) (string, error) {
 	version := "unknown"
 	if len(info.Version) >= 2 {
 		version = fmt.Sprintf("%d.%d", info.Version[0], info.Version[1])
+		// Applet 4.0 and later authenticates with a certificate against the
+		// Status CA, and asking for a pairing password there is asking for
+		// something that does not exist.
+		rep.NeedsPassword = info.Version[0] < 4
+	} else {
+		rep.NeedsPassword = true
+	}
+	rep.Applet = version
+	rep.Initialised = info.Initialized
+	rep.HasKey = len(info.KeyUID) > 0
+	if rep.HasKey {
+		rep.KeyUID = fmt.Sprintf("%x", info.KeyUID[:min(4, len(info.KeyUID))])
 	}
 	slots := "unknown"
 	if len(info.AvailableSlots) >= 1 {
 		free := int(info.AvailableSlots[0])
+		rep.FreeSlots = free
 		slots = fmt.Sprintf("%d of %d free", free, keycard.PairingMaxClientCount)
 		if free == 0 {
 			slots += " — this is what 6a84 means"
@@ -489,6 +531,7 @@ func CardStatus(t CardTransport) (string, error) {
 	}
 
 	caps := capabilityList(info)
+	rep.Capabilities = caps
 
 	switch {
 	case !info.HasSecureChannelCapability():
@@ -496,25 +539,121 @@ func CardStatus(t CardTransport) (string, error) {
 		// PAIR instruction is not implemented — which is what "6d00" means, an
 		// instruction the applet does not have. A Cash card is the usual reason
 		// to be holding one of these.
-		return fmt.Sprintf("applet %s — this card has NO SECURE CHANNEL "+
-			"capability, so it cannot be paired and cannot sign for a mesh. "+
-			"That is what 6d00 means: the applet does not implement PAIR. "+
-			"Capabilities: %s", version, caps), nil
+		rep.Problem = "no-secure-channel"
+		rep.Summary = fmt.Sprintf("This card cannot open a secure channel, so it "+
+			"cannot be paired and cannot sign for a mesh. That is what 6d00 "+
+			"means: the applet does not implement PAIR. A Cash card is the "+
+			"usual reason to be holding one. Applet %s, capabilities: %s",
+			version, caps)
+		return rep.encode()
 	case !info.Initialized:
-		return fmt.Sprintf("applet %s, NOT INITIALISED — it has no PIN, PUK or "+
-			"pairing password yet, so pairing cannot work. Initialise it with "+
-			"keycard-cli or the Keycard app first (pairing slots: %s)",
-			version, slots), nil
+		rep.Problem = "not-initialised"
+		rep.Summary = fmt.Sprintf("This card has never been initialised, so it "+
+			"has no PIN, no PUK and no pairing password — there is nothing to "+
+			"pair with yet. Set it up in the Keycard app or keycard-cli first; "+
+			"shrooms deliberately will not, because it is irreversible and "+
+			"decides what the card is. Applet %s, pairing slots: %s",
+			version, slots)
+		return rep.encode()
 	case len(info.KeyUID) == 0:
-		return fmt.Sprintf("applet %s, initialised but HOLDS NO KEY — pairing "+
-			"will work and there is nothing to sign with. Generate or load a key "+
-			"with keycard-cli or the Keycard app (pairing slots: %s)",
-			version, slots), nil
+		rep.Problem = "no-key"
+		rep.Summary = fmt.Sprintf("This card is initialised but holds no key. "+
+			"Pairing would work and there would be nothing to sign with. "+
+			"Generate or load a key in the Keycard app or keycard-cli. "+
+			"Applet %s, pairing slots: %s", version, slots)
+		return rep.encode()
 	default:
-		return fmt.Sprintf("applet %s, initialised, holds a key (%x), pairing "+
-			"slots: %s, capabilities: %s", version,
-			info.KeyUID[:min(4, len(info.KeyUID))], slots, caps), nil
+		if rep.FreeSlots == 0 {
+			// Not a dead end: this phone may already hold one of those five
+			// slots, in which case it can free the rest. The UI decides,
+			// because it knows whether a pairing is stored here.
+			rep.Problem = "no-slots"
+		}
+		rep.Summary = fmt.Sprintf("Applet %s, initialised, holds a key (%s). "+
+			"Pairing slots: %s. Capabilities: %s",
+			version, rep.KeyUID, slots, caps)
+		return rep.encode()
 	}
+}
+
+// cardReport is what CardStatus answers with, as JSON.
+//
+// It used to answer with a sentence, which read well and left the screen unable
+// to do anything with it: whether to ask for a pairing password, whether to
+// offer freeing the other slots, whether there is any point asking for a PIN.
+// All of that was in the prose and none of it was reachable, so the screen
+// showed every button always and left somebody holding a card to work out which
+// one applied. Summary is still a sentence, because the failures are things
+// nobody should have to decode from a field.
+type cardReport struct {
+	Applet       string `json:"applet"`
+	Initialised  bool   `json:"initialised"`
+	HasKey       bool   `json:"hasKey"`
+	KeyUID       string `json:"keyUID"`
+	FreeSlots    int    `json:"freeSlots"`
+	MaxSlots     int    `json:"maxSlots"`
+	Capabilities string `json:"capabilities"`
+	// NeedsPassword is false for applet 4.0 and later, which pairs with a
+	// certificate. Asking for a password there is asking for something the card
+	// does not have.
+	NeedsPassword bool `json:"needsPassword"`
+	// Problem is empty when the card can be enrolled. Otherwise one of
+	// no-secure-channel, not-initialised, no-key, no-slots — the four walls, in
+	// the order they stop you.
+	Problem string `json:"problem"`
+	Summary string `json:"summary"`
+}
+
+func (r cardReport) encode() (string, error) {
+	b, err := json.Marshal(r)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// CardEnrolment says whether this phone is set up with a card, without needing
+// one to be present.
+//
+// The pairing and the key it enrolled with are both on disk, so the settings
+// screen can open showing what it is set up with rather than showing five
+// buttons and no idea which apply.
+func CardEnrolment(configDir string) string {
+	out := struct {
+		Paired bool   `json:"paired"`
+		Key    string `json:"key"`
+	}{}
+	if _, err := os.Stat(pairingFile(configDir)); err == nil {
+		out.Paired = true
+	}
+	if b, err := os.ReadFile(cardKeyFile(configDir)); err == nil {
+		out.Key = strings.TrimSpace(string(b))
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return `{"paired":false,"key":""}`
+	}
+	return string(b)
+}
+
+// CardForget deletes this phone's pairing, and says what it does not do.
+//
+// It does not free the slot on the card. The card has no idea this happened —
+// it still counts this phone among the five devices it is paired with, and
+// pairing again takes another slot. Freeing it needs the card present, which is
+// what CardUnpairOthers is for, run from a device that still holds a pairing.
+//
+// Worth having anyway: a pairing that no longer opens a channel is worse than
+// none, because every operation fails at the same place with an error about the
+// wrong card.
+func CardForget(configDir string) error {
+	if err := os.Remove(pairingFile(configDir)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.Remove(cardKeyFile(configDir)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 // capabilityList names what a card says it can do.
