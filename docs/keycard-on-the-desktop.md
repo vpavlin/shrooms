@@ -88,51 +88,45 @@ The module is [`xAlisher/keycard-basecamp`](https://github.com/xAlisher/keycard-
 shrooms would not open a reader itself, and two modules would not fight over
 one.
 
-**But its current API is the wrong shape for this, and its own documentation
-says so.** Today it is an auth and key-derivation service: `requestAuth(domain,
-caller)` derives a domain-scoped secp256k1 key on-card and **returns the raw
-32-byte private key to the calling module**.
+**And it already signs.** `KEYCARD_API.md` documents only `requestAuth` and
+`checkAuthStatus`, which is what led an earlier version of this note to conclude
+that a patch was needed. The documentation is behind the code. `keycard-core`
+exposes a full signing flow, mirroring the auth one:
 
-Shrooms must not use that. The whole point of
-[ADR-022](adr/022-keycard-for-the-admin-key.md) is that the mesh's authority key
-never leaves the card — a card signs a digest and the key stays put. A call that
-hands back the private key would put the authority for a mesh into
-`shrooms_core`'s memory, which is worse than the passphrase-protected file it
-was meant to improve on.
+    requestSign({domain, payloadHash, caller, scheme, bip32_path?})
+    checkSignStatus(signId)  ->  {status, signature}
+    getPendingSigns() / approveSign({signId, pin}) / rejectSign(signId)
 
-`KEYCARD_SIGNING_MODES.md` in that repo already makes this argument, quoting
-guylouis: *"keycard-basecamp needs to be more than an auth/key-derivation
-service — it also needs to sign request for signature coming from LEZ wallet (or
-other modules)"*, and noting that handing raw keys to consumers "distributes the
-surface across every consumer module". Status there is **"Research complete,
-implementation not yet started."**
+Every property this needs is already there:
 
-**The good news is that what shrooms needs is the already-supported path, not
-the unmerged one.** That document is mostly about BIP340 Schnorr for LEZ, which
-needs an applet branch mikkoph distributes by hand. Shrooms needs plain
-**secp256k1 ECDSA over a 32-byte digest** — `SIGN P2=0x00`, the current
-behaviour — and the vendored `keycard-qt` SDK already exposes it:
+- **`scheme` accepts `"ecdsa"`**, which is what this codebase verifies. The
+  Schnorr work in `KEYCARD_SIGNING_MODES.md` is for LEZ and is not on our path.
+- **It takes a `payloadHash`**, not a payload — a digest is exactly what
+  `Credential.Digest()` and `Rotation.Digest()` produce, and exactly what
+  [ADR-022](adr/022-keycard-for-the-admin-key.md) built the `Signer` seam around.
+- **`bip32_path` is settable**, so `m/44'/60'/0'/0` can be asked for by name.
+- **It returns a signature and never a key.** `approveSign` calls
+  `signWithPath(hash, path, false, P2)` on the card and hands back hex; the read
+  is one-shot and the buffer is wiped after. The private half never leaves the
+  card, which is the property this whole design depends on.
+- The 65 bytes are R‖S‖V, and `internal/cred/card.go` already drops the recovery
+  byte — "which matters to Ethereum and not to us" — leaving the 64-byte r‖s
+  this codebase verifies.
 
-> `signWithPath()` returns 65 bytes: R(32) ‖ S(32) ‖ V(1)
+**So there is no card work to do, and nothing to ask anyone for.** Shrooms does
+not need its own reader, does not need the Keycard protocol on the desktop at
+all, and does not need `mobile/keycard.go` moved out of the mobile module for
+this — signing is delegated, so the protocol stays where it is used.
 
-`internal/cred/card.go` already turns exactly that into what this codebase
-verifies. So no new cryptography, no new applet, no waiting for Schnorr.
+What is left is wiring and one decision: `shrooms_core` calls `requestSign` and
+polls `checkSignStatus`, and the invite tier has to allow Basecamp to hold the
+exchange in the first place.
 
-**So this is a patch to write, not a request to make.** The module's whole
-exposed surface is `requestAuth`, `checkAuthStatus` and `getCardPresence` for
-consumers, plus a UI-only set — `deriveKey(domain)` is the closest thing to
-signing and it derives. Nothing in it signs. But the card signs, the vendored
-SDK exposes `signWithPath()`, and there is already a fork with changes in it.
-
-A `signDigest(path, digest)` alongside `requestAuth` — returning a signature,
-not a key — is a thin passthrough to a call that is already there. Add it to the
-fork, use it, offer it upstream when convenient. It is the thing
-keycard-basecamp's own roadmap says it should have, so upstream is a
-conversation about timing rather than about whether.
-
-What cannot be skipped is the method itself: `requestAuth` hands back a private
-key, and shrooms cannot accept one. Something has to sign on the card, and
-today nothing in the module's API does.
+**Do not use `requestAuth` for this.** It derives a key and returns the raw 32
+bytes to the caller, which is the right shape for a module doing bulk encryption
+and the wrong one for an authority key. `requestSign` exists precisely because
+of that distinction, and the module's own
+`KEYCARD_SIGNING_MODES.md` argues the point at length.
 
 **One constraint to carry into the UI**, from the same document: a card is
 loaded in one mode or the other, standard BIP32 or LEE, and only one at a time.
@@ -143,14 +137,15 @@ stopped working".
 
 ## Suggested order
 
-1. **Move `mobile/keycard.go` to `internal/keycard`.** Mechanical, useful on its
-   own, and everything else depends on it.
-2. **Settle the tier**, in an ADR: may the group tier hold and relay an invite,
-   given that the signature is off-daemon?
-3. **Add `signDigest` to the keycard-basecamp fork** — a passthrough to
-   `signWithPath()`, which is already vendored. Its absence, not the transport
-   and not the card, is what blocks this.
-4. **Then the transport and the UI**, which is the smallest part of this.
+1. **Settle the tier**, in an ADR: may the group tier hold and relay an invite,
+   given that the signature is off-daemon? This is the only blocker left, and
+   the only thing here that is a decision rather than work.
+2. **Wire `shrooms_core` to `requestSign`/`checkSignStatus`**, dropping the
+   recovery byte and handing the 64-byte r‖s to the existing credential path.
+3. **The UI**, which is the smallest part.
+
+Nothing needs moving out of `mobile/`, and nothing needs adding to
+keycard-basecamp.
 
 ## One thing this does not change
 
