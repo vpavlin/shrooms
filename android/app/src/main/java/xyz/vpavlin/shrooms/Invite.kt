@@ -4,6 +4,7 @@ import android.app.Activity
 import android.graphics.Bitmap
 import android.graphics.Color
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -107,6 +108,28 @@ fun InviteScreen(dir: String, meshLabel: String, onClose: () -> Unit) {
     var failed by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
 
+    // Which mesh this invite admits to.
+    //
+    // A phone on one mesh has nothing to choose and is not asked. A phone on
+    // several used to admit to whichever the config listed first, silently —
+    // the invite was minted, scanned, and the device landed somewhere the
+    // person inviting had not picked.
+    //
+    // Only meshes that are RUNNING: holding an invite means subscribing to the
+    // token's topic on that mesh's rendezvous plane, which a switched-off mesh
+    // is not doing. Offering one would produce an invite nobody could answer.
+    val meshes = remember {
+        runCatching {
+            val arr = org.json.JSONArray(Mobile.meshesJSON(dir))
+            (0 until arr.length())
+                .map { arr.getJSONObject(it) }
+                .filter { !it.optBoolean("disabled", false) }
+                .map { it.optString("label", "") }
+                .filter { it.isNotEmpty() }
+        }.getOrDefault(emptyList())
+    }
+    var chosen by remember { mutableStateOf(meshLabel.ifEmpty { meshes.firstOrNull().orEmpty() }) }
+
     val qr = remember(uri) { if (uri.isEmpty()) null else qrBitmap(uri) }
 
     /**
@@ -149,7 +172,7 @@ fun InviteScreen(dir: String, meshLabel: String, onClose: () -> Unit) {
             // an invite stays live for its full fifteen minutes even after the
             // person who made it walks away from the screen.
             val held = runCatching {
-                withContext(Dispatchers.IO) { Mobile.awaitInvite(token, 15 * 60L, meshLabel) }
+                withContext(Dispatchers.IO) { Mobile.awaitInvite(token, 15 * 60L, chosen) }
             }
             held
                 .onSuccess {
@@ -176,7 +199,7 @@ fun InviteScreen(dir: String, meshLabel: String, onClose: () -> Unit) {
             val result = runCatching {
                 withContext(Dispatchers.IO) {
                     onCardTap(activity) {
-                        Mobile.admitWithCard(it, dir, pin, token, requestJSON, joiner, 0L, meshLabel)
+                        Mobile.admitWithCard(it, dir, pin, token, requestJSON, joiner, 0L, chosen)
                     }
                 }
             }
@@ -209,6 +232,29 @@ fun InviteScreen(dir: String, meshLabel: String, onClose: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall,
                 color = Palette.Ash,
             )
+
+            // Shown only when there is a choice to make. One mesh is the
+            // ordinary case and an extra control there is noise.
+            if (meshes.size > 1) {
+                Spacer(Modifier.height(18.dp))
+                Label("ADMIT TO")
+                Spacer(Modifier.height(6.dp))
+                meshes.forEach { label ->
+                    val picked = label == chosen
+                    Text(
+                        (if (picked) "› " else "  ") + label,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (picked) Palette.Phosphor else Palette.Ash,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 6.dp)
+                            // Locked once an invite is live: the token is held
+                            // on one mesh's topic, so changing it here would
+                            // show a QR code for a mesh nobody is listening on.
+                            .clickable(enabled = stage == Stage.Idle) { chosen = label },
+                    )
+                }
+            }
 
             if (stage == Stage.Showing && qr != null) {
                 Spacer(Modifier.height(18.dp))
