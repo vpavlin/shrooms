@@ -42,3 +42,4 @@ number appears, its source is named.
 | [030](030-tailscale-shaped-not-tor-shaped.md) | Tailscale-shaped, not Tor-shaped | accepted; scopes four design notes |
 | [031](031-bootstrap-from-the-mesh-itself.md) | Bootstrap from the mesh itself | proposed; after five of six fleet entry nodes refused |
 | [032](032-a-suffix-that-cannot-be-taken-away.md) | A suffix that cannot be taken away | accepted; `.mesh` was never reserved and ICANN's 2026 round has closed |
+| [033](033-the-card-is-the-admin-not-the-uid.md) | The card is the admin, not the uid | proposed; tiers by what protects an operation, not by how it sounds |
