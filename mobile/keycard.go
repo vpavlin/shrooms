@@ -136,6 +136,13 @@ func CardEnrol(t CardTransport, configDir, pairingPassword string) (string, erro
 	if err := cs.Select(); err != nil {
 		return "", fmt.Errorf("no Keycard applet on this card: %w", err)
 	}
+	// Asked before pairing rather than after: a card without this answers 6d00
+	// to PAIR — an instruction it does not implement — and the error that comes
+	// back otherwise blames the pairing password, which is never the reason.
+	if info := cs.ApplicationInfo; info != nil && !info.HasSecureChannelCapability() {
+		return "", errors.New("this card has no secure-channel capability, so it " +
+			"cannot be paired at all. Check this card to see what it does have")
+	}
 	if err := cs.AutoPairWithMode(pairingPassword, keycard.P2PairAny); err != nil {
 		return "", fmt.Errorf("%w", pairingError(err))
 	}
@@ -361,7 +368,18 @@ func CardStatus(t CardTransport) (string, error) {
 		}
 	}
 
+	caps := capabilityList(info)
+
 	switch {
+	case !info.HasSecureChannelCapability():
+		// A card that cannot open a secure channel cannot be paired, and the
+		// PAIR instruction is not implemented — which is what "6d00" means, an
+		// instruction the applet does not have. A Cash card is the usual reason
+		// to be holding one of these.
+		return fmt.Sprintf("applet %s — this card has NO SECURE CHANNEL "+
+			"capability, so it cannot be paired and cannot sign for a mesh. "+
+			"That is what 6d00 means: the applet does not implement PAIR. "+
+			"Capabilities: %s", version, caps), nil
 	case !info.Initialized:
 		return fmt.Sprintf("applet %s, NOT INITIALISED — it has no PIN, PUK or "+
 			"pairing password yet, so pairing cannot work. Initialise it with "+
@@ -374,6 +392,34 @@ func CardStatus(t CardTransport) (string, error) {
 			version, slots), nil
 	default:
 		return fmt.Sprintf("applet %s, initialised, holds a key (%x), pairing "+
-			"slots: %s", version, info.KeyUID[:min(4, len(info.KeyUID))], slots), nil
+			"slots: %s, capabilities: %s", version,
+			info.KeyUID[:min(4, len(info.KeyUID))], slots, caps), nil
 	}
+}
+
+// capabilityList names what a card says it can do.
+//
+// Worth showing because the absence of one is the readable form of a status
+// word: a card with no secure channel answers 6d00 to PAIR, and a card with no
+// key management cannot be given a key. Both read as "the card refused" without
+// this.
+func capabilityList(info *ktypes.ApplicationInfo) string {
+	var have []string
+	for _, c := range []struct {
+		name string
+		ok   bool
+	}{
+		{"secure-channel", info.HasSecureChannelCapability()},
+		{"key-management", info.HasKeyManagementCapability()},
+		{"credentials", info.HasCredentialsManagementCapability()},
+		{"ndef", info.HasNDEFCapability()},
+	} {
+		if c.ok {
+			have = append(have, c.name)
+		}
+	}
+	if len(have) == 0 {
+		return "none reported"
+	}
+	return strings.Join(have, ", ")
 }
