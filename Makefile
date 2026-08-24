@@ -361,7 +361,12 @@ test: check-lib
 	@# has known that since a struct change reached an F-Droid publish before
 	@# anything complained — but `make test` did not depend on it, so the same
 	@# thing happened again: the binding was broken and every check was green.
-	cd mobile && $(GO) build ./...
+	@#
+	@# `test` and not only `build`: mobile/ has had tests since the Keycard
+	@# work started and nothing has ever run them. They passed, which is the
+	@# part worth noticing — a suite nobody runs is not passing, it is
+	@# unobserved, and the two look identical in a green terminal.
+	cd mobile && $(GO) test ./...
 
 ## --- site ---
 

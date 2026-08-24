@@ -494,7 +494,6 @@ func CardStatus(t CardTransport) (string, error) {
 	if t == nil {
 		return "", errors.New("no card transport")
 	}
-	rep := cardReport{MaxSlots: keycard.PairingMaxClientCount, FreeSlots: -1}
 	cs := keycard.NewCommandSet(kio.NewNormalChannel(t))
 	if err := cs.Select(); err != nil {
 		return "", fmt.Errorf("no Keycard applet on this card: %w", err)
@@ -503,6 +502,19 @@ func CardStatus(t CardTransport) (string, error) {
 	if info == nil {
 		return "", errors.New("the card answered SELECT with nothing to read")
 	}
+	return reportOf(info).encode()
+}
+
+// reportOf turns what the card said about itself into what the screen needs.
+//
+// Separated from the exchange so it can be tested without a card or a fake one:
+// this is the decision table the whole setup flow branches on — whether to ask
+// for a pairing password, whether there is any point asking for a PIN, whether
+// freeing the other slots would help — and it is worth pinning that four
+// conditions are checked in the order they stop you, since a card can fail more
+// than one at once and only the first is worth saying.
+func reportOf(info *ktypes.ApplicationInfo) cardReport {
+	rep := cardReport{MaxSlots: keycard.PairingMaxClientCount, FreeSlots: -1}
 
 	version := "unknown"
 	if len(info.Version) >= 2 {
@@ -545,7 +557,6 @@ func CardStatus(t CardTransport) (string, error) {
 			"means: the applet does not implement PAIR. A Cash card is the "+
 			"usual reason to be holding one. Applet %s, capabilities: %s",
 			version, caps)
-		return rep.encode()
 	case !info.Initialized:
 		rep.Problem = "not-initialised"
 		rep.Summary = fmt.Sprintf("This card has never been initialised, so it "+
@@ -554,14 +565,12 @@ func CardStatus(t CardTransport) (string, error) {
 			"shrooms deliberately will not, because it is irreversible and "+
 			"decides what the card is. Applet %s, pairing slots: %s",
 			version, slots)
-		return rep.encode()
-	case len(info.KeyUID) == 0:
+	case !rep.HasKey:
 		rep.Problem = "no-key"
 		rep.Summary = fmt.Sprintf("This card is initialised but holds no key. "+
 			"Pairing would work and there would be nothing to sign with. "+
 			"Generate or load a key in the Keycard app or keycard-cli. "+
 			"Applet %s, pairing slots: %s", version, slots)
-		return rep.encode()
 	default:
 		if rep.FreeSlots == 0 {
 			// Not a dead end: this phone may already hold one of those five
@@ -572,8 +581,8 @@ func CardStatus(t CardTransport) (string, error) {
 		rep.Summary = fmt.Sprintf("Applet %s, initialised, holds a key (%s). "+
 			"Pairing slots: %s. Capabilities: %s",
 			version, rep.KeyUID, slots, caps)
-		return rep.encode()
 	}
+	return rep
 }
 
 // cardReport is what CardStatus answers with, as JSON.
