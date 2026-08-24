@@ -214,9 +214,22 @@ func cardPublicKey(cs *keycard.CommandSet) (string, error) {
 		return "", err
 	}
 	if !cred.VerifyDigest(c, enrolDigest, compact) {
-		return "", errors.New("the card signed, but the signature does not verify " +
-			"against the key it returned — the conversion between what the card " +
-			"produces and what this project checks is wrong")
+		// What it actually returned, because this is the one failure that
+		// cannot be reproduced without the card in hand. Every value here is
+		// public — a point, r, s, and the recovery byte — so printing them
+		// costs nothing and saves a round trip per guess.
+		//
+		// keycard-go builds the public key one of two ways depending on what
+		// the card sends back: a legacy template carries it, and a raw
+		// recoverable signature does NOT, so the library recovers it from the
+		// signature and the recovery byte. A recovered key that is wrong
+		// verifies nothing, and looks exactly like a conversion bug from here.
+		return "", fmt.Errorf("the card signed, but the signature does not verify "+
+			"against the key it returned.\n\n"+
+			"pub %d bytes: %x\ncompressed: %x\nr %d bytes: %x\ns %d bytes: %x\nv: %02x\n"+
+			"digest: %x",
+			len(sig.PubKey()), sig.PubKey(), c,
+			len(sig.R()), sig.R(), len(sig.S()), sig.S(), sig.V(), enrolDigest)
 	}
 	return hex.EncodeToString(c), nil
 }

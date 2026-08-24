@@ -189,11 +189,15 @@ fun KeycardSetting(dir: String) {
         // "Pair this phone" appeared to do nothing at all, twice over.
         if (status.isNotEmpty()) {
             Spacer(Modifier.height(10.dp))
-            Text(
-                status,
-                style = MaterialTheme.typography.bodySmall,
-                color = if (failed) Palette.Amber else Palette.Phosphor,
-            )
+            // Selectable, because a card failure is now several lines of hex
+            // and the alternative to copying it is transcribing it by hand.
+            SelectionContainer {
+                Text(
+                    status,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (failed) Palette.Amber else Palette.Phosphor,
+                )
+            }
         }
 
         // First, because it answers what state the card is in and costs
