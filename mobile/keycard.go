@@ -311,3 +311,69 @@ func CardUnpairOthers(t CardTransport, configDir string) (string, error) {
 	return fmt.Sprintf("freed the other slots; this phone is still paired (%d in total)",
 		keycard.PairingMaxClientCount), nil
 }
+
+// CardStatus reports what state a card is in, without pairing or a PIN.
+//
+// SELECT alone answers this: it costs no pairing slot, spends no PIN attempt,
+// and needs no secret. That makes it the thing to run first on an unfamiliar
+// card, and the thing that would have answered Vaclav's first card in one tap
+// instead of a failed pairing and a raw status word.
+//
+// Four questions, in the order they stop you:
+//
+//   - initialised? Until INIT has been run there is no PIN, no PUK and no
+//     pairing password, so pairing cannot work and no password is the right one.
+//   - does it hold a key? A card can be initialised and empty. KeyUID is the
+//     hash of the master public key and is absent when there is none, and
+//     without one there is nothing at m/44'/60'/0'/0 to sign with.
+//   - how many pairing slots are free? Five is the maximum and zero is what
+//     "6a84" means.
+//   - which applet version? Below 4.0 pairing uses a password; at 4.0 and above
+//     it uses a certificate and the password is not asked for.
+//
+// Neither INIT nor key generation is done here. Both are one-time acts that
+// decide what a card IS, they are irreversible, and doing them from a VPN's
+// settings screen by accident is not a thing anybody should be able to do. Use
+// keycard-cli or the Keycard app.
+func CardStatus(t CardTransport) (string, error) {
+	if t == nil {
+		return "", errors.New("no card transport")
+	}
+	cs := keycard.NewCommandSet(kio.NewNormalChannel(t))
+	if err := cs.Select(); err != nil {
+		return "", fmt.Errorf("no Keycard applet on this card: %w", err)
+	}
+	info := cs.ApplicationInfo
+	if info == nil {
+		return "", errors.New("the card answered SELECT with nothing to read")
+	}
+
+	version := "unknown"
+	if len(info.Version) >= 2 {
+		version = fmt.Sprintf("%d.%d", info.Version[0], info.Version[1])
+	}
+	slots := "unknown"
+	if len(info.AvailableSlots) >= 1 {
+		free := int(info.AvailableSlots[0])
+		slots = fmt.Sprintf("%d of %d free", free, keycard.PairingMaxClientCount)
+		if free == 0 {
+			slots += " — this is what 6a84 means"
+		}
+	}
+
+	switch {
+	case !info.Initialized:
+		return fmt.Sprintf("applet %s, NOT INITIALISED — it has no PIN, PUK or "+
+			"pairing password yet, so pairing cannot work. Initialise it with "+
+			"keycard-cli or the Keycard app first (pairing slots: %s)",
+			version, slots), nil
+	case len(info.KeyUID) == 0:
+		return fmt.Sprintf("applet %s, initialised but HOLDS NO KEY — pairing "+
+			"will work and there is nothing to sign with. Generate or load a key "+
+			"with keycard-cli or the Keycard app (pairing slots: %s)",
+			version, slots), nil
+	default:
+		return fmt.Sprintf("applet %s, initialised, holds a key (%x), pairing "+
+			"slots: %s", version, info.KeyUID[:min(4, len(info.KeyUID))], slots), nil
+	}
+}
