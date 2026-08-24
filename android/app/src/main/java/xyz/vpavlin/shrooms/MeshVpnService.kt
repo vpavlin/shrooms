@@ -62,6 +62,15 @@ class MeshVpnService : VpnService() {
     // when its resolvers change. See watchNetworks.
     private var netCallback: ConnectivityManager.NetworkCallback? = null
 
+    /**
+     * When the underlying network last changed, for the watchdog.
+     *
+     * Volatile because it is written from ConnectivityManager's callback thread
+     * and read from the watchdog coroutine.
+     */
+    @Volatile
+    private var networkChangedAt = 0L
+
     /** When the watchdog last said it was holding off because the device is offline. */
     private var offlineNoted = 0L
 
@@ -95,6 +104,16 @@ class MeshVpnService : VpnService() {
         private const val REVIVE_COOLDOWN = 15 * 60_000L
 
         /**
+         * How long after a network change to treat a disconnected rendezvous
+         * plane as recovery rather than as a fault.
+         *
+         * Long enough for the delivery node to find peers on the new network,
+         * which is a bootstrap rather than a reconnect; short enough that a
+         * node still wedged afterwards is dealt with in the same session.
+         */
+        private const val NETWORK_SETTLE = 3 * 60_000L
+
+        /**
          * How often to say "still offline" while the watchdog holds off.
          *
          * Said at all because the alternative is a log that goes silent for
@@ -103,6 +122,16 @@ class MeshVpnService : VpnService() {
         private const val OFFLINE_LOG_EVERY = 10 * 60_000L
         private const val CHANNEL = "mesh"
         private const val NOTIFICATION_ID = 1
+
+        /**
+         * A second notification, for the case where the process is about to
+         * end and cannot promise to come back.
+         *
+         * Separate from the foreground-service notification deliberately: that
+         * one belongs to the service and disappears with it, which is precisely
+         * when somebody most needs to be told something.
+         */
+        private const val GONE_NOTIFICATION_ID = 2
         private const val TAG = "shrooms"
 
         /** MTU 1280: the IPv6 minimum, which no path may fragment below. */
@@ -441,6 +470,28 @@ class MeshVpnService : VpnService() {
                         healthy = now
                     }
 
+                    // The network just changed, so being disconnected is
+                    // what recovery looks like rather than a fault.
+                    //
+                    // Same bug as the one above, with a network present. Moving
+                    // between wifi and mobile data tears down every connection
+                    // the delivery node had, and rebuilding them on the new
+                    // network takes time — during which rendezvous correctly
+                    // reports Disconnected. The branch below read that as a
+                    // wedged node and killed the process. On a flapping
+                    // connection that repeated, and from the outside it is
+                    // indistinguishable from the app crashing on every network
+                    // switch, which is exactly how it was reported.
+                    //
+                    // Holding the timer while the ground keeps moving is right
+                    // for the same reason it is right when there is no network
+                    // at all: there is no repair to attempt yet. If the network
+                    // settles and the node is genuinely wedged, this stops
+                    // firing and the branch below does its job.
+                    now - networkChangedAt < NETWORK_SETTLE -> {
+                        healthy = now
+                    }
+
                     now - healthy > STALL_BEFORE_RECONNECT &&
                         now - revived > REVIVE_COOLDOWN -> {
                         revived = now
@@ -511,9 +562,57 @@ class MeshVpnService : VpnService() {
     private fun hardRestart(why: String) {
         Log.w(TAG, "delivery node is gone ($why) — restarting the process")
         MeshState.log("WARN", "delivery node gone, restarting the app")
+
+        // Say so before dying, because the restart is not guaranteed.
+        //
+        // This relied on START_STICKY, and START_STICKY is a request rather
+        // than a promise: Android backs off a service that keeps dying, and on
+        // Android 12 and later a foreground service started from the background
+        // may be refused outright. Reported from the field as the app simply
+        // not coming back — which, from the outside, is indistinguishable from
+        // a crash, because that is what it is.
+        //
+        // So leave something behind that outlives the process and can start it
+        // again. A tap is a user-initiated start, which is allowed when a
+        // background one is not, and it is also how somebody finds out that the
+        // VPN they thought was running is not.
+        runCatching { notifyGone(why) }
+
         runCatching { Mobile.stop() }
         runCatching { tunnel?.close() }
         android.os.Process.killProcess(android.os.Process.myPid())
+    }
+
+    /**
+     * Posts a notification that survives this process, offering to start again.
+     *
+     * Its own id, so it is not the foreground-service notification that goes
+     * away with the service. Not ongoing, so it can be dismissed by somebody
+     * who does not want it back right now.
+     */
+    private fun notifyGone(why: String) {
+        val connect = PendingIntent.getService(
+            this, 2, Intent(this, MeshVpnService::class.java).setAction(ACTION_CONNECT),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val n = Notification.Builder(this, CHANNEL)
+            .setContentTitle("Shrooms stopped")
+            .setContentText("Lost the rendezvous connection and could not rebuild it. Tap to reconnect.")
+            .setStyle(
+                Notification.BigTextStyle().bigText(
+                    "Shrooms lost its connection to the rendezvous plane and could " +
+                        "not rebuild it in place, so it restarted itself. If it did " +
+                        "not come back, Android declined to start it again — tap to " +
+                        "start it.\n\n" + why
+                )
+            )
+            .setSmallIcon(android.R.drawable.stat_notify_error)
+            .setContentIntent(connect)
+            .setAutoCancel(true)
+            .addAction(Notification.Action.Builder(null, "Reconnect", connect).build())
+            .build()
+        val mgr = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        mgr.notify(GONE_NOTIFICATION_ID, n)
     }
 
     private fun stop() {
@@ -598,6 +697,10 @@ class MeshVpnService : VpnService() {
                 refresh("link properties changed")
 
             private fun refresh(why: String) {
+                // Before anything else, so the watchdog stops counting a
+                // rebuild as a stall even if the work below fails.
+                networkChangedAt = SystemClock.elapsedRealtime()
+
                 // Tell the system which network the tunnel actually runs over.
                 //
                 // Without this a VpnService keeps whatever underlying network it
@@ -716,5 +819,8 @@ class MeshVpnService : VpnService() {
     private fun notify(text: String) {
         val mgr = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         mgr.notify(NOTIFICATION_ID, notification(text))
+        // Whatever went wrong is over: leaving "Shrooms stopped" on the shade
+        // while it is plainly running is worse than never having said it.
+        runCatching { mgr.cancel(GONE_NOTIFICATION_ID) }
     }
 }
