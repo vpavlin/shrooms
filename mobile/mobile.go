@@ -1064,10 +1064,16 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 				if !ok {
 					return
 				}
+				// Guarded per mesh and per event, so a message that trips
+				// something takes that message down and not the reader — and
+				// not, as it did before, the whole app. See mobile/recover.go.
 				for _, in := range instances {
-					in.mesh.Deliver(ev)
+					in := in
+					guard(log, configDir, "deliver to mesh "+in.label, func() {
+						in.mesh.Deliver(ev)
+					})
 				}
-				tap.feed(ev)
+				guard(log, configDir, "tap feed", func() { tap.feed(ev) })
 			}
 		}
 	}()
@@ -1077,9 +1083,11 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 		wgRun.Add(1)
 		go func(in *meshInstance) {
 			defer wgRun.Done()
-			if err := in.mesh.Run(ctx); err != nil && ctx.Err() == nil {
-				log.Error("mesh stopped", "mesh", in.label, "err", err)
-			}
+			guard(log, configDir, "run mesh "+in.label, func() {
+				if err := in.mesh.Run(ctx); err != nil && ctx.Err() == nil {
+					log.Error("mesh stopped", "mesh", in.label, "err", err)
+				}
+			})
 		}(in)
 	}
 	go func() {
