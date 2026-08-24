@@ -185,3 +185,51 @@ func TestSignerOfFindsTheKeyThatSigned(t *testing.T) {
 		t.Error("accepted a signature of the wrong length")
 	}
 }
+
+// keycard-go hands back an s that is two bytes short, and the two that are
+// missing can be found because only one pair produces a signature that
+// verifies. Reproduced here exactly as the library mangles it.
+func TestRepairCardSignature(t *testing.T) {
+	priv, err := secp256k1.GeneratePrivateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub := priv.PubKey().SerializeCompressed()
+	digest := sha256.Sum256([]byte("a card signature"))
+
+	sig := ecdsa.Sign(priv, digest[:])
+	r, sc := sig.R(), sig.S()
+	rb, sb := r.Bytes(), sc.Bytes()
+	good := append(append([]byte(nil), rb[:]...), sb[:]...)
+	if !VerifyDigest(pub, digest, good) {
+		t.Fatal("the fixture signature does not verify; the test proves nothing")
+	}
+
+	// What the library returns: s shifted two left, two junk bytes appended.
+	broken := append([]byte(nil), good...)
+	copy(broken[32:62], good[34:64])
+	broken[62], broken[63] = 0x01, 0xd2
+	if VerifyDigest(pub, digest, broken) {
+		t.Fatal("the mangled signature verified; the fixture is wrong")
+	}
+
+	got, ok := RepairCardSignature(pub, digest, broken)
+	if !ok {
+		t.Fatal("could not recover the signature")
+	}
+	if !bytes.Equal(got, good) {
+		t.Errorf("recovered %x, want %x", got, good)
+	}
+
+	// A signature that is already correct is returned untouched, without a
+	// search — the common case once the library is fixed.
+	same, ok := RepairCardSignature(pub, digest, good)
+	if !ok || !bytes.Equal(same, good) {
+		t.Error("a good signature was not passed straight through")
+	}
+
+	// Nonsense is refused rather than searched into something plausible.
+	if _, ok := RepairCardSignature(pub, digest, make([]byte, 64)); ok {
+		t.Error("recovered a signature from zeroes")
+	}
+}

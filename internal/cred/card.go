@@ -2,6 +2,7 @@ package cred
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"github.com/decred/dcrd/dcrec/secp256k1/v4/ecdsa"
@@ -161,4 +162,49 @@ func recoverCandidates(digest [32]byte, sig []byte) ([][]byte, error) {
 		return nil, errors.New("no key could have produced that signature")
 	}
 	return out, nil
+}
+
+// RepairCardSignature recovers the two bytes keycard-go loses from s.
+//
+// The bug is in the library, not the card. parseLegacySignature reads r and s
+// as slices INTO the response buffer, then calculateV does:
+//
+//	rs := append(r, s...)
+//
+// r's backing array is that buffer, so the append writes s on top of the two
+// DER header bytes (02 20) that sit between r and s — and the s slice still
+// points at the old offset. What comes back is s shifted two bytes left with
+// two bytes of whatever followed on the end. Demonstrated with a signature made
+// locally, no card involved: 366fdd72…a5d2 in, dd72a3ae…01d2 out.
+//
+// v, r and the public key survive, because calculateV computes with its own
+// correct copy and the append does not reach backwards over r.
+//
+// So the first thirty bytes of the real s are the last thirty of what we were
+// given, and the first two are gone. Sixty-five thousand possibilities, each
+// checked against the card's own key — this cannot return a signature that does
+// not verify, which is what makes a repair by search defensible rather than a
+// guess. It is also fast: a wrong candidate fails at the first verification.
+//
+// Remove this when the library is fixed. VerifyDigest is tried first, so a
+// correct signature costs one verification and never reaches the search.
+func RepairCardSignature(pub ed25519.PublicKey, digest [32]byte, sig []byte) ([]byte, bool) {
+	if len(sig) != secp256k1SigSize {
+		return nil, false
+	}
+	if VerifyDigest(pub, digest, sig) {
+		return sig, true
+	}
+	fixed := make([]byte, secp256k1SigSize)
+	copy(fixed, sig[:32])        // r is intact
+	copy(fixed[34:], sig[32:62]) // the surviving thirty bytes of s
+	for hi := 0; hi < 256; hi++ {
+		for lo := 0; lo < 256; lo++ {
+			fixed[32], fixed[33] = byte(hi), byte(lo)
+			if VerifyDigest(pub, digest, fixed) {
+				return append([]byte(nil), fixed...), true
+			}
+		}
+	}
+	return nil, false
 }

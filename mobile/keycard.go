@@ -240,6 +240,13 @@ func cardPublicKey(cs *keycard.CommandSet, rec *recorder) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// keycard-go returns an s that is two bytes short of what the card sent —
+	// a slice-aliasing bug in its own signature parser, not anything the card
+	// did. Repaired here, and the repair only ever returns a signature that
+	// verifies, so a card that is genuinely wrong still fails below.
+	if repaired, ok := cred.RepairCardSignature(c, enrolDigest, compact); ok {
+		compact = repaired
+	}
 	if !cred.VerifyDigest(c, enrolDigest, compact) {
 		// What it actually returned, because this is the one failure that
 		// cannot be reproduced without the card in hand. Every value here is
@@ -330,7 +337,20 @@ func (c *cardSigner) SignDigest(d [32]byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("the card did not sign: %w", err)
 	}
-	return cred.CompactSig(sig.R(), sig.S())
+	compact, err := cred.CompactSig(sig.R(), sig.S())
+	if err != nil {
+		return nil, err
+	}
+	// The same two bytes the library loses on the way out of its parser. Every
+	// signature this card makes needs them back, not only the enrolment one —
+	// a credential signed with the mangled s is refused by every peer, silently
+	// and for a reason nobody would find.
+	repaired, ok := cred.RepairCardSignature(c.pub, d, compact)
+	if !ok {
+		return nil, errors.New("the card's signature could not be reconciled " +
+			"with its own key, even allowing for the two bytes keycard-go loses")
+	}
+	return repaired, nil
 }
 
 var _ cred.Signer = (*cardSigner)(nil)
