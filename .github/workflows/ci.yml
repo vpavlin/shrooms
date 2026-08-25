@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, e2e-two-nodes]
     tags: ['v*']
   pull_request:
   # So a run can be forced without an empty commit — useful when checking
@@ -83,6 +83,31 @@ jobs:
         run: make shrooms
       - name: Scenarios
         run: make e2e
+
+  # Two nodes and a mesh that actually comes up, with a local fleet rather than
+  # the public one — so this is seconds rather than the four minutes m1 waits on
+  # somebody else's network.
+  #
+  # continue-on-error while it settles: it is new, it needs a tun device on a
+  # hosted runner, and a job nobody trusts yet must not block the ones that are
+  # already trustworthy. Flip it once it has been green for a while.
+  e2e-two-nodes:
+    name: end-to-end (two nodes)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - name: Fetch liblogosdelivery
+        run: make deps-release
+      - name: Build the binary
+        run: make shrooms
+      - name: A tun device
+        run: sudo modprobe tun || true; ls -l /dev/net/tun
+      - name: Two nodes
+        run: sudo --preserve-env=PATH make e2e-two-nodes
 
   # Publish the container image.
   #

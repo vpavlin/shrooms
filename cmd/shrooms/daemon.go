@@ -133,6 +133,16 @@ func cmdDaemon(args []string) error {
 	// object are not the list of keys this accepts.
 	if cfg.DeliveryPort != 0 {
 		nodeCfg["tcpPort"] = cfg.DeliveryPort
+		// And the discovery port, which is UDP and was left to the library.
+		// Pinning only the TCP half meant two nodes on one machine still
+		// collided — "failed to open udp port: (98) Address already in use" —
+		// so a second daemon could not be started beside a first whatever was
+		// configured, which made a two-node test on one host impossible.
+		//
+		// The same number: TCP and UDP are separate namespaces, so there is
+		// nothing to avoid, and one pinned port is easier to reason about and
+		// to open in a firewall than two.
+		nodeCfg["discv5UdpPort"] = cfg.DeliveryPort
 	}
 	// A stable libp2p identity, so a bootstrap address this node publishes
 	// keeps working after it restarts (ADR-031). Best effort: without it the
@@ -153,7 +163,18 @@ func cmdDaemon(args []string) error {
 	if err := node.Start(); err != nil {
 		return fmt.Errorf("start rendezvous plane: %w", err)
 	}
-	log.Info("rendezvous plane up", "preset", cfg.Preset, "cluster", cfg.ClusterID, "mode", cfg.Mode)
+	// The peer id is logged because nothing else can answer "what is this node's
+	// rendezvous identity". bootAddr knows it, and deliberately publishes
+	// nothing unless this node has a public address — which is right, since a
+	// bootstrap address that does not answer is worse than none, and wrong for
+	// anybody standing two nodes up on one machine and needing to point the
+	// second at the first.
+	peerID := ""
+	if id, err := node.PeerID(); err == nil {
+		peerID = strings.TrimSpace(id)
+	}
+	log.Info("rendezvous plane up", "preset", cfg.Preset, "cluster", cfg.ClusterID,
+		"mode", cfg.Mode, "peer_id", peerID, "delivery_port", cfg.DeliveryPort)
 
 	ctx := ctx0
 
