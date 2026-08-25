@@ -125,6 +125,12 @@ func mintAuthorityFor(dir, cfgPath, stateDir, label, name string) error {
 }
 
 func mintAuthorityAt(dir string, plain bool, cfgPath, stateDir, name, label string) error {
+	// Before anything is generated: a mesh minted onto a filesystem that is
+	// about to disappear is a mesh that ends when its credentials expire, and
+	// nothing later in this function can detect that it happened.
+	if err := refuseEphemeralMint(dir); err != nil {
+		return err
+	}
 	path := adminPathFor(dir, label)
 	if _, err := os.Stat(path); err == nil {
 		return fmt.Errorf("%s already exists; minting again would create a different mesh", path)

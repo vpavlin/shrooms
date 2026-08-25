@@ -29,6 +29,22 @@ services:
     volumes:
       - /etc/shrooms:/etc/shrooms:z
       - /var/lib/shrooms:/var/lib/shrooms:z
+      # The admin key, IF this node mints a mesh. It is not needed to run one —
+      # a member never holds the authority — but `shrooms init` inside a
+      # container without this writes the mesh's admin key to the container's
+      # own filesystem, and it is gone the next time the container is recreated.
+      #
+      # That cannot be recovered. The admin keys are fixed when a mesh is
+      # minted, because the mesh id is their hash and the address prefix derives
+      # from the id, so a lost key cannot be replaced and the mesh can never
+      # admit another device. It happened, on 2026-08-25, to a mesh whose
+      # admin_keys were configured on every member and whose private key was on
+      # no machine anybody could find.
+      #
+      # Minting refuses outright now rather than relying on this being
+      # uncommented, but the mount is what makes it possible in here at all.
+      # Use it with: shrooms admin init --dir /etc/shrooms/admin
+      - /etc/shrooms/admin:/etc/shrooms/admin:z
       # The control socket, so `shrooms status` works from the host.
       #
       # :z on every mount, for SELinux. Without it the daemon cannot bind the
