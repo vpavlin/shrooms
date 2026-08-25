@@ -191,6 +191,9 @@ elif grep -q "tunnel established" "$WORK/b/daemon.log"; then
 else
   bad "no tunnel at all ${n}s after the restart"
 fi
+note "B after restart: $(grep -cE 'remembered peers|tunnel established|from=memory' "$WORK/b/daemon.log") relevant lines"
+grep -E "remembered peers|tunnel established|peer discovered|provisional" "$WORK/b/daemon.log" |
+  sed 's/^/         /' | head -6
 
 # --- revocation, which is the one that has to work --------------------------
 #
@@ -201,9 +204,12 @@ DEV_B=$("$BIN" keys --state "$WORK/b/state" 2>&1 | sed -n 's/^device  *//p' | he
 printf 'pw\n' | "$BIN" admin revoke --dir "$WORK/a/admin" \
     --config "$WORK/a/config.toml" --socket "$SOCKS/a.sock" \
     --device "$DEV_B" >"$WORK/a/revoke.log" 2>&1
-if grep -qiE "revok" "$WORK/a/revoke.log"; then ok "node A revokes node B"; else
+# What it printed, always: a loose grep for "revok" matches the word in an
+# error just as happily as in a success, which is how a failing revocation
+# reported itself as working.
+sed 's/^/         /' "$WORK/a/revoke.log" | head -6
+if grep -qiE "revoked|published" "$WORK/a/revoke.log"; then ok "node A revokes node B"; else
   bad "revocation did not go out"
-  note "$(tail -2 "$WORK/a/revoke.log")"
 fi
 
 n=0
@@ -214,6 +220,7 @@ done
 if "$BIN" status --socket "$SOCKS/a.sock" 2>/dev/null | grep -q "beta"; then
   bad "node B is still on node A's roster ${n}s after being revoked"
   note "$("$BIN" status --socket "$SOCKS/a.sock" 2>&1 | tail -3 | tr '\n' ' ')"
+  grep -iE "revok" "$WORK/a/daemon.log" | sed 's/^/         /' | tail -4
 else
   ok "node B is gone from node A's roster (${n}s)"
 fi
