@@ -191,7 +191,15 @@ elif grep -q "tunnel established" "$WORK/b/daemon.log"; then
 else
   bad "no tunnel at all ${n}s after the restart"
 fi
-note "B after restart: $(grep -cE 'remembered peers|tunnel established|from=memory' "$WORK/b/daemon.log") relevant lines"
+note "what node B remembered:"
+for f in "$WORK/b/state"/roster-*.json; do
+  [ -f "$f" ] || continue
+  python3 - "$f" <<'PYEOF' | sed 's/^/         /'
+import json,sys
+for p in (json.load(open(sys.argv[1])).get("peers") or []):
+    print(" ", p.get("name"), "endpoints:", p.get("endpoints"), "seen:", p.get("seen"))
+PYEOF
+done
 grep -E "remembered peers|tunnel established|peer discovered|provisional" "$WORK/b/daemon.log" |
   sed 's/^/         /' | head -6
 
@@ -201,15 +209,20 @@ grep -E "remembered peers|tunnel established|peer discovered|provisional" "$WORK
 # revocation is something peers enforce, not something the revoked device
 # cooperates with.
 DEV_B=$("$BIN" keys --state "$WORK/b/state" 2>&1 | sed -n 's/^device  *//p' | head -1)
+# No --config: admin revoke does not take one, and flag.ExitOnError turns an
+# unknown flag into usage text and an exit — which a grep for "revok" then
+# matched, reporting a revocation that never happened.
 printf 'pw\n' | "$BIN" admin revoke --dir "$WORK/a/admin" \
-    --config "$WORK/a/config.toml" --socket "$SOCKS/a.sock" \
-    --device "$DEV_B" >"$WORK/a/revoke.log" 2>&1
+    --socket "$SOCKS/a.sock" --device "$DEV_B" >"$WORK/a/revoke.log" 2>&1
+REVOKE_RC=$?
 # What it printed, always: a loose grep for "revok" matches the word in an
 # error just as happily as in a success, which is how a failing revocation
 # reported itself as working.
 sed 's/^/         /' "$WORK/a/revoke.log" | head -6
-if grep -qiE "revoked|published" "$WORK/a/revoke.log"; then ok "node A revokes node B"; else
-  bad "revocation did not go out"
+# The exit status, not a word in the output: an error mentioning revocation
+# reads exactly like a success to a grep.
+if [ "$REVOKE_RC" -eq 0 ]; then ok "node A revokes node B"; else
+  bad "revocation did not go out (exit $REVOKE_RC)"
 fi
 
 n=0
