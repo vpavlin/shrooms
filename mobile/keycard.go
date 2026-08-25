@@ -43,12 +43,43 @@ type CardTransport interface {
 	Transmit(apdu []byte) ([]byte, error)
 }
 
-// KeycardPath is where the authority key lives on the card.
+// KeycardPath is where a mesh's authority key lives on the card.
 //
-// The same path loam-keycard uses, so a card already enrolled for a Loam
-// identity presents the same key here. That is a convenience, not a
-// requirement: the authority is whatever public key the mesh was minted with.
-const KeycardPath = "m/44'/60'/0'/0"
+// This used to be `m/44'/60'/0'/0` — the standard Ethereum path, and the one
+// loam-keycard uses, so that a card enrolled for a Loam identity presented the
+// same key here. That was a deliberate convenience and it was the wrong trade.
+//
+// A mesh's admin_keys is in every member's config. With the wallet path, that
+// means everybody you share a mesh with can read your Loam/Ethereum identity's
+// public key and look up whatever that address has ever done. The linkage only
+// runs one way — rendezvous topics derive from the network key, not from the
+// mesh id, so nobody can find your mesh from your wallet — but mesh to identity
+// is the direction that matters when a mesh is shared with somebody outside the
+// household, which is the case this project exists for.
+//
+// It also meant one key signing in two protocols. The digests are domain
+// separated so neither can forge the other, but compromise would have been
+// shared, and there is no reason to accept that for a convenience.
+//
+// **This cannot be changed once a mesh exists.** The mesh id is the hash of the
+// admin key set and the overlay prefix derives from the id, so a different path
+// is a different mesh, and every device would have to be re-enrolled and
+// re-addressed.
+//
+// The purpose index is the first two bytes of SHA-256("shrooms"), 0xfb09 —
+// arbitrary, but reproducible and written down rather than picked and forgotten.
+// It is clear of every registered BIP purpose (44, 45, 47, 48, 49, 84, 86,
+// 1852…), so no wallet restoring this mnemonic will scan it, offer it as an
+// account, or spend from it.
+//
+// Every level is hardened, so an extended public key from anywhere above cannot
+// derive this one or its siblings.
+//
+// The second level is the mesh, reserved rather than used: one card can hold a
+// distinct authority per mesh (ADR-015), and two meshes sharing an admin key
+// would be linkable to each other through admin_keys alone. Today everything
+// mints at 0'.
+const KeycardPath = "m/64265'/0'/0'"
 
 // CardDefaultPairingPassword is what a card initialised without a chosen
 // pairing password will have.
@@ -65,8 +96,52 @@ const CardDefaultPairingPassword = "KeycardDefaultPairing"
 // The public half only, and only so the settings screen can say which key this
 // phone signs with without asking anybody to find a card and type a PIN. Losing
 // it costs one tap to recover.
+//
+// Stored with the derivation path it came from, and refused if that path is not
+// the one in use now. This is not tidiness. A key shown on that screen is a key
+// somebody copies into admin_keys, the mesh id is the hash of admin_keys, and
+// the overlay prefix derives from the mesh id — so a mesh minted from a stale
+// key is a mesh whose card cannot sign for it, permanently, with re-enrolling
+// every device as the only way out. The path changed once already; treating a
+// key from the old one as absent costs a tap and prevents that.
 func cardKeyFile(configDir string) string {
 	return filepath.Join(configDir, "keycard-key")
+}
+
+// storedKey is what cardKeyFile holds.
+type storedKey struct {
+	Path string `json:"path"`
+	Key  string `json:"key"`
+}
+
+// writeCardKey records the key and the path it was derived at.
+func writeCardKey(configDir, key string) error {
+	b, err := json.Marshal(storedKey{Path: KeycardPath, Key: key})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(cardKeyFile(configDir), b, 0o600)
+}
+
+// readCardKey returns the stored key, or empty if it was derived somewhere else.
+//
+// A file that does not parse is treated as absent rather than as an error: the
+// first version of this stored bare hex with no path, and a bare hex key is
+// exactly the case that must not be offered — it predates the path change, so
+// it is the stale one.
+func readCardKey(configDir string) string {
+	raw, err := os.ReadFile(cardKeyFile(configDir))
+	if err != nil {
+		return ""
+	}
+	var sk storedKey
+	if json.Unmarshal(raw, &sk) != nil {
+		return ""
+	}
+	if sk.Path != KeycardPath {
+		return ""
+	}
+	return strings.TrimSpace(sk.Key)
 }
 
 // pairingFile is where the pairing for this card is kept.
@@ -203,7 +278,7 @@ func CardEnrol(t CardTransport, configDir, pairingPassword, pin string) (string,
 	}
 	// Best effort: the enrolment succeeded whether or not this lands, and
 	// failing here would report a failure that did not happen.
-	_ = os.WriteFile(cardKeyFile(configDir), []byte(key), 0o600)
+	_ = writeCardKey(configDir, key)
 	return key, nil
 }
 
@@ -508,7 +583,7 @@ func CardUnpairOthers(t CardTransport, configDir string) (string, error) {
 //     pairing password, so pairing cannot work and no password is the right one.
 //   - does it hold a key? A card can be initialised and empty. KeyUID is the
 //     hash of the master public key and is absent when there is none, and
-//     without one there is nothing at m/44'/60'/0'/0 to sign with.
+//     without one there is nothing at KeycardPath to sign with.
 //   - how many pairing slots are free? Five is the maximum and zero is what
 //     "6a84" means.
 //   - which applet version? Below 4.0 pairing uses a password; at 4.0 and above
@@ -663,9 +738,7 @@ func CardEnrolment(configDir string) string {
 	if _, err := os.Stat(pairingFile(configDir)); err == nil {
 		out.Paired = true
 	}
-	if b, err := os.ReadFile(cardKeyFile(configDir)); err == nil {
-		out.Key = strings.TrimSpace(string(b))
-	}
+	out.Key = readCardKey(configDir)
 	b, err := json.Marshal(out)
 	if err != nil {
 		return `{"paired":false,"key":""}`

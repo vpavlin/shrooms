@@ -235,7 +235,9 @@ func TestEnrolmentIsAnsweredFromDisk(t *testing.T) {
 		[]byte(encodePairing(ktypes.NewPairing([32]byte{7}, 2))), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "keycard-key"), []byte("02aabb\n"), 0o600); err != nil {
+	// Written the way enrolment writes it: with the path it was derived at, so
+	// a key from a build that used a different one is never offered.
+	if err := writeCardKey(dir, "02aabb"); err != nil {
 		t.Fatal(err)
 	}
 	var after struct {
@@ -248,8 +250,8 @@ func TestEnrolmentIsAnsweredFromDisk(t *testing.T) {
 	if !after.Paired {
 		t.Error("a stored pairing was not reported")
 	}
-	// Trimmed: it is read straight into a field that goes in admin_keys, and a
-	// trailing newline there is a key that does not parse.
+	// Read straight into a field that goes in admin_keys, so it must come back
+	// exactly as it went in.
 	if after.Key != "02aabb" {
 		t.Errorf("key came back as %q", after.Key)
 	}
@@ -298,5 +300,59 @@ func TestARefusedPinSaysWhatItCosts(t *testing.T) {
 	other := errors.New("tag lost")
 	if pinError(other) != other {
 		t.Error("a non-PIN failure was rewritten as a PIN failure")
+	}
+}
+
+// A key read at a different derivation path must not be offered.
+//
+// It is not tidiness. The key on that screen is the one somebody copies into
+// admin_keys; the mesh id is the hash of admin_keys; the overlay prefix derives
+// from the mesh id. A mesh minted from a stale key is one the card cannot sign
+// for, permanently, with re-enrolling every device as the only way out. The
+// path changed once already, on 2026-08-25, so this case is real rather than
+// hypothetical.
+func TestAKeyFromAnotherPathIsNotOffered(t *testing.T) {
+	dir := t.TempDir()
+
+	// What the current path produces is offered.
+	if err := writeCardKey(dir, "02aabbcc"); err != nil {
+		t.Fatal(err)
+	}
+	if got := readCardKey(dir); got != "02aabbcc" {
+		t.Errorf("a key from the current path came back as %q", got)
+	}
+
+	// The same key recorded against the old Ethereum path is not.
+	stale, err := json.Marshal(storedKey{Path: "m/44'/60'/0'/0", Key: "02aabbcc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "keycard-key"), stale, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := readCardKey(dir); got != "" {
+		t.Errorf("offered %q, which was derived at a path this build no longer uses", got)
+	}
+
+	// The first version of this file stored bare hex with no path at all. That
+	// is by definition from before the change, so it is the stale one.
+	if err := os.WriteFile(filepath.Join(dir, "keycard-key"), []byte("02aabbcc\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := readCardKey(dir); got != "" {
+		t.Errorf("offered %q from a file with no path recorded", got)
+	}
+}
+
+// The path is committed to by every mesh minted from it, so a change is a
+// migration and not an edit. This fails if it moves without somebody meaning it.
+func TestTheDerivationPathIsPinned(t *testing.T) {
+	const want = "m/64265'/0'/0'"
+	if KeycardPath != want {
+		t.Fatalf("KeycardPath is %q, want %q.\n\n"+
+			"The mesh id is the hash of admin_keys and the overlay prefix derives "+
+			"from the mesh id, so changing this path re-addresses every device on "+
+			"every mesh minted from a card. If that is genuinely intended, update "+
+			"this test and write down why.", KeycardPath, want)
 	}
 }

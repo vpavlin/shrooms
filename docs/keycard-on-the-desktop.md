@@ -32,7 +32,7 @@ deciding rather than building.
     Transmit(apdu []byte) ([]byte, error)
 
 Everything above it — pairing, the secure channel, deriving at
-`m/44'/60'/0'/0`, signing a digest — is ordinary Go in `mobile/keycard.go`, and
+`mobile.KeycardPath`, signing a digest — is ordinary Go in `mobile/keycard.go`, and
 none of it knows what carries the bytes. The phone's implementation is NFC. A
 desktop's would be PC/SC. That is the whole difference.
 
@@ -104,7 +104,10 @@ Every property this needs is already there:
 - **It takes a `payloadHash`**, not a payload — a digest is exactly what
   `Credential.Digest()` and `Rotation.Digest()` produce, and exactly what
   [ADR-022](adr/022-keycard-for-the-admin-key.md) built the `Signer` seam around.
-- **`bip32_path` is settable**, so `m/44'/60'/0'/0` can be asked for by name.
+- **`bip32_path` is settable**, so shrooms' own path can be asked for by name.
+  It must be: the authority is derived at `m/64265'/0'/0'`, not at the wallet
+  path, and a signer defaulting to `m/44'/60'/0'/0` would sign with the wrong
+  key and produce credentials nothing verifies.
 - **It returns a signature and never a key.** `approveSign` calls
   `signWithPath(hash, path, false, P2)` on the card and hands back hex; the read
   is one-shot and the buffer is wiped after. The private half never leaves the

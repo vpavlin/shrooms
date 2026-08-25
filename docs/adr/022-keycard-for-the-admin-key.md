@@ -140,6 +140,54 @@ A card fails in ways a file does not — unplugged mid-operation, wrong PIN,
 pairing lost — and if the file implementation had no error path, the card's
 would be the one nothing else exercises.
 
+### The derivation path is the mesh's, not the wallet's
+
+Added 2026-08-25. The path was `m/44'/60'/0'/0` — standard Ethereum, and what
+loam-keycard uses, so one card presented the same key to both. Deliberate, and
+the wrong trade.
+
+`admin_keys` is in every member's config, so on the wallet path everybody you
+share a mesh with can read your Loam/Ethereum identity's public key. The linkage
+runs one way only — rendezvous topics derive from the network key rather than
+the mesh id, so nobody finds your mesh from your wallet — but mesh to identity is
+the direction that matters once a mesh is shared with somebody outside the
+household, which is the case this project was launched for.
+
+It is now `m/64265'/0'/0'`: the purpose index is the first two bytes of
+SHA-256("shrooms"), clear of every registered BIP purpose so no wallet restoring
+the mnemonic will scan it, hardened at every level, with the second level
+reserved for one authority per mesh (ADR-015) since two meshes sharing an admin
+key would be linkable through admin_keys alone.
+
+**Unchangeable after the fact.** The mesh id is the hash of the admin key set
+and the overlay prefix derives from the id, so a different path is a different
+mesh. Nothing had been minted from a card when this changed, which is the only
+reason it was free.
+
+### The card is not the only copy of the key
+
+Also 2026-08-25, and it corrects something this ADR has claimed from the start.
+Initialising a Keycard produces a BIP-39 mnemonic and asks you to write it down.
+That mnemonic reconstructs the same key on another card, in a software wallet,
+or in ten lines of Python.
+
+So *"a compressed secp256k1 point, whose private half has never existed outside
+the card"* — the sentence [ADR-033](033-the-card-is-the-admin-not-the-uid.md)
+leans on — is **not true**. The private half existed outside the card the moment
+the words were displayed.
+
+What remains true is worth having and should be stated instead: **the card will
+not export the private half, so a host cannot steal it.** Malware on a laptop
+cannot take the key; it can only ask for signatures while the card is held
+against the reader and the PIN has been entered. That is the property the card
+buys. It is not exclusivity.
+
+Two consequences. The mnemonic is the mesh's root of trust, permanently and
+without revocation — and it looks like any other wallet seed, so the risk is it
+gets filed next to crypto backups by somebody who has not registered that it is
+also a VPN's master key. And recovery is already solved: a card mesh needs no
+second admin key, because the mnemonic restores the first one.
+
 ### What has to be got right
 
 - **The public key must be exported at mint time**, since `admin_keys` is what
