@@ -542,6 +542,25 @@ because labels are local and deliberately never announced ([ADR-015](docs/adr/01
 Both resolve to the same address. It looks like a bug the first time and is the
 reason no member can rename a mesh for everybody else.
 
+If the disagreement is more trouble than it is worth, change this device's name
+for it:
+
+```
+shrooms mesh rename test home
+```
+
+That is a command rather than an edit because the label also names the mesh's
+admin key file, and because interface names and ports are derived from a
+label-sorted order — so renaming by hand silently moves another mesh's
+interface and port. Rename pins them first.
+
+**Comparing meshes across devices is by key, never by name**: `admin_keys`, the
+`fd…::/48` prefix, or the network id in the state directory's filenames. An
+evening went into learning that the hard way —
+[docs/mesh-labels-are-local.md](docs/mesh-labels-are-local.md) has the rest,
+including a short name that can resolve to a mesh where your service is not
+listening.
+
 Announcing is per mesh too — `mesh.<label>.announce_bound` — since telling your
 own machines what you run and telling somebody else's are different decisions.
 
@@ -631,6 +650,10 @@ one of your own machines is reachable; see
 | no peers at all after 60 s | the daemon is not reaching the fleet; check outbound connectivity |
 | `missing liblogosdelivery.h` | run `make deps-basecamp` |
 | the daemon exits immediately | `libpq` missing — deploy the container rather than a bare binary |
+| `parse state: unexpected end of JSON input`, restarting in a loop | a power cut truncated `state.json`. **Do not delete it** — see [docs/when-a-node-loses-its-state.md](docs/when-a-node-loses-its-state.md) |
+| `!! no credential` on a node that is otherwise healthy | it holds no membership, so peers refuse it before it reaches their roster. The symptom shows on the peers, not here |
+| `credential set` succeeded and `status` still says `no credential` | restart the daemon — it holds its own copy of the state and does not reread the file |
+| `no mesh called "x"` for a mesh you are certainly on | mesh labels are local; this device may file it under another name. `shrooms mesh list`, and compare by key rather than by name |
 
 ---
 
@@ -1331,6 +1354,8 @@ short version:
 | [PROTOTYPE.md](PROTOTYPE.md) | build plan, milestones, what each proved |
 | [SECURITY.md](SECURITY.md) | what is protected, what leaks, what is deferred |
 | [docs/adr/](docs/adr/) | why each significant decision was made (26 records) |
+| [docs/mesh-labels-are-local.md](docs/mesh-labels-are-local.md) | why the same mesh has a different name on every device, and what that decides |
+| [docs/when-a-node-loses-its-state.md](docs/when-a-node-loses-its-state.md) | what is in the state directory, what survives a power cut, and how to enrol a device again |
 
 ---
 

@@ -136,14 +136,62 @@ vps.home.mesh
 nas.shared.mesh
 ```
 
-The short form `vps.mesh` is **also** emitted, but only when that peer name is
-unambiguous across every joined mesh. A single-mesh node — which is every node
-today — therefore sees no change, and ambiguity degrades by removing the short
-name rather than by silently resolving it to one of the candidates.
+The short form `vps.mesh` is **also** emitted. This ADR originally said it was
+emitted only when unambiguous across every joined mesh, so that ambiguity
+degraded by removing the short name rather than by silently picking. **That is
+no longer what happens** — see the amendment below.
 
-This is the same rule already applied to duplicate device names within a mesh
-(`hosts.Render` appends a piece of the address rather than letting the last
-writer win), extended one level out.
+### Amendment, 2026-08-25: what "local" turned out to cost
+
+Labels being local is still right, and there is still no authenticated channel
+to distribute a name. What was underestimated is how much a local nickname was
+quietly deciding, and how hard it is to answer *are these two machines on the
+same mesh?* when every machine calls it something different.
+
+An evening went into that question with a mesh called `home` on a phone, `test`
+on a laptop, and nothing at all on the node between them. Four things made it
+worse than it needed to be, and three are now fixed.
+
+**The short name silently picks.** `fc12b75` replaced the refuse-when-ambiguous
+rule above with *first mesh in config order wins*, because ambiguity is the
+normal case for your own devices — the machines on two of your meshes are
+largely the same machines — so refusing removed the short names most worth
+having, and it read as DNS being broken for one host.
+
+That reasoning holds. Its justification did not: it said picking either was fine
+because *"both addresses reach the same machine"*. They reach the same machine
+and **not the same service** — an sshd bound to one mesh's address is not
+listening on the other's. So the short form can resolve to an address where the
+thing you want is not. The qualified form remains correct and is now the one to
+use whenever it matters; making it mandatory is
+[an open question](../mesh-labels-are-local.md).
+
+**The qualified form uses the *resolver's* label.** `vps.home.mesh` works on a
+device that calls that mesh `home` and on no other, which is not obvious from
+the name and is invisible when it happens to work. It happened to work for
+months here through a separate bug: a device name matched with any trailing
+labels, so `k11.home.mesh` resolved to `k11` while reading nothing at all from
+`home`. Fixing that made a long-standing name stop working, correctly.
+
+**The label named the admin key file.** `admin-<label>.json`, so a mesh renamed
+on one machine loses its own authority there — and "no admin key for a mesh I
+minted" is alarming enough to send you looking at the wrong problem.
+
+**The label decided the interface and the port**, through position in a
+label-sorted list. Renaming re-sorted it and moved both, for every mesh at or
+after the new position.
+
+The last two are why `shrooms mesh rename` exists rather than being a
+`sed`: it moves the admin key with the label, and pins every mesh's interface
+and port first, so nothing the network can see depends on a nickname any more.
+
+```
+shrooms mesh rename test home
+```
+
+`mesh.<label>.iface` and `mesh.<label>.port` are settable directly for the same
+reason. Absent means derived from position, which is what every config written
+before this does.
 
 ### Configuration
 
