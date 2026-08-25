@@ -146,11 +146,11 @@ func TestTwoMeshesAreIndependent(t *testing.T) {
 
 	// Separate interfaces and ports, with the original mesh keeping exactly
 	// what it had.
-	if iface, port := ifaceAndPort(cfg, 0); iface != cfg.Interface || port != cfg.ListenPort {
+	if iface, port := ifaceAndPort(cfg, state.Mesh{}, 0); iface != cfg.Interface || port != cfg.ListenPort {
 		t.Errorf("the first mesh moved to %s:%d", iface, port)
 	}
-	i0, p0 := ifaceAndPort(cfg, 0)
-	i1, p1 := ifaceAndPort(cfg, 1)
+	i0, p0 := ifaceAndPort(cfg, state.Mesh{}, 0)
+	i1, p1 := ifaceAndPort(cfg, state.Mesh{}, 1)
 	if i0 == i1 || p0 == p1 {
 		t.Errorf("both meshes would use %s:%d", i0, p0)
 	}

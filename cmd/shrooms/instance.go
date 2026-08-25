@@ -275,11 +275,21 @@ func aliasAcross(meshes []namedMesh) func(netip.Addr) (netip.Addr, bool) {
 
 // ifaceAndPort numbers the interface and port for the nth mesh. The first keeps
 // exactly what the config says, so a node with one mesh is unchanged.
-func ifaceAndPort(cfg state.Config, i int) (string, uint16) {
-	if i == 0 {
-		return cfg.Interface, cfg.ListenPort
+func ifaceAndPort(cfg state.Config, m state.Mesh, i int) (string, uint16) {
+	// A pinned value wins, so that a mesh keeps the interface and port it had
+	// when it was renamed. Derived otherwise, which is what every config did
+	// before renaming existed.
+	iface, port := cfg.Interface, cfg.ListenPort
+	if i > 0 {
+		iface, port = fmt.Sprintf("%s%d", cfg.Interface, i), cfg.ListenPort+uint16(i)
 	}
-	return fmt.Sprintf("%s%d", cfg.Interface, i), cfg.ListenPort + uint16(i)
+	if m.Interface != "" {
+		iface = m.Interface
+	}
+	if m.ListenPort != 0 {
+		port = m.ListenPort
+	}
+	return iface, port
 }
 
 // cutLabel splits "vps.home" into "vps" and "home".

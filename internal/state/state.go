@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -1227,6 +1228,15 @@ func WriteConfig(path string, c Config) error {
 			}
 			if len(m.Services) > 0 {
 				fmt.Fprintf(&b, "mesh.%s.services = %s\n", label, formatArray(m.Services))
+			}
+			// Pinned by `shrooms mesh rename`, so that renaming a mesh cannot
+			// move its interface or its port. Absent means derived from
+			// position, which is what every config did before.
+			if m.Interface != "" {
+				fmt.Fprintf(&b, "mesh.%s.iface = %q\n", label, m.Interface)
+			}
+			if m.ListenPort != 0 {
+				fmt.Fprintf(&b, "mesh.%s.port  = %q\n", label, strconv.FormatUint(uint64(m.ListenPort), 10))
 			}
 			// Written only when set, like every other per-mesh key: the
 			// default is off, and a config full of "false" reads as though

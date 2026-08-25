@@ -3,8 +3,10 @@ package state
 import (
 	"crypto/sha256"
 	"encoding/base32"
+	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/vpavlin/shrooms/internal/cred"
@@ -50,6 +52,22 @@ type Mesh struct {
 	// mesh, because telling your own machines what you run and telling
 	// somebody else's are different decisions.
 	AnnounceServices bool
+
+	// Interface and ListenPort pin this mesh's device name and UDP port.
+	//
+	// Empty and zero mean "work it out", which is what every config did until
+	// there was a way to rename a mesh: the name and port come from the mesh's
+	// position in a label-sorted list, so logos01 is simply the second mesh
+	// alphabetically.
+	//
+	// That is fine until a label changes. Renaming test to home re-sorts the
+	// list, and every mesh at or after the new position takes a different
+	// interface and a different port — so firewall rules, port forwards and
+	// every peer's cached endpoint point at the wrong mesh, for a change that
+	// was supposed to be cosmetic. Pinning them makes a local nickname stop
+	// deciding anything the network can see.
+	Interface  string
+	ListenPort uint16
 
 	// AnnounceBound lists the ports bound to this device's address on this
 	// mesh (ADR-026), for the same reason and with the same default.
@@ -203,6 +221,36 @@ func (c Config) validateMeshes() error {
 	return nil
 }
 
+// ValidMeshLabel checks a name this device may call a mesh.
+//
+// It is a local nickname and nothing on the wire carries it, so the rules are
+// not about interoperating — they are about the two places the label is
+// substituted into something with its own syntax. It becomes part of a config
+// key (mesh.<label>.key), where a dot would create a field nobody meant, and
+// part of a DNS name (vps.<label>.internal), where anything outside a hostname
+// label cannot be queried at all.
+func ValidMeshLabel(label string) error {
+	if label == "" {
+		return errors.New("a mesh label cannot be empty")
+	}
+	if len(label) > 63 {
+		return fmt.Errorf("mesh label %q is %d characters; a DNS label holds 63", label, len(label))
+	}
+	for _, r := range label {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-':
+		default:
+			return fmt.Errorf("mesh label %q contains %q: use lower-case letters, "+
+				"digits and hyphens, because the label becomes part of a config "+
+				"key and part of a DNS name", label, r)
+		}
+	}
+	if label[0] == '-' || label[len(label)-1] == '-' {
+		return fmt.Errorf("mesh label %q starts or ends with a hyphen, which a DNS label may not", label)
+	}
+	return nil
+}
+
 // parseMeshKey reads a "mesh.<label>.<field>" config key. Reports false for
 // anything that is not one.
 func parseMeshKey(key string) (label, field string, ok bool) {
@@ -240,6 +288,14 @@ func (c *Config) setMeshField(label, field, val string, line int) error {
 		m.AnnounceBound = unquote(val) == "true"
 	case "announce_revocations":
 		m.QuietRevocations = unquote(val) == "false"
+	case "iface":
+		m.Interface = unquote(val)
+	case "port":
+		n, err := strconv.ParseUint(unquote(val), 10, 16)
+		if err != nil {
+			return fmt.Errorf("line %d: mesh port %q: %w", line, val, err)
+		}
+		m.ListenPort = uint16(n)
 	default:
 		return fmt.Errorf("line %d: unknown mesh option %q", line, field)
 	}

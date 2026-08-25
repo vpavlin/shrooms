@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"text/tabwriter"
 
 	"github.com/vpavlin/shrooms/internal/state"
@@ -41,8 +42,10 @@ func cmdMesh(args []string) error {
 		return cmdMeshSwitch(args[1:], true)
 	case "disable", "off":
 		return cmdMeshSwitch(args[1:], false)
+	case "rename":
+		return cmdMeshRename(args[1:])
 	default:
-		return fmt.Errorf("unknown mesh command %q; try: list, enable, disable", args[0])
+		return fmt.Errorf("unknown mesh command %q; try: list, enable, disable, rename", args[0])
 	}
 }
 
@@ -208,4 +211,113 @@ func hintPermission(path string, err error) error {
 			"  try: sudo shrooms mesh list", path, err)
 	}
 	return err
+}
+
+// cmdMeshRename changes what this device calls a mesh.
+//
+// A mesh label is local and nothing on the wire carries it, so the same mesh is
+// routinely called different things on different devices — which is fine until
+// you are trying to work out whether two machines are on the same mesh, and
+// then it is the whole problem. Renaming is how you make them agree.
+//
+// It cannot be a sed on the config, which is what it looks like. The interface
+// name and UDP port come from a mesh's position in a label-sorted list, so a
+// rename re-sorts that list and silently moves the interface and port of every
+// mesh at or after the new position — firewall rules, port forwards and every
+// peer's cached endpoint left pointing at the wrong mesh, for a change that was
+// supposed to be cosmetic.
+//
+// So this pins what every mesh currently has before renaming anything. After
+// it, the config says outright which interface and port each mesh uses, and
+// nothing is deciding that from a nickname any more.
+func cmdMeshRename(args []string) error {
+	fs := flag.NewFlagSet("mesh rename", flag.ExitOnError)
+	cfgPath := fs.String("config", state.DefaultConfigPath, "config file")
+	adminDir := fs.String("admin-dir", defaultAdminDir(), "where admin keys are kept")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 2 {
+		return errors.New("usage: shrooms mesh rename <old> <new>")
+	}
+	from, to := fs.Arg(0), fs.Arg(1)
+	if from == to {
+		return fmt.Errorf("%q is already what it is called", from)
+	}
+	if err := state.ValidMeshLabel(to); err != nil {
+		return err
+	}
+
+	cfg, err := state.LoadConfig(*cfgPath)
+	if err != nil {
+		return err
+	}
+	if _, taken := cfg.MeshSet[to]; taken {
+		return fmt.Errorf("this device already has a mesh called %q", to)
+	}
+	if to == state.DefaultLabel {
+		return fmt.Errorf("%q names the mesh this device was built around, which is "+
+			"written as the config's top-level key rather than as a mesh entry",
+			state.DefaultLabel)
+	}
+	if _, ok := cfg.MeshSet[from]; !ok {
+		if from == state.DefaultLabel || cfg.NetworkKey != "" && len(cfg.MeshSet) == 0 {
+			return fmt.Errorf("%q is this config's top-level mesh, not a named entry, "+
+				"so there is no label to change. Every other device may call it "+
+				"whatever it likes; this one does not name it at all", from)
+		}
+		return fmt.Errorf("no mesh called %q; try: shrooms mesh list", from)
+	}
+
+	// Pin every mesh's current interface and port BEFORE the labels move, so
+	// that re-sorting cannot change what anything is called on the wire.
+	meshes := cfg.Meshes()
+	pinned := map[string]state.Mesh{}
+	for i, m := range meshes {
+		if m.Label == state.DefaultLabel {
+			continue // the top-level form is always position zero
+		}
+		iface, port := ifaceAndPort(cfg, m, i)
+		e := cfg.MeshSet[m.Label]
+		e.Interface, e.ListenPort = iface, port
+		pinned[m.Label] = e
+	}
+	for label, m := range pinned {
+		cfg.MeshSet[label] = m
+	}
+
+	moved := cfg.MeshSet[from]
+	moved.Label = to
+	delete(cfg.MeshSet, from)
+	cfg.MeshSet[to] = moved
+
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	if err := state.WriteConfig(*cfgPath, cfg); err != nil {
+		return err
+	}
+
+	// The admin key file is named after the label too, and a mesh whose
+	// authority this device holds would otherwise stop finding it.
+	oldAdmin := adminPathFor(*adminDir, from)
+	if _, err := os.Stat(oldAdmin); err == nil {
+		newAdmin := adminPathFor(*adminDir, to)
+		if _, err := os.Stat(newAdmin); err == nil {
+			fmt.Printf("!! %s already exists; left %s alone\n", newAdmin, oldAdmin)
+		} else if err := os.Rename(oldAdmin, newAdmin); err != nil {
+			fmt.Printf("!! renamed the mesh but not its admin key: %v\n", err)
+			fmt.Printf("   move %s to %s by hand\n", oldAdmin, newAdmin)
+		} else {
+			fmt.Printf("admin key   %s\n", filepath.Base(newAdmin))
+		}
+	}
+
+	fmt.Printf("renamed     %s -> %s\n", from, to)
+	fmt.Printf("interface   %s, port %d (pinned, so the rename moved nothing)\n",
+		moved.Interface, moved.ListenPort)
+	fmt.Println()
+	fmt.Println("Restart the daemon for it to take effect.")
+	fmt.Println("Other devices keep their own name for this mesh; labels are local.")
+	return nil
 }

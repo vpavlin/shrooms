@@ -187,7 +187,7 @@ func cmdDaemon(args []string) error {
 	blocks := v4.Blocks(ids)
 
 	for i, mc := range meshes {
-		iface, port := ifaceAndPort(cfg, i)
+		iface, port := ifaceAndPort(cfg, mc, i)
 		id, err := mc.NetworkID()
 		if err != nil {
 			return err
