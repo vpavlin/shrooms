@@ -58,6 +58,32 @@ jobs:
       - name: Test
         run: make test
 
+  # The management surface, end to end, against the real binary.
+  #
+  # Separate from the unit tests because it is testing the seams between
+  # processes rather than any package: a daemon holding state in memory, a CLI
+  # writing the file underneath it, an admin key on a different machine, and a
+  # config that outlives both. Every bug this was written after lived in one of
+  # those seams and was invisible from either side alone.
+  #
+  # Offline, deliberately. m1/m2/m3 cover the data plane and need the public
+  # fleet, which is somebody else's network and takes minutes — this needs to
+  # run on every push.
+  e2e:
+    name: end-to-end (management)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - name: Fetch liblogosdelivery
+        run: make deps-release
+      - name: Build the binary
+        run: make shrooms
+      - name: Scenarios
+        run: make e2e
+
   # Publish the container image.
   #
   # Separate from build-from-source, which is continue-on-error and blocked

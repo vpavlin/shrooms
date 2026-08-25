@@ -25,7 +25,7 @@ GO ?= go
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 .PHONY: all deps deps-basecamp check-lib shrooms wakuspike s3topics m0demo \
-        s1 s3 probe relay relay-image m0 m1 m2 m2-edm m3 m3-remote dist image push-image deps-release install uninstall build-all vet-cgo test test-unit android-deps android-core aar apk fdroid basecamp-check basecamp-lgx site-adrs fmt clean
+        s1 s3 probe relay relay-image m0 m1 m2 m2-edm m3 m3-remote dist image push-image deps-release install uninstall build-all vet-cgo test test-unit e2e android-deps android-core aar apk fdroid basecamp-check basecamp-lgx site-adrs fmt clean
 
 all: shrooms
 
@@ -367,6 +367,12 @@ test: check-lib
 	@# part worth noticing — a suite nobody runs is not passing, it is
 	@# unobserved, and the two look identical in a green terminal.
 	cd mobile && $(GO) test ./...
+
+## End-to-end tests for managing a mesh: minting, admitting, renaming,
+## recovering a node that lost its state. Offline, so unlike m1/m2/m3 it runs
+## on every push. See scripts/e2e-management.sh for what each scenario is for.
+e2e: shrooms
+	./scripts/e2e-management.sh
 
 ## --- site ---
 
