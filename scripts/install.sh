@@ -134,12 +134,22 @@ if command -v getenforce >/dev/null && [ "$(getenforce 2>/dev/null)" = "Enforcin
     echo "  SELinux enforcing, relabelling mounts (shared)"
 fi
 
+# The image is :latest by default, and that is a trust decision worth naming
+# rather than dressing up. Pinning a digest here would look stronger and buy
+# little: this script is fetched from the same GitHub account that publishes the
+# image, so whoever could substitute one could substitute the other. What
+# genuinely helps is knowing WHICH image you got, so set IMAGE to a digest
+# (ghcr.io/vpavlin/shrooms@sha256:...) when you want a build that cannot move
+# under you, and read the digest printed below when you do not.
 echo "==> fetching $IMAGE"
 "$RUNTIME" pull -q "$IMAGE" >/dev/null || {
     echo "could not pull $IMAGE"
     echo "if the package is private, either make it public or run: $(basename "$RUNTIME") login ghcr.io"
     exit 1
 }
+
+digest=$("$RUNTIME" image inspect --format '{{index .RepoDigests 0}}' "$IMAGE" 2>/dev/null || true)
+[ -n "$digest" ] && echo "  running $digest"
 
 mkdir -p /etc/shrooms /var/lib/shrooms /run/shrooms
 chmod 700 /etc/shrooms /var/lib/shrooms
@@ -325,57 +335,131 @@ EOF
 # typed: the config is the source of truth, and a --relay that failed to take
 # effect should not produce advice implying it did.
 if [ "${SETUP[0]}" = "init" ]; then
-    KEY=$("$RUNTIME" run --rm -v "/etc/shrooms:/etc/shrooms$Z" "$IMAGE" \
-        key show --config /etc/shrooms/config.toml)
-    cat <<EOF
-This machine created the mesh. Add others with:
+    cat <<'EOF'
+This machine created the mesh. Add another device with an invite:
 
-  sudo bash install.sh join $KEY
+  sudo shrooms invite
 
-Treat that key as a password: anyone holding it is a member of the mesh.
+That prints a token good for fifteen minutes and a QR code for the phone.
+The token admits one device; the network key admits anybody who ever sees it,
+which is why this no longer prints it for you to paste.
+
+If you do need the key itself — recovery, or a machine that cannot be invited:
+
+  sudo shrooms key show          # read it deliberately
+  sudo bash install.sh join      # then paste it when asked, not on the command line
 EOF
 fi
 
-# Every node needs its UDP port open, not only a relay.
+# Firewall advice for the machine in front of us.
 #
-# This used to print only for relays, on the reasoning that a relay is the node
-# others dial. That is wrong and it cost somebody a day: two peers need at least
-# one of them reachable, and a laptop with a default-deny firewall cannot be
-# reached even by a phone on the same wifi. Both ends then sit there announcing
-# addresses, visible to each other over the rendezvous plane, with every
-# handshake failing — which looks like anything except a closed port.
+# Printed for every node, not only relays. That distinction was made once, on
+# the reasoning that a relay is the node others dial, and it cost somebody a
+# day: two peers need at least one of them reachable, and a laptop with a
+# default-deny firewall cannot be reached even by a phone on the same wifi. Both
+# ends then sit there announcing addresses, visible to each other over the
+# rendezvous plane, with every handshake failing — which looks like anything
+# except a closed port. A relay only gets an extra line at the bottom.
 #
-# The command is chosen by what is actually installed rather than guessed from
-# the distribution, because a Debian box can be running firewalld and a Fedora
-# box nftables directly.
+# Chosen by what is actually running rather than by distro, because the two
+# disagree often enough to matter: Fedora ships firewalld but a server may run
+# plain nftables, and Ubuntu ships ufw but frequently has it switched off. A
+# command for the wrong tool is worse than none — it appears to work, changes
+# nothing the active firewall consults, and the symptom stays.
+#
+# Two rules, not one, and they fail differently. The UDP port is the tunnel
+# itself: without it this node cannot be dialled, which looks like a peer that
+# never comes up. The interface rule is about traffic that has already arrived
+# through the tunnel — a host firewall does not know the mesh interface is the
+# mesh and files it under whatever it does with strangers, so `ssh host.mesh`
+# works (ssh is usually allowed) while a service published on port 80 is
+# refused. That pair of symptoms is a genuinely confusing thing to debug.
 firewall_hint() {
-    local port="${1:-51820}"
-    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi "^Status: active"; then
-        echo "  sudo ufw allow $port/udp"
-        return
-    fi
+    local port iface conf=/etc/shrooms/config.toml
+    port=$(sed -n 's/^ *listen_port *= *\([0-9]\+\).*/\1/p' "$conf" 2>/dev/null | head -1)
+    iface=$(sed -n 's/^ *interface *= *"\([^"]*\)".*/\1/p' "$conf" 2>/dev/null | head -1)
+    port=${port:-51820}
+    iface=${iface:-shrooms0}
+
+    echo "==> firewall"
+
     if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-        echo "  sudo firewall-cmd --add-port=$port/udp --permanent && sudo firewall-cmd --reload"
-        return
+        cat <<EOF
+firewalld is running. The mesh interface lands in the "public" zone, which
+allows ssh and little else.
+
+  sudo firewall-cmd --permanent --add-port=$port/udp
+  sudo firewall-cmd --permanent --zone=trusted --add-interface=$iface
+  sudo firewall-cmd --reload
+
+The second line says traffic arriving over the mesh is trusted, which matches
+how access is decided here: by membership, enforced by WireGuard, not by port.
+On a mesh you share with other people do not do that — it gives their devices
+everything on this machine, not only what you published. There, open the
+specific ports instead:
+
+  sudo firewall-cmd --permanent --add-port=80/tcp
+EOF
+    elif command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi '^Status: active'; then
+        cat <<EOF
+ufw is active.
+
+  sudo ufw allow $port/udp
+  sudo ufw allow in on $iface
+
+The second line trusts anything arriving over the mesh, which is right for your
+own devices. On a mesh shared with other people, allow the published ports
+instead: sudo ufw allow in on $iface to any port 80 proto tcp
+EOF
+    elif command -v nft >/dev/null 2>&1 && nft list ruleset 2>/dev/null | grep -q 'chain input'; then
+        cat <<EOF
+nftables has rules loaded. Chain names vary, so check yours against
+\`sudo nft list ruleset\` before pasting — these assume the common inet filter:
+
+  sudo nft add rule inet filter input udp dport $port accept
+  sudo nft add rule inet filter input iifname "$iface" accept
+
+Added this way they are gone at reboot. Put them in /etc/nftables.conf, or
+wherever your distribution keeps the ruleset it restores.
+EOF
+    elif command -v iptables >/dev/null 2>&1 && iptables -S 2>/dev/null | grep -q '^-A INPUT'; then
+        cat <<EOF
+iptables has rules in INPUT.
+
+  sudo iptables -I INPUT -p udp --dport $port -j ACCEPT
+  sudo iptables -I INPUT -i $iface -j ACCEPT
+
+Those are lost at reboot unless something saves them — iptables-persistent on
+Debian and Ubuntu, iptables-services on RHEL.
+EOF
+    else
+        cat <<EOF
+No active host firewall found, so there is probably nothing to open here. If a
+peer still cannot reach this node, the block is upstream: a home router, or a
+cloud provider's security group. Both need $port/udp forwarded to this machine.
+EOF
     fi
-    if command -v nft >/dev/null 2>&1 && nft list ruleset 2>/dev/null | grep -q 'policy drop'; then
-        echo "  sudo nft add rule inet filter input udp dport $port accept"
-        return
+
+    if [ "$RELAY" = yes ]; then
+        cat <<EOF
+
+This node relays for others, so being reachable is not optional for it: a relay
+nobody can dial is a relay that does nothing.
+EOF
     fi
-    if command -v iptables >/dev/null 2>&1 && iptables -S INPUT 2>/dev/null | grep -q '^-P INPUT DROP'; then
-        echo "  sudo iptables -I INPUT -p udp --dport $port -j ACCEPT"
-        return
-    fi
-    return 1
+
+    cat <<EOF
+
+Each additional mesh uses the next port and interface up — a second mesh is
+$((port + 1))/udp on ${iface}1.
+EOF
 }
 
-PORT=$(grep -oE '^listen_port *= *[0-9]+' /etc/shrooms/config.toml 2>/dev/null | grep -oE '[0-9]+' | head -1)
-PORT=${PORT:-51820}
-if hint=$(firewall_hint "$PORT"); then
-    echo
-    echo "A firewall is running here. Peers reach this node on UDP $PORT, so open it:"
-    echo "$hint"
-    echo
-    echo "Without it this node can still reach others, but nothing can reach it —"
-    echo "which presents as peers that appear and never connect."
-fi
+# Read on the host, not by starting a container to grep a file. The copy this
+# was ported from ran the image with --entrypoint /bin/sh for this one line,
+# which is a container start, another SELinux relabel, and a different source of
+# truth from the sed two lines above in firewall_hint.
+RELAY=no
+grep -q '^relay *= *"true"' /etc/shrooms/config.toml 2>/dev/null && RELAY=yes
+
+firewall_hint
