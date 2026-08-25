@@ -607,6 +607,7 @@ func LoadOrCreateState(dir string) (*State, error) {
 		return nil, fmt.Errorf("create state dir: %w", err)
 	}
 	path := filepath.Join(dir, "state.json")
+	recovered := false
 
 	raw, err := os.ReadFile(path)
 	switch {
@@ -619,6 +620,14 @@ func LoadOrCreateState(dir string) (*State, error) {
 		if err := s.Save(); err != nil {
 			return nil, err
 		}
+		// Immediately, not on the next start. A backup written only when an
+		// existing file is read leaves a node that has never restarted with no
+		// copy at all — and the window between minting an identity and first
+		// restarting it is exactly when a machine is being set up, plugged in
+		// and moved around.
+		if raw, err := os.ReadFile(path); err == nil {
+			_ = writeBackupState(dir, raw)
+		}
 		return s, nil
 	case err != nil:
 		return nil, fmt.Errorf("read state: %w", err)
@@ -626,7 +635,31 @@ func LoadOrCreateState(dir string) (*State, error) {
 
 	var sf stateFile
 	if err := json.Unmarshal(raw, &sf); err != nil {
-		return nil, fmt.Errorf("parse state: %w", err)
+		// The identity is in here, and it is not regenerable: a fresh one has
+		// no credential, cannot get one without an admin, and arrives at a
+		// different overlay address. So an unreadable state.json is never a
+		// reason to mint a new device — it is a reason to look for the last
+		// copy that worked.
+		backup, berr := os.ReadFile(backupStatePath(dir))
+		if berr != nil || json.Unmarshal(backup, &sf) != nil {
+			return nil, fmt.Errorf("parse state: %w.\n\n"+
+				"%s is unreadable and there is no usable backup beside it. Its "+
+				"contents are this device's identity, so DO NOT DELETE IT: "+
+				"starting without it mints a new device, which has no "+
+				"credential, cannot be given one without an admin, and joins at "+
+				"a different address as a stranger to every peer. A zero-length "+
+				"file here is a power loss during a write. Restore state.json "+
+				"from a backup if you have one; otherwise this device has to be "+
+				"enrolled again.", err, path)
+		}
+		// Recovered. The sequence number in a backup is behind whatever the
+		// live file reached, and peers persist the highest they have seen, so
+		// resuming at a lower one would have every announce refused as a replay
+		// until it climbed back past. Jumping forward is free — the counter is
+		// a uint64 and only has to increase — so skip well clear rather than
+		// spend the outage invisible.
+		sf.Seq += seqJumpAfterRecovery
+		recovered = true
 	}
 
 	devPriv, err := base64.StdEncoding.DecodeString(sf.DevicePriv)
@@ -678,7 +711,69 @@ func LoadOrCreateState(dir string) (*State, error) {
 		}
 		st.Credential = c
 	}
+	// One write per start, and it is the difference between a power cut costing
+	// a reboot and costing a re-enrolment.
+	//
+	// Written from the bytes that just parsed, so the copy is known-good rather
+	// than re-serialised from a struct that may have dropped a field this build
+	// does not know about. If we got here from the backup, the live file is the
+	// broken one and gets the good state put back instead.
+	if recovered {
+		if err := st.Save(); err != nil {
+			return nil, fmt.Errorf("recovered state.json from its backup but could not write it back: %w", err)
+		}
+	} else {
+		_ = writeBackupState(dir, raw)
+	}
 	return st, nil
+}
+
+// seqJumpAfterRecovery is how far the sequence number skips when state has been
+// recovered from a backup.
+//
+// The backup's counter is behind whatever the live file reached, and peers keep
+// the highest they have accepted across restarts, so resuming below it means
+// every announce is refused as a replay until the counter climbs back past —
+// invisible to the mesh for exactly as long as the outage was busy. The counter
+// is a uint64 that only has to increase, so jumping is free and guessing high
+// is the cheap direction to be wrong in.
+const seqJumpAfterRecovery = 10000
+
+// backupStatePath is the last state.json known to have parsed.
+func backupStatePath(dir string) string {
+	return filepath.Join(dir, "state.json.bak")
+}
+
+// writeBackupState keeps a copy of a state file that was read successfully.
+//
+// Best effort throughout: this is a safety net, and a node that cannot write it
+// should still run rather than refuse to start over a backup.
+func writeBackupState(dir string, raw []byte) error {
+	tmpf, err := os.CreateTemp(dir, "state-bak-*.json.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := tmpf.Name()
+	defer os.Remove(tmp)
+	if _, err := tmpf.Write(raw); err != nil {
+		tmpf.Close()
+		return err
+	}
+	if err := tmpf.Chmod(0o600); err != nil {
+		tmpf.Close()
+		return err
+	}
+	// Synced for the same reason the live file is: a backup that is present and
+	// empty after a power cut is worse than no backup, because it looks like
+	// one.
+	if err := tmpf.Sync(); err != nil {
+		tmpf.Close()
+		return err
+	}
+	if err := tmpf.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, backupStatePath(dir))
 }
 
 // Save writes state atomically. The sequence number changes on every announce,
@@ -764,11 +859,33 @@ func (s *State) Save() error {
 		tmpf.Close()
 		return fmt.Errorf("write state: %w", err)
 	}
+	// Flush the contents before the rename makes them visible.
+	//
+	// A rename is atomic with respect to other processes, and that is not the
+	// same as durable. On ext4 the rename can reach the journal while the data
+	// blocks have not, so a power loss leaves state.json present and ZERO
+	// BYTES — which is not a corrupt identity, it is no identity, and it is
+	// exactly what "parse state: unexpected end of JSON input" is.
+	//
+	// Seen on minipc-k11, 2026-08-25: 1385 restarts in a loop against an empty
+	// file, on a day when a power supply had already failed in the same house.
+	if err := tmpf.Sync(); err != nil {
+		tmpf.Close()
+		return fmt.Errorf("write state: %w", err)
+	}
 	if err := tmpf.Close(); err != nil {
 		return fmt.Errorf("write state: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		return fmt.Errorf("replace state: %w", err)
+	}
+	// And the directory, so the rename itself survives. Without this the file
+	// can have its contents and the directory entry can still be the old one.
+	// Best effort: some filesystems refuse to sync a directory, and failing the
+	// save over it would turn a durability improvement into an outage.
+	if d, err := os.Open(s.dir); err == nil {
+		_ = d.Sync()
+		d.Close()
 	}
 	return nil
 }
