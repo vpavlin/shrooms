@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 // The receiver's side of replay protection, kept across restarts.
@@ -30,16 +29,9 @@ type seqMarkFile struct {
 }
 
 func (s *State) seqMarkPath(networkID string) string {
-	safe := strings.Map(func(r rune) rune {
-		if (r >= 'a' && r <= 'z') || (r >= '2' && r <= '7') {
-			return r
-		}
-		return '-'
-	}, networkID)
-	if safe == "" {
-		safe = "default"
-	}
-	return filepath.Join(s.dir, "seqmarks-"+safe+".json")
+	// Same mapping as it always was, now shared with the remembered roster —
+	// see safeNetworkName. Identical output, so no existing file moves.
+	return filepath.Join(s.dir, "seqmarks-"+safeNetworkName(networkID)+".json")
 }
 
 // SeqMarks returns the highest sequence accepted per device for one mesh.

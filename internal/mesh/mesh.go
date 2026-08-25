@@ -161,6 +161,16 @@ type Mesh struct {
 	// credentials this node verified. Guarded by mu.
 	sealPubs map[string][]byte
 
+	// creds is the wire form of each peer's credential, kept so the roster can
+	// be written down and checked again on the next start rather than trusted
+	// because it was on disk. Guarded by mu.
+	creds map[string][]byte
+
+	// restored names peers put back from disk that have not yet announced.
+	// They are carried for ProvisionalWindow and then subject to the ordinary
+	// offline rule. Guarded by mu.
+	restored map[string]bool
+
 	// networkID names this mesh in the state dir, so its revocations survive a
 	// restart (see loadRevocations).
 	networkID string
@@ -295,6 +305,10 @@ func New(log *slog.Logger, cfg state.Config, st *state.State, node *waku.Node, d
 	// start — reopening the rollback window at exactly the moment an observer
 	// would try it. See state.SeqMarks.
 	m.guard.Load(m.st.SeqMarks(m.networkID))
+	// After the revocations, which is what makes a remembered peer checkable:
+	// restoring one runs the same membership gate an announce does, and that
+	// gate consults the list loaded above.
+	m.loadRememberedPeers(time.Now())
 	if cfg.Relay {
 		m.relaySrv = relay.NewServer(m.relayKey, m.ownsWGKey)
 		log.Info("acting as a relay for this mesh")
@@ -772,6 +786,12 @@ func (m *Mesh) checkMembership(a *control.Announce, now time.Time) error {
 		}
 		m.sealPubs[id] = append([]byte(nil), c.SealPub...)
 	}
+	// Kept so the roster can be written down with the evidence for it, rather
+	// than written down and believed on the next start.
+	if m.creds == nil {
+		m.creds = map[string][]byte{}
+	}
+	m.creds[id] = append([]byte(nil), a.Credential...)
 	// A renewal arrived: this peer may be carried again, and if it expires
 	// once more that is a new event worth acting on.
 	delete(m.expiredDropped, hex.EncodeToString(a.DevicePub))
@@ -1874,6 +1894,14 @@ func (m *Mesh) handle(ev waku.Event) {
 	if peer.DevicePub == nil {
 		return // our own announce
 	}
+	// It has spoken for itself, so it is no longer carried on a memory.
+	m.confirmed(peer.ID())
+	if changed {
+		// Written where the announce is, like the bootstrap address below, and
+		// only when something material moved: a heartbeat saying what the last
+		// one said writes nothing.
+		m.saveRememberedPeers()
+	}
 
 	// Remember where this peer says its rendezvous node can be reached, for
 	// our next start (ADR-031). Written on the receive path because that is
@@ -1986,7 +2014,7 @@ func (m *Mesh) syncPeers() error {
 		// tunnel still works must be kept. Tearing tunnels down because the
 		// fleet went away is exactly what DESIGN §2 forbids.
 		st, haveStats := stats[p.WGPub.String()]
-		if !p.Online(now) && !(haveStats && st.Live(now)) {
+		if !m.carry(p, st, haveStats, now) {
 			continue
 		}
 

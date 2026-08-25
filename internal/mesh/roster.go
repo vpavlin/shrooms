@@ -120,6 +120,44 @@ func (r *Roster) Apply(a *control.Announce, now time.Time) (PeerInfo, bool) {
 	return p, changed
 }
 
+// Restore puts a remembered peer back without an announce to carry it.
+//
+// The timestamp is the one the peer actually had, not now. That is the whole
+// discipline of this: the entry says when the peer was last heard, which is a
+// fact about the peer and not a claim about this process, so Online() keeps
+// telling the truth and nothing downstream needs a new idea of what a peer is.
+//
+// Two consequences, and both are wanted. A memory older than OfflineAfter comes
+// back reading offline, and needs the provisional window to be installed at all.
+// A memory from ten seconds before a crash comes back reading online — honestly,
+// because it was — and is carried by the ordinary rule exactly as it would have
+// been had the process never died. What this buys in both cases is an endpoint
+// for the data plane to try before the rendezvous plane has come up.
+//
+// A peer already in the roster is left alone. Restore runs at startup, so the
+// only way that happens is an announce having arrived first — which is better
+// evidence than a memory, and later.
+//
+// Membership is the caller's to check. This deliberately takes a PeerInfo and
+// not the stored form, so nothing can reach the roster without having gone
+// through the same credential check an announce does.
+func (r *Roster) Restore(p PeerInfo) bool {
+	id := hex.EncodeToString(p.DevicePub)
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if id == r.self {
+		return false
+	}
+	if _, exists := r.peers[id]; exists {
+		return false
+	}
+	p.Overlay = identity.OverlayAddr(r.nk, p.DevicePub)
+	r.peers[id] = p
+	return true
+}
+
 // Peers returns the roster sorted by name, for stable output.
 func (r *Roster) Peers() []PeerInfo {
 	r.mu.RLock()

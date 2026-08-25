@@ -1,8 +1,9 @@
 # Should the roster survive a restart?
 
-**Status:** open question, Vaclav's. Asked 2026-08-25 about mobile
-specifically: would remembering peers across a restart or crash reconnect
-faster, assuming most peers are still where we last saw them?
+**Status:** built, 2026-08-25. Asked about mobile specifically: would
+remembering peers across a restart or crash reconnect faster, assuming most
+peers are still where we last saw them? Yes — and the reasoning below is kept
+because it is why the window is 90 seconds rather than a number somebody liked.
 
 Short answers: **nobody decided against it**, it would help, and the help
 arrives from a different direction than it looks like it should.
@@ -71,11 +72,20 @@ persisting where its counter got to, or a restored peer's next announce is
 either rejected as a replay or trusted as first-seen. `seqmarks.go` already
 persists exactly that, per mesh. The hard half is done.
 
-**`Online()` would do the right thing by itself.** A restored entry should keep
-the `LastSeen` it actually had, not be stamped with now — and `PeerInfo.Online`
-compares `LastSeen` against `OfflineAfter`, so a remembered peer correctly
-presents as *known but offline* until it actually speaks. The UI would not need
-a new concept, and it would not lie about who is up.
+**`Online()` would do the right thing by itself.** A restored entry keeps the
+`LastSeen` it actually had rather than being stamped with now, so the entry says
+when the *peer* was last heard — a fact about the peer, not a claim about this
+process. `PeerInfo.Online` compares that against `OfflineAfter` and gets the
+right answer in both directions, with no new concept for the UI.
+
+Note what that implies, because an early draft of this document got it wrong by
+saying a restored peer is always *known but offline until it speaks*. It is not.
+A memory from ten seconds before a crash comes back reading **online** — which
+is honest, because the peer really did announce ten seconds ago — and is carried
+by the ordinary rule as though nothing had restarted. Only a memory older than
+`OfflineAfter` comes back offline and needs the window below. The window is
+therefore not the only thing keeping remembered peers alive, and reading it
+alone gives the wrong impression of how long one survives.
 
 That last point matches how the services cache already behaves: the claims are
 persisted, but `Services()` filters them through the live roster, so a
@@ -126,17 +136,43 @@ existing category in the reconcile switch — the same slot an announced candida
 occupies today. Persisting the roster does not need a new kind of trust, which
 is the strongest argument that it belongs.
 
-## What it would look like
+## What was built
 
-Modelled on `BootPeers`, which solved the same shape of problem:
+Modelled on `BootPeers`, which solved the same shape of problem.
 
-- one bounded, TTL'd snapshot per mesh, written when the roster materially
-  changes (it already knows: `Apply` returns whether anything changed)
-- restored with real timestamps, filtered through persisted revocations and
-  credential expiry
-- installed only as bootstrap-guess endpoints, never as probed ones
-- a provisional startup window, after which the ordinary offline rule applies
-- shown as *known but offline* until the peer actually announces
+`state.RosterPeers` / `SetRosterPeers` keep one bounded, TTL'd snapshot per
+mesh — `roster-<network>.json`, 0600, at most 64 peers, seven days. The cap is
+generous next to `MaxBootPeers` for a reason that inverts it: bootstrap
+addresses are tried in series, so each extra one is a dial before reaching a
+live node, while these are installed at once and handshaked in parallel.
+
+**Each peer is stored with the credential it announced**, not with the fields
+derived from it. A credential is not a secret — it is published in every
+announce — and keeping the whole thing means `loadRememberedPeers` can run the
+peer back through `checkMembership`, the *same* gate an announce passes, by
+handing it a synthetic announce carrying what that function reads. Verifying
+against the authority, refusing one that names a different device or tunnel key,
+refusing a revoked one, recording expiry and the sealing key: all of it, rather
+than a second implementation that would drift from the first.
+
+`Roster.Restore` takes a `PeerInfo` and not the stored form, deliberately, so
+nothing can reach the roster without having been through that check. It refuses
+to overwrite a peer already there — at startup the only way that happens is an
+announce having arrived first, which is better evidence and later — and it
+refuses to restore us to our own roster.
+
+`Mesh.carry` is where the three ways to stay configured now live, extracted from
+the reconcile loop so the decision can be tested without a WireGuard device:
+announced recently, or a live tunnel, or remembered-and-recent.
+
+The write happens on the receive path next to the ADR-031 bootstrap note, and
+only when `Apply` reports a material change — a heartbeat saying what the last
+one said writes nothing.
+
+**A wart found by its own test:** `SetRosterPeers` sorted the caller's slice in
+place. It worked, and it silently reordered a snapshot built from the
+sorted-by-name roster — invisible until something downstream depended on the
+order it passed in. It copies now.
 
 ## The window: 90 seconds, and not a guess
 
