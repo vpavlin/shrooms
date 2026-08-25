@@ -138,11 +138,48 @@ Modelled on `BootPeers`, which solved the same shape of problem:
 - a provisional startup window, after which the ordinary offline rule applies
 - shown as *known but offline* until the peer actually announces
 
-## The question back
+## The window: 90 seconds, and not a guess
 
-The provisional window is the decision, and it is a trade rather than a
-detail: too short and the feature does nothing on the phone it was built for;
-too long and a restarted node transmits at dead addresses for exactly as long as
-the current rule was written to prevent.
+Vaclav's instinct was around two minutes, reasoning that by then the announces
+should have arrived and refreshed everybody. Right conclusion; the reason turns
+out to be a better one, and it makes the window shorter and more robust.
+
+**The window only ever culls failures.** If a remembered endpoint still works,
+the handshake completes in about a round trip, `st.Live(now)` goes true, and the
+existing rule keeps the peer configured whatever the timer says. The timer
+cannot kill a peer that is actually reachable — success is self-sustaining, so
+the exact value is far lower-stakes than it first appears.
+
+**And it does not need to cover announce arrival.** Tying the window to
+announces ties it to the rendezvous bootstrap, which is the one unpredictable
+part — a cold radio, or the ADR-031 case where the entry nodes refuse and there
+is nowhere to look. A window measured that way can expire before the first
+announce has even been sent. What rescues a good peer is the WireGuard
+handshake, which needs no delivery plane at all, so the window only has to cover
+a handshake attempt.
+
+Both things that could rescue a remembered peer already have a 90-second budget
+in this tree:
+
+| constant | what it is |
+|---|---|
+| `RekeyAttemptTime` = 90s | what wireguard-go spends retrying a handshake before giving up |
+| `FreshWindow` = 90s | how long announces are marked Fresh, asking peers to answer |
+
+So the rule is **keep a remembered peer for exactly as long as WireGuard is
+still trying to reach it** — derived from an existing constant rather than
+chosen, and arriving at the same number from the announce side.
+
+Past 90s wireguard-go has spent its attempt budget and nothing is actively
+trying that address any more, which is what makes two minutes slightly too long.
+Shorter — 45s, one announce interval — undercuts wireguard-go's own retries to
+save about eighteen handshake initiations per dead peer, at the protocol's 5s
+REKEY_TIMEOUT. Not a trade worth making.
+
+**90s is also well inside `OfflineAfter` (3 min)**, so a remembered peer that
+never proves itself is dropped before the ordinary offline rule would have begun
+to worry about it. The provisional window closes strictly earlier than the
+normal one: a narrowing rather than a widening, which is the safer direction for
+an override to point.
 
 Everything else here follows from choices already made.
