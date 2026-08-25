@@ -375,7 +375,7 @@ func cmdSetKey(args []string) error {
 	fs := flag.NewFlagSet("set-key", flag.ExitOnError)
 	cfgPath, _ := commonFlags(fs)
 	sock := fs.String("socket", DefaultSocket, "control socket, so a waiting daemon picks this up")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(splitArgs(fs, args)); err != nil {
 		return err
 	}
 

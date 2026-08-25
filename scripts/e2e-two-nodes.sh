@@ -76,8 +76,18 @@ fi
 mkdir -p "$WORK/b"
 "$BIN" prepare --config "$WORK/b/config.toml" --state "$WORK/b/state" \
     --name beta --port "$B_WG" >"$WORK/b/prepare.log" 2>&1
+# The key goes on stdin, not as an argument: set-key prompts for it, so that a
+# mesh key never lands in a shell history or a process list.
 KEY=$("$BIN" key show --config "$WORK/a/config.toml" 2>/dev/null | tail -1)
-"$BIN" set-key "$KEY" --config "$WORK/b/config.toml" >/dev/null 2>&1
+printf '%s\n' "$KEY" | "$BIN" set-key --config "$WORK/b/config.toml" \
+    --socket "$SOCKS/none.sock" >"$WORK/b/setkey.log" 2>&1
+if grep -q '^network_key = "'"$KEY"'"' "$WORK/b/config.toml"; then
+  ok "node B has the mesh key"
+else
+  bad "node B never got the mesh key"
+  note "$(tail -2 "$WORK/b/setkey.log")"
+  exit 1
+fi
 {
   printf 'delivery_port = %d\ninterface = "%s"\n' "$B_DELIVERY" "$B_IF"
   printf 'entry_nodes = ["/ip4/127.0.0.1/tcp/%d/p2p/%s"]\n' "$A_DELIVERY" "$PEER_A"

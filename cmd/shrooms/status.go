@@ -455,7 +455,7 @@ func printServices(out io.Writer, svcs []serviceStatus, router []routerStatus) {
 func cmdPaths(args []string) error {
 	fs := flag.NewFlagSet("paths", flag.ExitOnError)
 	sock := fs.String("socket", DefaultSocket, "control socket path")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(splitArgs(fs, args)); err != nil {
 		return err
 	}
 	want := ""
