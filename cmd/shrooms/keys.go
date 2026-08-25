@@ -121,13 +121,13 @@ func cmdCredential(args []string) error {
 	if err != nil {
 		return err
 	}
-	// It must name THIS device, or it will be refused by every peer and the
-	// mistake would only show up as a mesh that ignores you.
-	if fmt.Sprintf("%x", c.DevicePub) != fmt.Sprintf("%x", st.Identity.DevicePub) {
-		return fmt.Errorf("this credential names device %x, but this machine is %x",
-			c.DevicePub[:8], st.Identity.DevicePub[:8])
-	}
-	if err := st.SetCredential(raw); err != nil {
+	// It must name a key this device actually announces with, or it will be
+	// refused by every peer and the mistake would only show up as a mesh that
+	// ignores you. SetCredential does that check across every mesh: this device
+	// has a distinct derived identity per mesh (ADR-015), so comparing against
+	// the top-level one alone rejected a valid credential for any mesh but the
+	// first — and stored it where the daemon does not read.
+	if err := st.SetCredential(c.DevicePub, raw); err != nil {
 		return err
 	}
 

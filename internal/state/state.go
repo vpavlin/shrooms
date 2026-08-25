@@ -8,6 +8,7 @@
 package state
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/base32"
 	"encoding/base64"
@@ -507,8 +508,40 @@ func (c *Config) ServiceSpecs() ([]service.Spec, error) {
 }
 
 // SetCredential stores this device's membership and persists it.
-func (s *State) SetCredential(raw []byte) error {
-	s.Credential = append([]byte(nil), raw...)
+//
+// devPub is the device the credential names, and it decides where this lands.
+// The top-level field is not enough on its own: once a mesh has a per-mesh
+// entry, MeshState returns that and never consults the top level again, so a
+// credential written only there is stored successfully and never read.
+//
+// That is what "installed a credential, and status still says no credential"
+// was — on a node whose per-mesh entry had been created during the window when
+// it had no credential to adopt. `shrooms keys` reads the top level and showed
+// it; the daemon reads the mesh entry and did not.
+//
+// Written to every identity that matches, which is at most one per mesh: the
+// legacy mesh shares the top-level identity, and every other mesh has a
+// distinct derived one, so the credential can only belong to the mesh whose
+// device key it names.
+func (s *State) SetCredential(devPub []byte, raw []byte) error {
+	stored := false
+	if s.Identity != nil && bytes.Equal(s.Identity.DevicePub, devPub) {
+		s.Credential = append([]byte(nil), raw...)
+		stored = true
+	}
+	for _, ms := range s.Meshes {
+		if ms == nil || ms.Identity == nil {
+			continue
+		}
+		if bytes.Equal(ms.Identity.DevicePub, devPub) {
+			ms.Credential = append([]byte(nil), raw...)
+			stored = true
+		}
+	}
+	if !stored {
+		return fmt.Errorf("this credential names device %x, which is not this "+
+			"device's key on any mesh it belongs to", devPub[:min(8, len(devPub))])
+	}
 	return s.Save()
 }
 
