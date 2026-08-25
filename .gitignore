@@ -43,3 +43,10 @@ site/comparison.html
 # that was plainly defined, while every local build worked because the files
 # were on disk.
 /shrooms-relay
+
+# Built by scripts/build-portable.sh, which rm -rf's it first. CI builds and
+#
+  uploads the real one (.github/workflows/ci.yml); a checked-in copy is 54MB of
+# third-party .so
+  files that never get a security update.
+/dist/
