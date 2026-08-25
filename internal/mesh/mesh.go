@@ -585,6 +585,22 @@ func (m *Mesh) Run(ctx context.Context) error {
 		m.log.Debug("could not announce services", "err", err)
 	}
 
+	// The remembered roster reaches the data plane here, and nowhere else.
+	//
+	// syncPeers runs on a resync request, and nothing requested one at startup:
+	// every trigger is an announce arriving, a revocation, a probe result. So
+	// peers restored from disk sat in the roster, correctly carried by the
+	// provisional window, and were never written to WireGuard until the first
+	// announce turned up — which is the precise event remembering them exists
+	// to make unnecessary. The feature did nothing at all.
+	//
+	// Caught by the two-node end-to-end test, which restarted a node that had
+	// remembered its peer with two good endpoints and watched it wait
+	// twenty-three seconds to be told where that peer was.
+	if err := m.syncPeers(); err != nil {
+		m.log.Debug("could not install remembered peers", "err", err)
+	}
+
 	for {
 		select {
 		case <-ctx.Done():

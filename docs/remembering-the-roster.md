@@ -1,6 +1,9 @@
 # Should the roster survive a restart?
 
-**Status:** built, 2026-08-25. Asked about mobile specifically: would
+**Status:** built 2026-08-25, and **broken on arrival until the same evening**
+— see "What it actually did at first" below. Measured working now: a tunnel on a
+remembered endpoint **19ms** after start, against 23 seconds waiting to be told
+where the peer was. Asked about mobile specifically: would
 remembering peers across a restart or crash reconnect faster, assuming most
 peers are still where we last saw them? Yes — and the reasoning below is kept
 because it is why the window is 90 seconds rather than a number somebody liked.
@@ -173,6 +176,31 @@ one said writes nothing.
 place. It worked, and it silently reordered a snapshot built from the
 sorted-by-name roster — invisible until something downstream depended on the
 order it passed in. It copies now.
+
+## What it actually did at first: nothing
+
+It restored peers, carried them correctly through the provisional window, and
+wrote none of them to WireGuard.
+
+`syncPeers` runs when something requests a resync, and every trigger is an
+event: an announce arriving, a revocation, a probe result. Nothing requested one
+at startup. So a roster read from disk sat in memory until the first announce
+turned up — which is the exact event remembering it exists to make unnecessary.
+
+**Every test of it passed.** The state round-trips; `carry` returns true for a
+restored peer; the window closes when it should. All true, all testing the half
+that worked, and none of them able to see that nothing ever asked the data plane
+to look. It took two nodes, a restart and a stopwatch:
+
+    remembered peers from the last run  devices=1 carried_for=1m30s
+    peer discovered                     peer=alpha after=23.271s
+
+One `syncPeers()` before the run loop starts. Afterwards, the same test:
+
+    tunnel established  peer=alpha  after=19ms  from=memory  via=10.1.0.109:51990
+
+That is also why `from=memory` had never appeared in anybody's log: there was
+nothing to appear.
 
 ## The window: 90 seconds, and not a guess
 

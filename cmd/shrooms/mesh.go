@@ -148,7 +148,7 @@ func credentialNote(st *state.State, m state.Mesh) (string, string) {
 func cmdMeshSwitch(args []string, on bool) error {
 	fs := flag.NewFlagSet("mesh enable", flag.ExitOnError)
 	cfgPath, _ := commonFlags(fs)
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(splitArgs(fs, args)); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
@@ -234,7 +234,7 @@ func cmdMeshRename(args []string) error {
 	fs := flag.NewFlagSet("mesh rename", flag.ExitOnError)
 	cfgPath := fs.String("config", state.DefaultConfigPath, "config file")
 	adminDir := fs.String("admin-dir", defaultAdminDir(), "where admin keys are kept")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(splitArgs(fs, args)); err != nil {
 		return err
 	}
 	if fs.NArg() != 2 {

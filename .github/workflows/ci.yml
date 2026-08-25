@@ -84,6 +84,30 @@ jobs:
       - name: Scenarios
         run: make e2e
 
+  # Two nodes and a mesh that actually comes up, with a local fleet rather than
+  # the public one — so this is seconds rather than the four minutes m1 waits on
+  # somebody else's network.
+  #
+  # Gating. It earned it on its first day: it found that the remembered roster
+  # never reached the data plane, which every unit test of that feature had
+  # passed while testing the half that worked.
+  e2e-two-nodes:
+    name: end-to-end (two nodes)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - name: Fetch liblogosdelivery
+        run: make deps-release
+      - name: Build the binary
+        run: make shrooms
+      - name: A tun device
+        run: sudo modprobe tun || true; ls -l /dev/net/tun
+      - name: Two nodes
+        run: sudo --preserve-env=PATH make e2e-two-nodes
+
   # Publish the container image.
   #
   # Separate from build-from-source, which is continue-on-error and blocked
