@@ -24,8 +24,14 @@ with a comment naming the second implementation before one existed: *"an admin
 key held in a file, which is what exists today, and a Keycard, which is why this
 is an interface at all."* Everything the package signs is a 32-byte digest,
 chosen up front so a card could sign it. `internal/cred/secp256k1.go` already
-accepts a secp256k1 authority, and `admin init --keycard` compresses the card's
-exported point before writing it.
+accepts a secp256k1 authority, and `cred.CompressPoint` converts the card's
+exported point to the form an authority is written with.
+
+(An earlier version of this line credited `admin init --keycard` with doing
+that. **There is no such flag** — `cmdAdminInit` registers `-dir`,
+`-no-passphrase` and `-mesh`, and always mints ed25519. Minting a mesh whose
+authority is a card is still the thing that does not exist; see
+[testing-the-keycard.md](testing-the-keycard.md).)
 
 On the other side, `loam-keycard` already drives a card from a phone for Scala:
 a raw NFC driver, enrolment, implicit-PIN unlock, tap-per-sign, and a
