@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [main, master, e2e-two-nodes]
+    branches: [main, master]
     tags: ['v*']
   pull_request:
   # So a run can be forced without an empty commit — useful when checking
@@ -88,13 +88,12 @@ jobs:
   # the public one — so this is seconds rather than the four minutes m1 waits on
   # somebody else's network.
   #
-  # continue-on-error while it settles: it is new, it needs a tun device on a
-  # hosted runner, and a job nobody trusts yet must not block the ones that are
-  # already trustworthy. Flip it once it has been green for a while.
+  # Gating. It earned it on its first day: it found that the remembered roster
+  # never reached the data plane, which every unit test of that feature had
+  # passed while testing the half that worked.
   e2e-two-nodes:
     name: end-to-end (two nodes)
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
