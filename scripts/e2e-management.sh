@@ -268,12 +268,58 @@ scenario_no_backup_refuses_rather_than_reminting() {
   fi
 }
 
+# The socket surface, against a daemon that is actually running.
+#
+# Everything above drives files. This drives the seam those bugs actually lived
+# in: a daemon holding its own copy of the state while a CLI writes the file
+# underneath it. `status` asks the daemon; `keys` reads the file; tonight they
+# disagreed for an hour because a credential had been written where only one of
+# them looks.
+#
+# It does not bring up a mesh, because that needs a tun device and this suite
+# has to run anywhere. A daemon with no mesh yet still serves the socket, which
+# is enough to prove the two halves agree about what it holds.
+scenario_a_running_daemon_answers() {
+  local n; n=$(node one); mkdir -p "$n"
+  "$BIN" prepare --config "$n/config.toml" --state "$n/state" --name waiting --port 51950 \
+    >/dev/null 2>&1
+  # A port of its own, so this cannot collide with a daemon already on the host.
+  printf 'delivery_port = %d\n' "$((30000 + RANDOM % 2000))" >> "$n/config.toml"
+
+  # Short path on purpose: a unix socket path is capped near 108 characters and
+  # a long working directory silently fails to bind.
+  local sock; sock=$(mktemp -u /tmp/e2e-XXXXXX.sock)
+  "$BIN" daemon --config "$n/config.toml" --state "$n/state" --socket "$sock" \
+    >"$n/daemon.log" 2>&1 &
+  local pid=$!
+  trap 'kill '"$pid"' 2>/dev/null' RETURN
+
+  # The rendezvous node takes a while to come up before the socket is bound.
+  local waited=0
+  while [ ! -S "$sock" ] && [ "$waited" -lt 60 ]; do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 1; waited=$((waited+1))
+  done
+
+  if [ ! -S "$sock" ]; then
+    note "the daemon did not bind a socket in ${waited}s; skipping"
+    note "$(grep -viE 'topics="(waku|nim|eth)' "$n/daemon.log" | tail -2)"
+    return
+  fi
+  ok "a daemon binds its control socket (${waited}s)"
+
+  expect "and answers on it" "waiting for a mesh" \
+    "$("$BIN" status --socket "$sock" 2>&1)"
+
+  kill "$pid" 2>/dev/null
+}
+
 # ---------------------------------------------------------------------------
 
 ALL=(admin_show enrol_a_second_device credential_reaches_the_mesh_entry
      credential_for_another_device
      rename_moves_nothing state_survives_a_power_cut
-     no_backup_refuses_rather_than_reminting)
+     no_backup_refuses_rather_than_reminting a_running_daemon_answers)
 
 [ -x "$BIN" ] || { echo "no $BIN — run 'make shrooms'"; exit 1; }
 
