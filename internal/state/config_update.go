@@ -75,9 +75,23 @@ func lockConfig(path string) (func(), error) {
 
 // writeFileAtomic replaces path with body, or leaves it exactly as it was.
 //
-// Same shape as the state writer: a uniquely-named temp file in the same
-// directory, chmod before the rename so the config is never briefly readable at
-// the default mode, and rename last because it is the only step that is atomic.
+// A uniquely-named temp file in the same directory, chmod before the rename so
+// the file is never briefly readable at the default mode, fsync so the contents
+// exist before the name does, and rename last because it is the only step that
+// is atomic.
+//
+// **The fsync is not optional and this is why.** A rename is atomic with
+// respect to other processes and says nothing about durability: on ext4 the
+// rename can reach the journal while the data blocks have not, so a power loss
+// leaves the new name with no contents at all. On 2026-08-25 a power cut left
+// minipc-k11 with a zero-byte state.json and a zero-byte seqmarks file written
+// in the same minute, and the node looped 1385 times refusing to start.
+//
+// This is the only atomic writer in the package. There used to be three
+// near-identical copies — here, in state.Save, and in SetRevocations — and the
+// power cut proved all three wrong at once. One is harder to get wrong again,
+// and the next thing that needs durable writes gets it without having to know
+// any of this.
 func writeFileAtomic(path string, body []byte, mode os.FileMode) error {
 	dir := filepath.Dir(path)
 	tmpf, err := os.CreateTemp(dir, filepath.Base(path)+"-*.tmp")
@@ -95,11 +109,23 @@ func writeFileAtomic(path string, body []byte, mode os.FileMode) error {
 		tmpf.Close()
 		return err
 	}
+	if err := tmpf.Sync(); err != nil {
+		tmpf.Close()
+		return err
+	}
 	if err := tmpf.Close(); err != nil {
 		return err
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		return fmt.Errorf("replace %s: %w", filepath.Base(path), err)
+	}
+	// And the directory, so the rename survives too — a file can have its
+	// contents while the directory entry is still the old one. Best effort:
+	// some filesystems refuse to sync a directory, and failing the write over
+	// that would turn a durability fix into an outage.
+	if d, err := os.Open(dir); err == nil {
+		_ = d.Sync()
+		d.Close()
 	}
 	return nil
 }

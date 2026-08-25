@@ -91,29 +91,11 @@ func (s *State) SetRevocations(networkID string, raws [][]byte) error {
 		return fmt.Errorf("marshal revocations: %w", err)
 	}
 
-	// Temp file and rename, like state.json: a torn revocation list read at the
-	// next start would drop withdrawals silently, which is the whole failure
-	// this file exists to prevent.
-	path := s.revocationPath(networkID)
-	tmpf, err := os.CreateTemp(s.dir, "revocations-*.json.tmp")
-	if err != nil {
+	// A torn revocation list read at the next start would drop withdrawals
+	// silently, which is the whole failure this file exists to prevent — and a
+	// power cut zeroing it would bring every revoked device back.
+	if err := writeFileAtomic(s.revocationPath(networkID), append(body, '\n'), 0o600); err != nil {
 		return fmt.Errorf("write revocations: %w", err)
-	}
-	tmp := tmpf.Name()
-	defer os.Remove(tmp) // no-op once renamed
-	if _, err := tmpf.Write(append(body, '\n')); err != nil {
-		tmpf.Close()
-		return fmt.Errorf("write revocations: %w", err)
-	}
-	if err := tmpf.Chmod(0o600); err != nil {
-		tmpf.Close()
-		return fmt.Errorf("write revocations: %w", err)
-	}
-	if err := tmpf.Close(); err != nil {
-		return fmt.Errorf("write revocations: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return fmt.Errorf("replace revocations: %w", err)
 	}
 	return nil
 }

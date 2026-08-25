@@ -749,31 +749,9 @@ func backupStatePath(dir string) string {
 // Best effort throughout: this is a safety net, and a node that cannot write it
 // should still run rather than refuse to start over a backup.
 func writeBackupState(dir string, raw []byte) error {
-	tmpf, err := os.CreateTemp(dir, "state-bak-*.json.tmp")
-	if err != nil {
-		return err
-	}
-	tmp := tmpf.Name()
-	defer os.Remove(tmp)
-	if _, err := tmpf.Write(raw); err != nil {
-		tmpf.Close()
-		return err
-	}
-	if err := tmpf.Chmod(0o600); err != nil {
-		tmpf.Close()
-		return err
-	}
 	// Synced for the same reason the live file is: a backup that is present and
-	// empty after a power cut is worse than no backup, because it looks like
-	// one.
-	if err := tmpf.Sync(); err != nil {
-		tmpf.Close()
-		return err
-	}
-	if err := tmpf.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp, backupStatePath(dir))
+	// empty after a power cut is worse than no backup, because it looks like one.
+	return writeFileAtomic(backupStatePath(dir), raw, 0o600)
 }
 
 // Save writes state atomically. The sequence number changes on every announce,
@@ -844,48 +822,10 @@ func (s *State) Save() error {
 	// A unique temporary name as well as the lock. The lock orders writers in
 	// this process; the name means a second process — an admin command run
 	// while the daemon is up — cannot delete the file this one is about to
-	// rename.
-	tmpf, err := os.CreateTemp(s.dir, "state-*.json.tmp")
-	if err != nil {
+	// rename. writeFileAtomic does both, and syncs, which is what this used to
+	// get wrong.
+	if err := writeFileAtomic(path, raw, 0o600); err != nil {
 		return fmt.Errorf("write state: %w", err)
-	}
-	tmp := tmpf.Name()
-	defer os.Remove(tmp) // no-op once renamed
-	if _, err := tmpf.Write(raw); err != nil {
-		tmpf.Close()
-		return fmt.Errorf("write state: %w", err)
-	}
-	if err := tmpf.Chmod(0o600); err != nil {
-		tmpf.Close()
-		return fmt.Errorf("write state: %w", err)
-	}
-	// Flush the contents before the rename makes them visible.
-	//
-	// A rename is atomic with respect to other processes, and that is not the
-	// same as durable. On ext4 the rename can reach the journal while the data
-	// blocks have not, so a power loss leaves state.json present and ZERO
-	// BYTES — which is not a corrupt identity, it is no identity, and it is
-	// exactly what "parse state: unexpected end of JSON input" is.
-	//
-	// Seen on minipc-k11, 2026-08-25: 1385 restarts in a loop against an empty
-	// file, on a day when a power supply had already failed in the same house.
-	if err := tmpf.Sync(); err != nil {
-		tmpf.Close()
-		return fmt.Errorf("write state: %w", err)
-	}
-	if err := tmpf.Close(); err != nil {
-		return fmt.Errorf("write state: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return fmt.Errorf("replace state: %w", err)
-	}
-	// And the directory, so the rename itself survives. Without this the file
-	// can have its contents and the directory entry can still be the old one.
-	// Best effort: some filesystems refuse to sync a directory, and failing the
-	// save over it would turn a durability improvement into an outage.
-	if d, err := os.Open(s.dir); err == nil {
-		_ = d.Sync()
-		d.Close()
 	}
 	return nil
 }
