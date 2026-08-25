@@ -119,11 +119,25 @@ func (m *Mesh) checkTunnels(now time.Time) {
 			continue
 		}
 		t := m.Timing(p.ID())
-		m.log.Info("tunnel established",
-			"peer", p.Name,
-			"after", t.TunnelAfter.Round(time.Millisecond),
-			"discovered_after", t.DiscoveredAfter.Round(time.Millisecond),
-			"path_after", t.PathAfter.Round(time.Millisecond),
-			"via", st.Endpoint)
+		// Unreached milestones are omitted rather than logged as zero. A zero
+		// here means "has not happened", and printing it as 0s read as
+		// "happened instantly" — which is wrong in the one case worth
+		// noticing, below.
+		args := []any{"peer", p.Name, "after", t.TunnelAfter.Round(time.Millisecond)}
+		if t.DiscoveredAfter > 0 {
+			args = append(args, "discovered_after", t.DiscoveredAfter.Round(time.Millisecond))
+		} else {
+			// A tunnel before the first announce: this peer came from the
+			// remembered roster and WireGuard reached it on a stored endpoint
+			// while the rendezvous plane was still coming up. That is the whole
+			// point of remembering, and it used to be impossible — no announce
+			// meant no peer meant nothing to handshake with.
+			args = append(args, "from", "memory")
+		}
+		if t.PathAfter > 0 {
+			args = append(args, "path_after", t.PathAfter.Round(time.Millisecond))
+		}
+		args = append(args, "via", st.Endpoint)
+		m.log.Info("tunnel established", args...)
 	}
 }
