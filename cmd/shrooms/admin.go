@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -661,16 +662,97 @@ func publishRevocation(sock, label string, raw []byte) error {
 func cmdAdminShow(args []string) error {
 	fs := flag.NewFlagSet("admin show", flag.ExitOnError)
 	dir := fs.String("dir", defaultAdminDir(), "where the admin key is kept")
+	label := fs.String("mesh", "", "which mesh's authority to show (ADR-015); omit to show every one held here")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	_, auth, err := loadAdmin(*dir)
+	if *label != "" {
+		return showAuthority(*dir, *label)
+	}
+
+	// Every mesh this machine holds the authority for, not just the default.
+	//
+	// This used to show only admin.json, which is what `admin init` writes with
+	// no --mesh. ADR-015 gave every mesh its own admin-<label>.json and this
+	// command never caught up, so the one question it exists to answer — which
+	// meshes am I the admin of — was answerable only for the first one.
+	//
+	// And it is the question somebody arrives with. A mesh label is a local
+	// nickname: the machine that minted a mesh may call it something the other
+	// members do not, so "do I have the key for the mesh that box is on" cannot
+	// be answered by looking for a matching name. It is answered by comparing
+	// admin_keys, which is what this prints.
+	labels, err := adminLabelsIn(*dir)
+	if err != nil {
+		return err
+	}
+	if len(labels) == 0 {
+		return fmt.Errorf("no admin keys in %s.\n"+
+			"An admin key is written by `shrooms init` on the machine that minted "+
+			"the mesh and stays there, so if a mesh was created elsewhere its key "+
+			"is on that machine and not this one", *dir)
+	}
+	for i, l := range labels {
+		if i > 0 {
+			fmt.Println()
+		}
+		name := l
+		if name == "" {
+			name = state.DefaultLabel
+		}
+		fmt.Printf("=== %s (%s) ===\n", name, filepath.Base(adminPathFor(*dir, l)))
+		if err := showAuthority(*dir, l); err != nil {
+			fmt.Printf("unreadable: %v\n", err)
+		}
+	}
+	return nil
+}
+
+// adminLabelsIn lists the meshes this directory holds an authority for.
+//
+// The empty string means the default file, which is what `admin init` with no
+// --mesh writes; anything else is the label in admin-<label>.json.
+func adminLabelsIn(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var out []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		n := e.Name()
+		switch {
+		case n == adminFileName:
+			out = append(out, "")
+		case strings.HasPrefix(n, "admin-") && strings.HasSuffix(n, ".json"):
+			out = append(out, strings.TrimSuffix(strings.TrimPrefix(n, "admin-"), ".json"))
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// showAuthority prints one mesh's authority.
+//
+// The public half only: this reads the keys, never the private one, so it needs
+// no passphrase and can be run to answer "which mesh is this" without unlocking
+// anything.
+func showAuthority(dir, label string) error {
+	auth, err := authorityFor(dir, label)
 	if err != nil {
 		return err
 	}
 	fmt.Printf("mesh id  %s\n", auth.ID())
 	fmt.Printf("prefix   %s\n", auth.ID().Prefix())
 	fmt.Printf("keys     %d trusted\n", len(auth.Keys))
+	if auth.CardOnly() {
+		fmt.Printf("         every key is a card key\n")
+	}
 	fmt.Println()
 	fmt.Println("admin_keys = [")
 	for _, k := range auth.Keys {
