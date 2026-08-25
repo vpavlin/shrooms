@@ -151,5 +151,72 @@ if saw "$SOCKS/a.sock" "up "; then ok "a tunnel is established (${n}s)"; else
   note "$("$BIN" status --socket "$SOCKS/a.sock" 2>&1 | tail -3 | tr '\n' ' ')"
 fi
 
+# --- does a restart come back on remembered endpoints? --------------------
+#
+# The remembered roster is meant to give WireGuard an endpoint to try before the
+# rendezvous plane is up, so a restarted node reaches its peers without waiting
+# to be told where they are. That claim has never been checked: it needs a node
+# that has peers, a restart, and a look at what happened first.
+#
+# "from=memory" on a tunnel means exactly that — the handshake completed on a
+# stored endpoint before any announce arrived. It was structurally impossible
+# before the roster was persisted, so it is a yes-or-no rather than a judgement
+# about whether something felt quicker.
+kill "${PIDS[1]}" 2>/dev/null; sleep 2
+mv "$WORK/b/daemon.log" "$WORK/b/daemon-first.log"
+
+if [ -f "$WORK/b/state/roster-"*.json ] 2>/dev/null || ls "$WORK/b/state"/roster-*.json >/dev/null 2>&1; then
+  ok "node B wrote down its roster"
+else
+  bad "node B kept no roster to come back to"
+fi
+
+"$BIN" daemon --config "$WORK/b/config.toml" --state "$WORK/b/state" \
+    --socket "$SOCKS/b2.sock" >"$WORK/b/daemon.log" 2>&1 &
+PIDS+=($!)
+if wait_for 90 "$SOCKS/b2.sock"; then ok "node B restarts"; else
+  bad "node B did not come back"
+fi
+
+n=0
+while [ "$n" -lt 60 ]; do
+  grep -q "tunnel established" "$WORK/b/daemon.log" && break
+  sleep 2; n=$((n+2))
+done
+if grep -q "from=memory" "$WORK/b/daemon.log"; then
+  ok "a tunnel came up on a remembered endpoint, before any announce"
+elif grep -q "tunnel established" "$WORK/b/daemon.log"; then
+  bad "the tunnel waited for an announce; the remembered endpoint was not used"
+  note "$(grep 'tunnel established' "$WORK/b/daemon.log" | head -1)"
+else
+  bad "no tunnel at all ${n}s after the restart"
+fi
+
+# --- revocation, which is the one that has to work --------------------------
+#
+# A revoked device must stop being carried, and the check is on the OTHER node:
+# revocation is something peers enforce, not something the revoked device
+# cooperates with.
+DEV_B=$("$BIN" keys --state "$WORK/b/state" 2>&1 | sed -n 's/^device  *//p' | head -1)
+printf 'pw\n' | "$BIN" admin revoke --dir "$WORK/a/admin" \
+    --config "$WORK/a/config.toml" --socket "$SOCKS/a.sock" \
+    --device "$DEV_B" >"$WORK/a/revoke.log" 2>&1
+if grep -qiE "revok" "$WORK/a/revoke.log"; then ok "node A revokes node B"; else
+  bad "revocation did not go out"
+  note "$(tail -2 "$WORK/a/revoke.log")"
+fi
+
+n=0
+while [ "$n" -lt 90 ]; do
+  "$BIN" status --socket "$SOCKS/a.sock" 2>/dev/null | grep -q "beta" || break
+  sleep 3; n=$((n+3))
+done
+if "$BIN" status --socket "$SOCKS/a.sock" 2>/dev/null | grep -q "beta"; then
+  bad "node B is still on node A's roster ${n}s after being revoked"
+  note "$("$BIN" status --socket "$SOCKS/a.sock" 2>&1 | tail -3 | tr '\n' ' ')"
+else
+  ok "node B is gone from node A's roster (${n}s)"
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
