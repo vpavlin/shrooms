@@ -24,6 +24,11 @@ func main() {
 		os.Exit(2)
 	}
 
+	// Readers opened along the way are released here rather than left to
+	// process exit: pcscd holds an exclusive connection and does not reliably
+	// reclaim it in time for the next command, which reads as a broken reader.
+	defer releaseCards()
+
 	var err error
 	switch os.Args[1] {
 	case "init":

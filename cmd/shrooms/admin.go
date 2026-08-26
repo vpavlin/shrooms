@@ -336,15 +336,31 @@ func signerFor(dir, label, signWith string, external bool) (cred.Signer, *cred.A
 	return &externalSigner{auth: auth, command: signWith}, auth, nil
 }
 
-// cardSignerFor opens the card this mesh's authority lives on.
+// openCards holds readers this process opened, to be released before it exits.
 //
-// The reader connection is left open deliberately. pcscd holds it exclusively
-// until the process exits, and the signer is used after this returns — closing
-// it here would hand back something that cannot sign. A command-line process
-// exits promptly and the connection goes with it; a long-running one would need
-// this to return a closer instead.
+// The connection cannot be closed when the signer is handed back — the signer is
+// used after that, and a closed card signs nothing. Relying on process exit is
+// not enough either: pcscd holds an exclusive connection and does not always
+// reclaim it before the next command connects, which surfaces as "Sharing
+// violation" on the very next `shrooms admin ...` and looks like the reader is
+// broken. So they are released deliberately, by main.
+var openCards []func()
+
+// releaseCards closes every reader this process opened. Called by main on the
+// way out, whatever the command did.
+func releaseCards() {
+	for _, c := range openCards {
+		c()
+	}
+	openCards = nil
+}
+
+// cardSignerFor opens the card this mesh's authority lives on.
 func cardSignerFor(dir string, auth *cred.Authority) (cred.Signer, *cred.Authority, error) {
-	t, _, err := keycard.OpenReader("")
+	t, done, err := keycard.OpenReader("")
+	if done != nil {
+		openCards = append(openCards, done)
+	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("this mesh's authority is a Keycard, so it has to "+
 			"sign: %w", err)

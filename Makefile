@@ -25,7 +25,7 @@ GO ?= go
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 .PHONY: all deps deps-basecamp check-lib shrooms wakuspike s3topics m0demo \
-        s1 s3 probe relay relay-image m0 m1 m2 m2-edm m3 m3-remote dist image push-image deps-release install uninstall build-all vet-cgo test test-unit e2e e2e-two-nodes android-deps android-core aar apk fdroid basecamp-check basecamp-lgx site-adrs fmt clean
+        s1 s3 probe relay relay-image m0 m1 m2 m2-edm m3 m3-remote dist image push-image deps-release install uninstall build-all vet-cgo test test-unit e2e e2e-two-nodes e2e-keycard android-deps android-core aar apk fdroid basecamp-check basecamp-lgx site-adrs fmt clean
 
 all: shrooms
 
@@ -380,6 +380,13 @@ test: check-lib
 ## on every push. See scripts/e2e-management.sh for what each scenario is for.
 e2e: shrooms
 	./scripts/e2e-management.sh
+
+## The life of a mesh whose authority is a Keycard, against a real card: mint,
+## issue, install, revoke, teardown. Needs a reader, a card and a PIN, so it
+## cannot run in CI:
+##     make shrooms TAGS=pcsc && SHROOMS_CARD_PIN=nnnnnn make e2e-keycard
+e2e-keycard:
+	./scripts/e2e-keycard.sh
 
 ## Two nodes on one machine with a local fleet: mint, admit, discover, tunnel.
 ## Needs root for the WireGuard device, unlike `make e2e`.
