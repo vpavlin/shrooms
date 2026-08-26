@@ -311,7 +311,11 @@ func cmdJoinInvite(token string, args []string) error {
 	label := fs.String("mesh", "", "what to call this mesh on this machine (ADR-015)")
 	local := fs.Bool("local", false, "do not use a running daemon even if there is one")
 	verbose := fs.Bool("v", false, "show the rendezvous library's own logging")
-	if err := fs.Parse(args); err != nil {
+	// Where to look for the mesh, when the preset's fleet is not reachable or
+	// not wanted. Comma-separated multiaddrs; they go into the config this
+	// writes, so the node keeps using them afterwards.
+	entryNodes := fs.String("entry-node", "", "bootstrap addresses to use instead of the preset's")
+	if err := fs.Parse(splitArgs(fs, args)); err != nil {
 		return err
 	}
 
@@ -433,7 +437,7 @@ func cmdJoinInvite(token string, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := setupMesh(*cfgPath, *stateDir, nk, deviceName, *label, uint16(*port), *advertise, *relay, false); err != nil {
+	if err := setupMeshWith(*cfgPath, *stateDir, nk, deviceName, *label, uint16(*port), *advertise, *relay, false, splitList(*entryNodes)); err != nil {
 		return err
 	}
 
@@ -672,4 +676,16 @@ func inviteBootAddr(cfg state.Config, stateDir string) string {
 		return peers[0]
 	}
 	return ""
+}
+
+// splitList turns a comma-separated flag into a slice, ignoring empties so that
+// an unset flag is no addresses rather than one empty one.
+func splitList(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

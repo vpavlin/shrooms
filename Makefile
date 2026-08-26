@@ -25,7 +25,7 @@ GO ?= go
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 .PHONY: all deps deps-basecamp check-lib shrooms wakuspike s3topics m0demo \
-        s1 s3 probe relay relay-image m0 m1 m2 m2-edm m3 m3-remote dist image push-image deps-release install uninstall build-all vet-cgo test test-unit e2e e2e-two-nodes e2e-keycard android-deps android-core aar apk fdroid basecamp-check basecamp-lgx site-adrs fmt clean
+        s1 s3 probe relay relay-image m0 m1 m2 m2-edm m3 m3-remote dist image push-image deps-release install uninstall build-all vet-cgo test test-unit e2e e2e-two-nodes e2e-keycard e2e-keycard-mesh android-deps android-core aar apk fdroid basecamp-check basecamp-lgx site-adrs fmt clean
 
 all: shrooms
 
@@ -387,6 +387,12 @@ e2e: shrooms
 ##     make shrooms TAGS=pcsc && SHROOMS_CARD_PIN=nnnnnn make e2e-keycard
 e2e-keycard:
 	./scripts/e2e-keycard.sh
+
+## The same, with a daemon and a second device: mint, invite, join, renew,
+## revoke. Needs root as well as a card:
+##     make shrooms TAGS=pcsc && sudo SHROOMS_CARD_PIN=nnnnnn make e2e-keycard-mesh
+e2e-keycard-mesh:
+	./scripts/e2e-keycard-mesh.sh
 
 ## Two nodes on one machine with a local fleet: mint, admit, discover, tunnel.
 ## Needs root for the WireGuard device, unlike `make e2e`.

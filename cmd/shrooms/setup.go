@@ -202,9 +202,23 @@ func setup(cfgPath, stateDir string, nk identity.NetworkKey, name string, port u
 // setupMesh is setup with a local name for the mesh (ADR-015). An empty label
 // writes the single-mesh form, which is what init and `join <KEY>` want.
 func setupMesh(cfgPath, stateDir string, nk identity.NetworkKey, name, label string, port uint16, advertise string, relay, fresh bool) error {
+	return setupMeshWith(cfgPath, stateDir, nk, name, label, port, advertise, relay, fresh, nil)
+}
+
+// setupMeshWith is setupMesh with explicit bootstrap addresses.
+//
+// A joining device has to reach the rendezvous plane to redeem its invite, and
+// with no addresses it uses the preset's — the public fleet. On a network that
+// cannot reach it, or that deliberately does not, there was no way to say where
+// to look: `join` writes the config, so there was nowhere to put the answer
+// before it was needed.
+func setupMeshWith(cfgPath, stateDir string, nk identity.NetworkKey, name, label string, port uint16, advertise string, relay, fresh bool, entry []string) error {
 	cfg := state.DefaultConfig()
 	cfg.NetworkKey = nk.String()
 	cfg.ListenPort = port
+	if len(entry) > 0 {
+		cfg.EntryNodes = entry
+	}
 	if name != "" {
 		cfg.Name = name
 	}
