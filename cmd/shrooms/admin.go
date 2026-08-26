@@ -1058,8 +1058,11 @@ func mintCardAuthorityFull(dir, cfgPath, stateDir, name, label, readerName strin
 	}
 
 	fmt.Printf("\nMinted the mesh authority from the card.\n\n")
+	// No prefix line. The overlay prefix a person sees in `mesh list` and
+	// `status` comes from the NETWORK key; auth.ID().Prefix() is derived from
+	// the admin keys and is a different value, so printing it beside a mesh id
+	// invites reading it as the addresses this mesh will use. It is not.
 	fmt.Printf("  mesh id     %s\n", auth.ID())
-	fmt.Printf("  prefix      %s\n", auth.ID().Prefix())
 	fmt.Printf("  admin key   %s\n", path)
 	fmt.Printf("  authority   %x\n", signer.Public())
 	if enrolled {

@@ -45,7 +45,7 @@ func cmdInit(args []string) error {
 	// A second mesh on a machine that already has one. Everything else about
 	// the config stays as it is: this adds a network, it does not replace one.
 	if *label != "" {
-		return addMesh(*cfgPath, *stateDir, *adminDir, *label, *relay, *noAdmin, *sock)
+		return addMeshWith(*cfgPath, *stateDir, *adminDir, *label, *relay, *noAdmin, *sock, *card, *reader)
 	}
 
 	if _, err := os.Stat(*cfgPath); err == nil {
@@ -133,6 +133,16 @@ func cmdJoin(args []string) error {
 // admitted to one, and the difference matters — whoever runs this holds the new
 // mesh's admin key and can enrol into it.
 func addMesh(cfgPath, stateDir, adminDir, label string, relay, noAdmin bool, sock string) error {
+	return addMeshWith(cfgPath, stateDir, adminDir, label, relay, noAdmin, sock, false, "")
+}
+
+// addMeshWith is addMesh, optionally with a Keycard as the new mesh's authority.
+//
+// Adding a mesh took the file path whatever was asked for, so `init --mesh work
+// --keycard` silently minted a file authority — the flag was read and dropped.
+// Which is the case a person actually has: a machine already on a mesh or three,
+// making one more.
+func addMeshWith(cfgPath, stateDir, adminDir, label string, relay, noAdmin bool, sock string, card bool, reader string) error {
 	cfg, err := state.LoadConfig(cfgPath)
 	if err != nil {
 		return fmt.Errorf("%w\n\n--mesh adds a network to an existing config; "+
@@ -157,6 +167,13 @@ func addMesh(cfgPath, stateDir, adminDir, label string, relay, noAdmin bool, soc
 	fmt.Printf("  prefix       %s\n", nk.Prefix())
 	fmt.Println()
 
+	if !noAdmin && card {
+		if err := mintCardAuthorityFull(adminDir, cfgPath, stateDir, cfg.Name, label, reader); err != nil {
+			return err
+		}
+		reportNext(sock)
+		return nil
+	}
 	if !noAdmin {
 		if err := mintAuthorityFor(adminDir, cfgPath, stateDir, label, cfg.Name); err != nil {
 			return err
