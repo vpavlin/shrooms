@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"encoding/base32"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -133,4 +134,107 @@ func TestRenamingRefusesTheCasesThatWouldBreakThings(t *testing.T) {
 	if _, ok := after.MeshSet["test"]; !ok {
 		t.Error("a refused rename still changed the config")
 	}
+}
+
+// Removing a mesh re-sorts the label list exactly as renaming does, so every
+// mesh after it in that order would take a different interface and a different
+// port — for an operation about leaving one network, not about the others.
+func TestRemovingAMeshMovesNoInterfaceOrPort(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := aConfig(t, dir)
+
+	before, err := state.LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	was := map[string][2]any{}
+	for i, m := range before.Meshes() {
+		iface, port := ifaceAndPort(before, m, i)
+		was[m.Label] = [2]any{iface, port}
+	}
+
+	if err := cmdMeshRemove([]string{"--config", cfgPath, "--yes", "office"}); err != nil {
+		t.Fatal(err)
+	}
+
+	after, err := state.LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, still := after.MeshSet["office"]; still {
+		t.Error("the mesh is still in the config")
+	}
+	for i, m := range after.Meshes() {
+		iface, port := ifaceAndPort(after, m, i)
+		if want, known := was[m.Label]; known && (iface != want[0] || port != want[1]) {
+			t.Errorf("%s moved from %v/%v to %v/%v", m.Label, want[0], want[1], iface, port)
+		}
+	}
+}
+
+// The network key IS the membership: no admin can reissue it, and it is written
+// nowhere else once the entry is gone. Printing it is the only chance somebody
+// gets to keep it, so it must happen whatever else this does.
+func TestRemovingAMeshPrintsTheKeyItIsAboutToDestroy(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := aConfig(t, dir)
+	cfg, err := state.LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := cfg.MeshSet["office"].NetworkKey
+
+	out := captureStdout(t, func() {
+		if err := cmdMeshRemove([]string{"--config", cfgPath, "--yes", "office"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(out, key) {
+		t.Error("the network key was not printed, so leaving a mesh is one-way with no warning")
+	}
+}
+
+// The top-level mesh is the device's whole configuration rather than one it
+// joined, so removing it is a different act and should say so instead of
+// half-doing it.
+func TestRemovingRefusesWhatItShould(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := aConfig(t, dir)
+	for _, c := range []struct{ name, label string }{
+		{"the top-level mesh", "default"},
+		{"a mesh that is not there", "nope"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if err := cmdMeshRemove([]string{"--config", cfgPath, "--yes", c.label}); err == nil {
+				t.Errorf("removing %q was allowed", c.label)
+			}
+		})
+	}
+	after, err := state.LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after.MeshSet) != 2 {
+		t.Errorf("a refused removal still changed the config: %v", after.MeshSet)
+	}
+}
+
+func captureStdout(t *testing.T, f func()) string {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	done := make(chan string, 1)
+	go func() {
+		var b strings.Builder
+		_, _ = io.Copy(&b, r)
+		done <- b.String()
+	}()
+	f()
+	w.Close()
+	os.Stdout = old
+	return <-done
 }

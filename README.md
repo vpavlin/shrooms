@@ -546,8 +546,15 @@ If the disagreement is more trouble than it is worth, change this device's name
 for it:
 
 ```
-shrooms mesh rename test home
+shrooms mesh rename test home     # what this device calls it
+shrooms mesh remove  test         # leave it
 ```
+
+`remove` prints the network key before it goes, because that key *is* the
+membership: no admin can reissue it and it is written nowhere else afterwards.
+It leaves the mesh's admin key alone — that belongs to the mesh rather than to
+this device — and leaves this mesh's state, so rejoining comes back as the same
+device rather than a stranger.
 
 That is a command rather than an edit because the label also names the mesh's
 admin key file, and because interface names and ports are derived from a

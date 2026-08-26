@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/vpavlin/shrooms/internal/state"
@@ -44,6 +45,8 @@ func cmdMesh(args []string) error {
 		return cmdMeshSwitch(args[1:], false)
 	case "rename":
 		return cmdMeshRename(args[1:])
+	case "remove", "rm", "leave":
+		return cmdMeshRemove(args[1:])
 	default:
 		return fmt.Errorf("unknown mesh command %q; try: list, enable, disable, rename", args[0])
 	}
@@ -269,22 +272,7 @@ func cmdMeshRename(args []string) error {
 		return fmt.Errorf("no mesh called %q; try: shrooms mesh list", from)
 	}
 
-	// Pin every mesh's current interface and port BEFORE the labels move, so
-	// that re-sorting cannot change what anything is called on the wire.
-	meshes := cfg.Meshes()
-	pinned := map[string]state.Mesh{}
-	for i, m := range meshes {
-		if m.Label == state.DefaultLabel {
-			continue // the top-level form is always position zero
-		}
-		iface, port := ifaceAndPort(cfg, m, i)
-		e := cfg.MeshSet[m.Label]
-		e.Interface, e.ListenPort = iface, port
-		pinned[m.Label] = e
-	}
-	for label, m := range pinned {
-		cfg.MeshSet[label] = m
-	}
+	pinInterfacesAndPorts(&cfg)
 
 	moved := cfg.MeshSet[from]
 	moved.Label = to
@@ -319,5 +307,112 @@ func cmdMeshRename(args []string) error {
 	fmt.Println()
 	fmt.Println("Restart the daemon for it to take effect.")
 	fmt.Println("Other devices keep their own name for this mesh; labels are local.")
+	return nil
+}
+
+// pinInterfacesAndPorts writes down what every mesh currently uses.
+//
+// Interface names and ports come from a mesh's position in a label-sorted list,
+// so anything that changes that list — renaming a mesh, removing one — moves
+// them for every mesh at or after the change. Firewall rules, port forwards and
+// every peer's cached endpoint would then point at the wrong mesh, for an
+// operation that was supposed to be about a name.
+//
+// Called before the list changes, never after.
+func pinInterfacesAndPorts(cfg *state.Config) {
+	pinned := map[string]state.Mesh{}
+	for i, m := range cfg.Meshes() {
+		if m.Label == state.DefaultLabel {
+			continue // the top-level form is always position zero
+		}
+		iface, port := ifaceAndPort(*cfg, m, i)
+		e := cfg.MeshSet[m.Label]
+		e.Interface, e.ListenPort = iface, port
+		pinned[m.Label] = e
+	}
+	for label, m := range pinned {
+		cfg.MeshSet[label] = m
+	}
+}
+
+// cmdMeshRemove takes this device off a mesh.
+//
+// The network key IS the membership. Removing the entry that holds it is how
+// you leave, and it is also how you lose the ability to come back — so the key
+// is printed before anything is written, because it is the one thing here that
+// cannot be recovered from somewhere else.
+//
+// What it deliberately does NOT touch:
+//
+//   - the admin key, if this device holds the mesh's authority. That is the
+//     mesh's, not this device's, and deleting it would end the mesh for
+//     everybody rather than removing one member from it.
+//   - this mesh's state — its identity, credential and replay marks. Rejoining
+//     with the same key then comes back as the same device rather than a
+//     stranger, which is usually what somebody leaving and returning wants.
+func cmdMeshRemove(args []string) error {
+	fs := flag.NewFlagSet("mesh remove", flag.ExitOnError)
+	cfgPath := fs.String("config", state.DefaultConfigPath, "config file")
+	yes := fs.Bool("yes", false, "do not ask")
+	if err := fs.Parse(splitArgs(fs, args)); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("which mesh? try: shrooms mesh list")
+	}
+	label := fs.Arg(0)
+
+	cfg, err := state.LoadConfig(*cfgPath)
+	if err != nil {
+		return err
+	}
+	m, ok := cfg.MeshSet[label]
+	if !ok {
+		if label == state.DefaultLabel || cfg.NetworkKey != "" && len(cfg.MeshSet) == 0 {
+			return fmt.Errorf("%q is this config's top-level mesh, which is the one "+
+				"this device was built around rather than one it joined. Removing it "+
+				"is removing the device's whole configuration; delete %s instead, "+
+				"deliberately", label, *cfgPath)
+		}
+		return fmt.Errorf("no mesh called %q; try: shrooms mesh list", label)
+	}
+
+	fmt.Printf("Leaving %q.\n\n", label)
+	fmt.Printf("  network key  %s\n", m.NetworkKey)
+	if len(m.AdminKeys) > 0 {
+		fmt.Printf("  admin keys   %d — this mesh admits by credential\n", len(m.AdminKeys))
+	}
+	fmt.Println()
+	fmt.Println("That key is the membership. Save it if there is any chance you want")
+	fmt.Println("back in: it is not written anywhere else once this is done, and no")
+	fmt.Println("admin can reissue it — it is the mesh, not a permission.")
+	fmt.Println()
+	fmt.Println("The mesh's admin key, if this device holds it, is left alone: that")
+	fmt.Println("belongs to the mesh rather than to this device. So is this mesh's")
+	fmt.Println("state, so rejoining comes back as the same device.")
+
+	if !*yes {
+		fmt.Println()
+		ans, err := readSecret("Type the mesh's name to confirm: ")
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(ans) != label {
+			return errors.New("stopped, and nothing was changed")
+		}
+	}
+
+	// Before the set changes, or every mesh after this one in label order takes
+	// a different interface and a different port.
+	pinInterfacesAndPorts(&cfg)
+	delete(cfg.MeshSet, label)
+
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	if err := state.WriteConfig(*cfgPath, cfg); err != nil {
+		return err
+	}
+	fmt.Printf("\nRemoved. Restart the daemon to drop the interface.\n")
 	return nil
 }
