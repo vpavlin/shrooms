@@ -186,3 +186,48 @@ func TestFlattenSurvivesAWriteAndRead(t *testing.T) {
 		t.Errorf("default's pin did not survive: %s:%d", d.Interface, d.ListenPort)
 	}
 }
+
+// The per-mesh relay and advertise keys have to survive the file, for the same
+// reason announce_revocations did not: parsed but never written is a setting
+// that disappears the next time anything rewrites the config.
+func TestPerMeshRelayAndAdvertiseSurviveTheFile(t *testing.T) {
+	c := Config{
+		Name: "vps", Interface: "logos0", ListenPort: 51820,
+		Preset: "logos.test", Mode: ModeEdge,
+		MeshSet: map[string]Mesh{
+			"home": {
+				NetworkKey: aKey(t),
+				Advertise:  []string{"203.0.113.5:51821"},
+				RelayBlind: []string{"192.0.2.9:31760"},
+				RelayToken: "own",
+				RelayAddr:  "198.51.100.1:51820",
+			},
+			"office": {NetworkKey: aKey(t), RelayNone: true},
+		},
+	}
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := WriteConfig(path, c); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(path)
+
+	back, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("%v\n---\n%s", err, raw)
+	}
+	h := back.MeshSet["home"]
+	if len(h.Advertise) != 1 || h.Advertise[0] != "203.0.113.5:51821" {
+		t.Errorf("advertise did not survive: %v\n%s", h.Advertise, raw)
+	}
+	if len(h.RelayBlind) != 1 || h.RelayBlind[0] != "192.0.2.9:31760" {
+		t.Errorf("relay_blind did not survive: %v\n%s", h.RelayBlind, raw)
+	}
+	if h.RelayToken != "own" || h.RelayAddr != "198.51.100.1:51820" {
+		t.Errorf("relay_addr/token did not survive: %+v\n%s", h, raw)
+	}
+	// "none" has to come back as an opt-out, not as an empty list that means
+	// inherit — those are different and the file has to tell them apart.
+	if o := back.MeshSet["office"]; !o.RelayNone {
+		t.Errorf("relay_blind = none did not survive:\n%s", raw)
+	}
+}

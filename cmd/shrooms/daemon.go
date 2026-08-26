@@ -207,6 +207,16 @@ func cmdDaemon(args []string) error {
 	}
 	blocks := v4.Blocks(ids)
 
+	// A device-wide advertise belongs to the mesh on the device's own port.
+	// The others announce nothing configured, which is correct and looks
+	// exactly like a forgotten setting, so name them once at startup.
+	if missing := cfg.MeshesMissingAdvertise(); len(missing) > 0 {
+		log.Warn("advertise is set for this device but not for every mesh",
+			"without", strings.Join(missing, ","),
+			"effect", "those meshes announce only the addresses they can work out themselves",
+			"fix", "mesh.<label>.advertise = [\"host:port\"], with that mesh's own port")
+	}
+
 	for _, mc := range meshes {
 		// Resolved by Meshes(), not re-derived here: this loop walks the
 		// ACTIVE meshes, and numbering by position in it gave a different

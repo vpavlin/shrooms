@@ -99,6 +99,40 @@ type Mesh struct {
 	// answer to "not right now".
 	Disabled bool
 
+	// Advertise is this mesh's public endpoint, when it is not on a local
+	// interface.
+	//
+	// Per mesh because the value carries a PORT, and each mesh listens on its
+	// own. A device-wide advertise was appended verbatim to every mesh's
+	// candidates, so a public node told peers to reach all its meshes at one
+	// address — right for whichever mesh listens there, wrong for the rest, and
+	// wrong in the way that looks like a network fault rather than a typo.
+	//
+	// The device-wide setting is NOT inherited here, unlike the relay ones
+	// below. Inheriting is what the bug was.
+	Advertise []string
+
+	// RelayAddr, RelayToken and RelayBlind override the device-wide relay
+	// settings for this mesh (docs/blind-relays.md).
+	//
+	// These DO inherit: a relay address carries no per-mesh meaning — the tag a
+	// device registers under is derived per mesh from the relay's address, so
+	// one relay serves every mesh correctly. Pointing a phone at one relay and
+	// having every mesh use it is the case worth keeping easy.
+	//
+	// The override exists for the opposite case, which is real: a mesh whose
+	// traffic should not cross somebody else's relay, on a device that uses one
+	// for everything else. Empty means inherit; RelayNone turns it off.
+	RelayAddr  string
+	RelayToken string
+	RelayBlind []string
+
+	// RelayNone stops this mesh using the device's relays without naming
+	// another. Written as relay_blind = "none", because an empty list in the
+	// config is indistinguishable from an absent one and would read as
+	// inherit.
+	RelayNone bool
+
 	// InheritsIdentity marks the mesh that carries the device keys this node
 	// had before it was on more than one mesh.
 	//
@@ -334,6 +368,20 @@ func (c *Config) setMeshField(label, field, val string, line int) error {
 		m.AnnounceBound = unquote(val) == "true"
 	case "announce_revocations":
 		m.QuietRevocations = unquote(val) == "false"
+	case "advertise":
+		m.Advertise = parseArray(val)
+	case "relay_addr":
+		m.RelayAddr = unquote(val)
+	case "relay_token":
+		m.RelayToken = unquote(val)
+	case "relay_blind":
+		// "none" rather than an empty list: [] parses to nil, which is what an
+		// absent line gives, so there would be no way to say "not this mesh".
+		if v := unquote(val); v == "none" {
+			m.RelayNone = true
+		} else {
+			m.RelayBlind = parseArray(val)
+		}
 	case "inherits_identity":
 		// The mesh holding the device keys this node had before it was on more
 		// than one mesh. Written down rather than inferred from config shape;
@@ -389,6 +437,31 @@ func (c Config) ForMesh(m Mesh, port uint16) Config {
 	out.AnnounceBound = m.AnnounceBound
 	out.QuietRevocations = m.QuietRevocations
 	out.ListenPort = port
+
+	// Advertise does NOT inherit. A device-wide entry names a port, and only
+	// one mesh listens there — the one keeping the device's base port. Giving
+	// it to the others is the bug this field exists to fix, so they get
+	// nothing unless they say something.
+	switch {
+	case len(m.Advertise) > 0:
+		out.Advertise = m.Advertise
+	case port == c.ListenPort:
+		// The mesh on the device's own port: the device-wide value is about
+		// this one, and a single-mesh config is unchanged.
+	default:
+		out.Advertise = nil
+	}
+
+	// The relay settings DO inherit, because a relay address means the same
+	// thing to every mesh. An override replaces the lot rather than merging:
+	// half this device's relays and half the mesh's is not a thing anybody
+	// asked for, and would be hard to read back out of the config.
+	switch {
+	case m.RelayNone:
+		out.RelayAddr, out.RelayToken, out.RelayBlind = "", "", nil
+	case m.RelayAddr != "" || len(m.RelayBlind) > 0:
+		out.RelayAddr, out.RelayToken, out.RelayBlind = m.RelayAddr, m.RelayToken, m.RelayBlind
+	}
 	return out
 }
 
@@ -445,4 +518,28 @@ func (c Config) Flatten() (Config, error) {
 	out.AnnounceBound = false
 	out.QuietRevocations = false
 	return out, nil
+}
+
+// MeshesMissingAdvertise names the meshes that will announce no configured
+// endpoint because the device-wide advertise is not theirs.
+//
+// Worth saying out loud. Before this, a device-wide advertise was given to
+// every mesh, so a public node appeared to have told all of them where it was
+// — while pointing all but one at the wrong port. Now the others correctly get
+// nothing, and "correctly nothing" is indistinguishable from "forgot to
+// configure it" unless somebody says which happened.
+//
+// Empty when there is no device-wide advertise, when there is only one mesh, or
+// when every mesh has its own.
+func (c Config) MeshesMissingAdvertise() []string {
+	if len(c.Advertise) == 0 {
+		return nil
+	}
+	var out []string
+	for _, m := range c.Meshes() {
+		if len(m.Advertise) == 0 && m.ListenPort != c.ListenPort {
+			out = append(out, m.Label)
+		}
+	}
+	return out
 }

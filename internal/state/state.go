@@ -1308,6 +1308,25 @@ func RenderConfig(c Config) (string, error) {
 			if m.QuietRevocations {
 				fmt.Fprintf(&b, "mesh.%s.announce_revocations = \"false\"\n", label)
 			}
+			// This mesh's own public endpoint. Not inherited from the device,
+			// because the value names a port and only one mesh listens there.
+			if len(m.Advertise) > 0 {
+				fmt.Fprintf(&b, "mesh.%s.advertise = %s\n", label, formatArray(m.Advertise))
+			}
+			// Relay overrides. Absent means the device's settings apply, which
+			// is the useful default; "none" is how a mesh opts out without
+			// naming a relay of its own.
+			if m.RelayNone {
+				fmt.Fprintf(&b, "mesh.%s.relay_blind = %q\n", label, "none")
+			} else if len(m.RelayBlind) > 0 {
+				fmt.Fprintf(&b, "mesh.%s.relay_blind = %s\n", label, formatArray(m.RelayBlind))
+			}
+			if m.RelayAddr != "" {
+				fmt.Fprintf(&b, "mesh.%s.relay_addr = %q\n", label, m.RelayAddr)
+			}
+			if m.RelayToken != "" {
+				fmt.Fprintf(&b, "mesh.%s.relay_token = %q\n", label, m.RelayToken)
+			}
 			// Which mesh holds the device keys from before multi-mesh. Stated
 			// rather than inferred from the config's shape, so the shape can
 			// stop mattering.
