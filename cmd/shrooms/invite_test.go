@@ -73,7 +73,7 @@ func serveHolder(t *testing.T, h inviteHolder) string {
 		t.Fatal(err)
 	}
 	mux := http.NewServeMux()
-	inviteHandlers(mux, only(h))
+	inviteHandlers(mux, "", only(h))
 	// ConnContext as the daemon sets it, so the tests exercise the peer
 	// credential check rather than routing around it.
 	srv := &http.Server{Handler: mux, ConnContext: withPeerCred}
@@ -153,7 +153,7 @@ func TestInviteExpiryIsNotAnError(t *testing.T) {
 // mesh is a different thing, and must not come with it.
 func TestMutatingEndpointsRefuseStrangers(t *testing.T) {
 	mux := http.NewServeMux()
-	inviteHandlers(mux, only(&fakeHolder{}))
+	inviteHandlers(mux, "", only(&fakeHolder{}))
 
 	// A handler reached with no credentials on the context — what a caller the
 	// kernel would not vouch for looks like — must be refused.
@@ -181,7 +181,7 @@ func TestInviteRefusalIsReported(t *testing.T) {
 // into the wrong network.
 func TestInviteForAnUnknownMeshIsRefused(t *testing.T) {
 	mux := http.NewServeMux()
-	inviteHandlers(mux, func(label string) inviteHolder {
+	inviteHandlers(mux, "", func(label string) inviteHolder {
 		if label == "home" {
 			return &fakeHolder{}
 		}

@@ -244,7 +244,7 @@ func TestGroupMayNotReplyWithAnExpiredCredential(t *testing.T) {
 // is about identity.
 func TestInviteEndpointsRefuseAnUnidentifiedCaller(t *testing.T) {
 	mux := http.NewServeMux()
-	inviteHandlers(mux, only(&fakeHolder{}))
+	inviteHandlers(mux, "", only(&fakeHolder{}))
 
 	for _, path := range []string{"/invite/hold", "/invite/reply"} {
 		rec := httptest.NewRecorder()

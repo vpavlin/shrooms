@@ -719,7 +719,7 @@ type inviteHolder interface {
 //
 // pick chooses which mesh an invite belongs to: an empty label means the first,
 // which is what a single-mesh node and an older CLI both send.
-func inviteHandlers(mux *http.ServeMux, pick func(string) inviteHolder) {
+func inviteHandlers(mux *http.ServeMux, cfgPath string, pick func(string) inviteHolder) {
 	// Enrolment, held open by the daemon because it is the thing that is
 	// already connected — `shrooms invite` used to start a Logos Delivery node
 	// of its own for the sake of two messages.
@@ -750,7 +750,7 @@ func inviteHandlers(mux *http.ServeMux, pick func(string) inviteHolder) {
 		}
 		m := pick(req.Mesh)
 		if m == nil {
-			http.Error(w, "no mesh called "+req.Mesh+" on this node", http.StatusBadRequest)
+			http.Error(w, noSuchMesh(cfgPath, req.Mesh), http.StatusBadRequest)
 			return
 		}
 		ttl := time.Duration(req.TTLS) * time.Second
@@ -821,7 +821,7 @@ func inviteHandlers(mux *http.ServeMux, pick func(string) inviteHolder) {
 		}
 		m := pick(in.Mesh)
 		if m == nil {
-			http.Error(w, "no mesh called "+in.Mesh+" on this node", http.StatusBadRequest)
+			http.Error(w, noSuchMesh(cfgPath, in.Mesh), http.StatusBadRequest)
 			return
 		}
 		if !callerIsRoot(r) {
@@ -1536,7 +1536,7 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 		return nil
 	}
 
-	inviteHandlers(mux, func(label string) inviteHolder {
+	inviteHandlers(mux, rl.cfgPath, func(label string) inviteHolder {
 		for _, in := range instances {
 			if label == "" || in.label == label {
 				return in.mesh
@@ -1708,4 +1708,27 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 	}
 
 	return listenControl(ctx, log, path, mux, cfg)
+}
+
+// noSuchMesh says why a mesh the caller named is not here.
+//
+// A daemon reads its mesh set once, at startup. Creating a mesh writes the
+// config and cannot make a running daemon adopt it — reload updates the meshes
+// that are running and does not start new ones — so `init --mesh x` followed
+// straight away by `invite --mesh x` failed with "no mesh called x", which reads
+// as the mesh not having been created at all.
+//
+// The config is on disk and can be asked. If it names the mesh, the answer is
+// not "no such mesh", it is "not yet".
+func noSuchMesh(cfgPath, label string) string {
+	if cfg, err := state.LoadConfig(cfgPath); err == nil {
+		for _, m := range cfg.Meshes() {
+			if m.Label == label {
+				return "the config has a mesh called " + label +
+					", but this daemon started before it did and reads its meshes " +
+					"once. Restart it:\n  sudo systemctl restart shrooms"
+			}
+		}
+	}
+	return "no mesh called " + label + " on this node"
 }

@@ -366,8 +366,16 @@ func reportNext(sock string) {
 	}
 	// Running, but did not take the nudge. Distinguished from "not running" so
 	// the instruction matches: one needs starting, the other needs restarting.
-	if st, err := fetchStatus(sock); err == nil && st.Waiting {
-		fmt.Printf("\nA daemon is running but has not picked this up. Restart it:\n")
+	//
+	// Whether or not it is WAITING. A daemon already carrying meshes cannot
+	// adopt a new one either — it reads its mesh set at startup, and reload
+	// updates what is running rather than starting anything — and this used to
+	// fall through to "enable --now", which is a no-op on a service that is
+	// already enabled and running. So the mesh was created, the advice did
+	// nothing, and `invite --mesh` then said the mesh did not exist.
+	if _, err := fetchStatus(sock); err == nil {
+		fmt.Printf("\nA daemon is running and reads its meshes at startup, so it has\n")
+		fmt.Printf("not picked this up. Restart it:\n")
 		if unit {
 			fmt.Printf("  sudo systemctl restart shrooms\n")
 		} else {
