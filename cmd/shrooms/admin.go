@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/vpavlin/shrooms/internal/cred"
+	"github.com/vpavlin/shrooms/internal/keycard"
 	"github.com/vpavlin/shrooms/internal/state"
 )
 
@@ -95,7 +96,9 @@ func cmdAdminInit(args []string) error {
 	dir := fs.String("dir", defaultAdminDir(), "where to keep the admin key")
 	plain := fs.Bool("no-passphrase", false, "store the admin key unencrypted")
 	label := fs.String("mesh", "", "which mesh this authority is for (ADR-015)")
-	if err := fs.Parse(args); err != nil {
+	card := fs.Bool("keycard", false, "the authority is a Keycard on a reader; nothing secret is stored here")
+	reader := fs.String("reader", "", "which reader, when several are attached")
+	if err := fs.Parse(splitArgs(fs, args)); err != nil {
 		return err
 	}
 
@@ -109,6 +112,9 @@ func cmdAdminInit(args []string) error {
 			path)
 	}
 
+	if *card {
+		return mintCardAuthorityAt(*dir, *label, *reader)
+	}
 	return mintAuthorityAt(*dir, *plain, "", "", "", *label)
 }
 
@@ -148,7 +154,7 @@ func mintAuthorityAt(dir string, plain bool, cfgPath, stateDir, name, label stri
 		return err
 	}
 
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := ensureUserDir(dir); err != nil {
 		return err
 	}
 	af := adminFile{
@@ -280,7 +286,7 @@ func addAdminKeys(cfgPath string, keys []string) error {
 // peer of a mesh with admin keys correctly refuses. The symptom is a peer that
 // appears in the roster on one side, never on the other, and whose handshakes
 // are dropped by a WireGuard that has never heard of it.
-func issueLocal(admin *cred.Admin, auth *cred.Authority, stateDir, name, networkID string, legacy bool, serial uint64) error {
+func issueLocal(admin cred.Signer, auth *cred.Authority, stateDir, name, networkID string, legacy bool, serial uint64) error {
 	st, err := state.LoadOrCreateState(stateDir)
 	if err != nil {
 		return err
@@ -310,6 +316,17 @@ func loadAdmin(dir string) (*cred.Admin, *cred.Authority, error) {
 // secret at all.
 func signerFor(dir, label, signWith string, external bool) (cred.Signer, *cred.Authority, error) {
 	if !external && signWith == "" {
+		// A mesh whose authority is a card has no private key in that file and
+		// never will, so there is nothing to load and nothing to ask for a
+		// passphrase. Reach for the reader instead: it is not a fallback, it is
+		// the only thing that can sign for this mesh.
+		//
+		// CardOnly rather than a flag in the file, because it is the same
+		// question every node already answers about the same bytes — every
+		// admin key is a compressed secp256k1 point, so no file key can sign.
+		if auth, err := authorityFor(dir, label); err == nil && auth.CardOnly() {
+			return cardSignerFor(dir, auth)
+		}
 		return loadAdminFor(dir, label)
 	}
 	auth, err := authorityFor(dir, label)
@@ -317,6 +334,34 @@ func signerFor(dir, label, signWith string, external bool) (cred.Signer, *cred.A
 		return nil, nil, err
 	}
 	return &externalSigner{auth: auth, command: signWith}, auth, nil
+}
+
+// cardSignerFor opens the card this mesh's authority lives on.
+//
+// The reader connection is left open deliberately. pcscd holds it exclusively
+// until the process exits, and the signer is used after this returns — closing
+// it here would hand back something that cannot sign. A command-line process
+// exits promptly and the connection goes with it; a long-running one would need
+// this to return a closer instead.
+func cardSignerFor(dir string, auth *cred.Authority) (cred.Signer, *cred.Authority, error) {
+	t, _, err := keycard.OpenReader("")
+	if err != nil {
+		return nil, nil, fmt.Errorf("this mesh's authority is a Keycard, so it has to "+
+			"sign: %w", err)
+	}
+	pin, err := readSecret("Card PIN: ")
+	if err != nil {
+		return nil, nil, err
+	}
+	signer, err := keycard.NewSigner(t, keycardDir(dir), strings.TrimSpace(pin))
+	if err != nil {
+		return nil, nil, err
+	}
+	if !auth.Has(signer.Public()) {
+		return nil, nil, errors.New("that card is not this mesh's authority — the key " +
+			"it signs with is not in admin_keys")
+	}
+	return signer, auth, nil
 }
 
 // authorityFor reads the public half of an admin file: the keys this mesh
@@ -891,5 +936,68 @@ func postToDaemon(sock, path, label string, body []byte) error {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return fmt.Errorf("the daemon refused it: %s", strings.TrimSpace(string(msg)))
 	}
+	return nil
+}
+
+// mintCardAuthorityAt mints a mesh whose authority is a Keycard.
+//
+// One admin key, not two. The pair exists because losing the file ends a mesh,
+// so a second key is minted and printed once as a paper way back — and a card's
+// key is already reconstructible from the mnemonic written down when the card
+// was initialised. A second key would be a second thing to lose, and worse than
+// redundant: it would not be a card key, and `Authority.CardOnly` is every key
+// or none, so one file key would disable the widening ADR-033 built.
+//
+// Nothing secret is written here. The admin file holds the card's public half,
+// which is what every node checks against, and the private half has never
+// existed outside the card except as that mnemonic.
+func mintCardAuthorityAt(dir, label, readerName string) error {
+	t, done, err := keycard.OpenReader(readerName)
+	if err != nil {
+		return err
+	}
+	defer done()
+
+	pin, err := readSecret("Card PIN: ")
+	if err != nil {
+		return err
+	}
+	// The signer, not just the key: minting ends by issuing this device its own
+	// credential, and that needs a signature. Opening it now means a wrong PIN
+	// is reported before a mesh id exists rather than after.
+	signer, err := keycard.NewSigner(t, keycardDir(dir), strings.TrimSpace(pin))
+	if err != nil {
+		return err
+	}
+	auth, err := cred.NewAuthority(signer.Public())
+	if err != nil {
+		return err
+	}
+
+	if err := ensureUserDir(dir); err != nil {
+		return err
+	}
+	af := adminFile{Keys: []string{b32.EncodeToString(signer.Public())}}
+	raw, err := json.MarshalIndent(af, "", "  ")
+	if err != nil {
+		return err
+	}
+	path := adminPathFor(dir, label)
+	if err := os.WriteFile(path, append(raw, '\n'), 0o600); err != nil {
+		return err
+	}
+
+	fmt.Printf("\nMinted the mesh authority from the card.\n\n")
+	fmt.Printf("  mesh id     %s\n", auth.ID())
+	fmt.Printf("  prefix      %s\n", auth.ID().Prefix())
+	fmt.Printf("  admin key   %s\n", path)
+	fmt.Printf("  authority   %x\n", signer.Public())
+	fmt.Println()
+	fmt.Println("Nothing secret is stored here: that file holds the card's public half,")
+	fmt.Println("which is what every node checks against. The card signs, and its key")
+	fmt.Println("comes back only from the mnemonic it was initialised with.")
+	fmt.Println()
+	fmt.Println("Add it to a config with:")
+	fmt.Printf("  admin_keys = [%q]\n", b32.EncodeToString(signer.Public()))
 	return nil
 }

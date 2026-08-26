@@ -58,6 +58,15 @@ jobs:
       - name: Test
         run: make test
 
+      # The reader build, compiled and vetted but not run: it needs a card and a
+      # USB reader, which no hosted runner has. Without this the smartcard path
+      # would rot silently, since nothing else compiles it.
+      - name: Build with reader support
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq libpcsclite-dev
+          go vet -tags pcsc ./cmd/shrooms/ ./internal/keycard/
+          make shrooms TAGS=pcsc
+
   # The management surface, end to end, against the real binary.
   #
   # Separate from the unit tests because it is testing the seams between

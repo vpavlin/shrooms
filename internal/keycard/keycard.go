@@ -585,6 +585,137 @@ func UnpairOthers(t Transport, configDir string) (string, error) {
 		kc.PairingMaxClientCount), nil
 }
 
+// Init sets up a blank card: its PIN, PUK and pairing password, and the key it
+// will sign with.
+//
+// [ADR-022](../../docs/adr/022-keycard-for-the-admin-key.md) said this belonged
+// in the Keycard app rather than here, because it is irreversible and decides
+// what a card IS — and doing that from a VPN's settings screen by accident is
+// not a thing anybody should be able to do. That reasoning was about a phone
+// screen. On a command line, behind a confirmation, against a card the caller
+// has physically inserted, it is the difference between shrooms being usable on
+// its own and needing a second tool nobody has installed.
+//
+// It refuses a card that is already initialised rather than resetting it. That
+// is the accident worth preventing here: `init` on the wrong card would destroy
+// a working authority, and INIT itself will not overwrite one.
+//
+// phrase empty generates a new mnemonic on the card and returns it. **It is
+// returned because it must be written down**: it is the only way back to this
+// key, and a card whose key exists nowhere else takes its mesh with it.
+func Init(t Transport, pin, puk, pairingPassword, phrase string) (string, error) {
+	if t == nil {
+		return "", errors.New("no card transport")
+	}
+	cs := kc.NewCommandSet(kio.NewNormalChannel(t))
+	if err := cs.Select(); err != nil {
+		return "", fmt.Errorf("no Keycard applet on this card: %w", err)
+	}
+	if info := cs.ApplicationInfo; info != nil && info.Initialized {
+		return "", errors.New("this card is already initialised. Initialising again " +
+			"would have to wipe it first, and that is `keycard reset` — deliberately " +
+			"a separate command, because it destroys the key")
+	}
+	if err := cs.Init(kc.NewSecrets(pin, puk, pairingPassword)); err != nil {
+		return "", fmt.Errorf("could not initialise the card: %w", err)
+	}
+	// SELECT again. The response from an uninitialised card carries no applet
+	// version, and the version-agnostic pairing and channel calls read that to
+	// decide which protocol to speak — so pairing against the stale answer
+	// succeeds and the channel then fails with 6982, MUTUALLY_AUTHENTICATE, on
+	// a card that had just accepted the password it was paired with.
+	if err := cs.Select(); err != nil {
+		return "", fmt.Errorf("initialised, but the card would not answer SELECT again: %w", err)
+	}
+
+	// Pair and open a channel: loading a key is a protected command, so the
+	// card must be talking to somebody it has agreed a secret with — even one
+	// second old.
+	if err := cs.AutoPairWithMode(pairingPassword, kc.P2PairAny); err != nil {
+		return "", fmt.Errorf("initialised, but could not pair to load a key: %w", pairingError(err))
+	}
+	if err := cs.AutoOpenSecureChannel(); err != nil {
+		return "", fmt.Errorf("initialised and paired, but no secure channel: %w", err)
+	}
+	if err := cs.VerifyPIN(pin); err != nil {
+		return "", fmt.Errorf("initialised, and the PIN it was just given was refused: %w", pinError(err))
+	}
+
+	m, err := mnemonicFor(cs, phrase)
+	if err != nil {
+		return "", err
+	}
+	if _, err := cs.LoadSeed(m.ToSeed("")); err != nil {
+		return "", fmt.Errorf("initialised, but could not load the key: %w", err)
+	}
+	// The pairing this used is left on the card and not written down: `keycard
+	// pair` takes a slot of its own, and one slot spent here would be a slot
+	// nobody can account for later.
+	_ = cs.Unpair(cs.Pairing().Index())
+	return m.ToPhrase(), nil
+}
+
+// mnemonicFor takes the phrase given, or has the card make one.
+//
+// Generated ON THE CARD rather than here, when there is no phrase: the card has
+// a hardware random source and this process has whatever the machine offers,
+// and a key that protects a mesh should not depend on which of those is better.
+func mnemonicFor(cs *kc.CommandSet, phrase string) (*ktypes.Mnemonic, error) {
+	if phrase != "" {
+		m, err := ktypes.MnemonicFromPhrase(phrase)
+		if err != nil {
+			return nil, fmt.Errorf("that is not a valid BIP-39 phrase: %w", err)
+		}
+		return m, nil
+	}
+	// 4 gives twelve words, which is what every wallet and every piece of paper
+	// expects.
+	indices, err := cs.GenerateMnemonic(4)
+	if err != nil {
+		return nil, fmt.Errorf("the card would not generate a mnemonic: %w", err)
+	}
+	small := make([]int16, len(indices))
+	for i, v := range indices {
+		small[i] = int16(v)
+	}
+	m, err := ktypes.MnemonicFromIndices(small)
+	if err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// Reset wipes the card: keys, PIN, PUK and every pairing slot.
+//
+// Unauthenticated by design — INS 0xFD with two magic bytes and nothing else,
+// sent on the raw channel rather than a protected one. That is deliberate on
+// the card's part: it is the way back when every pairing slot is taken and no
+// device holds one, which is otherwise unrecoverable, because UNPAIR travels
+// inside a channel only a pairing can open.
+//
+// The magic bytes are the whole guard, so this cannot happen by accident. It
+// can happen very much on purpose, to anybody holding the card, which is worth
+// knowing about a card in a drawer: physical possession is enough to destroy
+// what is on it, though not to use it.
+//
+// **The key is gone afterwards.** A card whose key was generated on it and
+// never written down as a mnemonic cannot be recovered, and any mesh minted
+// against that key can never admit another device.
+func Reset(t Transport) error {
+	if t == nil {
+		return errors.New("no card transport")
+	}
+	cs := kc.NewCommandSet(kio.NewNormalChannel(t))
+	if err := cs.Select(); err != nil {
+		return fmt.Errorf("no Keycard applet on this card: %w", err)
+	}
+	if info := cs.ApplicationInfo; info != nil && !info.HasFactoryResetCapability() {
+		return errors.New("this card does not support factory reset, so a full " +
+			"set of pairing slots cannot be recovered from")
+	}
+	return cs.FactoryReset()
+}
+
 // Status reports what state a card is in, without pairing or a PIN.
 //
 // SELECT alone answers this: it costs no pairing slot, spends no PIN attempt,
@@ -797,6 +928,12 @@ func capabilityList(info *ktypes.ApplicationInfo) string {
 		{"key-management", info.HasKeyManagementCapability()},
 		{"credentials", info.HasCredentialsManagementCapability()},
 		{"ndef", info.HasNDEFCapability()},
+		// Listed because its absence is what makes a full card unrecoverable,
+		// and its presence is the way out. Omitting it meant a card that could
+		// be reset reported four capabilities out of the five it has, and the
+		// missing one was the only one that mattered when every pairing slot
+		// was gone.
+		{"factory-reset", info.HasFactoryResetCapability()},
 	} {
 		if c.ok {
 			have = append(have, c.name)

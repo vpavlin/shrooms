@@ -23,7 +23,7 @@ import (
 
 func cmdKeycard(args []string) error {
 	if len(args) < 1 {
-		return errors.New("usage: shrooms keycard {status|readers|pair|free-slots|forget}")
+		return errors.New("usage: shrooms keycard {status|init|pair|readers|free-slots|forget|reset}")
 	}
 	switch args[0] {
 	case "status":
@@ -36,6 +36,10 @@ func cmdKeycard(args []string) error {
 		return cmdKeycardFreeSlots(args[1:])
 	case "forget":
 		return cmdKeycardForget(args[1:])
+	case "reset":
+		return cmdKeycardReset(args[1:])
+	case "init":
+		return cmdKeycardInit(args[1:])
 	default:
 		return fmt.Errorf("unknown keycard command %q; try: status, readers, pair, free-slots, forget", args[0])
 	}
@@ -220,6 +224,12 @@ func cmdKeycardPair(args []string) error {
 	}
 	pin = strings.TrimSpace(pin)
 
+	// Before pairing, not after: pairing consumes one of five slots on the
+	// card and cannot be undone, so a directory that turns out to be
+	// unwritable must fail while that is still free.
+	if err := ensureUserDir(keycardDir(*dir)); err != nil {
+		return err
+	}
 	key, err := keycard.Enrol(t, keycardDir(*dir), pass, pin)
 	if err != nil {
 		return err
@@ -283,5 +293,137 @@ func cmdKeycardForget(args []string) error {
 	fmt.Println("Forgotten here. The card still counts this machine among the five")
 	fmt.Println("devices it is paired with, so pairing again would take another slot —")
 	fmt.Println("free it first with `shrooms keycard free-slots` if they are scarce.")
+	return nil
+}
+
+// cmdKeycardReset wipes a card, which is the only way back from a full set of
+// pairing slots when no device holds one.
+//
+// Guarded by typing the words rather than a flag, because the cost is not
+// obvious from the name: "reset" sounds like clearing settings and means
+// destroying a key.
+func cmdKeycardReset(args []string) error {
+	fs := flag.NewFlagSet("keycard reset", flag.ExitOnError)
+	readerName := fs.String("reader", "", "which reader, when several are attached")
+	if err := fs.Parse(splitArgs(fs, args)); err != nil {
+		return err
+	}
+
+	t, done, err := keycard.OpenReader(*readerName)
+	if err != nil {
+		return err
+	}
+	defer done()
+
+	// What is on the card now, so the warning is about this card rather than
+	// cards in general.
+	if raw, err := keycard.Status(t); err == nil {
+		var rep struct {
+			HasKey bool   `json:"hasKey"`
+			KeyUID string `json:"keyUID"`
+		}
+		_ = json.Unmarshal([]byte(raw), &rep)
+		if rep.HasKey {
+			fmt.Printf("This card holds a key (%s).\n\n", rep.KeyUID)
+		}
+	}
+	fmt.Println("A factory reset destroys everything on it: the key, the PIN, the PUK")
+	fmt.Println("and every pairing. The card goes back to uninitialised.")
+	fmt.Println()
+	fmt.Println("The key is recoverable ONLY from the mnemonic written down when the")
+	fmt.Println("card was initialised. Without that it is gone, and any mesh minted")
+	fmt.Println("against it can never admit another device.")
+	fmt.Println()
+	ans, err := readSecret("Type: wipe this card\n> ")
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(ans) != "wipe this card" {
+		return errors.New("stopped, and nothing was sent to the card")
+	}
+
+	if err := keycard.Reset(t); err != nil {
+		return err
+	}
+	fmt.Println("\nDone. Initialise it again with the Keycard app or keycard-cli,")
+	fmt.Println("loading the same mnemonic to get the same key back.")
+	return nil
+}
+
+// cmdKeycardInit sets up a blank card so shrooms needs no second tool.
+//
+// ADR-022 put this in the Keycard app on purpose — it is irreversible and
+// decides what a card IS. That was about a phone settings screen and an
+// accidental tap. On a command line, against a card somebody has physically
+// inserted, the cost of NOT having it is a flow that stops halfway and says
+// "now go and find another program".
+func cmdKeycardInit(args []string) error {
+	fs := flag.NewFlagSet("keycard init", flag.ExitOnError)
+	readerName := fs.String("reader", "", "which reader, when several are attached")
+	restore := fs.Bool("restore", false, "load an existing mnemonic instead of making one")
+	if err := fs.Parse(splitArgs(fs, args)); err != nil {
+		return err
+	}
+
+	t, done, err := keycard.OpenReader(*readerName)
+	if err != nil {
+		return err
+	}
+	defer done()
+
+	pin, err := readSecret("New PIN (6 digits): ")
+	if err != nil {
+		return err
+	}
+	pin = strings.TrimSpace(pin)
+	if len(pin) != 6 || strings.Trim(pin, "0123456789") != "" {
+		return errors.New("a Keycard PIN is exactly six digits")
+	}
+	puk, err := readSecret("New PUK (12 digits, unblocks a locked PIN): ")
+	if err != nil {
+		return err
+	}
+	puk = strings.TrimSpace(puk)
+	if len(puk) != 12 || strings.Trim(puk, "0123456789") != "" {
+		return errors.New("a Keycard PUK is exactly twelve digits")
+	}
+	pass, err := readSecret("Pairing password (empty for the factory default): ")
+	if err != nil {
+		return err
+	}
+	pass = strings.TrimSpace(pass)
+	if pass == "" {
+		pass = keycard.DefaultPairingPassword
+	}
+
+	phrase := ""
+	if *restore {
+		typed, err := readSecret("Mnemonic phrase: ")
+		if err != nil {
+			return err
+		}
+		phrase = strings.Join(strings.Fields(typed), " ")
+		if phrase == "" {
+			return errors.New("no phrase given")
+		}
+	}
+
+	got, err := keycard.Init(t, pin, puk, pass, phrase)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("\nInitialised.")
+	if *restore {
+		fmt.Println("The key was restored from the phrase you gave.")
+	} else {
+		fmt.Println("\nWrite this down. It is the ONLY way back to this key, and a mesh")
+		fmt.Println("minted against a key that exists nowhere else dies with the card:")
+		fmt.Printf("\n  %s\n\n", got)
+		fmt.Println("It is a BIP-39 phrase, so it also restores into any wallet — which")
+		fmt.Println("means storing it beside crypto backups is storing your mesh's root")
+		fmt.Println("key there too.")
+	}
+	fmt.Println("\nNext:\n  shrooms keycard pair")
 	return nil
 }
