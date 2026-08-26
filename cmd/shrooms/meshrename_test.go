@@ -238,3 +238,51 @@ func captureStdout(t *testing.T, f func()) string {
 	os.Stdout = old
 	return <-done
 }
+
+// The crash this prevents: a new mesh took the interface its POSITION implied,
+// and a mesh that has been renamed or survived a removal carries a PINNED one.
+// `init --mesh kc` on a machine where "home" was pinned to logos02 gave kc
+// logos02 too, and the daemon crash-looped on "create tun logos02: device or
+// resource busy" — taking every other mesh on the node down with it.
+func TestANewMeshDoesNotTakeAPinnedInterface(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.toml")
+	body := "network_key = \"" + aKey(t) + "\"\nname = \"box\"\n" +
+		"interface = \"logos0\"\nlisten_port = 51820\n\n" +
+		// home and office pinned crosswise, which is what renaming leaves.
+		"mesh.home.key = \"" + aKey(t) + "\"\n" +
+		"mesh.home.iface = \"logos02\"\nmesh.home.port = \"51822\"\n" +
+		"mesh.office.key = \"" + aKey(t) + "\"\n" +
+		"mesh.office.iface = \"logos01\"\nmesh.office.port = \"51821\"\n"
+	if err := os.WriteFile(cfgPath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// "kc" sorts between home and office, so position would give it logos02.
+	if err := appendMesh(cfgPath, "kc", aKey(t), false); err != nil {
+		t.Fatal(err)
+	}
+	if err := pinNewMesh(cfgPath, "kc"); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := state.LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seenIface := map[string]string{}
+	seenPort := map[uint16]string{}
+	for i, m := range cfg.Meshes() {
+		iface, port := ifaceAndPort(cfg, m, i)
+		if other, clash := seenIface[iface]; clash {
+			t.Errorf("%s and %s both use %s; the daemon cannot create it twice", m.Label, other, iface)
+		}
+		if other, clash := seenPort[port]; clash {
+			t.Errorf("%s and %s both use port %d", m.Label, other, port)
+		}
+		seenIface[iface], seenPort[port] = m.Label, m.Label
+	}
+	if cfg.MeshSet["kc"].Interface == "" {
+		t.Error("the new mesh was not pinned, so the next change moves it")
+	}
+}

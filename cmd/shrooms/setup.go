@@ -181,6 +181,18 @@ func addMeshWith(cfgPath, stateDir, adminDir, label string, relay, noAdmin bool,
 	if err := appendMesh(cfgPath, label, nk.String(), relay); err != nil {
 		return err
 	}
+	// Give the new mesh an interface and a port nothing else is using, and
+	// write them down.
+	//
+	// Without this it took whatever its POSITION in the label-sorted list
+	// implied — and a mesh that has been renamed carries a PINNED interface,
+	// which the new one then collided with. `init --mesh kc` on a machine
+	// where "home" was pinned to logos02 gave kc logos02 as well, and the
+	// daemon crash-looped on "create tun logos02: device or resource busy",
+	// taking every other mesh down with it.
+	if err := pinNewMesh(cfgPath, label); err != nil {
+		return err
+	}
 
 	fmt.Printf("Created the mesh %q.\n\n", label)
 	fmt.Printf("  network key  %s\n", nk)
@@ -636,4 +648,58 @@ func cardIsReachable(reader string) error {
 		return fmt.Errorf("a card is on the reader but did not answer: %w", err)
 	}
 	return nil
+}
+
+// pinNewMesh assigns a mesh an interface and port nothing else has, and records
+// them.
+//
+// Derived names only work while every mesh derives one: as soon as any of them
+// is pinned — which renaming and removing both do, so that they do not move
+// other meshes' interfaces — a newly derived name can land on top of a pinned
+// one. The collision is not detected anywhere; it surfaces as the daemon
+// failing to create a tun device that already exists, which takes down every
+// mesh on the node rather than the new one.
+func pinNewMesh(cfgPath, label string) error {
+	cfg, err := state.LoadConfig(cfgPath)
+	if err != nil {
+		return err
+	}
+	m, ok := cfg.MeshSet[label]
+	if !ok {
+		return nil // nothing written, nothing to pin
+	}
+
+	taken := map[string]bool{}
+	ports := map[uint16]bool{}
+	for i, other := range cfg.Meshes() {
+		if other.Label == label {
+			continue
+		}
+		iface, port := ifaceAndPort(cfg, other, i)
+		taken[iface], ports[port] = true, true
+	}
+
+	// Start from what position would have given it, then step past anything
+	// already spoken for — so an untouched config keeps the names it had.
+	iface, port := "", uint16(0)
+	for i, cand := range cfg.Meshes() {
+		if cand.Label == label {
+			iface, port = ifaceAndPort(cfg, cand, i)
+			break
+		}
+	}
+	for n := 1; taken[iface] || ports[port]; n++ {
+		iface = fmt.Sprintf("%s%d", cfg.Interface, n)
+		port = cfg.ListenPort + uint16(n)
+		if n > 64 {
+			return fmt.Errorf("no free interface for %q; the config has too many meshes", label)
+		}
+	}
+
+	m.Interface, m.ListenPort = iface, port
+	cfg.MeshSet[label] = m
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	return state.WriteConfig(cfgPath, cfg)
 }
