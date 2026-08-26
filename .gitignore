@@ -43,3 +43,12 @@ site/comparison.html
 # that was plainly defined, while every local build worked because the files
 # were on disk.
 /shrooms-relay
+
+# Runtime store from the rendezvous library.
+#
+# The library resolves storeMessageDbUrl against the working directory, so a
+# daemon or a test run from the repository root writes its message store here.
+# It was committed once by an over-broad `git add -A` — 32 MB of it — and then
+# broke every later commit with "confused by unstable object source data",
+# because a running node was writing to the file git was hashing.
+data/

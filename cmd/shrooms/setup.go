@@ -374,6 +374,23 @@ func reportNext(sock string) {
 	// already enabled and running. So the mesh was created, the advice did
 	// nothing, and `invite --mesh` then said the mesh did not exist.
 	if _, err := fetchStatus(sock); err == nil {
+		// Ask it to restart itself rather than telling somebody to.
+		//
+		// A daemon reads its mesh set at startup, so a new mesh needs one — and
+		// leaving that to the reader meant `init --mesh x` followed by `invite
+		// --mesh x` failed with "no mesh called x", which reads as the mesh
+		// never having been created.
+		//
+		// The endpoint refuses if nothing would start the daemon again, so this
+		// cannot leave a mesh down by exiting; and it validates the config
+		// first, so it cannot restart into one that will not load.
+		if askRestart(sock) {
+			fmt.Printf("\nThe daemon is restarting to bring it up — a new mesh is a new\n")
+			fmt.Printf("interface, and those are created at startup. The other meshes\n")
+			fmt.Printf("reconnect in a few seconds.\n\n")
+			fmt.Printf("Then:\n  shrooms status\n")
+			return
+		}
 		fmt.Printf("\nA daemon is running and reads its meshes at startup, so it has\n")
 		fmt.Printf("not picked this up. Restart it:\n")
 		if unit {
@@ -513,6 +530,22 @@ func nudgeDaemon(sock string) bool {
 		return false
 	}
 	resp, err := socketClient(sock, 10*time.Second).Post("http://unix/reload", "application/json", nil)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode/100 == 2
+}
+
+// askRestart asks a running daemon to restart itself, and reports whether it
+// agreed.
+//
+// Deliberately a request rather than a kill: the daemon refuses when nothing
+// would start it again — exiting would then leave every mesh down to add one —
+// and it checks the config loads before going. Both of those are judgements
+// only it can make.
+func askRestart(sock string) bool {
+	resp, err := socketClient(sock, 15*time.Second).Post("http://unix/restart", "application/json", nil)
 	if err != nil {
 		return false
 	}
