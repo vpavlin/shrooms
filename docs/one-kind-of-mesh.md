@@ -42,6 +42,43 @@ The pattern is always the same. A per-mesh fact gets stored or reported in a
 place that predates there being more than one mesh, and the answer looks
 right — it *is* right, for one mesh — while being silently wrong for the rest.
 
+## The one that settles it
+
+Found 2026-08-26, after the list above was written, while diagnosing why a
+phone and a laptop **on the same LAN** could not connect on a new mesh:
+
+    meshCfg := cfg
+    meshCfg.NetworkKey = m.NetworkKey
+    meshCfg.AdminKeys = m.AdminKeys
+    meshCfg.Relay = m.Relay
+    ...
+    // meshCfg.ListenPort is never set
+
+Both callers — the daemon and the phone — worked out the nth mesh's port, bound
+WireGuard to it, and handed the mesh package a config still carrying the
+**device's** port. `candidates()` builds every local address from
+`m.cfg.ListenPort`, so a mesh listening on 51824 announced `192.168.0.151:51820`.
+
+A peer on the same LAN dials that, reaches the **first mesh's** WireGuard
+socket, and its handshake is rejected without comment because the keys belong to
+another mesh. Both devices retry forever. It presents as *"two devices one hop
+apart cannot find each other without a relay"*, and it was reported that way
+twice — once here and once by somebody else who had never seen this config.
+
+Only the first mesh escaped, **because its port is the device's port**. Every
+mesh after it was broken from the day multi-mesh shipped, on both front-ends,
+and it stayed invisible because the meshes that were tested all had relays —
+which route around the wrong address entirely.
+
+That is the argument in one field. Not that the distinction is untidy: that a
+config with one mesh and a config with four are read by the same code, and the
+code is correct for the first and quietly wrong for the rest. Nobody wrote a bug
+here. Somebody wrote `cfg` and it meant two different things.
+
+Fixed by `Config.ForMesh`, which both callers now use, and which cannot omit the
+port because there is nowhere left to omit it from. That is a patch on the
+symptom. The cause is that `Config` describes a device and a mesh at once.
+
 ## What "treat them all the same" means
 
 Every mesh is a `[mesh.<label>]` table. There is no top-level `network_key`,

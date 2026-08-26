@@ -302,3 +302,40 @@ func (c *Config) setMeshField(label, field, val string, line int) error {
 	c.MeshSet[label] = m
 	return nil
 }
+
+// ForMesh is the config one mesh runs under: the device's settings, with
+// everything the mesh owns replaced by that mesh's own.
+//
+// One function because there were two copies — the daemon's and the phone's —
+// and they had already drifted: the phone was not applying AnnounceServices,
+// AnnounceBound or QuietRevocations at all, so a per-mesh setting made on a
+// desktop did nothing on Android.
+//
+// ListenPort is the field this exists for. A mesh binds the port its caller
+// worked out (the first keeps the config's, the nth gets the nth after it), but
+// the config handed to the mesh package kept the DEVICE's port — so every mesh
+// except the first announced its local addresses with the first mesh's port.
+//
+// That is not a cosmetic error. A peer on the same LAN reads the announce,
+// dials 192.168.0.10:51820 for a mesh that is actually listening on 51823, and
+// reaches the first mesh's WireGuard socket — which rejects the handshake,
+// because the keys belong to a different mesh, and says nothing. Both devices
+// then sit there announcing and probing until something else, a relay, carries
+// the traffic instead. It looks exactly like "two devices on the same network
+// cannot find each other", and it was reported that way twice.
+//
+// Only the first mesh escaped, because its port IS the device's port. That is
+// the whole shape of the primary-mesh problem in one field
+// (docs/one-kind-of-mesh.md).
+func (c Config) ForMesh(m Mesh, port uint16) Config {
+	out := c
+	out.NetworkKey = m.NetworkKey
+	out.AdminKeys = m.AdminKeys
+	out.Relay = m.Relay
+	out.Services = m.Services
+	out.AnnounceServices = m.AnnounceServices
+	out.AnnounceBound = m.AnnounceBound
+	out.QuietRevocations = m.QuietRevocations
+	out.ListenPort = port
+	return out
+}

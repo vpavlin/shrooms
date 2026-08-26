@@ -129,16 +129,14 @@ func startInstance(ctx context.Context, log *slog.Logger, cfg state.Config, st *
 	}
 
 	// The mesh's own view of the config: its key, its relay setting, its admin
-	// keys. Everything else — name, preset, mode — is the device's and shared.
-	meshCfg := cfg
-	meshCfg.NetworkKey = m.NetworkKey
-	meshCfg.AdminKeys = m.AdminKeys
-	meshCfg.Relay = m.Relay
+	// keys, and its port. Everything else — name, preset, mode — is the
+	// device's and shared.
+	//
+	// The port has to come from `port` rather than the config: that is the one
+	// this mesh's WireGuard device just bound, and the config's belongs to the
+	// device. Announcing the wrong one sent peers to another mesh's socket.
+	meshCfg := cfg.ForMesh(m, port)
 	in.relay = m.Relay
-	meshCfg.Services = m.Services
-	meshCfg.AnnounceServices = m.AnnounceServices
-	meshCfg.AnnounceBound = m.AnnounceBound
-	meshCfg.QuietRevocations = m.QuietRevocations
 
 	in.mesh, err = mesh.New(log.With("mesh", m.Label), meshCfg, stateFor(st, ms), node, in.dev)
 	if err != nil {

@@ -128,6 +128,11 @@ type meshInstance struct {
 	aliases   *v4.Table
 	self      netip.Addr
 	prefix    netip.Prefix
+	// port is the one this mesh's WireGuard device actually bound. Carried
+	// rather than recomputed: it was worked out in one loop and needed in
+	// another, and deriving it twice is how the config handed to the mesh
+	// package ended up with the device's port instead of this one.
+	port uint16
 }
 
 // Init creates a new mesh and returns its network key.
@@ -964,7 +969,7 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 
 		instances = append(instances, &meshInstance{
 			label: mc.Label, networkID: networkID, dev: dev, aliases: aliases,
-			self: self, prefix: nk.Prefix(),
+			self: self, prefix: nk.Prefix(), port: listen,
 		})
 		log.Info("data plane up", "mesh", mc.Label, "port", listen,
 			"overlay", self, "protected_sockets", len(fds))
@@ -990,11 +995,10 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 		mc := meshes[i]
 		// Each mesh sees its own key, relay setting, admin keys and services;
 		// the rest of the config is the device's and shared.
-		meshCfg := cfg
-		meshCfg.NetworkKey = mc.NetworkKey
-		meshCfg.AdminKeys = mc.AdminKeys
-		meshCfg.Relay = mc.Relay
-		meshCfg.Services = mc.Services
+		// in.port, not cfg.ListenPort: this mesh bound its own and the config
+		// holds the device's. Announcing the device's sent peers to the first
+		// mesh's socket, where the handshake is rejected in silence.
+		meshCfg := cfg.ForMesh(mc, in.port)
 
 		nk, _ := mc.Key()
 		ms, err := st.MeshState(state.NetworkID(nk), cfg.NetworkKey != "" && mc.Label == state.DefaultLabel)
