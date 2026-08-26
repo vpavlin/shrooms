@@ -1,0 +1,44 @@
+# A card-backed mesh in containers: two nodes, and a Keycard on the host.
+#
+# The point is to run the whole life of such a mesh with no sudo. Creating a
+# WireGuard device needs CAP_NET_ADMIN, which a rootless container can be given
+# for its own network namespace — so the tests that used to need root on the
+# host need nothing at all.
+#
+# The reader stays on the host. pcscd owns the USB device and speaks a socket;
+# mounting that socket into node-a is all the card access an admin command
+# needs, and it means the commands run inside a node exactly as they would on a
+# real machine rather than beside one.
+services:
+  node-a:
+    image: shrooms:keycard
+    container_name: shrooms-card-a
+    cap_add: [NET_ADMIN]
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - ./run/card-a/etc:/etc/shrooms
+      - ./run/card-a/state:/var/lib/shrooms
+      # The admin key and the card pairing. Not a secret in the usual sense —
+      # the admin file holds a public key and the pairing opens a channel the
+      # PIN still guards — but they are what makes this node the authority.
+      - ./run/card-a/admin:/root/.config/shrooms
+      # The card itself, as far as anything here is concerned.
+      - /run/pcscd/pcscd.comm:/run/pcscd/pcscd.comm
+    networks: [cardmesh]
+    entrypoint: ["sleep", "infinity"]
+
+  node-b:
+    image: shrooms:keycard
+    container_name: shrooms-card-b
+    cap_add: [NET_ADMIN]
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - ./run/card-b/etc:/etc/shrooms
+      - ./run/card-b/state:/var/lib/shrooms
+    networks: [cardmesh]
+    entrypoint: ["sleep", "infinity"]
+
+networks:
+  cardmesh:

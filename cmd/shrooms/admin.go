@@ -260,7 +260,7 @@ func addAdminKeysFor(cfgPath, label string, keys []string) error {
 		return err
 	}
 	defer f.Close()
-	_, err = fmt.Fprintf(f, "mesh.%s.admin_keys = [%q, %q]\n", label, keys[0], keys[1])
+	_, err = fmt.Fprintf(f, "mesh.%s.admin_keys = %s\n", label, quotedList(keys))
 	return err
 }
 
@@ -272,9 +272,35 @@ func addAdminKeys(cfgPath string, keys []string) error {
 	}
 	defer f.Close()
 	_, err = fmt.Fprintf(f, "\n# The admin keys this mesh trusts to sign membership. Public values,\n"+
-		"# fixed when the mesh was minted: the mesh id commits to the set.\nadmin_keys = [%q, %q]\n",
-		keys[0], keys[1])
+		"# fixed when the mesh was minted: the mesh id commits to the set.\nadmin_keys = %s\n",
+		quotedList(keys))
 	return err
+}
+
+// quotedList writes however many keys there are.
+//
+// Both writers used keys[0] and keys[1] literally, because minting always made
+// exactly two: one to use and one printed once as a paper way back. A mesh
+// whose authority is a Keycard has ONE — the card's — because the mnemonic is
+// already the way back, so the second would be a second thing to lose and would
+// make CardOnly false.
+//
+// So joining a card-backed mesh crashed the joining device with an index out of
+// range, after it had written its config and before it stored the credential:
+// a machine left half-joined, holding a network key and no membership, which
+// every peer then refuses. Found by the containerised end-to-end run, the first
+// time anything joined a mesh with one admin key.
+func quotedList(keys []string) string {
+	var b strings.Builder
+	b.WriteByte('[')
+	for i, k := range keys {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		fmt.Fprintf(&b, "%q", k)
+	}
+	b.WriteByte(']')
+	return b.String()
 }
 
 // issueLocal enrols the device whose state directory this is, on one mesh.

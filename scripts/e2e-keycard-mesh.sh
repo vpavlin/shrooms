@@ -1,51 +1,64 @@
 #!/usr/bin/env bash
-# The whole life of a card-backed mesh, with a daemon and a second device:
+# The whole life of a card-backed mesh, in containers, with no sudo:
 # mint, invite, join, renew, revoke, teardown.
 #
-# NOT in CI and cannot be. It needs a USB reader, a card, a PIN, a -tags pcsc
-# build, and root for the WireGuard device. Run it where all of those are:
-#
 #     make shrooms TAGS=pcsc
-#     sudo SHROOMS_CARD_PIN=nnnnnn ./scripts/e2e-keycard-mesh.sh
+#     SHROOMS_CARD_PIN=nnnnnn ./scripts/e2e-keycard-mesh.sh
 #
-# e2e-keycard.sh covers the signing paths with no daemon, which is most of what
-# a card does. This covers the two that need one: `invite`, where the card signs
-# a credential for a device that turned up while the invite was open, and
-# `renew`, which reads the roster from a running daemon before signing.
+# Not in CI, and only because of the card: it needs a reader with a Keycard on
+# it. Everything else that used to need root does not any more. Creating a
+# WireGuard device wants CAP_NET_ADMIN, which a rootless container can be given
+# for its own network namespace, and the reader is reached through the pcscd
+# socket rather than the USB device — so the admin commands run inside a node,
+# exactly as they would on a real machine rather than beside one.
 #
-# The fleet is local: node A pins its rendezvous port and everything else is
-# pointed at it with --entry-node, so nothing here touches the public fleet.
+# The fleet is local: node A pins its rendezvous port and node B is pointed at
+# it with --entry-node, so nothing here touches the public fleet.
 set -uo pipefail
 
 cd "$(dirname "$0")/.."
 BIN=$(pwd)/bin/shrooms
+D=docker
+CTX=$D/build/cardctx
+RUN=$D/run
+COMPOSE="$D/compose-keycard.yml"
 PAIRDIR=${SHROOMS_CARD_PAIRDIR:-$HOME/.config/shrooms-e2e-card}
-WORK=$(mktemp -d)
-SOCKS=$(mktemp -d /tmp/e2e-card-XXXXXX)
-PIDS=()
-
-cleanup() {
-  for p in "${PIDS[@]:-}"; do kill "$p" 2>/dev/null; done
-  sleep 1
-  for p in "${PIDS[@]:-}"; do kill -9 "$p" 2>/dev/null; done
-  rm -rf "$WORK" "$SOCKS"
-}
-trap cleanup EXIT
 
 PASS=0; FAIL=0
 ok()   { printf '    \033[32mok\033[0m   %s\n' "$1"; PASS=$((PASS+1)); }
 bad()  { printf '    \033[31mFAIL\033[0m %s\n' "$1"; FAIL=$((FAIL+1)); }
 note() { printf '         %s\n' "$1"; }
 skip() { printf '\n  skipped: %s\n' "$1"; exit 77; }
-tailof() { sed 's/^/         /' <<<"$(grep -vE '^(INF|DBG|WRN|ERR|TRC|NTC) 20' "$1" | tail -"${2:-3}")"; }
+
+# KEEP=1 leaves the containers running, so a failure can be looked at rather
+# than reproduced. A run that tears down what it was investigating costs
+# another four minutes every time.
+DOWN_DONE=""
+down() {
+  [ -n "$DOWN_DONE" ] && return
+  DOWN_DONE=1
+  if [ "${KEEP:-}" = "1" ]; then
+    printf '\n  containers left running (KEEP=1):\n'
+    printf '    docker exec shrooms-card-a shrooms status\n'
+    printf '    docker exec shrooms-card-a cat /tmp/daemon.log\n'
+    printf '    docker compose -f %s down -v\n' "$COMPOSE"
+    return
+  fi
+  docker compose -f "$COMPOSE" down -v >/dev/null 2>&1 || true
+}
+trap 'down' EXIT
+
+# a <args...>  — run in node A;  b <args...> — in node B. -i so a PIN can be piped.
+a() { docker exec -i shrooms-card-a "$@"; }
+b() { docker exec -i shrooms-card-b "$@"; }
 
 [ -x "$BIN" ] || skip "no $BIN — run 'make shrooms TAGS=pcsc'"
-[ "$(id -u)" -eq 0 ] || skip "needs root: a WireGuard device is CAP_NET_ADMIN"
+command -v docker >/dev/null || skip "no docker/podman"
+[ -e /dev/net/tun ] || skip "no /dev/net/tun on the host"
+[ -S /run/pcscd/pcscd.comm ] || skip "pcscd is not listening — plug in a reader"
 PIN=${SHROOMS_CARD_PIN:-}
-[ -n "$PIN" ] || skip "set SHROOMS_CARD_PIN"
+[ -n "$PIN" ] || skip "set SHROOMS_CARD_PIN so this can use the card"
 [ -f "$PAIRDIR/keycard-pairing" ] || skip "no pairing in $PAIRDIR — run e2e-keycard.sh first, which pairs once"
-[ -e /dev/net/tun ] || modprobe tun 2>/dev/null
-[ -e /dev/net/tun ] || skip "no /dev/net/tun"
 
 probe=$("$BIN" keycard status 2>&1)
 case "$probe" in
@@ -53,138 +66,201 @@ case "$probe" in
     skip "no card on a reader" ;;
 esac
 
-A_WG=51920; A_DELIVERY=31920; A_IF=e2ca
-B_WG=51921; B_DELIVERY=31921; B_IF=e2cb
+echo "==> a card-backed mesh, in containers"
 
-echo "==> a card-backed mesh, end to end"
+# --- image ----------------------------------------------------------------
+rm -rf "$CTX" && mkdir -p "$CTX/lib"
+cp "$BIN" "$CTX/"
+cp "$D/build/lib/"*.so* "$CTX/lib/" 2>/dev/null
+cp "$D/gateway.sh" "$D/entrypoint-nat.sh" "$CTX/" 2>/dev/null
+if docker build -q -t shrooms:keycard -f "$D/Dockerfile" "$CTX" >/dev/null 2>&1; then
+  ok "built an image with the reader-capable binary"
+else
+  bad "image build failed"; exit 1
+fi
 
-wait_for() { local n=0; while [ ! -e "$2" ] && [ "$n" -lt "$1" ]; do sleep 1; n=$((n+1)); done; [ -e "$2" ]; }
+down
+rm -rf "$RUN/card-a" "$RUN/card-b"
+mkdir -p "$RUN/card-a/etc" "$RUN/card-a/state" "$RUN/card-a/admin" \
+         "$RUN/card-b/etc" "$RUN/card-b/state"
+cp "$PAIRDIR"/keycard-* "$RUN/card-a/admin/" 2>/dev/null
 
-# --- node A: minted from the card -----------------------------------------
-mkdir -p "$WORK/a"
-cp "$PAIRDIR"/keycard-* "$WORK/a/" 2>/dev/null
-"$BIN" prepare --config "$WORK/a/config.toml" --state "$WORK/a/state" \
-    --name alpha --port "$A_WG" >/dev/null 2>&1
+docker compose -f "$COMPOSE" up -d --force-recreate >/dev/null 2>&1
+sleep 2
+if a true 2>/dev/null && b true 2>/dev/null; then
+  ok "two nodes are running, unprivileged"
+else
+  bad "containers did not come up"
+  docker compose -f "$COMPOSE" logs 2>&1 | tail -5 | sed 's/^/         /'
+  exit 1
+fi
+
+# The card, from inside a container, through the mounted pcscd socket.
+if a shrooms keycard status 2>&1 | grep -q "^applet"; then
+  ok "node A can reach the card on the host's reader"
+else
+  bad "no card access inside the container"
+  a shrooms keycard status 2>&1 | head -2 | sed 's/^/         /'
+  exit 1
+fi
+
+# --- mint from the card ---------------------------------------------------
 KEY=$(python3 -c "
 import base64,os
 print(base64.b32encode(os.urandom(32)).decode().rstrip('='))")
-printf '%s\n' "$KEY" | "$BIN" set-key --config "$WORK/a/config.toml" \
-    --socket "$SOCKS/none.sock" >/dev/null 2>&1
+a shrooms prepare --name alpha --port 51820 >/dev/null 2>&1
+printf '%s\n' "$KEY" | a shrooms set-key >/dev/null 2>&1
 
-minted=$(printf '%s\n' "$PIN" | "$BIN" admin init --keycard --dir "$WORK/a" 2>&1)
+minted=$(printf '%s\n' "$PIN" | a shrooms admin init --keycard 2>&1)
 AUTHKEY=$(sed -n 's/.*admin_keys = \["\(.*\)"\].*/\1/p' <<<"$minted" | head -1)
-if [ -z "$AUTHKEY" ]; then bad "could not mint from the card"; note "$(tail -3 <<<"$minted")"; exit 1; fi
-ok "minted a mesh authority from the card"
-printf 'admin_keys = ["%s"]\ndelivery_port = %d\ninterface = "%s"\n' \
-    "$AUTHKEY" "$A_DELIVERY" "$A_IF" >> "$WORK/a/config.toml"
+if [ -n "$AUTHKEY" ]; then
+  ok "minted a mesh authority from the card"
+else
+  bad "could not mint"; note "$(tail -3 <<<"$minted" | tr '\n' ' ')"; exit 1
+fi
 
-# A needs its own credential, signed by the card.
-keys=$("$BIN" keys --state "$WORK/a/state" 2>&1)
-AD=$(sed -n 's/^device  *//p' <<<"$keys"|head -1); AW=$(sed -n 's/^tunnel  *//p' <<<"$keys"|head -1)
+# Written from INSIDE the container. The volume's files are owned by the
+# container's root, which in a rootless runtime is a subuid the host user is
+# not — so appending from here failed silently, the mesh got no admin_keys at
+# all, and half of what followed passed by having nothing to check.
+a sh -c "printf 'admin_keys = [\"%s\"]\ndelivery_port = 31820\n' '$AUTHKEY' >> /etc/shrooms/config.toml"
+if a grep -q "^admin_keys" /etc/shrooms/config.toml; then
+  ok "the card's key is the mesh's authority in the config"
+else
+  bad "admin_keys never reached the config, so this mesh has no authority"; exit 1
+fi
+
+keys=$(a shrooms keys 2>&1)
+AD=$(sed -n 's/^device  *//p' <<<"$keys"|head -1)
+AW=$(sed -n 's/^tunnel  *//p' <<<"$keys"|head -1)
 AS=$(sed -n 's/^sealing  *//p' <<<"$keys"|head -1)
-blob=$(printf '%s\n' "$PIN" | "$BIN" admin issue --dir "$WORK/a" --name alpha \
+blob=$(printf '%s\n' "$PIN" | a shrooms admin issue --name alpha \
     --device "$AD" --wg "$AW" --seal "$AS" --write=false 2>&1 |
-    sed -n 's/.*credential set //p' | tr -d ' \n')
-[ -n "$blob" ] && ok "the card issued node A its own credential" || { bad "no credential for A"; exit 1; }
-"$BIN" credential set "$blob" --config "$WORK/a/config.toml" --state "$WORK/a/state" \
-  </dev/null >/dev/null 2>&1
+    sed -n 's/.*credential set //p' | tr -d ' \r\n')
+if [ -n "$blob" ]; then ok "the card issued node A its own credential"; else
+  bad "no credential for node A"; exit 1; fi
+a shrooms credential set "$blob" >/dev/null 2>&1
 
-"$BIN" daemon --config "$WORK/a/config.toml" --state "$WORK/a/state" \
-    --socket "$SOCKS/a.sock" >"$WORK/a/daemon.log" 2>&1 &
-PIDS+=($!)
-wait_for 90 "$SOCKS/a.sock" && ok "node A is up on the card's mesh" || {
-  bad "node A never bound its socket"; tailof "$WORK/a/daemon.log"; exit 1; }
+# --- node A's daemon ------------------------------------------------------
+docker exec -d shrooms-card-a sh -c 'shrooms daemon -v >/tmp/daemon.log 2>&1'
+alog() { a cat /tmp/daemon.log 2>/dev/null; }
+n=0
+while [ "$n" -lt 90 ]; do
+  a shrooms status >/dev/null 2>&1 && break
+  sleep 2; n=$((n+2))
+done
+if a shrooms status >/dev/null 2>&1; then
+  ok "node A is up on the card's mesh (${n}s)"
+else
+  bad "node A never answered"; alog | grep -v '^\(INF\|DBG\|WRN\|ERR\) 20' | tail -4 | sed 's/^/         /'; exit 1
+fi
 
-PEER_A=$(grep -o 'peer_id=[A-Za-z0-9]*' "$WORK/a/daemon.log" | head -1 | cut -d= -f2)
-ENTRY="/ip4/127.0.0.1/tcp/$A_DELIVERY/p2p/$PEER_A"
-[ ${#PEER_A} -gt 20 ] && ok "node A is dialable as a local fleet" || bad "no peer id for A"
-
-"$BIN" status --socket "$SOCKS/a.sock" 2>&1 | grep -q "no credential" &&
-  bad "node A reports itself unenrolled on its own mesh" ||
+# Meaningful only because admin_keys is set above: Unenrolled() is false for a
+# mesh with no authority, so without one this asserted nothing at all.
+if a shrooms status 2>&1 | grep -q "no credential"; then
+  bad "node A reports itself unenrolled on the mesh it minted"
+else
   ok "node A is admitted by the authority it minted"
+fi
+
+PEER_A=$(alog | grep -o 'peer_id=[A-Za-z0-9]*' | head -1 | cut -d= -f2)
+IP_A=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' shrooms-card-a 2>/dev/null | head -1)
+ENTRY="/ip4/$IP_A/tcp/31820/p2p/$PEER_A"
+if [ ${#PEER_A} -gt 20 ] && [ -n "$IP_A" ]; then
+  ok "node A is a dialable local fleet ($IP_A)"
+else
+  bad "no rendezvous address for node A"; note "peer=$PEER_A ip=$IP_A"
+fi
 
 # --- invite: the card signs for a device that turns up --------------------
-mkdir -p "$WORK/b"
-inv="$WORK/a/invite.log"
-( printf '%s\n' "$PIN" | "$BIN" invite --admin-dir "$WORK/a" \
-    --config "$WORK/a/config.toml" --state "$WORK/a/state" \
-    --socket "$SOCKS/a.sock" --ttl 5m >"$inv" 2>&1 ) &
-PIDS+=($!)
+docker exec -d shrooms-card-a sh -c \
+  "printf '%s\n' '$PIN' | shrooms invite --ttl 5m >/tmp/invite.log 2>&1"
 
 TOKEN=""
 for _ in $(seq 1 60); do
-  TOKEN=$(sed -n 's/.*join --invite \([A-Za-z0-9._-]*\).*/\1/p' "$inv" | head -1)
+  TOKEN=$(a cat /tmp/invite.log 2>/dev/null | sed -n 's/.*join --invite \([A-Za-z0-9._-]*\).*/\1/p' | head -1)
   [ -n "$TOKEN" ] && break
   sleep 1
 done
 if [ -n "$TOKEN" ]; then ok "the card holder opened an invite"; else
-  bad "no invite token appeared"; tailof "$inv" 5; exit 1
+  bad "no invite token appeared"
+  a cat /tmp/invite.log 2>/dev/null | tail -4 | sed 's/^/         /'; exit 1
 fi
 
-joined=$("$BIN" join --invite "$TOKEN" --config "$WORK/b/config.toml" \
-    --state "$WORK/b/state" --name beta --port "$B_WG" \
-    --entry-node "$ENTRY" --local </dev/null 2>&1)
-if grep -qiE "joined|welcome|admitted|you are in" <<<"$joined"; then
-  ok "node B redeemed the invite"
+b shrooms join --invite "$TOKEN" --name beta --port 51820 \
+    --entry-node "$ENTRY" --local >/tmp/join.log 2>&1
+joined=$(cat /tmp/join.log 2>/dev/null)
+# "expires", not "^credential  ": `shrooms keys` prints "credential  none yet"
+# when there is none, which the obvious grep matches — so this asserted that B
+# had a credential by matching the words saying it did not, and only the
+# failure two steps later gave it away.
+if b shrooms keys 2>&1 | grep -q "expires"; then
+  ok "node B joined and holds a card-signed credential"
 else
-  bad "node B could not join"
-  note "$(grep -vE '^(INF|DBG|WRN|ERR|TRC|NTC) 20' <<<"$joined" | tail -3 | tr '\n' ' ')"
+  bad "node B did not end up with a credential"
+  note "keys says: $(b shrooms keys 2>&1 | grep -i credential | tr '\n' ' ')"
+  # The top of a panic, not the tail: the message is the first line and the
+  # stack is the rest, so tailing it showed frames and hid the reason.
+  if grep -q "panic:" <<<"$joined"; then
+    note "join PANICKED:"
+    grep -A6 "panic:" <<<"$joined" | head -8 | sed 's/^/         /'
+  else
+    note "join said: $(grep -vE '^(INF|DBG|WRN|ERR|TRC|NTC) 20' <<<"$joined" | tail -4 | tr '\n' ' ')"
+  fi
 fi
+a cat /tmp/invite.log 2>/dev/null | grep -qi "Admitted" &&
+  ok "the invite recorded admitting it" ||
+  bad "the invite never admitted anybody"
 
-grep -qi "Admitted" "$inv" &&
-  ok "the card signed a credential for it" || { bad "the invite never admitted anybody"; tailof "$inv" 4; }
+# --- node B's daemon, and do they meet? -----------------------------------
+b sh -c "printf 'delivery_port = 31821\n' >> /etc/shrooms/config.toml"
+docker exec -d shrooms-card-b sh -c 'shrooms daemon -v >/tmp/daemon.log 2>&1'
+n=0
+while [ "$n" -lt 90 ]; do b shrooms status >/dev/null 2>&1 && break; sleep 2; n=$((n+2)); done
+b shrooms status >/dev/null 2>&1 && ok "node B is up" || bad "node B never answered"
 
-if [ -f "$WORK/b/state/state.json" ] && "$BIN" keys --state "$WORK/b/state" 2>&1 | grep -q "^credential"; then
-  ok "node B holds a credential the card signed"
+n=0
+while [ "$n" -lt 150 ]; do
+  a shrooms status 2>/dev/null | grep -q beta && break
+  sleep 3; n=$((n+3))
+done
+if a shrooms status 2>/dev/null | grep -q beta; then
+  ok "node A sees node B on the card's mesh (${n}s)"
 else
-  bad "node B has no credential"
+  bad "they never met in ${n}s"
+  note "A sees:"; a shrooms status 2>&1 | tail -3 | sed 's/^/         /'
+  note "B sees:"; b shrooms status 2>&1 | tail -3 | sed 's/^/         /'
+  note "B refused anything?"
+  b sh -c 'grep -iE "refus|credential|membership" /tmp/daemon.log | tail -3' 2>/dev/null | sed 's/^/         /'
+  note "A refused anything?"
+  a sh -c 'grep -iE "refus|credential|membership" /tmp/daemon.log | tail -3' 2>/dev/null | sed 's/^/         /' 
 fi
 
 # --- renew: reads the roster from a running daemon, then signs ------------
-# No entry_nodes here: `join --entry-node` already wrote them into the config
-# it created, and a second copy of the key would be a config that does not load.
-printf 'delivery_port = %d\ninterface = "%s"\n' "$B_DELIVERY" "$B_IF" \
-    >> "$WORK/b/config.toml"
-"$BIN" daemon --config "$WORK/b/config.toml" --state "$WORK/b/state" \
-    --socket "$SOCKS/b.sock" >"$WORK/b/daemon.log" 2>&1 &
-PIDS+=($!)
-wait_for 90 "$SOCKS/b.sock" && ok "node B is up" || { bad "node B never started"; tailof "$WORK/b/daemon.log"; }
-
-n=0
-while [ "$n" -lt 120 ]; do
-  "$BIN" status --socket "$SOCKS/a.sock" 2>/dev/null | grep -q beta && break
-  sleep 3; n=$((n+3))
-done
-"$BIN" status --socket "$SOCKS/a.sock" 2>/dev/null | grep -q beta &&
-  ok "node A sees node B on the card's mesh (${n}s)" ||
-  bad "they never met in ${n}s"
-
-renewed=$(printf '%s\n' "$PIN" | "$BIN" admin renew --dir "$WORK/a" \
-    --socket "$SOCKS/a.sock" --all 2>&1)
-if grep -qiE "renewed|issued|up to date" <<<"$renewed"; then
+renewed=$(printf '%s\n' "$PIN" | a shrooms admin renew --all 2>&1)
+if grep -qiE "renewed|left|unknown expiry" <<<"$renewed"; then
   ok "the card renewed the mesh's credentials"
 else
-  bad "renew failed"
-  note "$(grep -vE '^(INF|DBG)' <<<"$renewed" | tail -3 | tr '\n' ' ')"
+  bad "renew failed"; note "$(tail -3 <<<"$renewed" | tr '\n' ' ')"
 fi
 
 # --- revoke: enforced by the other node ----------------------------------
-BD=$("$BIN" keys --state "$WORK/b/state" 2>&1 | sed -n 's/^device  *//p' | head -1)
-revoked=$(printf '%s\n' "$PIN" | "$BIN" admin revoke --dir "$WORK/a" \
-    --socket "$SOCKS/a.sock" --device "$BD" 2>&1)
+BD=$(b shrooms keys 2>&1 | sed -n 's/^device  *//p' | head -1)
+revoked=$(printf '%s\n' "$PIN" | a shrooms admin revoke --device "$BD" 2>&1)
 grep -qE "^Revoked " <<<"$revoked" &&
-  ok "the card signed a revocation" || { bad "revoke failed"; note "$(tail -2 <<<"$revoked")"; }
+  ok "the card signed a revocation" || { bad "revoke failed"; note "$(tail -2 <<<"$revoked" | tr '\n' ' ')"; }
 
 n=0
 while [ "$n" -lt 90 ]; do
-  "$BIN" status --socket "$SOCKS/a.sock" 2>/dev/null | grep -q beta || break
+  a shrooms status 2>/dev/null | grep -q beta || break
   sleep 3; n=$((n+3))
 done
-"$BIN" status --socket "$SOCKS/a.sock" 2>/dev/null | grep -q beta &&
+a shrooms status 2>/dev/null | grep -q beta &&
   bad "node B is still on the roster ${n}s after being revoked" ||
   ok "node B is gone from the mesh (${n}s)"
 
 # --- teardown -------------------------------------------------------------
+down
 [ -f "$PAIRDIR/keycard-pairing" ] &&
   ok "the pairing survives, so the next run spends no slot" ||
   bad "the pairing was destroyed"

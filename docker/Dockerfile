@@ -13,6 +13,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         iputils-ping \
         libstdc++6 \
         procps \
+        # For a binary built with -tags pcsc, which reaches a smartcard reader
+        # through pcscd. The daemon never touches a card; the admin commands do,
+        # and running them inside a node is how a real deployment would. Costs
+        # about 60 KB and nothing at all when no socket is mounted.
+        libpcsclite1 \
     && rm -rf /var/lib/apt/lists/*
 
 # liblogosdelivery.so links librln.so from the same directory.

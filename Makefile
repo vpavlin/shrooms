@@ -388,9 +388,10 @@ e2e: shrooms
 e2e-keycard:
 	./scripts/e2e-keycard.sh
 
-## The same, with a daemon and a second device: mint, invite, join, renew,
-## revoke. Needs root as well as a card:
-##     make shrooms TAGS=pcsc && sudo SHROOMS_CARD_PIN=nnnnnn make e2e-keycard-mesh
+## The same, with two nodes and a daemon: mint, invite, join, renew, revoke.
+## In containers, so no sudo — only a reader with a card on it:
+##     make shrooms TAGS=pcsc && SHROOMS_CARD_PIN=nnnnnn make e2e-keycard-mesh
+## KEEP=1 leaves the containers up to look at.
 e2e-keycard-mesh:
 	./scripts/e2e-keycard-mesh.sh
 
