@@ -892,6 +892,18 @@ func Enrolment(configDir string) string {
 	return string(b)
 }
 
+// Files names everything an enrolment writes, in no particular order.
+//
+// Exported for one reason: `sudo shrooms init --keycard` writes these as root
+// into the invoking user's config directory, and the caller is the only layer
+// that knows about sudo. Rather than teach this package about SUDO_USER, it
+// says which paths it owns and lets the command hand them over.
+//
+// Both may be absent — a device that has never enrolled has neither.
+func Files(configDir string) []string {
+	return []string{pairingFile(configDir), cardKeyFile(configDir)}
+}
+
 // Forget deletes this phone's pairing, and says what it does not do.
 //
 // It does not free the slot on the card. The card has no idea this happened —

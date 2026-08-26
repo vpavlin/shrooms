@@ -180,6 +180,9 @@ func mintAuthorityAt(dir string, plain bool, cfgPath, stateDir, name, label stri
 	if err := os.WriteFile(path, append(raw, '\n'), 0o600); err != nil {
 		return err
 	}
+	if err := giveToUser(path); err != nil {
+		return err
+	}
 
 	// Write the keys into the config and enrol this device, so a fresh mesh is
 	// usable the moment init returns.
@@ -1039,6 +1042,9 @@ func mintCardAuthorityFull(dir, cfgPath, stateDir, name, label, readerName strin
 	}
 	path := adminPathFor(dir, label)
 	if err := os.WriteFile(path, append(raw, '\n'), 0o600); err != nil {
+		return err
+	}
+	if err := giveToUser(path); err != nil {
 		return err
 	}
 

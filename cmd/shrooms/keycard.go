@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/vpavlin/shrooms/internal/keycard"
@@ -233,6 +234,16 @@ func cmdKeycardPair(args []string) error {
 	key, err := keycard.Enrol(t, keycardDir(*dir), pass, pin)
 	if err != nil {
 		return err
+	}
+	// Under sudo the enrolment lands in the invoking user's config directory
+	// owned by root, and every later command that runs without sudo cannot
+	// read its own pairing. Best effort: the pairing is already on the card
+	// and a slot is already spent, so a failed chown is not worth undoing it
+	// over.
+	for _, f := range keycard.Files(keycardDir(*dir)) {
+		if err := giveToUser(f); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+		}
 	}
 	fmt.Printf("\nPaired, and this card signs with:\n\n  %s\n\n", key)
 	fmt.Printf("The pairing is in %s.\n", keycardDir(*dir))
