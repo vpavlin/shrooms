@@ -52,3 +52,30 @@ site/comparison.html
 # broke every later commit with "confused by unstable object source data",
 # because a running node was writing to the file git was hashing.
 data/
+
+# Built by hand with `go build -o shrooms ./cmd/shrooms`. The Makefile writes
+# bin/shrooms, which the first line of this file already ignores — this is the
+# stray that gets left in the working tree by a build run without -o.
+#
+# Anchored, for the reason /shrooms-relay is: a bare `shrooms` would also match
+# the cmd/shrooms directory and silently stop its sources being committed.
+#
+# It reached nine commits before anybody noticed, 13 MB each time, always as a
+# passenger in a feature commit rather than on purpose — the same over-broad
+# `git add -A` that put data/ in here. The copy that was tracked reported its
+# version as "dev", so it was never a release artifact either.
+/shrooms
+
+# Built by `make dist` (scripts/build-portable.sh), which regenerates the tree
+# from packaging/ and the library Basecamp installed.
+#
+# Committed once with the installer and then carried as 50 MB of generated
+# output. Every part of it has a tracked source: dist/install.sh is a
+# byte-identical copy of packaging/install-dist.sh, and dist/lib/*.so are
+# byte-identical to docker/build/lib, which this file already ignores.
+#
+# Nothing reads it from the repository — the build script excludes dist/ from
+# its own context, and CI builds the tree itself and uploads it as an artifact.
+# A checked-in copy only goes stale, which is the reason site/adr and
+# docker/build are ignored above.
+dist/
