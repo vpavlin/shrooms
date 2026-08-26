@@ -1,4 +1,4 @@
-package mobile
+package keycard
 
 import (
 	"encoding/json"
@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	keycard "github.com/keycard-tech/keycard-go/v4"
+	kc "github.com/keycard-tech/keycard-go/v4"
 	ktypes "github.com/keycard-tech/keycard-go/v4/types"
 )
 
@@ -52,7 +52,7 @@ func (deadCard) Transmit([]byte) ([]byte, error) { return nil, errors.New("tag l
 // The pairing file is what enrolment produces, so its absence is the check.
 func TestUnenrolledCardIsReportedBeforeUse(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := CardPublicKey(deadCard{}, dir, "123456"); err == nil {
+	if _, err := PublicKey(deadCard{}, dir, "123456"); err == nil {
 		t.Error("an unenrolled card produced a public key")
 	}
 	// And with a pairing present, the failure comes from the card rather than
@@ -61,7 +61,7 @@ func TestUnenrolledCardIsReportedBeforeUse(t *testing.T) {
 		[]byte(encodePairing(ktypes.NewPairing([32]byte{1}, 0))), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := CardPublicKey(deadCard{}, dir, "123456"); err == nil {
+	if _, err := PublicKey(deadCard{}, dir, "123456"); err == nil {
 		t.Error("a dead transport produced a public key")
 	}
 }
@@ -69,7 +69,7 @@ func TestUnenrolledCardIsReportedBeforeUse(t *testing.T) {
 // A nil transport is a programming error on the Kotlin side and must not panic
 // inside the card library.
 func TestNilTransportIsAnError(t *testing.T) {
-	if _, err := CardEnrol(nil, t.TempDir(), "x", "123456"); err == nil {
+	if _, err := Enrol(nil, t.TempDir(), "x", "123456"); err == nil {
 		t.Error("a nil transport was accepted")
 	}
 }
@@ -224,7 +224,7 @@ func TestEnrolmentIsAnsweredFromDisk(t *testing.T) {
 		Paired bool   `json:"paired"`
 		Key    string `json:"key"`
 	}
-	if err := json.Unmarshal([]byte(CardEnrolment(dir)), &before); err != nil {
+	if err := json.Unmarshal([]byte(Enrolment(dir)), &before); err != nil {
 		t.Fatal(err)
 	}
 	if before.Paired {
@@ -244,7 +244,7 @@ func TestEnrolmentIsAnsweredFromDisk(t *testing.T) {
 		Paired bool   `json:"paired"`
 		Key    string `json:"key"`
 	}
-	if err := json.Unmarshal([]byte(CardEnrolment(dir)), &after); err != nil {
+	if err := json.Unmarshal([]byte(Enrolment(dir)), &after); err != nil {
 		t.Fatal(err)
 	}
 	if !after.Paired {
@@ -258,7 +258,7 @@ func TestEnrolmentIsAnsweredFromDisk(t *testing.T) {
 
 	// Forgetting removes both, and says nothing about the card — the slot on
 	// the card is still taken, which is why the UI has to say so.
-	if err := CardForget(dir); err != nil {
+	if err := Forget(dir); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "keycard-pairing")); !os.IsNotExist(err) {
@@ -269,7 +269,7 @@ func TestEnrolmentIsAnsweredFromDisk(t *testing.T) {
 	}
 	// Twice is not an error: the button is there whether or not there is
 	// anything behind it.
-	if err := CardForget(dir); err != nil {
+	if err := Forget(dir); err != nil {
 		t.Errorf("forgetting an already-forgotten card failed: %v", err)
 	}
 }
@@ -286,7 +286,7 @@ func TestARefusedPinSaysWhatItCosts(t *testing.T) {
 		{1, "ONE attempt left"},
 		{0, "now blocked"},
 	} {
-		got := pinError(&keycard.WrongPINError{RemainingAttempts: c.left}).Error()
+		got := pinError(&kc.WrongPINError{RemainingAttempts: c.left}).Error()
 		if !strings.Contains(got, c.want) {
 			t.Errorf("%d attempts left produced %q, want it to contain %q", c.left, got, c.want)
 		}
@@ -348,11 +348,11 @@ func TestAKeyFromAnotherPathIsNotOffered(t *testing.T) {
 // migration and not an edit. This fails if it moves without somebody meaning it.
 func TestTheDerivationPathIsPinned(t *testing.T) {
 	const want = "m/64265'/0'/0'"
-	if KeycardPath != want {
-		t.Fatalf("KeycardPath is %q, want %q.\n\n"+
+	if Path != want {
+		t.Fatalf("Path is %q, want %q.\n\n"+
 			"The mesh id is the hash of admin_keys and the overlay prefix derives "+
 			"from the mesh id, so changing this path re-addresses every device on "+
 			"every mesh minted from a card. If that is genuinely intended, update "+
-			"this test and write down why.", KeycardPath, want)
+			"this test and write down why.", Path, want)
 	}
 }

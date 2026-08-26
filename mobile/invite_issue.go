@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/vpavlin/shrooms/internal/keycard"
 	"time"
 
 	"github.com/vpavlin/shrooms/internal/cred"
@@ -177,7 +178,7 @@ func AdmitWithCard(t CardTransport, configDir, pin, token, requestJSON, name str
 
 	// Opened before the signature so a wrong PIN or an unpaired card is
 	// reported while the invite is still open, rather than after it lapses.
-	signer, err := newCardSigner(t, configDir, pin)
+	signer, err := keycard.NewSigner(t, configDir, pin)
 	if err != nil {
 		return "", err
 	}
