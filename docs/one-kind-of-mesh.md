@@ -79,6 +79,45 @@ Fixed by `Config.ForMesh`, which both callers now use, and which cannot omit the
 port because there is nowhere left to omit it from. That is a patch on the
 symptom. The cause is that `Config` describes a device and a mesh at once.
 
+## The second instance, still open
+
+`Advertise` is the same shape and is not fixed. `candidates()` reads it:
+
+    for _, a := range m.cfg.Advertise {
+        add(a)
+    }
+
+`state.Mesh` has no `Advertise`, so it is device-wide. An entry is a full
+`host:port`, which means a node configured with `advertise =
+["203.0.113.5:51820"]` announces that exact string on **every** mesh — right for
+the one listening on 51820 and wrong for the rest. It lands on the nodes most
+likely to be reached first: relays and public boxes, which are the only ones
+anybody sets `advertise` on.
+
+`ListenPort` could be fixed by handing the mesh the port it bound. This one
+cannot, because the right value is not derivable:
+
+- **Match by port** — announce an entry only on the mesh whose ListenPort equals
+  the entry's port. Correct where the external port equals the internal one, and
+  a silent regression where it does not: `advertise = ["1.2.3.4:31820"]` on a
+  node listening on 51820 matches no mesh and announces nothing, which is
+  today's working single-mesh case broken.
+- **Per-mesh `advertise`** — correct, and means anybody with a public node and
+  several meshes must write one per mesh. NAT gives each mesh its own external
+  port anyway, so there is a real value to write; it is not ceremony.
+- **Device-wide applies to the first mesh only** — preserves today's behaviour
+  exactly where it works, needs a warning for every other mesh, and is one more
+  rule of the form "the first mesh is special".
+
+Leaning: per-mesh `advertise`, with the device-wide one kept as the first mesh's
+and a warning when a node has several meshes and only the device-wide form.
+**Vaclav's call** — it changes what an existing public node announces, which is
+the kind of change that should not arrive as a surprise.
+
+Note the third option is the same shape as the thing this document proposes
+removing. That is the tell: every repair to a device-wide field either makes it
+per-mesh or adds another "except the first" rule.
+
 ## What "treat them all the same" means
 
 Every mesh is a `[mesh.<label>]` table. There is no top-level `network_key`,
