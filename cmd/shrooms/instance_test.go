@@ -127,12 +127,19 @@ func TestAliasAcrossMeshes(t *testing.T) {
 // The first mesh keeps exactly the interface and port the config names, so a
 // node that has always had one is untouched by any of this.
 func TestFirstMeshKeepsTheConfiguredInterface(t *testing.T) {
-	cfg := state.Config{Interface: "shrooms0", ListenPort: 51820}
-	if iface, port := ifaceAndPort(cfg, state.Mesh{}, 0); iface != "shrooms0" || port != 51820 {
-		t.Errorf("first mesh got %s:%d", iface, port)
+	cfg := state.Config{
+		Interface: "shrooms0", ListenPort: 51820, NetworkKey: "first",
+		MeshSet: map[string]state.Mesh{"zzz": {NetworkKey: "second"}},
 	}
-	if iface, port := ifaceAndPort(cfg, state.Mesh{}, 1); iface != "shrooms01" || port != 51821 {
-		t.Errorf("second mesh got %s:%d", iface, port)
+	got := cfg.Meshes() // "default" sorts before "zzz"
+	if len(got) != 2 {
+		t.Fatalf("got %d meshes", len(got))
+	}
+	if got[0].Interface != "shrooms0" || got[0].ListenPort != 51820 {
+		t.Errorf("first mesh got %s:%d", got[0].Interface, got[0].ListenPort)
+	}
+	if got[1].Interface != "shrooms01" || got[1].ListenPort != 51821 {
+		t.Errorf("second mesh got %s:%d", got[1].Interface, got[1].ListenPort)
 	}
 }
 

@@ -72,7 +72,7 @@ func TestTwoMeshesAreIndependent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		ms, err := st.MeshState(netID, isLegacyMesh(cfg, m))
+		ms, err := st.MeshState(netID, m.InheritsIdentity)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -146,13 +146,15 @@ func TestTwoMeshesAreIndependent(t *testing.T) {
 
 	// Separate interfaces and ports, with the original mesh keeping exactly
 	// what it had.
-	if iface, port := ifaceAndPort(cfg, state.Mesh{}, 0); iface != cfg.Interface || port != cfg.ListenPort {
-		t.Errorf("the first mesh moved to %s:%d", iface, port)
+	res := cfg.Meshes()
+	if len(res) != 2 {
+		t.Fatalf("got %d meshes", len(res))
 	}
-	i0, p0 := ifaceAndPort(cfg, state.Mesh{}, 0)
-	i1, p1 := ifaceAndPort(cfg, state.Mesh{}, 1)
-	if i0 == i1 || p0 == p1 {
-		t.Errorf("both meshes would use %s:%d", i0, p0)
+	if res[0].Interface != cfg.Interface || res[0].ListenPort != cfg.ListenPort {
+		t.Errorf("the first mesh moved to %s:%d", res[0].Interface, res[0].ListenPort)
+	}
+	if res[0].Interface == res[1].Interface || res[0].ListenPort == res[1].ListenPort {
+		t.Errorf("both meshes would use %s:%d", res[0].Interface, res[0].ListenPort)
 	}
 }
 

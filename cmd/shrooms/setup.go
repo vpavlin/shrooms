@@ -712,20 +712,19 @@ func pinNewMesh(cfgPath, label string) error {
 
 	taken := map[string]bool{}
 	ports := map[uint16]bool{}
-	for i, other := range cfg.Meshes() {
+	for _, other := range cfg.Meshes() {
 		if other.Label == label {
 			continue
 		}
-		iface, port := ifaceAndPort(cfg, other, i)
-		taken[iface], ports[port] = true, true
+		taken[other.Interface], ports[other.ListenPort] = true, true
 	}
 
 	// Start from what position would have given it, then step past anything
 	// already spoken for — so an untouched config keeps the names it had.
 	iface, port := "", uint16(0)
-	for i, cand := range cfg.Meshes() {
+	for _, cand := range cfg.Meshes() {
 		if cand.Label == label {
-			iface, port = ifaceAndPort(cfg, cand, i)
+			iface, port = cand.Interface, cand.ListenPort
 			break
 		}
 	}

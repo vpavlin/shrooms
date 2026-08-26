@@ -241,15 +241,9 @@ func meshIdentityOf(cfgPath, label string) (string, bool, error) {
 			continue
 		}
 		id, err := m.NetworkID()
-		return id, isLegacyMesh(cfg, m), err
+		return id, m.InheritsIdentity, err
 	}
 	return "", false, fmt.Errorf("no mesh called %q in %s", want, cfgPath)
-}
-
-// isLegacyMesh reports whether a mesh is the one written as network_key — the
-// device's original mesh, whose identity must not be re-derived.
-func isLegacyMesh(cfg state.Config, m state.Mesh) bool {
-	return cfg.NetworkKey != "" && m.Label == state.DefaultLabel
 }
 
 // addAdminKeysFor appends an authority to a config, for one mesh or for the

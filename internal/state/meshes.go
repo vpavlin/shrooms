@@ -98,6 +98,20 @@ type Mesh struct {
 	// time. Leaving would mean re-enrolling to come back, which is a poor
 	// answer to "not right now".
 	Disabled bool
+
+	// InheritsIdentity marks the mesh that carries the device keys this node
+	// had before it was on more than one mesh.
+	//
+	// Not a preference. Re-deriving that mesh's identity changes this node's
+	// overlay address and voids its credential, so every peer sees a stranger.
+	// It was previously inferred from config SHAPE — "the mesh described by the
+	// top-level fields is the one with the old keys" — which is why so much
+	// code had to know which shape it was holding.
+	//
+	// Written down instead, so the shape can stop mattering. Temporary by
+	// design: a mesh re-minted onto a Keycard gets fresh keys and no longer
+	// needs it, and the field goes when the last one has been.
+	InheritsIdentity bool
 }
 
 // Key parses the mesh's network key.
@@ -182,6 +196,10 @@ func (c Config) Meshes() []Mesh {
 			AnnounceServices: c.AnnounceServices,
 			AnnounceBound:    c.AnnounceBound,
 			QuietRevocations: c.QuietRevocations,
+			// The mesh in the top-level fields is the one this device already
+			// belonged to. Recorded here, once, so nothing downstream has to
+			// ask which shape a mesh came from.
+			InheritsIdentity: true,
 		})
 	}
 	for label, m := range c.MeshSet {
@@ -189,6 +207,34 @@ func (c Config) Meshes() []Mesh {
 		out = append(out, m)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Label < out[j].Label })
+
+	// Interface and port are resolved HERE and nowhere else.
+	//
+	// They used to be derived by each caller from a mesh's position in a list,
+	// and the callers disagreed about which list: the daemon numbered the
+	// ACTIVE meshes, while "mesh list" and pinning numbered ALL of them. With
+	// one mesh disabled the two answers differ, so the port a node reported was
+	// not the port it bound.
+	//
+	// Over every mesh rather than the running ones, so that disabling a mesh
+	// does not renumber the others. That was the worse half of the same bug:
+	// switching one mesh off moved every later mesh to a different interface
+	// and a different port on the next restart, which drops their tunnels and
+	// invalidates the endpoints their peers remember.
+	for i := range out {
+		iface, port := c.Interface, c.ListenPort
+		if i > 0 {
+			iface, port = fmt.Sprintf("%s%d", c.Interface, i), c.ListenPort+uint16(i)
+		}
+		// A pin wins, so a mesh keeps what it had when something before it in
+		// the order was renamed or removed.
+		if out[i].Interface == "" {
+			out[i].Interface = iface
+		}
+		if out[i].ListenPort == 0 {
+			out[i].ListenPort = port
+		}
+	}
 	return out
 }
 

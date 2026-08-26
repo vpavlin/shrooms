@@ -207,8 +207,11 @@ func cmdDaemon(args []string) error {
 	}
 	blocks := v4.Blocks(ids)
 
-	for i, mc := range meshes {
-		iface, port := ifaceAndPort(cfg, mc, i)
+	for _, mc := range meshes {
+		// Resolved by Meshes(), not re-derived here: this loop walks the
+		// ACTIVE meshes, and numbering by position in it gave a different
+		// answer than the same numbering over every mesh.
+		iface, port := mc.Interface, mc.ListenPort
 		id, err := mc.NetworkID()
 		if err != nil {
 			return err
@@ -217,7 +220,7 @@ func cmdDaemon(args []string) error {
 		// is the one this device already belonged to, and keeps its keys —
 		// re-deriving them would change its address and make it a stranger to
 		// every peer. A mesh labelled "aaa" sorts first and is not it.
-		primary := isLegacyMesh(cfg, mc)
+		primary := mc.InheritsIdentity
 		in, err := startInstance(ctx, log, cfg, st, node, mc, iface, port,
 			blocks[id], primary, *verbose)
 		if in != nil {

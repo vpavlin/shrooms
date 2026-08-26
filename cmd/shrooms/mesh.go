@@ -321,13 +321,12 @@ func cmdMeshRename(args []string) error {
 // Called before the list changes, never after.
 func pinInterfacesAndPorts(cfg *state.Config) {
 	pinned := map[string]state.Mesh{}
-	for i, m := range cfg.Meshes() {
+	for _, m := range cfg.Meshes() {
 		if m.Label == state.DefaultLabel {
 			continue // the top-level form is always position zero
 		}
-		iface, port := ifaceAndPort(*cfg, m, i)
 		e := cfg.MeshSet[m.Label]
-		e.Interface, e.ListenPort = iface, port
+		e.Interface, e.ListenPort = m.Interface, m.ListenPort
 		pinned[m.Label] = e
 	}
 	for label, m := range pinned {

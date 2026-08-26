@@ -49,8 +49,8 @@ func TestRenamingAMeshMovesNoInterfaceOrPort(t *testing.T) {
 		t.Fatal(err)
 	}
 	was := map[string][2]any{}
-	for i, m := range before.Meshes() {
-		iface, port := ifaceAndPort(before, m, i)
+	for _, m := range before.Meshes() {
+		iface, port := m.Interface, m.ListenPort
 		was[m.Label] = [2]any{iface, port}
 	}
 	if was["test"][0] == was["office"][0] {
@@ -68,8 +68,8 @@ func TestRenamingAMeshMovesNoInterfaceOrPort(t *testing.T) {
 	if _, gone := after.MeshSet["test"]; gone {
 		t.Error("the old label is still there")
 	}
-	for i, m := range after.Meshes() {
-		iface, port := ifaceAndPort(after, m, i)
+	for _, m := range after.Meshes() {
+		iface, port := m.Interface, m.ListenPort
 		old := m.Label
 		if old == "home" {
 			old = "test" // the same mesh, under its new name
@@ -148,8 +148,8 @@ func TestRemovingAMeshMovesNoInterfaceOrPort(t *testing.T) {
 		t.Fatal(err)
 	}
 	was := map[string][2]any{}
-	for i, m := range before.Meshes() {
-		iface, port := ifaceAndPort(before, m, i)
+	for _, m := range before.Meshes() {
+		iface, port := m.Interface, m.ListenPort
 		was[m.Label] = [2]any{iface, port}
 	}
 
@@ -164,8 +164,8 @@ func TestRemovingAMeshMovesNoInterfaceOrPort(t *testing.T) {
 	if _, still := after.MeshSet["office"]; still {
 		t.Error("the mesh is still in the config")
 	}
-	for i, m := range after.Meshes() {
-		iface, port := ifaceAndPort(after, m, i)
+	for _, m := range after.Meshes() {
+		iface, port := m.Interface, m.ListenPort
 		if want, known := was[m.Label]; known && (iface != want[0] || port != want[1]) {
 			t.Errorf("%s moved from %v/%v to %v/%v", m.Label, want[0], want[1], iface, port)
 		}
@@ -272,8 +272,8 @@ func TestANewMeshDoesNotTakeAPinnedInterface(t *testing.T) {
 	}
 	seenIface := map[string]string{}
 	seenPort := map[uint16]string{}
-	for i, m := range cfg.Meshes() {
-		iface, port := ifaceAndPort(cfg, m, i)
+	for _, m := range cfg.Meshes() {
+		iface, port := m.Interface, m.ListenPort
 		if other, clash := seenIface[iface]; clash {
 			t.Errorf("%s and %s both use %s; the daemon cannot create it twice", m.Label, other, iface)
 		}
