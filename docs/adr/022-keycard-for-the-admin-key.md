@@ -140,6 +140,43 @@ A card fails in ways a file does not — unplugged mid-operation, wrong PIN,
 pairing lost — and if the file implementation had no error path, the card's
 would be the one nothing else exercises.
 
+### Amendment, 2026-08-26: a card, a reader, and a mesh minted from it
+
+Built and proven end to end from a laptop with a USB reader, no phone involved:
+
+    shrooms keycard init      # PIN, PUK, pairing password, key + mnemonic
+    shrooms keycard pair      # one of five slots
+    shrooms admin init --keycard
+
+which produced a mesh whose `admin_keys` is the card's own key, and then a
+credential for a device signed by that card. `IssueFor` verifies what it signed
+against the authority before returning, so a credential coming back is the proof
+that the loop closes. `Authority.CardOnly()` is true for a real mesh for the
+first time — the condition [ADR-033](033-the-card-is-the-admin-not-the-uid.md)
+was built around and could not, until now, be reached at all.
+
+**One admin key, not the usual two.** The pair exists because losing the file
+ends a mesh; a card's key is already reconstructible from the mnemonic it was
+initialised with. A second key would be another thing to lose, and worse than
+redundant: it could not itself be a card key, and `CardOnly` is every key or
+none, so one file key would disable the widening above.
+
+**This ADR said shrooms would never INIT a card or generate a key on one**, and
+that is no longer true. The reasoning was about a phone settings screen and an
+accidental tap on something irreversible, which still holds — the Android app
+does neither. On a command line, against a card somebody has physically pushed
+into a reader, behind a typed confirmation, the cost of *not* having it is a
+setup that stops halfway and says "now go and find another program". There was
+no other program on the machine.
+
+`shrooms keycard reset` exists for the same reason and is the sharper case: it
+destroys a key. It was written because Vaclav's card reached five taken pairing
+slots with no device holding one, which is otherwise terminal — `UNPAIR` travels
+inside a channel only a pairing can open. `FACTORY RESET` is unauthenticated by
+design, which is the card's own answer to that trap, and worth knowing about a
+card in a drawer: possession is enough to destroy what is on it, though not to
+use it.
+
 ### The derivation path is the mesh's, not the wallet's
 
 Added 2026-08-25. The path was `m/44'/60'/0'/0` — standard Ethereum, and what

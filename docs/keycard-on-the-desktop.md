@@ -1,5 +1,12 @@
 # Inviting from Basecamp with a Keycard
 
+> **Update, 2026-08-26.** The first half of this is built: the card protocol
+> moved out of `mobile/` into `internal/keycard`, a PC/SC transport sits behind
+> `-tags pcsc`, and `shrooms keycard` plus `admin init --keycard` drive a card
+> from a reader. What remains open is the part this document calls a decision
+> rather than a build — whether the group tier may hold an invite — which is
+> still unanswered and still wants an ADR.
+
 Vaclav, 2026-08-24: *"I would also like to support Basecamp invites via a keycard
 module — we got keycard integration working for Scala."*
 

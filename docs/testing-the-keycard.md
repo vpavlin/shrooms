@@ -87,6 +87,28 @@ irreversible:
 
 Both with `keycard-cli` or the Keycard app.
 
+## Stage 2 passed on 2026-08-26, from a reader
+
+A mesh minted with the card as its authority, and a credential signed by it that
+verifies against that authority — on a laptop with a USB reader and no phone.
+`shrooms keycard {status,init,pair,free-slots,forget,reset}` and
+`admin init --keycard`, built with `-tags pcsc`.
+
+What it cost getting there, since none of it was in the plan:
+
+- **All five pairing slots were gone**, spent on the failed attempts of the
+  first evening. They cannot be freed without a pairing, so the card was
+  recovered with `FACTORY RESET`, which is unauthenticated precisely for that.
+- **`6982 MUTUALLY_AUTHENTICATE` after INIT.** An uninitialised card's `SELECT`
+  carries no applet version, and the version-agnostic pairing and channel calls
+  read that to choose a protocol — so pairing succeeded and the channel then
+  failed on a card that had just accepted the password. Re-`SELECT` after INIT.
+- **A root-owned `~/.config/shrooms`.** `sudo shrooms admin ...` created it as
+  root in the user's home, so every later non-sudo command could not write
+  there. Pairing succeeded on the card and could not store the result, which
+  spent a slot for nothing. Directories are chowned to `SUDO_USER` now, and
+  `keycard pair` checks it can write *before* it pairs.
+
 ## Stage 1 — the card signs, and we can check it
 
 **Nothing to build.** Setting up a card ends by reading the authority key off
