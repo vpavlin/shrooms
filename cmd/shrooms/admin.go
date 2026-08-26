@@ -1035,6 +1035,32 @@ func mintCardAuthorityFull(dir, cfgPath, stateDir, name, label, readerName strin
 		return err
 	}
 	path := adminPathFor(dir, label)
+
+	// Replacing an authority this device already had.
+	//
+	// Not refused, and deliberately not: the private key is on the card, so
+	// this file is derived data and rewriting it costs nothing that cannot be
+	// derived again. The file mint refuses the same case because there the
+	// file IS the private key, and overwriting it ends the mesh.
+	//
+	// Said out loud, though, because of what is NOT the same: minting produces
+	// a new NETWORK key, and the network key is the membership. The mesh id is
+	// a hash over the trusted keys, so re-minting from the same card gives a
+	// mesh that looks identical in `admin show` — same id, same prefix, same
+	// admin key — and admits none of the devices the old one did. That failure
+	// arrives days later, on somebody else's device, as a member nobody admits.
+	//
+	// Reaching here at all means no mesh by this label is in the config: `init`
+	// refuses an existing config and `init --mesh` refuses a label it already
+	// has. So this is the leftover-file case, which is worth a sentence rather
+	// than a wall.
+	if _, err := os.Stat(path); err == nil {
+		fmt.Printf("\nReplacing %s.\n", path)
+		fmt.Printf("The card's key is unchanged, so this mesh has the same id as the one\n")
+		fmt.Printf("that file described — but a new network key, which is the membership.\n")
+		fmt.Printf("Any device admitted to the old mesh is not a member of this one.\n\n")
+	}
+
 	if err := os.WriteFile(path, append(raw, '\n'), 0o600); err != nil {
 		return err
 	}

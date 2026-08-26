@@ -109,10 +109,11 @@ cannot, because the right value is not derivable:
   exactly where it works, needs a warning for every other mesh, and is one more
   rule of the form "the first mesh is special".
 
-Leaning: per-mesh `advertise`, with the device-wide one kept as the first mesh's
-and a warning when a node has several meshes and only the device-wide form.
-**Vaclav's call** — it changes what an existing public node announces, which is
-the kind of change that should not arrive as a surprise.
+**Decided 2026-08-26: per-mesh, and it no longer inherits.**
+`mesh.<label>.advertise` is a mesh's own; the device-wide value belongs to the
+mesh on the device's base port, which leaves a single-mesh config exactly as it
+was. A mesh that now correctly announces nothing is indistinguishable from one
+somebody forgot to configure, so the daemon names them at startup.
 
 Note the third option is the same shape as the thing this document proposes
 removing. That is the tell: every repair to a device-wide field either makes it
@@ -165,9 +166,13 @@ Steps 1 and 2 are mechanical. Step 3 is the payoff and cannot be rushed: a node
 that half-migrates has two meshes claiming the same identity, which is worse
 than the thing being fixed.
 
-**Not decided:** whether `relay_blind` and `relay_token` become per-mesh in the
-same pass. They are top-level today and inherited by every mesh, which is
-convenient and is also the reason a blind relay can be configured for a mesh
-that has no idea it is using one. Probably yes, with the top-level kept as a
-default that each mesh may override — but that is a second decision and it does
-not have to ride along with this one.
+**Decided 2026-08-26: the relay settings keep inheriting.** Unlike `advertise`,
+a relay address means the same thing to every mesh — the tag a device registers
+under is derived per mesh from the relay's address, so one relay serves all of
+them correctly. Pointing a phone at one relay and having every mesh use it is
+the case worth keeping easy.
+
+`mesh.<label>.relay_blind`, `.relay_addr` and `.relay_token` override for one
+mesh, and `relay_blind = "none"` opts a mesh out without naming a relay of its
+own. A literal empty list cannot say that: `[]` parses the same as an absent
+line, which means inherit.

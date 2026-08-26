@@ -148,16 +148,25 @@ free slots and no device holding one. The key returns only from the mnemonic.
 The second runs two nodes in containers and needs no root. Both pair at most
 once and reuse it, so running them does not eat the card.
 
-## Re-minting the same mesh — an open question
+## Re-minting the same mesh — decided 2026-08-26
 
-**The two mint paths disagree about overwriting, and only one of them says so.**
+**An earlier version of this section was wrong about where the guard is, and
+the correction is most of the answer.**
 
-`admin init` (file keys) refuses when `admin-<label>.json` already exists:
+It said `admin init --keycard` has no overwrite check. It does: `cmdAdminInit`
+stats the admin file and refuses *before* it branches on `--keycard`, so both
+`admin init` and `admin init --keycard` refuse when `admin-<label>.json`
+already exists.
 
-    admin-kc.json already exists; minting again would create a different mesh
+The unguarded write is in `mintCardAuthorityFull`, which `init` reaches, and
+there the guards sit upstream instead: `init` refuses when the config already
+exists, and `init --mesh X` refuses when the config already names X. So
+**minting cannot replace a mesh this device is still on** — which is the rule
+worth having, and it was already true.
 
-`admin init --keycard` has no such check and overwrites in place. That
-asymmetry was not decided; it is where the code stands as of 2026-08-26.
+What is left is the leftover-file case: `mesh remove kc` leaves
+`admin-kc.json` behind on purpose (the authority belongs to the mesh, not the
+device), and a later `init --mesh kc --keycard` overwrites it.
 
 **The argument for leaving it.** A mesh id is a hash over the trusted keys, so
 re-minting from the same card reproduces the same mesh id and the same
@@ -177,18 +186,25 @@ from the old one.
 That failure is silent and arrives late: the phone that joined yesterday simply
 stops being a member, and the id it would be checked against still matches.
 
-**Options, undecided:**
+**Decided: allowed, and said out loud.**
 
-1. Leave it. Re-minting from a card is idempotent for identity, and the
-   operator is assumed to know the network key changes.
-2. Guard it like the file path, with `--force` to override.
-3. Guard it only when the config still names the mesh — the case where a
-   member could exist — and allow it freely once the mesh has been removed.
+Allowed because the card holds the private key, so the file is derived data —
+unlike the file mint, where overwriting destroys the only copy of the admin key
+and ends the mesh. That is why the two paths differ, and the difference is
+correct rather than an oversight.
 
-Option 3 matches what the guard is actually protecting against, but it is the
-most code and the rule is the hardest to state.
+Said out loud because the dangerous part is invisible. Re-minting from the same
+card produces the **same mesh id** — the id is a hash over the trusted keys —
+and a **new network key**, which is the membership. So the new mesh looks
+byte-identical in `shrooms admin show` and admits none of the devices the old
+one did. Minting over an existing authority now prints:
 
-Until this is decided: **removing a mesh and re-initing it under the same label
-gives you the same mesh id and a different network key.** With no members that
-is harmless, and it is a good way to re-run the flow. With members it silently
-orphans all of them.
+    Replacing /home/you/.config/shrooms/admin-kc.json.
+    The card's key is unchanged, so this mesh has the same id as the one
+    that file described — but a new network key, which is the membership.
+    Any device admitted to the old mesh is not a member of this one.
+
+Not `--force`: refusing would block `mesh remove` followed by `init --mesh`,
+which is the ordinary way to rebuild a mesh, and the case it would be
+protecting against — replacing a mesh this device is still on — is already
+refused upstream.
