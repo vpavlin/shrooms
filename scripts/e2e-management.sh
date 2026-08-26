@@ -314,12 +314,54 @@ scenario_a_running_daemon_answers() {
   kill "$pid" 2>/dev/null
 }
 
+# A card on a reader, if there is one.
+#
+# Skips itself otherwise, which is every CI runner and most machines: this needs
+# a USB reader, a card in it, and a binary built with -tags pcsc. It reads only
+# — SELECT and nothing else — because everything more interesting costs one of
+# five pairing slots that cannot be reclaimed without a factory reset, and a
+# test suite is not a thing that should be able to spend those.
+scenario_a_card_on_a_reader() {
+  local out; out=$("$BIN" keycard status 2>&1)
+  case "$out" in
+    *"no smartcard reader support"*)
+      note "built without -tags pcsc; skipping" ; return ;;
+    *"no smartcard reader found"*|*"No smart card inserted"*|*"no PC/SC service"*)
+      note "no reader or no card; skipping" ; return ;;
+  esac
+
+  expect "the card answers SELECT" "applet" "$out"
+  expect "and says whether it is initialised" "initialised" "$out"
+  expect "and how many pairing slots are left" "slots free" "$out"
+
+  # The capability list is what says whether a full card can be recovered at
+  # all, and it silently omitted factory-reset until 2026-08-26 — which is the
+  # single bit that matters when every slot is taken.
+  expect "and lists every capability, factory-reset included" "factory-reset" \
+    "$("$BIN" keycard status 2>&1)"
+
+  # The JSON is what the phone's setup flow branches on, so it has to parse.
+  local raw; raw=$("$BIN" keycard status --json 2>&1)
+  if python3 -c "
+import json,sys
+d=json.loads(sys.argv[1])
+for k in ('applet','initialised','hasKey','freeSlots','maxSlots','problem','summary'):
+    assert k in d, k
+" "$raw" 2>/dev/null; then
+    ok "the report parses, with every field the setup flow reads"
+  else
+    bad "the report is missing fields the setup flow branches on"
+    note "${raw:0:200}"
+  fi
+}
+
 # ---------------------------------------------------------------------------
 
 ALL=(admin_show enrol_a_second_device credential_reaches_the_mesh_entry
      credential_for_another_device
      rename_moves_nothing state_survives_a_power_cut
-     no_backup_refuses_rather_than_reminting a_running_daemon_answers)
+     no_backup_refuses_rather_than_reminting a_running_daemon_answers
+     a_card_on_a_reader)
 
 [ -x "$BIN" ] || { echo "no $BIN — run 'make shrooms'"; exit 1; }
 

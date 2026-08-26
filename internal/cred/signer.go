@@ -92,5 +92,22 @@ func SignRevocationWith(s Signer, r *Revocation) error {
 		return err
 	}
 	r.Sig, err = s.SignDigest(d)
-	return err
+	if err != nil {
+		return err
+	}
+	// Checked against the key that just signed it, the way IssueFor checks a
+	// credential. Issuing had this and revoking did not, which is the wrong way
+	// round: a credential that does not verify is a device that cannot join,
+	// noticed within minutes, while a revocation that does not verify is a
+	// device that was never removed — and nothing says so, because every peer
+	// simply discards it.
+	//
+	// Not academic. keycard-go returns a signature two bytes short of what the
+	// card sent, repaired in the card signer; anything that produces a
+	// malformed signature would otherwise reach the bus looking authoritative.
+	if !VerifyDigest(s.Public(), d, r.Sig) {
+		return errors.New("the signer produced a revocation that does not verify " +
+			"against its own key, so no peer would act on it")
+	}
+	return nil
 }
