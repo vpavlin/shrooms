@@ -12,6 +12,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/vpavlin/shrooms/internal/identity"
+	"github.com/vpavlin/shrooms/internal/keycard"
 	"github.com/vpavlin/shrooms/internal/mesh"
 	"github.com/vpavlin/shrooms/internal/state"
 )
@@ -51,6 +52,13 @@ func cmdInit(args []string) error {
 	if _, err := os.Stat(*cfgPath); err == nil {
 		return fmt.Errorf("%s already exists — remove it, use a different --config, "+
 			"or add a second mesh with --mesh <name>", *cfgPath)
+	}
+
+	// Same for a first mesh: nothing is written until the card answers.
+	if *card && !*noAdmin {
+		if err := cardIsReachable(*reader); err != nil {
+			return err
+		}
 	}
 
 	nk, err := identity.NewNetworkKey()
@@ -143,6 +151,18 @@ func addMesh(cfgPath, stateDir, adminDir, label string, relay, noAdmin bool, soc
 // Which is the case a person actually has: a machine already on a mesh or three,
 // making one more.
 func addMeshWith(cfgPath, stateDir, adminDir, label string, relay, noAdmin bool, sock string, card bool, reader string) error {
+	// The card, before a single byte is written.
+	//
+	// This used to mint the network key, write the mesh into the config, and
+	// only then reach for the reader — so a build with no reader support, or a
+	// card not on it, left a mesh in the config with no authority and no way to
+	// give it one. A half-made mesh nothing can finish, and no command to
+	// remove it.
+	if card && !noAdmin {
+		if err := cardIsReachable(reader); err != nil {
+			return err
+		}
+	}
 	cfg, err := state.LoadConfig(cfgPath)
 	if err != nil {
 		return fmt.Errorf("%w\n\n--mesh adds a network to an existing config; "+
@@ -596,5 +616,24 @@ func rotateKey(cfgPath, stateDir string, cfg state.Config, yes bool) error {
 	fmt.Printf("  shrooms join %s --name <NAME>\n", newKey)
 	fmt.Printf("  systemctl restart shrooms\n\n")
 	fmt.Printf("Then restart this one:  systemctl restart shrooms\n")
+	return nil
+}
+
+// cardIsReachable checks a card can be talked to, before anything commits to
+// there being one.
+//
+// Cheap and read-only: SELECT costs no pairing slot, no PIN attempt and no
+// password. The point is the order — minting a mesh writes a network key into a
+// config, and discovering afterwards that the reader is missing leaves a mesh
+// that cannot be finished and cannot be removed.
+func cardIsReachable(reader string) error {
+	t, done, err := keycard.OpenReader(reader)
+	if err != nil {
+		return err
+	}
+	defer done()
+	if _, err := keycard.Status(t); err != nil {
+		return fmt.Errorf("a card is on the reader but did not answer: %w", err)
+	}
 	return nil
 }

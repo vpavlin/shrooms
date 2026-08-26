@@ -55,6 +55,10 @@ check-lib:
 
 ## --- binaries ---
 
+## TAGS=pcsc adds smartcard reader support to `make shrooms` AND `make install`
+## — it was only wired into the first, so `make install TAGS=pcsc` installed a
+## binary without it and said so only when somebody reached for a card.
+##
 ## TAGS=pcsc adds smartcard reader support, for driving a Keycard from a machine
 ## with a reader rather than a phone. Off by default: it links libpcsclite
 ## through cgo, which the daemon and the container image have no use for, and
@@ -118,7 +122,7 @@ install: check-lib
 	install -d $(DESTDIR)$(LIBDIR) $(DESTDIR)$(PREFIX)/bin
 	install -m 0644 $(LD_LIB)/*.so $(DESTDIR)$(LIBDIR)/
 	@cp $(LD_LIB)/*.so.* $(DESTDIR)$(LIBDIR)/ 2>/dev/null || true
-	CGO_LDFLAGS="-L$(abspath $(LD_LIB)) -llogosdelivery -Wl,-rpath,$(LIBDIR)" 		$(GO) build -trimpath -ldflags "-X main.version=$(VERSION)" 		-o $(DESTDIR)$(PREFIX)/bin/shrooms ./cmd/shrooms
+	CGO_LDFLAGS="-L$(abspath $(LD_LIB)) -llogosdelivery -Wl,-rpath,$(LIBDIR)" 		$(GO) build -trimpath $(GOTAGS) -ldflags "-X main.version=$(VERSION)" 		-o $(DESTDIR)$(PREFIX)/bin/shrooms ./cmd/shrooms
 	install -d $(DESTDIR)/etc/systemd/system
 	install -m 0644 packaging/shrooms.service $(DESTDIR)/etc/systemd/system/
 	install -d $(DESTDIR)$(PREFIX)/share/bash-completion/completions
