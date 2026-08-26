@@ -1354,6 +1354,7 @@ short version:
 | [PROTOTYPE.md](PROTOTYPE.md) | build plan, milestones, what each proved |
 | [SECURITY.md](SECURITY.md) | what is protected, what leaks, what is deferred |
 | [docs/adr/](docs/adr/) | why each significant decision was made (26 records) |
+| [docs/a-mesh-on-a-card.md](docs/a-mesh-on-a-card.md) | putting a mesh's admin key on a Keycard, and admitting a phone to it |
 | [docs/mesh-labels-are-local.md](docs/mesh-labels-are-local.md) | why the same mesh has a different name on every device, and what that decides |
 | [docs/when-a-node-loses-its-state.md](docs/when-a-node-loses-its-state.md) | what is in the state directory, what survives a power cut, and how to enrol a device again |
 

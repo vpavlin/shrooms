@@ -994,6 +994,19 @@ func postToDaemon(sock, path, label string, body []byte) error {
 // which is what every node checks against, and the private half has never
 // existed outside the card except as that mnemonic.
 func mintCardAuthorityAt(dir, label, readerName string) error {
+	return mintCardAuthorityFull(dir, "", "", "", label, readerName)
+}
+
+// mintCardAuthorityFull is the same, and also writes the keys into a config and
+// enrols this device — everything `init --keycard` needs so that creating a
+// card-backed mesh is one command.
+//
+// Split the way mintAuthorityAt is: `admin init` mints an authority and nothing
+// else, `init` mints a mesh. Without this half, making a card-backed mesh meant
+// prepare, set-key, admin init, hand-editing admin_keys into the config, and
+// issuing yourself a credential — five steps and a text editor, for the thing
+// the card exists to make easy.
+func mintCardAuthorityFull(dir, cfgPath, stateDir, name, label, readerName string) error {
 	t, done, err := keycard.OpenReader(readerName)
 	if err != nil {
 		return err
@@ -1029,17 +1042,40 @@ func mintCardAuthorityAt(dir, label, readerName string) error {
 		return err
 	}
 
+	// Into the config and onto this device, when there is one to write to.
+	enrolled := false
+	if cfgPath != "" {
+		if err := addAdminKeysFor(cfgPath, label, af.Keys); err != nil {
+			return err
+		}
+		if netID, legacy, err := meshIdentityOf(cfgPath, label); err == nil {
+			if err := issueLocal(signer, auth, stateDir, name, netID, legacy, 1); err == nil {
+				enrolled = true
+			} else {
+				fmt.Printf("!! minted, but could not enrol this device: %v\n", err)
+			}
+		}
+	}
+
 	fmt.Printf("\nMinted the mesh authority from the card.\n\n")
 	fmt.Printf("  mesh id     %s\n", auth.ID())
 	fmt.Printf("  prefix      %s\n", auth.ID().Prefix())
 	fmt.Printf("  admin key   %s\n", path)
 	fmt.Printf("  authority   %x\n", signer.Public())
+	if enrolled {
+		fmt.Printf("  this device is enrolled\n")
+	}
 	fmt.Println()
 	fmt.Println("Nothing secret is stored here: that file holds the card's public half,")
 	fmt.Println("which is what every node checks against. The card signs, and its key")
 	fmt.Println("comes back only from the mnemonic it was initialised with.")
-	fmt.Println()
-	fmt.Println("Add it to a config with:")
-	fmt.Printf("  admin_keys = [%q]\n", b32.EncodeToString(signer.Public()))
+	// Only when there is no config to have written it into. Printing "add it to
+	// a config" after adding it to the config reads as something not having
+	// worked.
+	if cfgPath == "" {
+		fmt.Println()
+		fmt.Println("Add it to a mesh's config with:")
+		fmt.Printf("  admin_keys = [%q]\n", b32.EncodeToString(signer.Public()))
+	}
 	return nil
 }

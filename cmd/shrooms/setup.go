@@ -34,7 +34,11 @@ func cmdInit(args []string) error {
 	noAdmin := fs.Bool("no-admin", false, "do not mint an authority; membership is the network key alone")
 	sock := fs.String("socket", DefaultSocket, "control socket, so a waiting daemon picks this up")
 	label := fs.String("mesh", "", "create an additional mesh with this name (ADR-015)")
-	if err := fs.Parse(args); err != nil {
+	// The authority is a Keycard on a reader rather than a key in a file, so
+	// nothing secret is written here and admitting a device needs the card.
+	card := fs.Bool("keycard", false, "the authority is a Keycard on a reader")
+	reader := fs.String("reader", "", "which reader, when several are attached")
+	if err := fs.Parse(splitArgs(fs, args)); err != nil {
 		return err
 	}
 
@@ -64,6 +68,13 @@ func cmdInit(args []string) error {
 	// Minting the authority here rather than in a second command. Creating a
 	// mesh is one act, and asking for two was the first half of why enrolling a
 	// device had grown to six steps.
+	if *card {
+		if err := mintCardAuthorityFull(*adminDir, *cfgPath, *stateDir, *name, "", *reader); err != nil {
+			return err
+		}
+		reportNext(*sock)
+		return nil
+	}
 	if err := mintAuthority(*adminDir, *cfgPath, *stateDir, *name); err != nil {
 		return err
 	}
