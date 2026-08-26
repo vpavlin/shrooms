@@ -33,6 +33,8 @@ func cmdConfig(args []string) error {
 		return cmdConfigValidate(args[1:])
 	case "set":
 		return cmdConfigSet(args[1:])
+	case "flatten":
+		return cmdConfigFlatten(args[1:])
 	case "settings", "list":
 		// --names prints one setting per line and nothing else, for shell
 		// completion. Parsing the human list instead means completion breaks
@@ -60,6 +62,7 @@ func configUsage() {
   shrooms config validate           check the config the daemon would read
   shrooms config set <k> <v>        change one setting, through the daemon
   shrooms config settings           what can be set
+  shrooms config flatten            describe every mesh the same way
 
 `)
 }

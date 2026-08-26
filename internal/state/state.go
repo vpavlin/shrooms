@@ -397,22 +397,13 @@ func DefaultConfig() Config {
 
 // Validate checks a loaded config.
 func (c *Config) Validate() error {
-	// A config may describe its mesh either way round, so "no network_key" is
-	// only an error when there are no meshes at all.
-	if c.NetworkKey == "" && len(c.MeshSet) > 0 {
-		return c.validateMeshes()
-	}
-	if c.NetworkKey == "" {
-		return errors.New("network_key is not set — run `shrooms init` or `shrooms join`")
-	}
-	if c.NetworkKey == KeyPlaceholder {
-		// Named specifically: "invalid base32" would send someone hunting a
-		// corrupt file rather than the line they were told to edit.
-		return errors.New("network_key is still the placeholder — edit the config and paste the mesh key")
-	}
-	if _, err := identity.ParseNetworkKey(c.NetworkKey); err != nil {
-		return fmt.Errorf("network_key: %w", err)
-	}
+	// Device-level settings, checked whatever shape the meshes are in.
+	//
+	// These used to be skipped for a config whose meshes are all in
+	// mesh.<label> tables: the function returned validateMeshes() before
+	// reaching them. So the shape this codebase is moving TOWARDS was the one
+	// where an empty name, a zero port or an unset mode loaded cleanly and
+	// failed later, somewhere with less context to explain itself.
 	if c.Name == "" {
 		return errors.New("name is empty")
 	}
@@ -435,6 +426,22 @@ func (c *Config) Validate() error {
 	}
 	if c.Preset == "" && len(c.EntryNodes) == 0 {
 		return errors.New("preset is empty and no entry_nodes are set — the node would have nowhere to bootstrap from")
+	}
+
+	// A mesh, in either shape. "No network_key" is only an error when there
+	// are no meshes at all.
+	if c.NetworkKey == "" && len(c.MeshSet) == 0 {
+		return errors.New("network_key is not set — run `shrooms init` or `shrooms join`")
+	}
+	if c.NetworkKey == KeyPlaceholder {
+		// Named specifically: "invalid base32" would send someone hunting a
+		// corrupt file rather than the line they were told to edit.
+		return errors.New("network_key is still the placeholder — edit the config and paste the mesh key")
+	}
+	if c.NetworkKey != "" {
+		if _, err := identity.ParseNetworkKey(c.NetworkKey); err != nil {
+			return fmt.Errorf("network_key: %w", err)
+		}
 	}
 	// Rejected at load rather than at bind: a typo here otherwise surfaces as
 	// one service quietly missing from a mesh that is otherwise fine.
@@ -1087,11 +1094,33 @@ func WriteConfig(path string, c Config) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
 	}
+	out, err := RenderConfig(c)
+	if err != nil {
+		return err
+	}
+	// Atomically, because this file holds the network key: a write interrupted
+	// halfway leaves a config that fails Validate, and a config that fails
+	// Validate is a daemon that will not start. See writeFileAtomic.
+	if err := writeFileAtomic(path, []byte(out), 0o600); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+	return nil
+}
 
+// RenderConfig produces the file WriteConfig would write.
+//
+// Separate so a caller can show somebody the result before replacing their
+// only config — `shrooms config flatten --dry-run` is the reason it exists.
+func RenderConfig(c Config) (string, error) {
 	var b strings.Builder
 	b.WriteString("# logos-vpn configuration\n")
 	b.WriteString("# The network key is the only secret. Anyone holding it is a mesh member.\n\n")
-	fmt.Fprintf(&b, "network_key = %q\n", c.NetworkKey)
+	// Only when there is a top-level mesh. A flattened config describes every
+	// mesh under mesh.<label>, and writing network_key = "" would name a mesh
+	// with no key rather than no mesh.
+	if c.NetworkKey != "" {
+		fmt.Fprintf(&b, "network_key = %q\n", c.NetworkKey)
+	}
 	fmt.Fprintf(&b, "name        = %q\n", c.Name)
 	fmt.Fprintf(&b, "interface   = %q\n", c.Interface)
 	fmt.Fprintf(&b, "listen_port = %d\n", c.ListenPort)
@@ -1269,6 +1298,22 @@ func WriteConfig(path string, c Config) error {
 			if m.AnnounceBound {
 				fmt.Fprintf(&b, "mesh.%s.announce_bound = \"true\"\n", label)
 			}
+			// Inverted, matching how it is read: the useful default is on, so
+			// the line exists only to turn repeating off.
+			//
+			// Parsed since it was added and never written until now, so a node
+			// that set it per mesh lost the setting the next time anything
+			// rewrote the config — silently, and in the direction of more
+			// traffic on a link somebody was counting bytes on.
+			if m.QuietRevocations {
+				fmt.Fprintf(&b, "mesh.%s.announce_revocations = \"false\"\n", label)
+			}
+			// Which mesh holds the device keys from before multi-mesh. Stated
+			// rather than inferred from the config's shape, so the shape can
+			// stop mattering.
+			if m.InheritsIdentity {
+				fmt.Fprintf(&b, "mesh.%s.inherits_identity = \"true\"\n", label)
+			}
 		}
 	}
 
@@ -1292,11 +1337,5 @@ func WriteConfig(path string, c Config) error {
 		fmt.Fprintf(&b, "services = %s\n", formatArray(c.Services))
 	}
 
-	// Atomically, because this file holds the network key: a write interrupted
-	// halfway leaves a config that fails Validate, and a config that fails
-	// Validate is a daemon that will not start. See writeFileAtomic.
-	if err := writeFileAtomic(path, []byte(b.String()), 0o600); err != nil {
-		return fmt.Errorf("write config: %w", err)
-	}
-	return nil
+	return b.String(), nil
 }

@@ -334,6 +334,12 @@ func (c *Config) setMeshField(label, field, val string, line int) error {
 		m.AnnounceBound = unquote(val) == "true"
 	case "announce_revocations":
 		m.QuietRevocations = unquote(val) == "false"
+	case "inherits_identity":
+		// The mesh holding the device keys this node had before it was on more
+		// than one mesh. Written down rather than inferred from config shape;
+		// see the field's comment. A flattened config states it, an old-shaped
+		// one has it implied by the top-level fields.
+		m.InheritsIdentity = unquote(val) == "true"
 	case "iface":
 		m.Interface = unquote(val)
 	case "port":
@@ -384,4 +390,59 @@ func (c Config) ForMesh(m Mesh, port uint16) Config {
 	out.QuietRevocations = m.QuietRevocations
 	out.ListenPort = port
 	return out
+}
+
+// Flatten moves the top-level mesh into the mesh set, so that every mesh in the
+// config is described the same way.
+//
+// The config has carried two shapes since multi-mesh landed: one mesh in
+// top-level fields, the rest in mesh.<label> keys. Every piece of code that
+// touched a mesh had to know which it was holding, and the bugs that came out
+// of that are listed in docs/one-kind-of-mesh.md — they are all the same bug,
+// a per-mesh fact read from a place that predates there being more than one.
+//
+// Three things it is careful about:
+//
+// **Interface and port are pinned explicitly**, from the resolved values. After
+// this, no mesh's interface or port depends on its position in a sorted list,
+// so adding or removing a mesh cannot move another one.
+//
+// **InheritsIdentity is carried across.** The mesh that was in the top-level
+// fields is the one holding this device's pre-multi-mesh keys, and losing that
+// would re-derive them, change the node's overlay address and void its
+// credential. Implicit before, stated after.
+//
+// **The device's own settings stay where they are.** Name, base interface and
+// port, preset, mode and the relay pins are the device's, not any mesh's.
+//
+// Refuses rather than merges when the set already names a mesh "default": two
+// meshes would claim one label, and picking either silently is how a node ends
+// up on a network it was not asked to join.
+func (c Config) Flatten() (Config, error) {
+	if c.NetworkKey == "" || c.NetworkKey == KeyPlaceholder {
+		return c, nil // already flat, or prepared and holding no key yet
+	}
+	if _, clash := c.MeshSet[DefaultLabel]; clash {
+		return c, fmt.Errorf("this config has a top-level mesh and a mesh called %q; "+
+			"rename one with `shrooms mesh rename` before flattening, because "+
+			"they would become the same entry", DefaultLabel)
+	}
+
+	out := c
+	out.MeshSet = make(map[string]Mesh, len(c.MeshSet)+1)
+	for _, m := range c.Meshes() {
+		e := m
+		e.Label = "" // the map key carries it; a field beside it would drift
+		out.MeshSet[m.Label] = e
+	}
+
+	// Everything a mesh owns now lives on the mesh.
+	out.NetworkKey = ""
+	out.AdminKeys = nil
+	out.Relay = false
+	out.Services = nil
+	out.AnnounceServices = false
+	out.AnnounceBound = false
+	out.QuietRevocations = false
+	return out, nil
 }
