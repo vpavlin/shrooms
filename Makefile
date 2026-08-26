@@ -25,7 +25,7 @@ GO ?= go
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 .PHONY: all deps deps-basecamp check-lib shrooms wakuspike s3topics m0demo \
-        s1 s3 probe relay relay-image m0 m1 m2 m2-edm m3 m3-remote dist image push-image deps-release install uninstall build-all vet-cgo test test-unit e2e e2e-two-nodes e2e-keycard e2e-keycard-mesh android-deps android-core aar apk fdroid basecamp-check basecamp-lgx site-adrs fmt clean
+        s1 s3 probe relay relay-image m0 m1 m2 m2-edm m3 m3-remote dist image push-image deps-release install uninstall build-all vet-cgo vet-pcsc test test-unit e2e e2e-two-nodes e2e-keycard e2e-keycard-mesh android-deps android-core aar apk fdroid basecamp-check basecamp-lgx site-adrs fmt clean
 
 all: shrooms
 
@@ -346,6 +346,13 @@ build-all: check-lib
 ## misuse. That is the common idiom for FFI userdata and is safe here (a Handle
 ## is a map key, not an address), but silencing it properly means reshaping the
 ## bridge to pass uintptr_t. Left alone rather than blanket-disabling vet.
+## Vet the reader build. A separate target rather than a bare `go vet -tags
+## pcsc` in CI, because the cgo flags for liblogosdelivery are exported by this
+## file — running the command directly fails on a missing header, which is how
+## this was first shipped red.
+vet-pcsc: check-lib
+	$(GO) vet -tags pcsc ./cmd/shrooms/... ./internal/keycard/...
+
 vet-cgo: check-lib
 	$(GO) vet ./internal/mesh/... ./cmd/...
 

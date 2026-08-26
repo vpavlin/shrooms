@@ -64,7 +64,7 @@ jobs:
       - name: Build with reader support
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq libpcsclite-dev
-          go vet -tags pcsc ./cmd/shrooms/ ./internal/keycard/
+          make vet-pcsc
           make shrooms TAGS=pcsc
 
   # The management surface, end to end, against the real binary.
