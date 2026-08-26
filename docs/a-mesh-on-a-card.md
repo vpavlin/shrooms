@@ -147,3 +147,48 @@ free slots and no device holding one. The key returns only from the mnemonic.
 
 The second runs two nodes in containers and needs no root. Both pair at most
 once and reuse it, so running them does not eat the card.
+
+## Re-minting the same mesh — an open question
+
+**The two mint paths disagree about overwriting, and only one of them says so.**
+
+`admin init` (file keys) refuses when `admin-<label>.json` already exists:
+
+    admin-kc.json already exists; minting again would create a different mesh
+
+`admin init --keycard` has no such check and overwrites in place. That
+asymmetry was not decided; it is where the code stands as of 2026-08-26.
+
+**The argument for leaving it.** A mesh id is a hash over the trusted keys, so
+re-minting from the same card reproduces the same mesh id and the same
+`/48` prefix. For a file authority the private key is *in* the file and
+overwriting destroys it — unrecoverable, hence the guard. For a card the
+private key never left the card, so the file is derived data and rewriting it
+costs nothing.
+
+**The argument against.** The mesh id being identical is exactly what makes it
+dangerous. The **network key is freshly generated**, and the network key is the
+membership — so a re-mint produces a mesh that *looks* identical in
+`shrooms admin show`, same id, same prefix, same admin key, and which no
+previously-admitted device can join. Every credential issued under the old
+network key is orphaned, and nothing in the output distinguishes the new mesh
+from the old one.
+
+That failure is silent and arrives late: the phone that joined yesterday simply
+stops being a member, and the id it would be checked against still matches.
+
+**Options, undecided:**
+
+1. Leave it. Re-minting from a card is idempotent for identity, and the
+   operator is assumed to know the network key changes.
+2. Guard it like the file path, with `--force` to override.
+3. Guard it only when the config still names the mesh — the case where a
+   member could exist — and allow it freely once the mesh has been removed.
+
+Option 3 matches what the guard is actually protecting against, but it is the
+most code and the rule is the hardest to state.
+
+Until this is decided: **removing a mesh and re-initing it under the same label
+gives you the same mesh id and a different network key.** With no members that
+is harmless, and it is a good way to re-run the flow. With members it silently
+orphans all of them.
