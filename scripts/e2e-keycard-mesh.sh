@@ -105,41 +105,33 @@ else
 fi
 
 # --- mint from the card ---------------------------------------------------
-KEY=$(python3 -c "
-import base64,os
-print(base64.b32encode(os.urandom(32)).decode().rstrip('='))")
-a shrooms prepare --name alpha --port 51820 >/dev/null 2>&1
-printf '%s\n' "$KEY" | a shrooms set-key >/dev/null 2>&1
-
-minted=$(printf '%s\n' "$PIN" | a shrooms admin init --keycard 2>&1)
-AUTHKEY=$(sed -n 's/.*admin_keys = \["\(.*\)"\].*/\1/p' <<<"$minted" | head -1)
-if [ -n "$AUTHKEY" ]; then
-  ok "minted a mesh authority from the card"
+#
+# One command, and deliberately the one the guide tells people to run. This used
+# to assemble the same mesh from primitives — prepare, set-key, admin init,
+# append admin_keys, issue a credential to itself, install it — which tested a
+# path nobody would follow and left the documented one uncovered.
+minted=$(printf '%s\n' "$PIN" | a shrooms init --keycard --name alpha --port 51820 2>&1)
+if grep -q "Minted the mesh authority from the card" <<<"$minted"; then
+  ok "minted a card-backed mesh with one command"
 else
-  bad "could not mint"; note "$(tail -3 <<<"$minted" | tr '\n' ' ')"; exit 1
+  bad "init --keycard failed"; note "$(tail -3 <<<"$minted" | tr '\n' ' ')"; exit 1
 fi
 
-# Written from INSIDE the container. The volume's files are owned by the
-# container's root, which in a rootless runtime is a subuid the host user is
-# not — so appending from here failed silently, the mesh got no admin_keys at
-# all, and half of what followed passed by having nothing to check.
-a sh -c "printf 'admin_keys = [\"%s\"]\ndelivery_port = 31820\n' '$AUTHKEY' >> /etc/shrooms/config.toml"
 if a grep -q "^admin_keys" /etc/shrooms/config.toml; then
   ok "the card's key is the mesh's authority in the config"
 else
   bad "admin_keys never reached the config, so this mesh has no authority"; exit 1
 fi
 
-keys=$(a shrooms keys 2>&1)
-AD=$(sed -n 's/^device  *//p' <<<"$keys"|head -1)
-AW=$(sed -n 's/^tunnel  *//p' <<<"$keys"|head -1)
-AS=$(sed -n 's/^sealing  *//p' <<<"$keys"|head -1)
-blob=$(printf '%s\n' "$PIN" | a shrooms admin issue --name alpha \
-    --device "$AD" --wg "$AW" --seal "$AS" --write=false 2>&1 |
-    sed -n 's/.*credential set //p' | tr -d ' \r\n')
-if [ -n "$blob" ]; then ok "the card issued node A its own credential"; else
-  bad "no credential for node A"; exit 1; fi
-a shrooms credential set "$blob" >/dev/null 2>&1
+# `init` says so, and this is the half that matters: the card had to sign a
+# credential for this device before it could be a member of its own mesh.
+if grep -q "this device is enrolled" <<<"$minted"; then
+  ok "the card enrolled this device as part of minting"
+else
+  bad "minted, but this device was not enrolled"
+fi
+
+a sh -c "printf 'delivery_port = 31820\n' >> /etc/shrooms/config.toml"
 
 # --- node A's daemon ------------------------------------------------------
 docker exec -d shrooms-card-a sh -c 'shrooms daemon -v >/tmp/daemon.log 2>&1'
