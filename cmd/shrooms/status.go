@@ -472,7 +472,36 @@ func cmdPaths(args []string) error {
 	// is visible nowhere else. Skipped entirely when the daemon predates the
 	// field, rather than reported as "nothing" — that would be a false
 	// diagnosis pointing at the opposite of the real problem.
-	if st.Announced != nil {
+	// Per mesh when the daemon reports it that way. A node with four meshes
+	// listens on four ports, and printing one mesh's addresses above peers
+	// from all of them invites reading the wrong port as this mesh's — which
+	// is not a cosmetic error: it turns "nothing can dial me on this mesh"
+	// into "we announce an address", the opposite diagnosis.
+	perMesh := false
+	for _, m := range st.Meshes {
+		if len(m.Announced) > 0 {
+			perMesh = true
+			break
+		}
+	}
+	if perMesh {
+		fmt.Printf("we announce (where peers are told to reach us):\n")
+		for _, m := range st.Meshes {
+			fmt.Printf("  %s:\n", m.Label)
+			if len(m.Announced) == 0 {
+				fmt.Printf("    nothing — no peer can dial this node on this mesh\n")
+				fmt.Printf("    it needs a peer that can reach it first: a relay, or one\n")
+				fmt.Printf("    with a public address\n")
+				continue
+			}
+			for _, a := range m.Announced {
+				fmt.Printf("    %s\n", a)
+			}
+		}
+		fmt.Println()
+	} else if st.Announced != nil {
+		// A daemon that predates the per-mesh field. Labelled, so it is not
+		// read as applying to every mesh listed below.
 		fmt.Printf("we announce (where peers are told to reach us):\n")
 		if len(*st.Announced) == 0 {
 			fmt.Printf("  nothing — no peer can dial this node\n")
@@ -481,6 +510,10 @@ func cmdPaths(args []string) error {
 		}
 		for _, a := range *st.Announced {
 			fmt.Printf("  %s\n", a)
+		}
+		if len(st.Meshes) > 1 {
+			fmt.Printf("  (this daemon reports one mesh's addresses, not all %d —\n", len(st.Meshes))
+			fmt.Printf("   restart it into a newer build for the rest)\n")
 		}
 		fmt.Println()
 	}

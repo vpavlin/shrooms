@@ -403,6 +403,15 @@ type meshStatus struct {
 	// never appear in the roster: they hold no network key and never announce.
 	BlindRelays int `json:"blind_relays,omitempty"`
 
+	// Announced is where peers are told to reach this node ON THIS MESH.
+	//
+	// Per mesh because it is a per-mesh fact and was reported as a node-wide
+	// one: each mesh listens on its own port, so a single top-level field is
+	// right for whichever mesh happened to fill it and wrong for the rest.
+	// Reading one mesh's port as another's turns "nobody can dial me here"
+	// into "we announce an address", which is the opposite diagnosis.
+	Announced []string `json:"announced,omitempty"`
+
 	// RelayUsing is the relay currently carrying traffic, empty when none is.
 	RelayUsing string `json:"relay_using,omitempty"`
 	// RelayUsingBlind says that relay is one somebody else runs.
@@ -1261,6 +1270,7 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 				}
 			}
 			_, ms.BlindRelays = in.mesh.ConfiguredRelays()
+			ms.Announced = in.mesh.Announced()
 			if at, blind, ok := in.mesh.RelayInUse(); ok {
 				ms.RelayUsing, ms.RelayUsingBlind = at.String(), blind
 			}
