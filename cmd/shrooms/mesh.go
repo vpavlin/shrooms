@@ -353,6 +353,7 @@ func pinInterfacesAndPorts(cfg *state.Config) {
 func cmdMeshRemove(args []string) error {
 	fs := flag.NewFlagSet("mesh remove", flag.ExitOnError)
 	cfgPath := fs.String("config", state.DefaultConfigPath, "config file")
+	sock := fs.String("socket", DefaultSocket, "control socket, so a running daemon drops the interface")
 	yes := fs.Bool("yes", false, "do not ask")
 	if err := fs.Parse(splitArgs(fs, args)); err != nil {
 		return err
@@ -405,6 +406,7 @@ func cmdMeshRemove(args []string) error {
 	// Before the set changes, or every mesh after this one in label order takes
 	// a different interface and a different port.
 	pinInterfacesAndPorts(&cfg)
+	iface := cfg.MeshSet[label].Interface
 	delete(cfg.MeshSet, label)
 
 	if err := cfg.Validate(); err != nil {
@@ -413,6 +415,34 @@ func cmdMeshRemove(args []string) error {
 	if err := state.WriteConfig(*cfgPath, cfg); err != nil {
 		return err
 	}
+
+	// The same treatment init got, for the same reason and the opposite
+	// direction: a daemon reads its mesh set at startup, so removing an entry
+	// leaves the interface up and the mesh running until something restarts it.
+	// Telling somebody to do that by hand is how `init` used to end, and it
+	// produced a config and a daemon that disagreed about which meshes exist.
+	//
+	// Only when one is actually running — writing a config on a machine with no
+	// daemon is normal, and this is a convenience rather than a step.
+	if _, err := fetchStatus(*sock); err == nil {
+		if askRestart(*sock) {
+			fmt.Printf("\nRemoved, and the daemon is restarting to drop %s.\n", ifaceName(iface))
+			fmt.Printf("The other meshes reconnect in a few seconds.\n")
+			return nil
+		}
+		fmt.Printf("\nRemoved, but the daemon would not restart itself, so %s is\n", ifaceName(iface))
+		fmt.Printf("still up. Restart it:\n  sudo systemctl restart shrooms\n")
+		return nil
+	}
 	fmt.Printf("\nRemoved. Restart the daemon to drop the interface.\n")
 	return nil
+}
+
+// ifaceName describes the interface a removed mesh was using, for a device that
+// never pinned one and has nothing to name.
+func ifaceName(iface string) string {
+	if iface == "" {
+		return "its interface"
+	}
+	return iface
 }
