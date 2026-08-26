@@ -55,8 +55,15 @@ check-lib:
 
 ## --- binaries ---
 
+## TAGS=pcsc adds smartcard reader support, for driving a Keycard from a machine
+## with a reader rather than a phone. Off by default: it links libpcsclite
+## through cgo, which the daemon and the container image have no use for, and
+## which would otherwise be a build dependency for everyone.
+TAGS ?=
+GOTAGS = $(if $(TAGS),-tags $(TAGS),)
+
 shrooms: check-lib
-	$(GO) build -trimpath -ldflags "-X main.version=$(VERSION)" -o bin/shrooms ./cmd/shrooms
+	$(GO) build -trimpath $(GOTAGS) -ldflags "-X main.version=$(VERSION)" -o bin/shrooms ./cmd/shrooms
 
 wakuspike: check-lib
 	$(GO) build -o bin/wakuspike ./cmd/wakuspike

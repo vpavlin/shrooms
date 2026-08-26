@@ -6,6 +6,7 @@
 //	shrooms daemon                 run the mesh
 //	shrooms status                 roster and tunnel state
 //	shrooms key show               print the network key
+//	shrooms keycard status         what a card on the reader is
 package main
 
 import (
@@ -63,6 +64,8 @@ func main() {
 		err = cmdKeys(os.Args[2:])
 	case "credential":
 		err = cmdCredential(os.Args[2:])
+	case "keycard":
+		err = cmdKeycard(os.Args[2:])
 	case "admin":
 		err = cmdAdmin(os.Args[2:])
 	case "set-key":

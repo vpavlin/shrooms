@@ -13,6 +13,7 @@ require (
 require (
 	github.com/btcsuite/btcd/btcec/v2 v2.3.6 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 // indirect
+	github.com/ebfe/scard v0.0.0-20241214075232-7af069cabc25 // indirect
 	github.com/ethereum/go-ethereum v1.10.26 // indirect
 	github.com/go-stack/stack v1.8.1 // indirect
 	github.com/google/btree v1.1.2 // indirect
