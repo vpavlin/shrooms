@@ -110,3 +110,80 @@ func TestACredentialForAnotherDeviceIsRefused(t *testing.T) {
 		t.Error("it was stored anyway")
 	}
 }
+
+// A renewed credential must reach the single-mesh field, not only the mesh
+// entry — because that field is what `shrooms keys` reports, and a device whose
+// credential was renewed went on reporting the one it had stopped using.
+//
+// The mesh holds a VIEW rather than the owning State whenever its entry was
+// decoded from disk rather than created this run, which is every restart. A
+// view's Save writes the mesh entry alone.
+func TestARenewedCredentialReachesTheSingleMeshField(t *testing.T) {
+	dir := t.TempDir()
+	st, err := LoadOrCreateState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetCredential(st.Identity.DevicePub, []byte("first")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.MeshState("aaaaaaaaaaaaa", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reopened: this is what makes the mesh hold a view, and what made the
+	// pointer comparison this used to rely on silently false.
+	again, err := LoadOrCreateState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ms, err := again.MeshState("aaaaaaaaaaaaa", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := again.View(ms)
+
+	if err := view.SetOwnCredential([]byte("renewed")); err != nil {
+		t.Fatal(err)
+	}
+	if string(again.Credential) != "renewed" {
+		t.Errorf("the single-mesh field is %q; `shrooms keys` would report the old one",
+			again.Credential)
+	}
+
+	back, err := LoadOrCreateState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(back.Credential) != "renewed" {
+		t.Errorf("after a restart the single-mesh field is %q", back.Credential)
+	}
+}
+
+// An additional mesh joined by invite adopts the base identity (ADR-017), so
+// its keys match the first mesh's — and it must NOT overwrite the first mesh's
+// credential, which is why this is not a comparison of identities.
+func TestAnAdditionalMeshDoesNotTouchTheFirstOnesCredential(t *testing.T) {
+	dir := t.TempDir()
+	st, err := LoadOrCreateState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetCredential(st.Identity.DevicePub, []byte("the first mesh")); err != nil {
+		t.Fatal(err)
+	}
+	// legacy=false: another mesh, whatever identity it ends up adopting.
+	ms, err := st.MeshState("bbbbbbbbbbbbb", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.View(ms).SetOwnCredential([]byte("the second mesh")); err != nil {
+		t.Fatal(err)
+	}
+	if string(st.Credential) != "the first mesh" {
+		t.Errorf("a second mesh overwrote the first's credential: %q", st.Credential)
+	}
+}

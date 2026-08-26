@@ -237,11 +237,45 @@ else
 fi
 
 # --- renew: reads the roster from a running daemon, then signs ------------
+# The serial before, so the check is that a credential was REPLACED rather than
+# that renew printed something. "left" appears in the line for a member it
+# skipped, so grepping for it passed whether or not anything happened.
+# From the credential LINE, not from anywhere the word appears. `shrooms keys`
+# also prints an enrolment hint containing "--serial 1", and a naive match takes
+# that — so BEFORE and AFTER were both the example text, and the assertion
+# compared it to itself and called a working renewal broken.
+serial_of() {
+  b shrooms keys 2>&1 | grep '^credential ' | sed -n 's/.*serial \([0-9]*\).*/\1/p' | head -1
+}
+BEFORE=$(serial_of)
+[ -n "$BEFORE" ] && ok "node B has a credential with a serial ($BEFORE)" ||
+  bad "node B has no serial to renew"
+
 renewed=$(printf '%s\n' "$PIN" | a shrooms admin renew --all 2>&1)
-if grep -qiE "renewed|left|unknown expiry" <<<"$renewed"; then
-  ok "the card renewed the mesh's credentials"
+COUNT=$(sed -n 's/^Renewed \([0-9]*\),.*/\1/p' <<<"$renewed" | head -1)
+if [ -n "$COUNT" ] && [ "$COUNT" -gt 0 ]; then
+  ok "the card renewed $COUNT credential(s)"
 else
-  bad "renew failed"; note "$(tail -3 <<<"$renewed" | tr '\n' ' ')"
+  bad "renew reported nothing renewed"
+  note "$(grep -vE '^(INF|DBG)' <<<"$renewed" | tail -4 | tr '\n' ' ')"
+fi
+
+# And that it reached the device. A renewal is published on the mesh and
+# travels to the device it names, so this is the half that proves the loop
+# closed rather than that a signature was produced.
+n=0; AFTER=$BEFORE
+while [ "$n" -lt 60 ]; do
+  AFTER=$(serial_of)
+  [ -n "$AFTER" ] && [ "$AFTER" != "$BEFORE" ] && break
+  sleep 3; n=$((n+3))
+done
+if [ -n "$AFTER" ] && [ "$AFTER" != "$BEFORE" ]; then
+  ok "node B holds the renewed credential (serial $BEFORE -> $AFTER, ${n}s)"
+else
+  bad "node B still holds serial $BEFORE ${n}s after the renewal"
+  note "renew said:"; grep -vE '^(INF|DBG)' <<<"$renewed" | tail -6 | sed 's/^/         /'
+  note "A on granting:"; a sh -c 'grep -iE "grant|renew" /tmp/daemon.log | tail -3' 2>/dev/null | sed 's/^/         /'
+  note "B on granting:"; b sh -c 'grep -iE "grant|credential|refus" /tmp/daemon.log | tail -4' 2>/dev/null | sed 's/^/         /'
 fi
 
 # --- revoke: enforced by the other node ----------------------------------

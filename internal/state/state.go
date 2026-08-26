@@ -508,6 +508,24 @@ func (c *Config) ServiceSpecs() ([]service.Spec, error) {
 	return service.ParseSpecs(c.Services)
 }
 
+// SetOwnCredential stores a credential this mesh received for itself.
+//
+// The mesh may hold a view rather than the owning State — it does whenever the
+// entry was decoded from disk rather than created this run — and a view's Save
+// writes the mesh entry and nothing else. So assigning Credential and saving
+// updated the mesh and left the single-mesh field showing the credential the
+// device had stopped using, which is what `shrooms keys` reads.
+//
+// Renewal made that visible: the daemon logged "credential renewed", announced
+// with the new one, and `keys` went on reporting the old serial indefinitely.
+func (s *State) SetOwnCredential(raw []byte) error {
+	s.Credential = append([]byte(nil), raw...)
+	if s.owner != nil && s.original {
+		s.owner.Credential = append([]byte(nil), raw...)
+	}
+	return s.Save()
+}
+
 // SetCredential stores this device's membership and persists it.
 //
 // devPub is the device the credential names, and it decides where this lands.
@@ -620,6 +638,10 @@ type State struct {
 	// owner and view are set on a View: the state this one is a window onto,
 	// and the entry it stands for. Saving a view writes through to the owner,
 	// so one mesh cannot overwrite another's.
+	// original says this view is the device's first mesh, so the single-mesh
+	// fields mirror it. False on the owner itself, which IS those fields.
+	original bool
+
 	owner *State
 	view  *MeshState
 

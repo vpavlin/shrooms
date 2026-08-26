@@ -1285,8 +1285,7 @@ func (m *Mesh) handleGrant(raw []byte, now time.Time) error {
 	if cur, err := cred.UnmarshalCredential(m.st.Credential); err == nil && cur.NotAfter >= c.NotAfter {
 		return nil
 	}
-	m.st.Credential = raw
-	if err := m.st.Save(); err != nil {
+	if err := m.st.SetOwnCredential(raw); err != nil {
 		return fmt.Errorf("store the renewed credential: %w", err)
 	}
 	m.log.Info("credential renewed",

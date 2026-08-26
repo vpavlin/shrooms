@@ -23,6 +23,12 @@ import (
 type MeshState struct {
 	Identity *identity.Identity
 
+	// original marks the mesh the config names with its top-level network_key,
+	// whose credential the single-mesh field mirrors. Set by MeshState from the
+	// caller's `legacy`, not persisted: it is a fact about the config, and the
+	// config is read every start.
+	original bool
+
 	// Seq is the announce sequence number for this mesh.
 	Seq uint64
 
@@ -85,6 +91,21 @@ type ServiceClaim struct {
 // a node that regenerated its identity would change its overlay address and
 // WireGuard public key, breaking every established tunnel and appearing to its
 // peers as a stranger while the old device lingered until it timed out.
+// original marks the mesh written as the config's top-level network_key: the
+// one this device was built around, whose credential the single-mesh field
+// mirrors.
+//
+// Not derived from comparing identities. That was a POINTER comparison, true
+// only within the process that created the entry — after a restart decodeMeshes
+// builds a fresh Identity and it silently became false, so the single-mesh field
+// stopped being kept in step and `shrooms keys` reported a credential the device
+// had stopped using. Nor is a value comparison right: an additional mesh joined
+// by invite adopts the base identity too (ADR-017), so the keys match for a mesh
+// that must NOT touch the first one's credential.
+//
+// The caller knows, and passes it as `legacy`. This is where that answer is kept
+// rather than re-derived from something that looks like it.
+
 func (s *State) MeshState(networkID string, legacy bool) (*MeshState, error) {
 	if networkID == "" {
 		return nil, errors.New("a mesh with no network id")
@@ -93,6 +114,7 @@ func (s *State) MeshState(networkID string, legacy bool) (*MeshState, error) {
 		s.Meshes = map[string]*MeshState{}
 	}
 	if ms, ok := s.Meshes[networkID]; ok {
+		ms.original = legacy
 		return ms, nil
 	}
 
@@ -116,6 +138,7 @@ func (s *State) MeshState(networkID string, legacy bool) (*MeshState, error) {
 		}
 		ms = &MeshState{Identity: id}
 	}
+	ms.original = legacy
 	s.Meshes[networkID] = ms
 	return ms, s.Save()
 }
@@ -159,7 +182,7 @@ func (s *State) SetMeshCredentialFor(networkID string, legacy bool, raw []byte) 
 	// see ADR-017 — then overwrote the first mesh's credential with its own.
 	// The first mesh would go on announcing a credential for a different mesh,
 	// which its peers correctly refuse.
-	if legacy && s.Identity != nil && ms.Identity == s.Identity {
+	if ms.original && s.Identity != nil {
 		s.Credential = ms.Credential
 	}
 	return s.Save()
@@ -317,6 +340,7 @@ func decodeMeshes(in map[string]meshStateFile) (map[string]*MeshState, error) {
 // rather than a copy.
 func (s *State) View(ms *MeshState) *State {
 	return &State{
+		original: ms.original,
 		dir:      s.dir,
 		Identity: ms.Identity,
 		Seq:      ms.Seq,
