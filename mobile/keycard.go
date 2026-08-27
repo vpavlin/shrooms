@@ -54,8 +54,12 @@ func CardSelfTest(t CardTransport, configDir, pin string) (string, error) {
 }
 
 // CardUnpairOthers frees every pairing slot except this phone's.
-func CardUnpairOthers(t CardTransport, configDir string) (string, error) {
-	return keycard.UnpairOthers(t, configDir)
+//
+// Takes the PIN because UNPAIR needs one verified. Without it the card refuses
+// every UNPAIR and the underlying library discards the refusal, so this used to
+// report success and free nothing.
+func CardUnpairOthers(t CardTransport, configDir, pin string) (string, error) {
+	return keycard.UnpairOthers(t, configDir, pin)
 }
 
 // CardStatus reports what state a card is in, without pairing or a PIN.
