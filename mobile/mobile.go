@@ -144,10 +144,24 @@ func Init(name, configDir string) (string, error) {
 	return cfg.NetworkKey, nil
 }
 
-// Join configures this device as a member of an existing mesh.
+// Join is gone: a raw network key no longer makes this device a member.
+//
+// It was the prototype, and the desktop lost the same thing on 2026-08-27 —
+// `shrooms join <KEY>` and `shrooms set-key`. The key WAS the membership, so
+// everybody holding it was a member and nobody could be removed without
+// changing it for everybody.
+//
+// JoinWithInvite is the way in. It carries the same key sealed to this one
+// device for fifteen minutes, and what makes the device a member afterwards is
+// an admin-signed credential that can be revoked (ADR-017, ADR-018).
+//
+// Kept as a stub rather than deleted, because gomobile bindings are consumed by
+// an app that may be older than the library: an app still calling this gets a
+// sentence it can show instead of a method that is not there.
 func Join(key, name, configDir string) error {
-	_, _, err := setup(configDir, name, key)
-	return err
+	return errors.New("joining with a network key has been removed — scan or " +
+		"paste an invite instead. Ask someone on the mesh to run `shrooms " +
+		"invite`, or use the invite button in their app")
 }
 
 // JoinWithInvite redeems an invite token (ADR-017): the phone's way onto a mesh
@@ -1197,23 +1211,17 @@ func StatusJSON() string {
 	return string(b)
 }
 
-// InviteKey extracts a network key from a scanned QR code or pasted text.
+// InviteKey is gone with Join.
 //
-// Parsing lives here rather than in Kotlin so the invitation format has one
-// implementation: the CLI writes it, the app reads it, and neither can drift.
-// Accepts a full invite URI or a bare key, because people paste bare keys.
+// It read a bare network key, or a legacy invite:// URI — which carried the key
+// directly rather than sealing it to a device, and so was the same prototype
+// path wearing a URI. InviteToken is what a scan should go through now.
+//
+// A stub for the same reason Join is one.
 func InviteKey(scanned string) (string, error) {
-	key, _, err := state.ParseInvite(scanned)
-	return key, err
-}
-
-// InviteMeshName returns the mesh name hint from an invitation, or "".
-func InviteMeshName(scanned string) string {
-	_, name, err := state.ParseInvite(scanned)
-	if err != nil {
-		return ""
-	}
-	return name
+	return "", errors.New("that is a network key, not an invite. A key no longer " +
+		"admits a device: ask someone on the mesh to run `shrooms invite` and " +
+		"scan the code it prints")
 }
 
 // meshIdle reports whether no mesh session is running.

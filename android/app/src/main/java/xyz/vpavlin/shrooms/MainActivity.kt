@@ -239,9 +239,11 @@ private fun JoinScreen(dir: String, onScan: ((String) -> Unit) -> Unit, onDone: 
     var waiting by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
-    // An invite token and a network key are told apart by Go, not by asking:
-    // one is 26 characters and the other 52, so a single field can take either
-    // and nobody has to know which they were handed.
+    // An invite, and only an invite. A network key used to be accepted here
+    // and made this device a member on the strength of holding it — the
+    // prototype, removed on 2026-08-27 along with `shrooms join <KEY>`. What
+    // admits a device now is an admin-signed credential the invite carries,
+    // which can be revoked.
     val isInvite = key.isNotEmpty() && runCatching { Mobile.inviteToken(key) }.getOrNull()
         .orEmpty().isNotEmpty()
 
@@ -259,7 +261,7 @@ private fun JoinScreen(dir: String, onScan: ((String) -> Unit) -> Unit, onDone: 
         Text(buildLabel(), style = MaterialTheme.typography.bodySmall, color = Palette.Ash)
 
         Spacer(Modifier.height(40.dp))
-        Label(if (isInvite) "INVITE" else "INVITE OR NETWORK KEY")
+        Label("INVITE")
         Spacer(Modifier.height(8.dp))
         KeyField(key) { key = it.trim() }
 
@@ -275,9 +277,10 @@ private fun JoinScreen(dir: String, onScan: ((String) -> Unit) -> Unit, onDone: 
                 if (token.isNotEmpty()) {
                     key = token
                 } else {
-                    runCatching { Mobile.inviteKey(scanned) }
-                        .onSuccess { key = it }
-                        .onFailure { error = it.message ?: "that is not a mesh invitation" }
+                    // Including a network key, which this used to accept. Say
+                    // what to ask for rather than "not an invitation".
+                    error = "That is not an invite. Ask someone on the mesh to " +
+                        "run `shrooms invite` and scan the code it prints."
                 }
             }
         }
@@ -318,9 +321,11 @@ private fun JoinScreen(dir: String, onScan: ((String) -> Unit) -> Unit, onDone: 
                         .onFailure { error = it.message ?: "could not join"; busy = false }
                 }
             } else {
-                runCatching { Mobile.join(key, name, dir) }
-                    .onSuccess { onDone() }
-                    .onFailure { error = it.message ?: "could not join"; busy = false }
+                // Not a token, so there is nothing to redeem. The button is
+                // enabled on any non-empty field so this is reachable by typing.
+                error = "That is not an invite. Ask someone on the mesh to run " +
+                    "`shrooms invite`."
+                busy = false
             }
         }
 
