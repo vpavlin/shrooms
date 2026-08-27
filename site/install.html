@@ -206,7 +206,7 @@ and back here:
 <pre><code><span class="cmd">git clone https://github.com/vpavlin/shrooms &amp;&amp; cd shrooms</span>
 <span class="cmd">make deps-release       <span class="c"># prebuilt liblogosdelivery; there is no distribution of it</span></span>
 <span class="cmd">make shrooms</span>
-<span class="cmd">sudo make install       <span class="c"># binary, libraries, systemd unit, bash completion</span></code></pre></span>
+<span class="cmd">sudo make install       <span class="c"># binary, libraries, systemd unit, bash completion</span></span></code></pre>
 
 <p>
     <code>make install</code> relinks the binary with an rpath pointing at
@@ -290,7 +290,7 @@ and back here:
 <pre><code><span class="cmd">make apk                       <span class="c"># android/shrooms.apk, debug-signed</span></span>
 <span class="cmd">adb install -r android/shrooms.apk</span>
 
-<span class="cmd">make fdroid                    <span class="c"># build unsigned, sign on the repo host, publish</span></code></pre></span>
+<span class="cmd">make fdroid                    <span class="c"># build unsigned, sign on the repo host, publish</span></span></code></pre>
 
 <p>
     <code>make apk</code> needs the Android SDK and an NDK; it builds the
@@ -416,7 +416,7 @@ and back here:
 
 <pre><code><span class="cmd">make basecamp-check     <span class="c"># load the real view offscreen against a fixture</span></span>
 <span class="cmd">make basecamp-lgx       <span class="c"># build the installable package</span></span>
-<span class="cmd">make basecamp-publish   <span class="c"># cut a GitHub release carrying it</span></code></pre></span>
+<span class="cmd">make basecamp-publish   <span class="c"># cut a GitHub release carrying it</span></span></code></pre>
 
 <p>
     <code>basecamp-lgx</code> builds the portable variant through nix, because
@@ -518,7 +518,7 @@ A firewall is running here. Peers reach this node on UDP 51820, so open it:
 </p>
 
 <pre><code><span class="cmd">./scripts/deploy.sh root@VPS_IP --relay --name vps --key &lt;NETWORK-KEY&gt;</span>
-<span class="cmd">./scripts/deploy.sh root@VPS_IP --init --relay --name vps   <span class="c"># or create the mesh</span></code></pre></span>
+<span class="cmd">./scripts/deploy.sh root@VPS_IP --init --relay --name vps   <span class="c"># or create the mesh</span></span></code></pre>
 
 <p>
     With <code>--init</code> the config is generated <em>locally</em>, by your
@@ -580,7 +580,7 @@ Store it away from this machine. A password manager, a Keycard, paper.</code></p
     Then start the daemon:
 </p>
 
-<pre><code><span class="cmd">sudo systemctl enable --now shrooms</code></pre></span>
+<pre><code><span class="cmd">sudo systemctl enable --now shrooms</span></code></pre>
 
 <p>
     The container installer takes the same verb —
@@ -740,7 +740,7 @@ NAME         OVERLAY IP                              ANNOUNCE  TUNNEL  ENDPOINT 
 <span class="p">phone</span>        fd48:d107:3fce:9d1c:7b2e:41a:cc90:1f22   online    up 1m   relay:…@203.0.113.4:51820  1.1K/900    24s
 
 <span class="cmd">ping6 vps.mesh</span>
-<span class="cmd">ssh vps.mesh</code></pre></span>
+<span class="cmd">ssh vps.mesh</span></code></pre>
 
 <p>
     A healthy roster has both columns and they mean different things.

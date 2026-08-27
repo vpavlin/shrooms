@@ -286,7 +286,15 @@ def parse_list(lines, i, seen):
         # Tight by default: one paragraph in an item is just the text, and so
         # is the line above a nested list. Only an item that genuinely holds
         # several blocks gets <p> around them.
-        one = re.fullmatch(r"<p>(.*)</p>", rendered, re.S)
+        # The group must not span a paragraph boundary. With a greedy .* and
+        # re.S this also matched an item holding SEVERAL paragraphs —
+        # "<p>a</p>\n\n<p>b</p>" captured "a</p>\n\n<p>b" — so the shortcut
+        # fired on exactly the items it was meant to skip and emitted
+        # "<li>a</p>\n\n<p>b</li>", closing the item with the wrong tag.
+        #
+        # ADR-022 has the only such item today: a bullet whose body runs to a
+        # second indented paragraph.
+        one = re.fullmatch(r"<p>((?:(?!</p>).)*)</p>", rendered, re.S)
         if one:
             rendered = one.group(1)
         else:
