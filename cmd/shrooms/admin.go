@@ -84,6 +84,14 @@ func accountFor(dir, label string) uint32 {
 // Max plus one rather than the first gap: a gap means a mesh that was removed,
 // and reusing its account would mint a mesh with the same admin key and so the
 // same mesh id as one this device may still hold credentials for.
+//
+// CARD authorities only. A file authority occupies nothing on any card — its
+// key is an ed25519 file — and counting one would push the next card mesh past
+// an account nothing is using. On a machine with three file meshes and no card
+// mesh at all, the first card mesh would have been minted at 4.
+//
+// Told apart by key length, the same question CardOnly() answers everywhere
+// else: every card key is a compressed secp256k1 point and no file key is.
 func nextAccount(dir string) uint32 {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -101,6 +109,10 @@ func nextAccount(dir string) uint32 {
 		}
 		var af adminFile
 		if json.Unmarshal(raw, &af) != nil {
+			continue
+		}
+		auth, err := authorityOf(af.Keys)
+		if err != nil || !auth.CardOnly() {
 			continue
 		}
 		used = append(used, af.Account)
@@ -481,8 +493,14 @@ func authorityFor(dir, label string) (*cred.Authority, error) {
 	if err := json.Unmarshal(raw, &af); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
-	keys := make([]ed25519.PublicKey, 0, len(af.Keys))
-	for _, k := range af.Keys {
+	return authorityOf(af.Keys)
+}
+
+// authorityOf parses the printed admin keys. Shared, so that "is this a card
+// authority" is one question with one answer wherever it is asked.
+func authorityOf(printed []string) (*cred.Authority, error) {
+	keys := make([]ed25519.PublicKey, 0, len(printed))
+	for _, k := range printed {
 		b, err := b32.DecodeString(strings.ToUpper(k))
 		if err != nil {
 			return nil, fmt.Errorf("admin key %q: %w", k, err)

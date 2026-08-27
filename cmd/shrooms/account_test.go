@@ -10,9 +10,21 @@ import (
 // Which key on the card a mesh signs with has to be recorded, because the card
 // will derive any path asked of it and says nothing about which was used.
 
+// A card key is a compressed secp256k1 point: 33 bytes, which is what tells it
+// apart from a 32-byte ed25519 file key.
+func aCardKey(t *testing.T) string {
+	t.Helper()
+	return b32.EncodeToString(append([]byte{0x02}, make([]byte, 32)...))
+}
+
+func aFileKey(t *testing.T) string {
+	t.Helper()
+	return b32.EncodeToString(make([]byte, 32))
+}
+
 func writeAdmin(t *testing.T, dir, label string, account uint32) {
 	t.Helper()
-	af := adminFile{Keys: []string{"AAAA"}, Account: account}
+	af := adminFile{Keys: []string{aCardKey(t)}, Account: account}
 	raw, err := json.Marshal(af)
 	if err != nil {
 		t.Fatal(err)
@@ -84,5 +96,35 @@ func TestNextAccountIgnoresJunkWithoutResetting(t *testing.T) {
 	}
 	if got := nextAccount(dir); got != 6 {
 		t.Errorf("next = %d, want 6", got)
+	}
+}
+
+// Only CARD authorities occupy an account. A file authority's key is an
+// ed25519 file and takes nothing on any card, so counting one pushes the next
+// card mesh past an account nothing is using.
+//
+// Not hypothetical: this machine had three file meshes and one card mesh, so
+// the next card mesh would have been minted at account 4.
+func TestFileAuthoritiesDoNotConsumeCardAccounts(t *testing.T) {
+	dir := t.TempDir()
+
+	for _, label := range []string{"home", "office", "space"} {
+		af := adminFile{Priv: "x", Keys: []string{aFileKey(t)}}
+		raw, err := json.Marshal(af)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(adminPathFor(dir, label), raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := nextAccount(dir); got != 0 {
+		t.Errorf("next = %d with only file authorities; the first card mesh must be 0", got)
+	}
+
+	// One card mesh among them takes account 0, so the next is 1.
+	writeAdmin(t, dir, "kc", 0)
+	if got := nextAccount(dir); got != 1 {
+		t.Errorf("next = %d, want 1", got)
 	}
 }
