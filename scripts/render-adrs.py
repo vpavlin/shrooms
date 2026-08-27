@@ -476,6 +476,7 @@ PAGE = """<!doctype html>
     <a href="{up}index.html">what &amp; why</a>
     <a href="{up}install.html">install</a>
     <a href="{up}guides.html">guides</a>
+    <a href="{up}keycard.html">keycard</a>
     <a href="{up}dev.html" class="here">dev notes</a>
     <span class="spacer"></span>
     <a href="https://github.com/vpavlin/shrooms">github</a>

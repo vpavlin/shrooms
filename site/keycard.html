@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shrooms — keycard</title>
+<meta name="description" content="Put a mesh's admin key on a Keycard, where it never leaves the card: setting up a card, minting a mesh against it, admitting a phone, and what a card does and does not protect.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+<meta property="og:title" content="shrooms — keycard">
+<meta property="og:description" content="The admin key admits devices to a mesh. On a Keycard it never leaves the card, so admitting a device means the card has to be present. Setup, minting a mesh, admitting a phone, and the honest limits.">
+<meta name="theme-color" content="#07090b">
+</head>
+<body>
+<div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+<div class="lattice" aria-hidden="true"></div>
+<canvas id="field"></canvas>
+<div class="grain" aria-hidden="true"></div>
+
+<div class="page">
+<nav>
+    <a class="mark" href="index.html"><img class="nav-logo" src="logo.svg" alt="" width="24" height="24">shrooms</a>
+    <a href="index.html">what &amp; why</a>
+    <a href="install.html">install</a>
+    <a href="guides.html">guides</a>
+    <a href="keycard.html" class="here">keycard</a>
+    <a href="dev.html">dev notes</a>
+    <span class="spacer"></span>
+    <a href="https://github.com/vpavlin/shrooms">github</a>
+</nav>
+
+<header class="hero">
+    <h1>Keycard</h1>
+    <p class="lede">
+        The admin key is what admits devices to a mesh. Normally it is a
+        passphrase-protected file in your home directory. On a
+        <a href="https://keycard.tech">Keycard</a> it is a key that never leaves
+        the card — so admitting a device means the card has to be present, and
+        a machine that is compromised while you are asleep cannot admit anyone.
+    </p>
+    <p class="sub">
+        Everything below is what works today, against real hardware. Where the
+        card does less than it appears to, the sentence that says so is included
+        rather than left out.
+    </p>
+</header>
+
+<ul>
+    <li><a href="#why">What it changes</a> — and what it does not</li>
+    <li><a href="#need">What you need</a> — a reader, or a phone with NFC</li>
+    <li><a href="#status">Look at the card first</a> — the free command that prevents most of the ways this goes wrong</li>
+    <li><a href="#init">Initialise a blank card</a> — PIN, PUK, and the phrase to write down</li>
+    <li><a href="#pair">Pair this machine</a> — one of five slots, permanently</li>
+    <li><a href="#mint">Mint the mesh</a> — one command</li>
+    <li><a href="#phone">Admit a phone</a> — and make it an admin too</li>
+    <li><a href="#daily">Day to day</a> — invite, issue, renew, revoke</li>
+    <li><a href="#wrong">When something goes wrong</a> — the status words and what they mean</li>
+</ul>
+
+<h2 id="why">1. What it changes</h2>
+
+<p>
+    A mesh admits devices by credential: the admin signs a statement naming one
+    device's keys, and every node checks that signature for itself
+    (<a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/018-credentials-instead-of-a-shared-key.md">ADR-018</a>).
+    The admin key is therefore the thing worth protecting — it is the only key
+    that can add members.
+</p>
+
+<p>
+    With a file, that key exists in a directory, and anything running as you can
+    read it. With a card, the private half is generated on the card and never
+    leaves it: signing happens on the card, and the most a compromised machine
+    can do is ask it to sign while it is plugged in and unlocked
+    (<a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/022-keycard-for-the-admin-key.md">ADR-022</a>).
+</p>
+
+<div class="note">
+    <p><strong>What a signature proves, and what it does not.</strong> A
+    credential signed by the card proves the admin approved that device. It does
+    <em>not</em> prove anyone was holding a card when it was checked — a
+    signature made last month verifies exactly like one made a second ago. So
+    "the card was used" is a fact about the past, which is the right property
+    for a credential and the wrong one to describe as presence.</p>
+    <p>The card also does nothing for a mesh that is already yours to read.
+    Membership is what it controls; it is not a second factor on your own
+    traffic.</p>
+</div>
+
+<h2 id="need">2. What you need</h2>
+
+<p>
+    A <strong>Keycard</strong> with applet 3.1 or later, and either a USB
+    smartcard reader or a phone with NFC. Both work. This guide uses a reader,
+    because then everything happens in one place.
+</p>
+
+<p>
+    Reader support is <strong>not in the default build</strong>: it links
+    <code>libpcsclite</code> through cgo, and the daemon itself never touches a
+    card. A build without it says so, and says how to get it.
+</p>
+
+<pre><code><span class="cmd">sudo apt install libpcsclite-dev</span>              <span class="c"># or your distribution's equivalent</span>
+<span class="cmd">sudo make install TAGS=pcsc</span></code></pre>
+
+<div class="note">
+    <p><strong>There is no service to start.</strong> <code>pcscd</code> is
+    socket-activated: it starts when something asks for a reader and stops when
+    nothing is using one. If a guide anywhere tells you to enable a daemon for
+    this, you do not need it.</p>
+</div>
+
+<h2 id="status">3. Look at the card first</h2>
+
+<pre><code><span class="cmd">shrooms keycard status</span>
+        applet       <span class="p">3.1</span>
+        initialised  <span class="p">true</span>
+        key          <span class="p">yes (1839b7db)</span>
+        pairing      <span class="p">4 of 5 slots free</span>
+        can do       secure-channel, key-management, credentials, ndef, factory-reset</code></pre>
+
+<p>
+    This costs <strong>nothing</strong> — no pairing slot, no PIN attempt, no
+    password, and nothing on the card changes. Run it first on any card you have
+    not used here. It answers most of the ways setting one up can fail, before
+    anything has been spent.
+</p>
+
+<div class="warn">
+    <p><strong><code>pairing 0 of 5 slots free</code> is the one to watch
+    for.</strong> A card has five pairing slots, they are consumed
+    <em>permanently</em>, and freeing one requires a device that already holds
+    one. Every slot is a device that has ever paired — including failed
+    attempts, and including a machine you have since reinstalled.</p>
+    <p>A card with no free slots and no paired device left can only be recovered
+    by wiping it completely with <code>shrooms keycard reset</code>, which
+    destroys the key. The way back is the mnemonic, which is why step 4 asks you
+    to write it down.</p>
+    <p>From a machine that still holds a slot,
+    <code>shrooms keycard free-slots</code> releases every slot except its
+    own.</p>
+</div>
+
+<h2 id="init">4. Initialise a blank card</h2>
+
+<p>
+    Skip this if status already says <code>initialised true</code> and
+    <code>key yes</code>.
+</p>
+
+<pre><code><span class="cmd">shrooms keycard init</span></code></pre>
+
+<p>
+    It asks for a <strong>PIN</strong> (six digits), a <strong>PUK</strong>
+    (twelve digits, which unblocks a PIN locked by three wrong tries) and a
+    <strong>pairing password</strong> — press enter for the factory default,
+    which is what a card set up with the Keycard app has.
+</p>
+
+<p>Then it prints a mnemonic.</p>
+
+<div class="warn">
+    <p><strong>That phrase is the only way back to this key.</strong> A mesh
+    minted against a key that exists nowhere else dies with the card — a lost
+    card with no phrase means no one can ever admit another device, and the mesh
+    ends when the last credential expires.</p>
+    <p>It is an ordinary BIP-39 phrase, so it restores into any wallet. Which
+    also means: keeping it beside your crypto backups is keeping your mesh's
+    root key there, with whatever that implies for who can reach it.</p>
+</div>
+
+<p>
+    <code>shrooms keycard init --restore</code> loads a phrase you already have
+    instead of generating one.
+</p>
+
+<h2 id="pair">5. Pair this machine</h2>
+
+<pre><code><span class="cmd">shrooms keycard pair</span></code></pre>
+
+<p>
+    One of the five slots, once. The pairing is stored beside the admin key and
+    reused from then on. It is not a secret that admits anybody — the PIN is
+    still needed to sign anything — so it lives in your config directory rather
+    than anywhere more ceremonial.
+</p>
+
+<h2 id="mint">6. Mint the mesh</h2>
+
+<pre><code><span class="cmd">sudo shrooms init --keycard</span>
+        Card PIN:
+        mesh id     <span class="p">KIXKWYU4JTLL46IFC3IOVTTGOI</span>
+        prefix      <span class="p">fd06:507d:b6e0::/48</span>
+        authority   02372cd5…
+        <span class="p">this device is enrolled</span></code></pre>
+
+<p>
+    That is the whole thing. It reads the card's public key, makes it the mesh's
+    authority, writes the config, and enrols this machine with a credential the
+    card signs. Add <code>--mesh &lt;label&gt;</code> to put a card-backed mesh
+    on a machine that already has one.
+</p>
+
+<p>
+    <strong>Nothing secret is written.</strong> The admin file holds the card's
+    <em>public</em> half — the same value every node checks against anyway.
+</p>
+
+<div class="note">
+    <p><strong>One admin key, not the usual two.</strong> A file authority mints
+    a second key as a paper way back, because losing the file ends the mesh. A
+    card's key already has one — the mnemonic — so a second would be another
+    thing to lose. It also could not itself be a card key, and a single file key
+    in the set would disable the rule that lets a phone complete an invite
+    (<a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/033-the-card-is-the-admin-not-the-uid.md">ADR-033</a>):
+    an authority is card-backed only if <em>every</em> key in it is.</p>
+</div>
+
+<pre><code><span class="cmd">sudo systemctl enable --now shrooms</span></code></pre>
+
+<h2 id="phone">7. Admit a phone</h2>
+
+<p>On the machine with the card:</p>
+
+<pre><code><span class="cmd">sudo shrooms invite</span>
+        Card PIN:
+        Invite valid for 15m0s. On the joining device:
+          shrooms join --invite <span class="p">BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U</span>
+        [QR code]
+        Waiting...
+        <span class="p">Admitted "phone".</span></code></pre>
+
+<p>
+    Scan the QR from the phone, or paste the token into <strong>Join a
+    mesh</strong>. When the phone answers, the card signs its credential and the
+    invite completes. An invite is good for <strong>one device and fifteen
+    minutes</strong>, and only the node that issued it can answer — so leave the
+    command running until it says <code>Admitted</code>.
+</p>
+
+<h3>Making the phone an admin too</h3>
+
+<p>
+    Enrol the same card with the phone over NFC: <strong>Settings → Keycard →
+    Set up a card</strong>. That takes a second pairing slot, and it is what
+    makes a phone a full admin rather than a member — the key is on the card,
+    not on either device, so both can admit and neither holds anything the other
+    needs.
+</p>
+
+<h2 id="daily">8. Day to day</h2>
+
+<pre><code><span class="cmd">shrooms admin show</span>                    <span class="c"># every authority this machine holds</span>
+<span class="cmd">shrooms admin issue --name nas</span>        <span class="c"># enrol a device by its keys, no invite</span>
+<span class="cmd">shrooms admin renew --dry-run</span>         <span class="c"># who is near expiry</span>
+<span class="cmd">shrooms admin renew --all</span>             <span class="c"># reissue before credentials expire</span>
+<span class="cmd">shrooms admin revoke --device HEX</span>      <span class="c"># withdraw one before it expires</span></code></pre>
+
+<p>
+    Each of these asks for the card's PIN and signs on the card. Credentials
+    last thirty days by default, so renewal is a sweep you run occasionally
+    rather than a ceremony per device — see
+    <a href="guides.html#membership">Invites and membership</a> for how renewal
+    and revocation travel.
+</p>
+
+<h2 id="wrong">9. When something goes wrong</h2>
+
+<table>
+<thead><tr><th>What you see</th><th>What it means</th></tr></thead>
+<tbody>
+<tr><td><code>0 of 5 slots free</code></td><td>every slot is taken. Free them from a device that holds one — <code>shrooms keycard free-slots</code>, or the phone's Keycard screen — or wipe the card</td></tr>
+<tr><td><code>6a84</code></td><td>the same thing, as the card says it</td></tr>
+<tr><td><code>6d00</code> on pairing</td><td>the applet has no secure channel; a Cash card is the usual reason. It cannot be paired at all</td></tr>
+<tr><td><code>6985</code> reading the key</td><td>no PIN verified</td></tr>
+<tr><td><code>wrong PIN. 2 attempts left</code></td><td>count them. Three wrong and the card blocks and needs its PUK</td></tr>
+<tr><td><code>Sharing violation</code></td><td>something else is holding the reader</td></tr>
+<tr><td><code>this build has no smartcard reader support</code></td><td>rebuild with <code>TAGS=pcsc</code></td></tr>
+</tbody>
+</table>
+
+<p>
+    <code>shrooms keycard forget</code> drops this machine's pairing — useful
+    before reinstalling, so the slot is not stranded.
+    <code>shrooms keycard readers</code> lists attached readers when there is
+    more than one, for <code>--reader</code>.
+</p>
+
+<div class="warn">
+    <p><strong><code>shrooms keycard reset</code> is the last resort.</strong>
+    It wipes the card completely — key, PIN, PUK and every pairing — and is the
+    only way back from a card with no free slots and no device holding one. The
+    key returns only from the mnemonic. Any mesh minted against that key, whose
+    phrase you do not have, is over.</p>
+</div>
+
+<div class="grid">
+    <div class="card t1">
+        <h3><a href="guides.html">Guides →</a></h3>
+        <p>Names, services, several meshes, invites and renewals, relays and
+        what a node costs in bandwidth.</p>
+    </div>
+    <div class="card t2">
+        <h3><a href="https://github.com/vpavlin/shrooms/blob/master/docs/a-mesh-on-a-card.md">The long form →</a></h3>
+        <p>The same walkthrough in the repository, with the reasoning and the
+        parts that are still rough.</p>
+    </div>
+    <div class="card t3">
+        <h3><a href="https://github.com/vpavlin/shrooms/blob/master/docs/adr/022-keycard-for-the-admin-key.md">ADR-022 →</a></h3>
+        <p>Why the admin key belongs on a card, what was measured, and what this
+        deliberately does not claim.</p>
+    </div>
+</div>
+
+<footer>
+    <p>
+        shrooms is built in the open at
+        <a href="https://github.com/vpavlin/shrooms">github.com/vpavlin/shrooms</a>,
+        dual licensed Apache-2.0 or MIT.
+        Part of the <a href="https://logos.co">Logos</a> ecosystem: it rides on
+        Logos Delivery and ships as a Basecamp module.
+    </p>
+</footer>
+</div>
+
+<script src="field.js"></script>
+<script src="copy.js"></script>
+</body>
+</html>
