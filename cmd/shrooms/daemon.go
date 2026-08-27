@@ -664,6 +664,15 @@ type peerStatus struct {
 	Relayed bool   `json:"relayed"`
 	RTTMs   int64  `json:"rtt_ms,omitempty"`
 
+	// Device is the peer's public key, hex — what `admin revoke --device`
+	// wants.
+	//
+	// Absent before this, so the only way to revoke somebody was to fetch the
+	// hex off the device being revoked, with `shrooms keys` on the machine you
+	// are trying to remove. Which is fine for a laptop you still have and
+	// useless for a phone that has left.
+	Device string `json:"device,omitempty"`
+
 	Overlay   string   `json:"overlay"`
 	Endpoints []string `json:"endpoints"`
 	Seq       uint64   `json:"seq"`
@@ -1393,6 +1402,7 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 					Bound:     bnd[p.ID()],
 					Mesh:      meshLabel,
 					Name:      p.Name,
+					Device:    fmt.Sprintf("%x", p.DevicePub),
 					Overlay:   p.Overlay.String(),
 					OverlayV4: v4Of(m, p.Overlay),
 					Endpoints: p.Endpoints,

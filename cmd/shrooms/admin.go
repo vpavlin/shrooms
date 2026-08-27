@@ -687,6 +687,13 @@ func cmdAdminRevoke(args []string) error {
 	fs := flag.NewFlagSet("admin revoke", flag.ExitOnError)
 	dir := fs.String("dir", defaultAdminDir(), "where the admin key is kept")
 	devHex := fs.String("device", "", "the device's public key, hex")
+	// A name, because nothing on this machine printed the hex.
+	//
+	// `shrooms keys` prints a device's key on the device itself, which is fine
+	// for a laptop you still have and useless for the phone you are trying to
+	// remove. So revoking meant fetching a hex off the machine being revoked.
+	// The roster already knows both, so this asks it.
+	devName := fs.String("name", "", "the device's name, resolved through the local daemon")
 	// `issue` and `renew` both take this and `revoke` did not, which made it
 	// the one command that could only ever act on the default mesh - signing
 	// with the wrong authority, stamping the wrong mesh id, and being told
@@ -726,8 +733,20 @@ func cmdAdminRevoke(args []string) error {
 	if err != nil {
 		return err
 	}
+	if *devHex == "" && *devName != "" {
+		hex, err := deviceByName(*sock, *label, *devName)
+		if err != nil {
+			return err
+		}
+		*devHex = hex
+		// Printed before anything is signed. A name is a local label and this
+		// is the step where it stops being one, so the key it resolved to
+		// should be readable in the scrollback afterwards.
+		fmt.Printf("%q is %s\n", *devName, hex)
+	}
 	if *devHex == "" {
-		return errors.New("--device is required")
+		return errors.New("--device or --name is required. Names come from the " +
+			"roster: `shrooms status` lists them")
 	}
 	var dev []byte
 	if _, err := fmt.Sscanf(*devHex, "%x", &dev); err != nil || len(dev) != ed25519.PublicKeySize {
@@ -800,6 +819,45 @@ func cmdAdminRevoke(args []string) error {
 }
 
 // publishRevocation hands a signed revocation to the local daemon.
+// deviceByName resolves a peer's name to its public key through the daemon.
+//
+// Refuses rather than picks when a name is ambiguous. Names are local labels
+// with nothing enforcing uniqueness across meshes, and revoking the wrong
+// device is not an error anybody notices quickly: the mesh keeps working and
+// one machine quietly stops being a member.
+func deviceByName(sock, label, name string) (string, error) {
+	st, err := fetchStatus(sock)
+	if err != nil {
+		return "", fmt.Errorf("could not ask the daemon who %q is: %w\n\n"+
+			"Without a running daemon, pass the key itself with --device", name, err)
+	}
+	var hits []peerStatus
+	for _, p := range st.Peers {
+		if p.Name != name || p.Device == "" {
+			continue
+		}
+		if label != "" && p.Mesh != "" && p.Mesh != label {
+			continue
+		}
+		hits = append(hits, p)
+	}
+	switch len(hits) {
+	case 1:
+		return hits[0].Device, nil
+	case 0:
+		return "", fmt.Errorf("no peer called %q. `shrooms status` lists the "+
+			"roster; a device that has never announced is not in it, and its key "+
+			"has to come from `shrooms keys` on the device itself", name)
+	}
+	// Same name on several meshes: say which, because --mesh settles it.
+	var where []string
+	for _, h := range hits {
+		where = append(where, fmt.Sprintf("  %s on %s (%s)", h.Name, h.Mesh, h.Device[:16]))
+	}
+	return "", fmt.Errorf("%q is on more than one mesh, so name which with --mesh:\n%s",
+		name, strings.Join(where, "\n"))
+}
+
 func publishRevocation(sock, label string, raw []byte) error {
 	if sock == DefaultSocket {
 		if _, err := os.Stat(sock); err != nil {
