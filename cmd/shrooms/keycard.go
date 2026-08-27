@@ -287,7 +287,13 @@ func cmdKeycardFreeSlots(args []string) error {
 	}
 	defer done()
 
-	msg, err := keycard.UnpairOthers(t, keycardDir(*dir))
+	// The PIN, because UNPAIR needs one verified — see UnpairOthers. Asked
+	// after the confirmation so a mistyped "yes" costs no PIN attempt.
+	pin, err := readSecret("Card PIN: ")
+	if err != nil {
+		return err
+	}
+	msg, err := keycard.UnpairOthers(t, keycardDir(*dir), strings.TrimSpace(pin))
 	if err != nil {
 		return err
 	}

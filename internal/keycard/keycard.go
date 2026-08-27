@@ -624,16 +624,50 @@ func pairingError(err error) error {
 // Kept separate from enrolment and named for what it does to somebody else's
 // pairing, because it is not undoable: every other device that was paired with
 // this card stops being able to use it.
-func UnpairOthers(t Transport, configDir string) (string, error) {
+func UnpairOthers(t Transport, configDir, pin string) (string, error) {
 	s, err := openCard(t, configDir)
 	if err != nil {
 		return "", err
 	}
+	// UNPAIR needs a verified PIN, not only the secure channel.
+	//
+	// Without this the card answers 6985 to every UNPAIR and keycard-go throws
+	// the answer away — its loop has `if resp.Sw != apdu.SwOK { _ = resp }`,
+	// commented "some slots may not be paired", which is a fair reason to
+	// ignore SOME status words and not a reason to ignore all of them. So the
+	// call returned nil, this function reported success, and the card still had
+	// every slot taken.
+	//
+	// Seen 2026-08-27 on a card that stayed at 1 of 5 free across a run that
+	// said it had freed the others. Vaclav asked why this did not want a PIN
+	// days earlier, which was the right question.
+	if err := s.cs.VerifyPIN(pin); err != nil {
+		return "", pinError(err)
+	}
 	if err := s.cs.UnpairOthers(); err != nil {
 		return "", fmt.Errorf("could not free the other pairing slots: %w", err)
 	}
-	return fmt.Sprintf("freed the other slots; this phone is still paired (%d in total)",
-		kc.PairingMaxClientCount), nil
+
+	// Read the card back rather than trusting either the library or this
+	// function. A pairing slot is spent permanently, so "it worked" is not
+	// something to say on the strength of a call that cannot fail.
+	if err := s.cs.Select(); err != nil {
+		return "", fmt.Errorf("freed the other slots, but could not read the card "+
+			"back to confirm it: %w", err)
+	}
+	info := s.cs.ApplicationInfo
+	if info == nil || len(info.AvailableSlots) < 1 {
+		return "", errors.New("freed the other slots, but this card does not report " +
+			"how many are free, so it cannot be confirmed. Check with `shrooms keycard status`")
+	}
+	free := int(info.AvailableSlots[0])
+	if free < kc.PairingMaxClientCount-1 {
+		return "", fmt.Errorf("the card still reports %d of %d slots free, so the "+
+			"other pairings were NOT released. This card may not allow UNPAIR from "+
+			"this pairing", free, kc.PairingMaxClientCount)
+	}
+	return fmt.Sprintf("freed the other slots: %d of %d free, and this device is "+
+		"still paired", free, kc.PairingMaxClientCount), nil
 }
 
 // Init sets up a blank card: its PIN, PUK and pairing password, and the key it
