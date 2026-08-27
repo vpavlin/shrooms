@@ -63,7 +63,11 @@ func TestCompletionKnowsEveryCommand(t *testing.T) {
 	}
 
 	// Aliases and help spellings are not worth offering; the real ones are.
-	skip := map[string]bool{"meshes": true, "help": true}
+	//
+	// set-key is a tombstone: the case survives only to tell somebody with an
+	// old note what replaced it. Completing to a command that exists to say it
+	// does not exist would be a peculiar thing to offer.
+	skip := map[string]bool{"meshes": true, "help": true, "set-key": true}
 	for _, c := range commandsIn(t, "main.go") {
 		if skip[c] || offered[c] {
 			continue

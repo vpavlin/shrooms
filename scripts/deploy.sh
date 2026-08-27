@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Ship shrooms to a remote host and run it.
 #
-#   ./scripts/deploy.sh user@vps.example.com                    # join an existing mesh
+#   ./scripts/deploy.sh user@vps.example.com                    # deploy, then join by invite
 #   ./scripts/deploy.sh user@vps --init                         # create a new mesh
 #   ./scripts/deploy.sh user@vps --advertise 203.0.113.4:51820  # publicly reachable node
 #   ./scripts/deploy.sh user@vps --relay                        # also relay for others
@@ -23,7 +23,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 HOST=${1:-}
-[ -n "$HOST" ] || { echo "usage: $0 user@host [--init] [--relay] [--advertise IP:PORT] [--name NAME] [--key KEY] [--force]"; exit 1; }
+[ -n "$HOST" ] || { echo "usage: $0 user@host [--init] [--relay] [--advertise IP:PORT] [--name NAME] [--force]"; exit 1; }
 shift
 
 INIT=0
@@ -102,12 +102,24 @@ else
     if [ $INIT -eq 1 ]; then
         ./bin/shrooms init "${ARGS[@]}"
     else
-        [ -n "$KEY" ] || { echo "need a network key: set LOGOS_VPN_KEY, pass --key KEY, or use --init"; exit 1; }
-        if [ "${KEY_ON_ARGV:-0}" = 1 ]; then
-            echo "warning: --key puts the network key in this machine's process list and shell history."
-            echo "         LOGOS_VPN_KEY=... $0 ... avoids both, and \`shrooms invite\` avoids the key entirely."
+        # A config with NO key, joined by invite once it is running.
+        #
+        # This used to build the config around a network key — from --key or
+        # LOGOS_VPN_KEY — and ship it. That was the prototype path: the key was
+        # the membership, so the file crossing the wire was a bearer credential
+        # for the whole mesh, and every warning below it was about damage
+        # control. `shrooms join <KEY>` was removed on 2026-08-27 and this went
+        # with it.
+        #
+        # What ships now holds a name, a port and nothing secret at all.
+        if [ -n "$KEY" ]; then
+            echo "note: --key and LOGOS_VPN_KEY are ignored and no longer needed."
+            echo "      This deploys a keyless config and joins by invite; the key"
+            echo "      never leaves the machine that holds it."
+            echo
         fi
-        ./bin/shrooms join "$KEY" "${ARGS[@]}"
+        ./bin/shrooms prepare "${ARGS[@]}"
+        JOIN_BY_INVITE=1
     fi
 
     if [ $RELAY -eq 1 ]; then
@@ -143,6 +155,26 @@ echo "==> status (give it ~20s to reach the fleet)"
 sleep 20
 ssh "$HOST" 'sudo docker exec shrooms shrooms status --socket /run/shrooms/shrooms.sock' 2>&1 | head -12 || \
     ssh "$HOST" 'sudo docker logs shrooms 2>&1 | grep "^time=" | tail -10'
+
+if [ "${JOIN_BY_INVITE:-0}" = 1 ]; then
+cat <<EOF
+
+==> $HOST is running and waiting for a mesh.
+
+It has its own keys and its own name, and no mesh. To admit it, on a machine
+already in the mesh:
+
+  shrooms invite
+
+then, with the token it prints:
+
+  ssh $HOST 'sudo docker exec shrooms shrooms join --invite <TOKEN> \
+      --socket /run/shrooms/shrooms.sock'
+
+The token is good for one device and fifteen minutes, and what makes this node
+a member afterwards is an admin-signed credential — which you can revoke.
+EOF
+fi
 
 cat <<EOF
 

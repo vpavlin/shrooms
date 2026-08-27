@@ -5,7 +5,6 @@
 # image, generates the config, installs a systemd unit and starts it. There is
 # no separate "now run the daemon" step.
 #
-#   sudo ./install.sh join <NETWORK-KEY> --name laptop
 #   sudo ./install.sh init --relay                   # create a new mesh
 #
 # Everything after init/join goes straight to shrooms, so its flags are
@@ -35,10 +34,9 @@ FORCE=0
 
 usage() {
     cat <<EOF
-usage: $0 [--image REF] [--force] (init | join <NETWORK-KEY> | prepare) [flags...]
+usage: $0 [--image REF] [--force] (init | prepare) [flags...]
 
   init                 create a new mesh and print its key
-  join KEY             join an existing mesh
   prepare              write the config with the key left blank, for setting a
                        machine up without the key passing through anyone else
 
@@ -55,7 +53,6 @@ This script's own options:
   --force              regenerate the config if one exists
 
 Examples:
-  sudo $0 join P27KNQ2... --name laptop
   sudo $0 init --relay
 EOF
     exit 1

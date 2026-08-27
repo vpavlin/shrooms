@@ -327,7 +327,8 @@ join goes through it and it brings the mesh up itself — no second command, no
 restart. That is what a freshly installed machine looks like: the unit is
 enabled, the daemon waits, and `join` is the only thing you run.
 
-`sudo ./bin/shrooms join <NETWORK-KEY> --name laptop` also works, and is what to
+`shrooms join --invite <TOKEN>` is the only way in; the network-key form was
+removed on 2026-08-27. What to
 use when nothing is running on the other end.
 
 Leave that running (or `sudo make install` and use systemd here too). On first start it generates a device identity, derives its
@@ -633,8 +634,9 @@ needs a change to how addresses are derived; that is
 ### 7. Add more machines
 
 ```console
-$ sudo ./bin/shrooms join <NETWORK-KEY> --name office     # locally
-$ ./scripts/deploy.sh user@host --key <NETWORK-KEY> --name nas   # remotely
+$ sudo shrooms invite                                    # on this machine
+$ sudo shrooms join --invite <TOKEN> --name office        # on the new one
+$ ./scripts/deploy.sh user@host --name nas               # remotely, then invite it
 ```
 
 Any node with a reachable address can also relay — add `relay = "true"` to its
@@ -775,7 +777,10 @@ paste the token into the one field on the join screen — it takes an invite or 
 network key and tells them apart itself. The credential lands in the app's state
 and the phone is a member of a credentialled mesh, which it could not be before.
 
-`shrooms join <NETWORK-KEY>` is still there for bootstrapping and recovery, and
+`shrooms join <NETWORK-KEY>` and `shrooms set-key` were removed on 2026-08-27,
+and with them the last path where a raw network key made a device a member.
+Joining is by invite only.
+
 `shrooms admin init` mints an authority separately for a mesh created with
 `--no-admin`.
 
@@ -1176,18 +1181,21 @@ On the machine itself, with only docker installed:
 
 ```console
 $ curl -fsSLO https://raw.githubusercontent.com/vpavlin/shrooms/master/scripts/install.sh
-$ sudo bash install.sh join <NETWORK-KEY> --name laptop
+$ sudo bash install.sh prepare --name laptop
+# then, from a machine in the mesh: shrooms invite
+$ sudo shrooms join --invite <TOKEN>
 ```
 
-To set a machine up **without the key passing through whoever is doing the
-setup** — a colleague, a script, an AI agent — prepare it and paste the key
-yourself afterwards:
+Setting a machine up **without the key passing through whoever is doing the
+setup** — a colleague, a script, an AI agent — is now the only way it works. The
+config that lands holds a name and a port and nothing secret; membership arrives
+by invite, sealed to that one device:
 
 ```console
 $ sudo bash install.sh prepare --name nas --relay
-# then run `sudo shrooms set-key`, which reads it from a prompt so it never reaches
-shell history
-$ sudo systemctl start shrooms
+$ sudo systemctl enable --now shrooms
+# then, from a machine already in the mesh: shrooms invite
+$ sudo shrooms join --invite <TOKEN>
 ```
 
 The device identity is generated during `prepare`, so the machine's overlay

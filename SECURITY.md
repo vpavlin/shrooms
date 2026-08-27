@@ -273,8 +273,10 @@ Both halves of the exchange are padded to a constant, so the bus sees two
 fixed-size ciphertexts on a shard it cannot distinguish from the mesh's own
 traffic.
 
-`shrooms join <NETWORK-KEY>` still exists for bootstrapping and recovery, and
-carries the old exposure when used.
+`shrooms join <NETWORK-KEY>` and `shrooms set-key` were **removed on
+2026-08-27**, and with them the last path where a raw network key made a device
+a member. Keeping them left the weakest way in permanently available beside the
+mechanism that replaced it. Joining is by invite only.
 
 ### Phase 2 — admin-signed credentials ✅ built
 

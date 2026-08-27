@@ -125,7 +125,7 @@ _shrooms() {
         cword=$COMP_CWORD
     fi
 
-    local commands="init join invite prepare set-key daemon status mesh config reload bound paths services hosts key keys credential keycard admin version help"
+    local commands="init join invite prepare daemon status mesh config reload bound paths services hosts key keys credential keycard admin version help"
     local common="--config --state"
 
     # A path-valued flag completes as a path, whichever command it belongs to.
@@ -267,9 +267,6 @@ _shrooms() {
             else
                 COMPREPLY=($(compgen -W "--qr --yes $common" -- "$cur"))
             fi
-            ;;
-        set-key)
-            COMPREPLY=($(compgen -W "--socket $common" -- "$cur"))
             ;;
         keys)
             COMPREPLY=($(compgen -W "$common" -- "$cur"))

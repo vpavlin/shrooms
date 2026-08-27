@@ -91,48 +91,37 @@ func cmdInit(args []string) error {
 }
 
 func cmdJoin(args []string) error {
-	// Two ways in. `join --invite TOKEN` is the one to use — a token good for
-	// one device and fifteen minutes. `join <KEY>` stays because bootstrapping
-	// and recovery both need it, and because a mesh with no authority has
-	// nothing else (ADR-017).
+	// One way in: an invite.
+	//
+	// `join <KEY>` is gone, and with it set-key — the whole path where a raw
+	// network key makes somebody a member. That was the prototype: the key WAS
+	// the membership, so everyone holding it was a member, nobody could be
+	// removed without changing it for everybody, and it travelled by whatever
+	// means somebody had to hand.
+	//
+	// Credentials replaced it (ADR-018) and invites carry the key sealed to one
+	// device for fifteen minutes (ADR-017). Keeping a hand-pasted key beside
+	// them left the weakest way in permanently available, which is not what a
+	// superseded mechanism should be.
 	if tok, rest, ok := inviteFlag(args); ok {
 		return cmdJoinInvite(tok, rest)
 	}
-
-	// The key is positional and comes first, which is the natural way to type
-	// it. Go's flag package stops parsing at the first positional, so pull the
-	// key off before parsing the flags.
-	if len(args) < 1 || strings.HasPrefix(args[0], "-") {
-		return fmt.Errorf("usage: shrooms join <NETWORK-KEY> [flags]\n" +
-			"   or: shrooms join --invite <TOKEN> [flags]")
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		// Almost certainly somebody pasting a network key, from habit or an old
+		// note. Say what replaced it rather than "unknown flag".
+		return errors.New("`shrooms join <KEY>` has been removed.\n\n" +
+			"Joining with the network key was how this worked before credentials " +
+			"existed: the key was the membership, so anybody holding it was a " +
+			"member and nobody could be removed. An invite carries the same key " +
+			"sealed to ONE device for fifteen minutes, and what makes that device " +
+			"a member is an admin-signed credential that can be revoked.\n\n" +
+			"On a machine already in the mesh:\n" +
+			"    shrooms invite\n\n" +
+			"and here, with the token it prints:\n" +
+			"    sudo shrooms join --invite <TOKEN>")
 	}
-	keyArg := args[0]
-
-	fs := flag.NewFlagSet("join", flag.ExitOnError)
-	cfgPath, stateDir := commonFlags(fs)
-	name := fs.String("name", "", "device name (default: hostname)")
-	port := fs.Uint("port", 51820, "UDP listen port")
-	advertise := fs.String("advertise", "", "public endpoint, only if it is not on a local interface")
-	relay := fs.Bool("relay", false, "forward traffic for peers that cannot reach each other")
-	sock := fs.String("socket", DefaultSocket, "control socket, so a waiting daemon picks this up")
-	if err := fs.Parse(args[1:]); err != nil {
-		return err
-	}
-
-	nk, err := identity.ParseNetworkKey(keyArg)
-	if err != nil {
-		return err
-	}
-	if _, err := os.Stat(*cfgPath); err == nil {
-		return fmt.Errorf("%s already exists — remove it or use a different --config", *cfgPath)
-	}
-	if err := setup(*cfgPath, *stateDir, nk, *name, uint16(*port), *advertise, *relay, false); err != nil {
-		return err
-	}
-	// `join <KEY>` never nudged at all, so a waiting daemon on this machine sat
-	// there while the config beside it named a mesh. Same fix as init's.
-	reportNext(*sock)
-	return nil
+	return errors.New("usage: shrooms join --invite <TOKEN> [flags]\n\n" +
+		"An invite comes from `shrooms invite` on a machine already in the mesh.")
 }
 
 // addMesh appends a mesh to a config that already names one (ADR-015).
@@ -450,80 +439,19 @@ func cmdPrepare(args []string) error {
 	}
 
 	fmt.Printf("Prepared %s for %q.\n\n", *cfgPath, cfg.Name)
-	fmt.Println("The mesh key is not set. Add it yourself:")
-	fmt.Println("  sudo shrooms set-key")
+	fmt.Println("This device has its keys and its name. It is not on a mesh yet.")
 	fmt.Println()
-	fmt.Println("That reads the key from a prompt or stdin and validates it, so it")
-	fmt.Println("never appears in your shell history or in a command line other")
-	fmt.Println("processes can see. Get it from a machine already on the mesh:")
-	fmt.Println("  shrooms key show          # or --qr to scan it")
+	fmt.Println("Start it, so it is listening when the invite arrives:")
+	fmt.Println("  sudo systemctl enable --now shrooms")
 	fmt.Println()
-	fmt.Println("Then start it:")
-	fmt.Println("  sudo systemctl start shrooms")
+	fmt.Println("Then, on a machine already in the mesh:")
+	fmt.Println("  shrooms invite")
+	fmt.Println()
+	fmt.Println("and back here, with the token it prints:")
+	fmt.Println("  sudo shrooms join --invite <TOKEN>")
 	return nil
 }
 
-// cmdSetKey writes the mesh key into an existing config.
-//
-// The other half of `prepare`: that sets a machine up without ever handling the
-// key, and this is how the key arrives afterwards, from whoever holds it. It
-// used to be an instruction to run sed, which put the key in shell history and
-// in a command line every other process on the box can read — the two places a
-// bearer credential should never be.
-func cmdSetKey(args []string) error {
-	fs := flag.NewFlagSet("set-key", flag.ExitOnError)
-	cfgPath, _ := commonFlags(fs)
-	sock := fs.String("socket", DefaultSocket, "control socket, so a waiting daemon picks this up")
-	if err := fs.Parse(splitArgs(fs, args)); err != nil {
-		return err
-	}
-
-	cfg, err := state.LoadConfigUnvalidated(*cfgPath)
-	if err != nil {
-		return err
-	}
-
-	key, err := readSecret("Mesh key: ")
-	if err != nil {
-		return err
-	}
-	key = strings.TrimSpace(key)
-	if key == "" {
-		return errors.New("no key given")
-	}
-	// Validated before writing: a mistyped key otherwise fails much later, as
-	// a mesh where nobody appears.
-	if _, err := identity.ParseNetworkKey(key); err != nil {
-		return fmt.Errorf("that is not a mesh key: %w", err)
-	}
-
-	was := cfg.NetworkKey
-	cfg.NetworkKey = key
-	if err := cfg.Validate(); err != nil {
-		return err
-	}
-	if err := state.WriteConfig(*cfgPath, cfg); err != nil {
-		return err
-	}
-
-	if was != state.KeyPlaceholder && was != key {
-		fmt.Println("Replaced the existing key. Every peer must hold the same one,")
-		fmt.Println("so any machine still using the old key will not be seen.")
-	}
-	fmt.Printf("Key written to %s.\n", *cfgPath)
-	if nudgeDaemon(*sock) {
-		fmt.Println("The daemon was waiting for this and is bringing the mesh up now.")
-	} else {
-		fmt.Println("\nStart it:\n  sudo systemctl start shrooms")
-	}
-	return nil
-}
-
-// nudgeDaemon tells a daemon that is waiting for a mesh that the config now
-// names one. Reports whether there was one to tell.
-//
-// Best effort by design: writing a config on a machine with no daemon running
-// is entirely normal, and this is a convenience rather than a step.
 func nudgeDaemon(sock string) bool {
 	st, err := fetchStatus(sock)
 	if err != nil || !st.Waiting {

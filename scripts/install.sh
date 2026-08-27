@@ -6,7 +6,6 @@
 # no separate "now run the daemon" step.
 #
 #   sudo ./install.sh prepare --name fedora          # then redeem an invite
-#   sudo ./install.sh join <NETWORK-KEY> --name laptop
 #   sudo ./install.sh init --relay                   # create a new mesh
 #
 # `prepare` is the one to use with invites: it installs and starts the daemon
@@ -41,10 +40,9 @@ FORCE=0
 
 usage() {
     cat <<EOF
-usage: $0 [--image REF] [--force] (init | join <NETWORK-KEY> | prepare) [flags...]
+usage: $0 [--image REF] [--force] (init | prepare) [flags...]
 
   init                 create a new mesh and print its key
-  join KEY             join an existing mesh with its network key
   prepare              install and wait; join later with an invite
   prepare              write the config with the key left blank, for setting a
                        machine up without the key passing through anyone else
@@ -63,7 +61,6 @@ This script's own options:
 
 Examples:
   sudo $0 prepare --name fedora        # then: sudo shrooms join --invite TOKEN
-  sudo $0 join P27KNQ2... --name laptop
   sudo $0 init --relay
 EOF
     exit 1
@@ -285,7 +282,6 @@ and back here:
 
 That brings the mesh up without a restart. A network key still works if you
 have one rather than an invite:
-  sudo shrooms join <NETWORK-KEY> --name $(hostname)
 EOF
     shrooms status 2>/dev/null || true
     exit 0

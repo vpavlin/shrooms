@@ -175,7 +175,7 @@ and back here:
     <code>/usr/local/bin/shrooms</code> — a wrapper so <code>shrooms status</code>
     works on the host without anyone remembering the docker incantation. The
     wrapper runs <code>docker exec -i</code>, so the commands that prompt —
-    <code>invite</code>, <code>set-key</code>, <code>key rotate</code> — work
+    <code>invite</code>, <code>admin init</code>, <code>key rotate</code> — work
     through it.
 </p>
 
@@ -671,57 +671,45 @@ Asking to join as "nas"...
 <span class="cmd">sudo shrooms prepare --name nas --relay</span>
 Prepared /etc/shrooms/config.toml for "nas".
 
-The mesh key is not set. Add it yourself:
-  <span class="p">sudo shrooms set-key</span>
+This device has its keys and its name. It is not on a mesh yet.
 
-<span class="c"># later, by whoever holds the key</span>
-<span class="cmd">sudo shrooms set-key</span>
-Mesh key:
-<span class="p">Key written to /etc/shrooms/config.toml.</span>
-The daemon was waiting for this and is bringing the mesh up now.</code></pre>
+<span class="cmd">sudo systemctl enable --now shrooms</span>
+
+<span class="c"># on a machine already in the mesh</span>
+<span class="cmd">shrooms invite</span>
+  shrooms join --invite <span class="p">BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U</span>
+
+<span class="c"># back on the new machine</span>
+<span class="cmd">sudo shrooms join --invite BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U</span>
+<span class="p">Enrolled.</span> Credential serial 1786439411, expires 2026-09-26T09:14:02+02:00.</code></pre>
 
 <p>
     The device identity is generated during <code>prepare</code>, so the
-    machine's overlay address is settled before the key arrives and does not
-    change when it does. <code>set-key</code> reads from a prompt, or from stdin
-    when there is no terminal, so the key never reaches your shell history or a
-    command line that every other process on the box can read. It validates the
-    key before writing it — a mistyped one otherwise fails much later, as a mesh
-    where nobody ever appears.
-</p>
-
-<p>
-    If a daemon was waiting, <code>set-key</code> nudges it and the mesh comes
-    up without a restart; otherwise
-    <code>sudo systemctl start shrooms</code>.
+    machine's overlay address is settled before it joins anything and does not
+    change when it does. Nothing secret is in the config that lands: a name, a
+    port, and this device's own public keys.
 </p>
 
 <div class="note">
-    <p>
-        <strong>On a mesh with admin keys, the network key is not
-        membership.</strong> Peers refuse a device that cannot show a credential
-        signed by the mesh's authority, so <code>set-key</code> alone leaves a
-        node that connects to the fleet and is turned away by every peer —
-        <code>status</code> says <code>!! no credential</code>. The key still
-        decrypts the control plane, so it is worth protecting; it just no longer
-        admits anybody.
-    </p>
-    <p>
-        So this flow finishes one of two ways. Either the device redeems an
-        invite, which is the whole of it in one step and moves no key at all —
-        or, for a rollout with nobody present, the admin issues a credential for
-        that device's keys and hands over the one line it prints:
-    </p>
+    <p><strong>The network key stopped being membership, and the commands that
+    treated it as membership are gone.</strong> <code>shrooms join
+    &lt;NETWORK-KEY&gt;</code> and <code>shrooms set-key</code> were removed on
+    2026-08-27. They were how this worked before credentials: the key WAS the
+    membership, so everybody holding it was a member, nobody could be removed
+    without changing it for everybody, and it travelled by whatever means came
+    to hand.</p>
+    <p>An invite carries the same key <em>sealed to one device for fifteen
+    minutes</em>, and what makes that device a member afterwards is an
+    admin-signed credential that can be revoked. The key still decrypts the
+    control plane, so it is worth protecting — it just no longer admits
+    anybody.</p>
+    <p>For a rollout with nobody present to redeem an invite, the admin issues a
+    credential for that device's keys and hands over the one line it prints:</p>
     <pre><code><span class="c"># wherever the admin key lives</span>
 <span class="cmd">shrooms admin issue --device &lt;hex&gt; --wg &lt;hex&gt; --name nas</span>
 Install it on that machine:
 
   <span class="p">shrooms credential set &lt;credential&gt;</span></code></pre>
-    <p>
-        A mesh created with <code>--no-admin</code> has no authority, and there
-        the network key alone is still membership. That is the case
-        <code>prepare</code> plus <code>set-key</code> was written for.
-    </p>
 </div>
 
 <h2 id="check">Check it worked</h2>
@@ -822,7 +810,7 @@ reflexive addresses (as peers observe us):
 <tr>
     <td><code>error: EOF</code> from a prompt</td>
     <td>the command wanted a passphrase or a key and stdin was closed</td>
-    <td>run it in a terminal rather than from a script, a unit or a pipe. <code>set-key</code> is the exception: it reads stdin deliberately when there is no terminal</td>
+    <td>run it in a terminal rather than from a script, a unit or a pipe</td>
 </tr>
 
 <tr>

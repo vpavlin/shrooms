@@ -73,11 +73,25 @@ func main() {
 		err = cmdKeycard(os.Args[2:])
 	case "admin":
 		err = cmdAdmin(os.Args[2:])
-	case "set-key":
-		err = cmdSetKey(os.Args[2:])
 	// Not "-v": the daemon uses it for verbose, so `shrooms -v` expecting
 	// more logging printed a version string and exited. One letter, two
 	// meanings, and the wrong one is silent.
+	// Removed, and said so rather than left as "unknown command". Somebody
+	// typing this has an old note or an old habit, and the useful thing is what
+	// replaced it — not that it is gone.
+	case "set-key":
+		fmt.Fprintln(os.Stderr, "`shrooms set-key` has been removed, along with "+
+			"`shrooms join <KEY>`.\n\n"+
+			"Both were the path where a raw network key made a device a member. "+
+			"That is what this did before credentials existed: the key WAS the "+
+			"membership, so everybody holding it was a member and nobody could be "+
+			"removed without changing it for everybody.\n\n"+
+			"A device joins by invite now — the same key, sealed to one device "+
+			"for fifteen minutes, with an admin-signed credential deciding "+
+			"membership afterwards:\n"+
+			"    shrooms invite                    on a machine already in the mesh\n"+
+			"    sudo shrooms join --invite TOKEN  here")
+		os.Exit(2)
 	case "version", "--version":
 		fmt.Println(version)
 	case "-h", "--help", "help":
@@ -103,7 +117,6 @@ Usage:
                                           and this device's own credential
   shrooms invite [--name N]             admit one device, once, within 15 min
   shrooms join --invite TOKEN           join the mesh that invite came from
-  shrooms join KEY [--name N]           join with the network key itself
   shrooms version                       print the build this binary came from
   shrooms prepare [--name N] [--relay]  write a config with the key left blank,
                                           for setting a machine up without the
@@ -116,9 +129,6 @@ Usage:
   shrooms admin renew                    reissue for everyone near expiry
   shrooms admin revoke --device HEX       withdraw one before it expires
   shrooms admin show                      the mesh id and its trusted keys
-  shrooms set-key                       write the key into a prepared config,
-                                          read from a prompt or stdin so it
-                                          never reaches shell history
   shrooms daemon                     run the mesh node
   shrooms status [--json]            show the roster and tunnel state
   shrooms config validate            check the config before restarting into it
