@@ -13,8 +13,57 @@
 # when it cannot: a completion that prints a permission error over the prompt
 # is worse than one that offers nothing.
 _shrooms_mesh_labels() {
+    # The daemon first. `mesh list` reads the config, which holds the network
+    # keys and is root-only — so for everybody who is not root it printed
+    # nothing, silently, and --mesh completed to nothing at all. The socket is
+    # group-readable by design and knows every mesh that is running.
+    shrooms status --json 2>/dev/null | _shrooms_json_field label
+    # Then the config, which also knows the ones that are switched OFF. Adds
+    # duplicates for the running ones; the caller sorts them out.
     shrooms mesh list 2>/dev/null | awk 'NR>1 && NF {print $1}'
 }
+
+# One field out of the status JSON, from meshes or peers alike.
+_shrooms_json_field() {
+    local field=$1
+    if command -v python3 >/dev/null 2>&1; then
+        python3 -c '
+import json, sys
+field = sys.argv[1]
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for k in ("meshes", "peers"):
+    for item in d.get(k) or []:
+        v = item.get(field)
+        if v:
+            print(v)
+' "$field" 2>/dev/null
+    else
+        grep -o "\"$field\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" \
+            | sed 's/.*"\([^"]*\)"$/\1/'
+    fi
+}
+
+# Candidates that may contain spaces — a reader name is "ACS ACR39U ICC Reader
+# 00 00" — so they are split on newlines and quoted. Without this the shell
+# takes each word as a separate candidate and completes to nonsense.
+_shrooms_offer() {
+    local IFS=$'\n'
+    COMPREPLY=($(compgen -W "$1" -- "$cur"))
+    local i
+    for i in "${!COMPREPLY[@]}"; do
+        case ${COMPREPLY[i]} in
+            *\ *) COMPREPLY[i]=$(printf '%q' "${COMPREPLY[i]}") ;;
+        esac
+    done
+}
+
+# Durations, for the flags that take one. Not a guess at what somebody wants —
+# the point is the FORMAT, which is Go's and rejects "30d" with an error that
+# does not mention what it would have accepted.
+_shrooms_durations="1h 12h 24h 72h 168h 720h 2160h"
 
 # What `config set` accepts, asked of the binary rather than duplicated here:
 # a second list drifts the first time a setting is added, and is wrong exactly
@@ -30,6 +79,16 @@ _shrooms_readers() {
 }
 
 _shrooms_peers() {
+    _shrooms_peer_names | sort -u
+}
+
+# Device keys, for --device. Only reachable through the daemon: the roster
+# knows them and nothing else on this machine does.
+_shrooms_devices() {
+    shrooms status --json 2>/dev/null | _shrooms_json_field device | sort -u
+}
+
+_shrooms_peer_names() {
     local out
     # --json rather than parsing the table: the table is for people and is
     # allowed to change, and this must not break when it does.
@@ -70,19 +129,42 @@ _shrooms() {
     local common="--config --state"
 
     # A path-valued flag completes as a path, whichever command it belongs to.
+    # Values, before commands. Every flag whose answers are knowable is
+    # answered here rather than per command: --mesh means the same thing
+    # wherever it appears, and one place is one fewer to forget.
     case $prev in
-        --config|--socket|--state|--admin-dir|--dir)
+        --config|--socket|--state|--admin-dir|--dir|--file|--sign-with)
             _filedir 2>/dev/null || COMPREPLY=($(compgen -f -- "$cur"))
             return
             ;;
-        # Everywhere, rather than per command: --mesh means the same thing in
-        # all of them, and listing it once is one fewer place to forget.
         --mesh)
-            COMPREPLY=($(compgen -W "$(_shrooms_mesh_labels)" -- "$cur"))
+            _shrooms_offer "$(_shrooms_mesh_labels | sort -u)"
             return
             ;;
         --reader)
-            COMPREPLY=($(compgen -W "$(_shrooms_readers)" -- "$cur"))
+            _shrooms_offer "$(_shrooms_readers)"
+            return
+            ;;
+        --name)
+            # Only where a name means a device already in the roster. For
+            # `admin issue` and `init` it is a name being GIVEN to one, and
+            # offering existing names there suggests the wrong thing.
+            case "${words[1]}:${words[2]}" in
+                admin:revoke) _shrooms_offer "$(_shrooms_peers)" ;;
+                *)            COMPREPLY=() ;;
+            esac
+            return
+            ;;
+        --device)
+            _shrooms_offer "$(_shrooms_devices)"
+            return
+            ;;
+        --life|--within|--keep-for|--ttl|--timeout)
+            COMPREPLY=($(compgen -W "$_shrooms_durations" -- "$cur"))
+            return
+            ;;
+        --mode)
+            COMPREPLY=($(compgen -W "Core Edge" -- "$cur"))
             return
             ;;
     esac
@@ -99,7 +181,7 @@ _shrooms() {
             COMPREPLY=($(compgen -W "--name --relay --advertise --port --admin-dir --no-admin --socket --mesh --keycard --reader $common" -- "$cur"))
             ;;
         join)
-            COMPREPLY=($(compgen -W "--invite --name --relay --advertise --port --timeout --socket --local -v $common" -- "$cur"))
+            COMPREPLY=($(compgen -W "--invite --name --relay --advertise --port --timeout --socket --local --entry-node --mesh -v $common" -- "$cur"))
             ;;
         prepare)
             COMPREPLY=($(compgen -W "--name --relay --advertise --port $common" -- "$cur"))
@@ -111,7 +193,7 @@ _shrooms() {
             COMPREPLY=($(compgen -W "--socket -v $common" -- "$cur"))
             ;;
         status)
-            COMPREPLY=($(compgen -W "--json --socket" -- "$cur"))
+            COMPREPLY=($(compgen -W "--json --ipv4 --socket" -- "$cur"))
             ;;
         mesh|meshes)
             # The labels come from the config rather than from status, because
@@ -177,7 +259,7 @@ _shrooms() {
             fi
             ;;
         hosts)
-            COMPREPLY=($(compgen -W "--write --socket $common" -- "$cur"))
+            COMPREPLY=($(compgen -W "--write --file --suffix --socket $common" -- "$cur"))
             ;;
         key)
             if [ "$cword" -eq 2 ]; then
@@ -204,14 +286,6 @@ _shrooms() {
                 COMPREPLY=($(compgen -W "init issue renew revoke show" -- "$cur"))
                 return
             fi
-            # --name means a device already in the roster for revoke, and a
-            # name being GIVEN to one for issue. Only the first can be
-            # completed, and offering the roster for the second would suggest
-            # the wrong thing.
-            if [ "$prev" = --name ] && [ "${words[2]}" = revoke ]; then
-                COMPREPLY=($(compgen -W "$(_shrooms_peers)" -- "$cur"))
-                return
-            fi
             case ${words[2]} in
                 init)
                     COMPREPLY=($(compgen -W "--dir --mesh --no-passphrase --keycard --reader" -- "$cur")) ;;
@@ -220,7 +294,7 @@ _shrooms() {
                 renew)
                     COMPREPLY=($(compgen -W "--dir --mesh --socket --within --all --life --dry-run --sign-with --external-signer" -- "$cur")) ;;
                 revoke)
-                    COMPREPLY=($(compgen -W "--dir --device --name --mesh --socket --serial --keep --sign-with --external-signer" -- "$cur")) ;;
+                    COMPREPLY=($(compgen -W "--dir --device --name --mesh --socket --serial --keep-for --publish --rotate --sign-with --external-signer" -- "$cur")) ;;
                 show)
                     COMPREPLY=($(compgen -W "--dir --mesh" -- "$cur")) ;;
                 *)

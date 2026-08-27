@@ -2,7 +2,9 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -96,6 +98,171 @@ func TestCompletionKnowsEverySubcommand(t *testing.T) {
 				t.Errorf("`shrooms %s %s` exists and the completion never mentions it",
 					group.cmd, sub)
 			}
+		}
+	}
+}
+
+// Flags drift the same way verbs do, and worse: a flag that does not exist
+// completes just as confidently as one that does.
+//
+// Both directions, because they fail differently. A missing flag is a Tab that
+// offers less than it could. An invented one is a Tab that hands you something
+// the binary rejects — which is how `--keep` got offered for a flag actually
+// called `--keep-for`, alongside `--publish` and `--rotate` that were never
+// offered at all. All three were hand-copied from the source into the script,
+// which is the step this replaces.
+func TestCompletionOffersTheFlagsThatExist(t *testing.T) {
+	var src strings.Builder
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+			continue
+		}
+		raw, err := os.ReadFile(e.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		src.Write(raw)
+	}
+
+	flagDef := regexp.MustCompile(`fs\.(?:String|Bool|Uint|Uint64|Int|Duration)\("([a-z][a-z0-9-]*)"`)
+	defined := map[string]bool{}
+	for _, m := range flagDef.FindAllStringSubmatch(src.String(), -1) {
+		defined[m[1]] = true
+	}
+
+	script := completionScript(t)
+	offered := map[string]bool{}
+	for _, w := range regexp.MustCompile(`compgen -W "([^"]*)"`).FindAllStringSubmatch(script, -1) {
+		for _, tok := range strings.Fields(w[1]) {
+			if strings.HasPrefix(tok, "--") {
+				offered[strings.TrimPrefix(tok, "--")] = true
+			}
+		}
+	}
+
+	// Two that the regexp cannot see, rather than two that are wrong.
+	//
+	// --invite is matched as a literal argument in setup.go instead of being
+	// declared on a FlagSet, because it decides WHICH join this is before
+	// there is a FlagSet to declare it on.
+	//
+	// v is declared as fs.Bool("v"), which Go's flag package accepts as -v,
+	// and -v is what the script offers — a single dash, so it is not picked up
+	// as a long flag above.
+	knownGood := map[string]bool{"invite": true, "v": true}
+
+	for f := range offered {
+		if !defined[f] && !knownGood[f] {
+			t.Errorf("the completion offers --%s and no command defines it", f)
+		}
+	}
+	for f := range defined {
+		if !offered[f] && !knownGood[f] {
+			t.Errorf("--%s exists and the completion never offers it", f)
+		}
+	}
+}
+
+// completeWith runs the real completion function and returns what it offers.
+//
+// The script rather than a model of it. Everything above compares two lists of
+// strings, which catches drift and proves nothing about whether pressing Tab
+// does anything — and the bugs here have all been in the second category.
+func completeWith(t *testing.T, words ...string) []string {
+	t.Helper()
+	var quoted []string
+	for _, w := range words {
+		quoted = append(quoted, "'"+strings.ReplaceAll(w, "'", `'\''`)+"'")
+	}
+	script := `
+source ../../packaging/shrooms.bash
+COMP_WORDS=(` + strings.Join(quoted, " ") + ` "")
+COMP_CWORD=` + itoa(len(words)) + `
+COMPREPLY=()
+_shrooms 2>/dev/null
+printf '%s\n' "${COMPREPLY[@]}"
+`
+	out, err := exec.Command("bash", "-c", script).Output()
+	if err != nil {
+		t.Fatalf("running the completion: %v", err)
+	}
+	var got []string
+	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if l != "" {
+			got = append(got, l)
+		}
+	}
+	return got
+}
+
+func itoa(n int) string { return strconv.Itoa(n) }
+
+func offers(got []string, want string) bool {
+	for _, g := range got {
+		if g == want {
+			return true
+		}
+	}
+	return false
+}
+
+// Pressing Tab has to actually produce something.
+func TestCompletionActuallyCompletes(t *testing.T) {
+	for _, c := range []struct {
+		want  string
+		words []string
+	}{
+		{"keycard", []string{"shrooms"}},
+		{"services", []string{"shrooms"}},
+		{"free-slots", []string{"shrooms", "keycard"}},
+		{"remove", []string{"shrooms", "mesh"}},
+		{"flatten", []string{"shrooms", "config"}},
+		{"renew", []string{"shrooms", "admin"}},
+		{"--mesh", []string{"shrooms", "admin", "revoke"}},
+		{"--keep-for", []string{"shrooms", "admin", "revoke"}},
+		{"--keycard", []string{"shrooms", "init"}},
+		// Values, not only flag names. These need no daemon: the list is here.
+		{"720h", []string{"shrooms", "admin", "revoke", "--keep-for"}},
+		{"Core", []string{"shrooms", "config", "set", "mode"}},
+	} {
+		got := completeWith(t, c.words...)
+		if !offers(got, c.want) {
+			t.Errorf("`%s <Tab>` did not offer %q (got %v)",
+				strings.Join(c.words, " "), c.want, got)
+		}
+	}
+}
+
+// A flag that takes a value the machine can know should complete to it. This
+// is the half that was missing: every flag NAME completed and --mesh gave
+// nothing, because the helper behind it shelled out to a root-only command.
+func TestFlagsWithKnowableValuesAreWired(t *testing.T) {
+	script := completionScript(t)
+	prev := regexp.MustCompile(`(?s)case \$prev in(.*?)\n    esac`).FindStringSubmatch(script)
+	if prev == nil {
+		t.Fatal("no `case $prev` block, so no flag completes to a value at all")
+	}
+	for _, f := range []string{
+		"--mesh",     // labels, from the daemon
+		"--name",     // peers, for revoke
+		"--device",   // device keys, from the roster
+		"--reader",   // attached readers
+		"--life",     // a duration, in Go's format
+		"--within",   //
+		"--keep-for", //
+		"--mode",     // Core or Edge
+		"--config",   // paths
+		"--socket",   //
+		"--dir",      //
+		"--file",     //
+		"--sign-with",
+	} {
+		if !strings.Contains(prev[1], f) {
+			t.Errorf("%s takes a value this machine can work out, and nothing completes it", f)
 		}
 	}
 }
