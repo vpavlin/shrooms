@@ -23,6 +23,12 @@ _shrooms_settings() {
     shrooms config settings --names 2>/dev/null
 }
 
+# Reader names, for --reader. Free to ask: `keycard readers` costs no pairing
+# slot, no PIN attempt and nothing on the card.
+_shrooms_readers() {
+    shrooms keycard readers 2>/dev/null
+}
+
 _shrooms_peers() {
     local out
     # --json rather than parsing the table: the table is for people and is
@@ -60,13 +66,23 @@ _shrooms() {
         cword=$COMP_CWORD
     fi
 
-    local commands="init join invite prepare set-key daemon status mesh config reload bound paths hosts key keys credential admin version help"
+    local commands="init join invite prepare set-key daemon status mesh config reload bound paths services hosts key keys credential keycard admin version help"
     local common="--config --state"
 
     # A path-valued flag completes as a path, whichever command it belongs to.
     case $prev in
         --config|--socket|--state|--admin-dir|--dir)
             _filedir 2>/dev/null || COMPREPLY=($(compgen -f -- "$cur"))
+            return
+            ;;
+        # Everywhere, rather than per command: --mesh means the same thing in
+        # all of them, and listing it once is one fewer place to forget.
+        --mesh)
+            COMPREPLY=($(compgen -W "$(_shrooms_mesh_labels)" -- "$cur"))
+            return
+            ;;
+        --reader)
+            COMPREPLY=($(compgen -W "$(_shrooms_readers)" -- "$cur"))
             return
             ;;
     esac
@@ -80,7 +96,7 @@ _shrooms() {
     local cmd=${words[1]}
     case $cmd in
         init)
-            COMPREPLY=($(compgen -W "--name --relay --advertise --port --admin-dir --no-admin --socket --mesh $common" -- "$cur"))
+            COMPREPLY=($(compgen -W "--name --relay --advertise --port --admin-dir --no-admin --socket --mesh --keycard --reader $common" -- "$cur"))
             ;;
         join)
             COMPREPLY=($(compgen -W "--invite --name --relay --advertise --port --timeout --socket --local -v $common" -- "$cur"))
@@ -102,9 +118,14 @@ _shrooms() {
             # the whole point of this command is the mesh status cannot see.
             # Second word is the verb, third is a label.
             if [ "$cword" -eq 2 ]; then
-                COMPREPLY=($(compgen -W "list enable disable" -- "$cur"))
+                COMPREPLY=($(compgen -W "list enable disable rename remove" -- "$cur"))
             elif [[ $cur == -* ]]; then
-                COMPREPLY=($(compgen -W "$common" -- "$cur"))
+                # remove restarts the daemon itself, so it takes a socket.
+                case ${words[2]} in
+                    remove|rm|leave) COMPREPLY=($(compgen -W "--yes --socket $common" -- "$cur")) ;;
+                    rename)          COMPREPLY=($(compgen -W "--admin-dir $common" -- "$cur")) ;;
+                    *)               COMPREPLY=($(compgen -W "$common" -- "$cur")) ;;
+                esac
             else
                 COMPREPLY=($(compgen -W "$(_shrooms_mesh_labels)" -- "$cur"))
             fi
@@ -114,10 +135,12 @@ _shrooms() {
             # here: a second copy would drift the first time one is added, and
             # be wrong in the place people find out what exists.
             case $cword in
-                2) COMPREPLY=($(compgen -W "validate set settings" -- "$cur")) ;;
+                2) COMPREPLY=($(compgen -W "validate set settings flatten" -- "$cur")) ;;
                 3)
                     if [ "${words[2]}" = set ]; then
                         COMPREPLY=($(compgen -W "$(_shrooms_settings)" -- "$cur"))
+                    elif [ "${words[2]}" = flatten ]; then
+                        COMPREPLY=($(compgen -W "--dry-run --yes --config" -- "$cur"))
                     else
                         COMPREPLY=($(compgen -W "$common" -- "$cur"))
                     fi
@@ -178,9 +201,57 @@ _shrooms() {
             ;;
         admin)
             if [ "$cword" -eq 2 ]; then
-                COMPREPLY=($(compgen -W "init issue revoke show" -- "$cur"))
-            else
-                COMPREPLY=($(compgen -W "--dir --name --device --wg --serial --life --write --no-passphrase --publish --socket $common" -- "$cur"))
+                COMPREPLY=($(compgen -W "init issue renew revoke show" -- "$cur"))
+                return
+            fi
+            # --name means a device already in the roster for revoke, and a
+            # name being GIVEN to one for issue. Only the first can be
+            # completed, and offering the roster for the second would suggest
+            # the wrong thing.
+            if [ "$prev" = --name ] && [ "${words[2]}" = revoke ]; then
+                COMPREPLY=($(compgen -W "$(_shrooms_peers)" -- "$cur"))
+                return
+            fi
+            case ${words[2]} in
+                init)
+                    COMPREPLY=($(compgen -W "--dir --mesh --no-passphrase --keycard --reader" -- "$cur")) ;;
+                issue)
+                    COMPREPLY=($(compgen -W "--dir --state --config --mesh --name --life --serial --device --wg --seal --write --sign-with --external-signer" -- "$cur")) ;;
+                renew)
+                    COMPREPLY=($(compgen -W "--dir --mesh --socket --within --all --life --dry-run --sign-with --external-signer" -- "$cur")) ;;
+                revoke)
+                    COMPREPLY=($(compgen -W "--dir --device --name --mesh --socket --serial --keep --sign-with --external-signer" -- "$cur")) ;;
+                show)
+                    COMPREPLY=($(compgen -W "--dir --mesh" -- "$cur")) ;;
+                *)
+                    COMPREPLY=($(compgen -W "--dir --mesh $common" -- "$cur")) ;;
+            esac
+            ;;
+
+        keycard)
+            if [ "$cword" -eq 2 ]; then
+                COMPREPLY=($(compgen -W "status readers pair init free-slots forget reset" -- "$cur"))
+                return
+            fi
+            case ${words[2]} in
+                status)     COMPREPLY=($(compgen -W "--reader --json" -- "$cur")) ;;
+                readers)    COMPREPLY=() ;;
+                pair)       COMPREPLY=($(compgen -W "--reader --dir" -- "$cur")) ;;
+                init)       COMPREPLY=($(compgen -W "--reader --restore" -- "$cur")) ;;
+                free-slots) COMPREPLY=($(compgen -W "--reader --dir --yes" -- "$cur")) ;;
+                forget)     COMPREPLY=($(compgen -W "--dir" -- "$cur")) ;;
+                reset)      COMPREPLY=($(compgen -W "--reader" -- "$cur")) ;;
+                *)          COMPREPLY=() ;;
+            esac
+            ;;
+
+        services)
+            if [ "$cword" -eq 2 ]; then
+                COMPREPLY=($(compgen -W "list add remove" -- "$cur"))
+                return
+            fi
+            if [[ $cur == -* ]]; then
+                COMPREPLY=($(compgen -W "--mesh --socket --tls --to --type" -- "$cur"))
             fi
             ;;
         *)
