@@ -10,7 +10,7 @@
 #
 # `prepare` is the one to use with invites: it installs and starts the daemon
 # with no mesh, and the daemon waits. Then, on a machine already on the mesh,
-# `shrooms invite` — and back here `sudo shrooms join --invite <TOKEN>`, which
+# `shrooms invite` — and back here `sudo shrooms join <TOKEN>`, which
 # brings it up without a restart.
 #
 # Everything after init/join goes straight to shrooms, so its flags are
@@ -60,7 +60,7 @@ This script's own options:
   --force              regenerate the config if one exists
 
 Examples:
-  sudo $0 prepare --name fedora        # then: sudo shrooms join --invite TOKEN
+  sudo $0 prepare --name fedora        # then: sudo shrooms join TOKEN
   sudo $0 init --relay
 EOF
     exit 1
@@ -261,7 +261,7 @@ systemctl enable shrooms >/dev/null 2>&1
 # no key would only fail. That stopped being true: a daemon without a mesh now
 # holds the control socket and waits to be told which one it is on, which is
 # precisely what an invite needs it to be doing. Leaving it stopped meant
-# `shrooms join --invite` had nothing to talk to.
+# `shrooms join` had nothing to talk to.
 if [ "${SETUP[0]}" = "prepare" ]; then
     if ! systemctl restart shrooms; then
         echo
@@ -278,7 +278,7 @@ On a machine already on one:
   shrooms invite                        # or --mesh <name> if it has several
 
 and back here:
-  sudo shrooms join --invite <TOKEN> --name $(hostname)
+  sudo shrooms join <TOKEN> --name $(hostname)
 
 That brings the mesh up without a restart. A network key still works if you
 have one rather than an invite:

@@ -137,7 +137,7 @@ func cmdStatus(args []string) error {
 		fmt.Println()
 		fmt.Println("Get an invite from a machine that is already on one:")
 		fmt.Println("  there $ shrooms invite")
-		fmt.Println("  here  $ sudo shrooms join --invite <TOKEN>")
+		fmt.Println("  here  $ sudo shrooms join <TOKEN>")
 		return nil
 	}
 

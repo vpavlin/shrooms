@@ -39,7 +39,7 @@ unreachable from outside — which is the whole point when testing a relay.
 shrooms invite
 
 # then, into the container
-docker exec shrooms-demo shrooms join --invite <TOKEN>
+docker exec shrooms-demo shrooms join <TOKEN>
 docker exec shrooms-demo shrooms status
 ```
 

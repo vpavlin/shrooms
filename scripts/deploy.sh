@@ -168,7 +168,7 @@ already in the mesh:
 
 then, with the token it prints:
 
-  ssh $HOST 'sudo docker exec shrooms shrooms join --invite <TOKEN> \
+  ssh $HOST 'sudo docker exec shrooms shrooms join <TOKEN> \
       --socket /run/shrooms/shrooms.sock'
 
 The token is good for one device and fifteen minutes, and what makes this node

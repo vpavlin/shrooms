@@ -181,7 +181,9 @@ _shrooms() {
             COMPREPLY=($(compgen -W "--name --relay --advertise --port --admin-dir --no-admin --socket --mesh --keycard --reader $common" -- "$cur"))
             ;;
         join)
-            COMPREPLY=($(compgen -W "--invite --name --relay --advertise --port --timeout --socket --local --entry-node --mesh -v $common" -- "$cur"))
+            # The token is positional now, so there is nothing to complete for it —
+            # offer the flags and let the token be pasted.
+            COMPREPLY=($(compgen -W "--name --relay --advertise --port --timeout --socket --local --entry-node --mesh -v $common" -- "$cur"))
             ;;
         prepare)
             COMPREPLY=($(compgen -W "--name --relay --advertise --port $common" -- "$cur"))

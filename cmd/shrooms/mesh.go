@@ -67,7 +67,7 @@ func cmdMeshList(args []string) error {
 	meshes := cfg.Meshes()
 	if len(meshes) == 0 {
 		fmt.Println("This device is not in any mesh.")
-		fmt.Println("  shrooms join --invite <TOKEN>")
+		fmt.Println("  shrooms join <TOKEN>")
 		return nil
 	}
 

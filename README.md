@@ -310,7 +310,7 @@ waits:
 $ shrooms invite
 Invite valid for 15m0s. On the joining device:
 
-  shrooms join --invite BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U
+  shrooms join BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U
 
 Waiting...
 ```
@@ -318,7 +318,7 @@ Waiting...
 Then run that here, while the other machine is still waiting:
 
 ```console
-$ sudo ./bin/shrooms join --invite BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U --name laptop
+$ sudo ./bin/shrooms join BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U --name laptop
 $ sudo ./bin/shrooms daemon -v
 ```
 
@@ -327,7 +327,7 @@ join goes through it and it brings the mesh up itself — no second command, no
 restart. That is what a freshly installed machine looks like: the unit is
 enabled, the daemon waits, and `join` is the only thing you run.
 
-`shrooms join --invite <TOKEN>` is the only way in; the network-key form was
+`shrooms join <TOKEN>` is the only way in; the network-key form was
 removed on 2026-08-27. What to
 use when nothing is running on the other end.
 
@@ -635,7 +635,7 @@ needs a change to how addresses are derived; that is
 
 ```console
 $ sudo shrooms invite                                    # on this machine
-$ sudo shrooms join --invite <TOKEN> --name office        # on the new one
+$ sudo shrooms join <TOKEN> --name office        # on the new one
 $ ./scripts/deploy.sh user@host --name nas               # remotely, then invite it
 ```
 
@@ -738,18 +738,18 @@ $ shrooms admin revoke --device <hex>      # withdraw one before it expires
 ```
 
 **Creating a mesh is one command and adding a device is two** — `invite` here,
-`join --invite` there. That matters more than it sounds: the intermediate
+`join <TOKEN>` there. That matters more than it sounds: the intermediate
 version had six steps and a credential blob copied between machines by hand,
 which is the sort of thing people skip.
 
 ```console
 laptop $ shrooms invite
         Invite valid for 15m0s. On the joining device:
-          shrooms join --invite BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U
+          shrooms join BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U
         [QR code]
         Waiting...
 
-vps    $ shrooms join --invite BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U --name vps
+vps    $ shrooms join BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U --name vps
         Asking to join as "vps"...
         Enrolled. Credential serial 1786439411, expires 2026-09-10T11:03:51+02:00.
 ```
@@ -1183,7 +1183,7 @@ On the machine itself, with only docker installed:
 $ curl -fsSLO https://raw.githubusercontent.com/vpavlin/shrooms/master/scripts/install.sh
 $ sudo bash install.sh prepare --name laptop
 # then, from a machine in the mesh: shrooms invite
-$ sudo shrooms join --invite <TOKEN>
+$ sudo shrooms join <TOKEN>
 ```
 
 Setting a machine up **without the key passing through whoever is doing the
@@ -1195,7 +1195,7 @@ by invite, sealed to that one device:
 $ sudo bash install.sh prepare --name nas --relay
 $ sudo systemctl enable --now shrooms
 # then, from a machine already in the mesh: shrooms invite
-$ sudo shrooms join --invite <TOKEN>
+$ sudo shrooms join <TOKEN>
 ```
 
 The device identity is generated during `prepare`, so the machine's overlay

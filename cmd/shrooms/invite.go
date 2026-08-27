@@ -29,7 +29,7 @@ import (
 
 // Enrolment, from both ends.
 //
-// `invite` on a machine that is already a member, `join --invite` on the one
+// `invite` on a machine that is already a member, `join <TOKEN>` on the one
 // that is not. Between them they replace the six steps enrolling a device had
 // grown to: mint a token, type it on the other machine, done. The mesh key
 // never appears on a screen, and the credential is issued in the same exchange
@@ -129,7 +129,7 @@ func cmdInvite(args []string) error {
 		fmt.Printf("Admitting one device to %q.\n", target.Label)
 	}
 	fmt.Printf("Invite valid for %s. On the joining device:\n\n", *ttl)
-	fmt.Printf("  shrooms join --invite %s\n\n", groupToken(secret.String()))
+	fmt.Printf("  shrooms join %s\n\n", groupToken(secret.String()))
 	// Somewhere for the joining device to reach the rendezvous plane, so it
 	// does not depend on the public fleet answering (ADR-031). Best effort: an
 	// invite without one still works exactly as it did.
@@ -292,7 +292,7 @@ func socketClient(sock string, timeout time.Duration) *http.Client {
 	}
 }
 
-// cmdJoinInvite is `join --invite`: the joining half.
+// cmdJoinInvite is the joining half of `invite`.
 //
 // Two ways to run the exchange, and the protocol itself is neither of them —
 // invite.Redeem is shared, so what differs is only where the node comes from.
@@ -300,7 +300,7 @@ func socketClient(sock string, timeout time.Duration) *http.Client {
 // tunnel up the moment it joins; a machine with no daemon runs a node for the
 // length of the exchange and throws it away.
 func cmdJoinInvite(token string, args []string) error {
-	fs := flag.NewFlagSet("join --invite", flag.ExitOnError)
+	fs := flag.NewFlagSet("join", flag.ExitOnError)
 	cfgPath, stateDir := commonFlags(fs)
 	sock := fs.String("socket", DefaultSocket, "control socket of the local daemon")
 	name := fs.String("name", "", "device name (default: hostname)")

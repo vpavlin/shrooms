@@ -136,7 +136,7 @@ On a machine already on one:
   shrooms invite
 
 and back here:
-  sudo shrooms join --invite &lt;TOKEN&gt; --name nas</code></pre>
+  sudo shrooms join &lt;TOKEN&gt; --name nas</code></pre>
 </details>
 
 <details>
@@ -148,7 +148,7 @@ and back here:
     the daemon with no mesh at all. <code>prepare</code> is the one to pair with
     invites — a daemon without a mesh still holds its control socket and waits
     to be told which network it is on, which is exactly what
-    <code>shrooms join --invite</code> needs it to be doing.
+    <code>shrooms join</code> needs it to be doing.
 </p>
 
 <p>
@@ -605,7 +605,7 @@ Store it away from this machine. A password manager, a Keycard, paper.</code></p
 <pre><code><span class="cmd">shrooms invite</span>
 Invite valid for 15m0s. On the joining device:
 
-  <span class="p">shrooms join --invite BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U</span>
+  <span class="p">shrooms join BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U</span>
 
   [QR code]
 
@@ -616,7 +616,7 @@ which is what makes it single-use — so leave this running.</code></pre>
     Then, on the newcomer, while the other machine is still waiting:
 </p>
 
-<pre><code><span class="cmd">sudo shrooms join --invite BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U --name nas</span>
+<pre><code><span class="cmd">sudo shrooms join BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U --name nas</span>
 Asking to join as "nas"...
 
 <span class="p">Enrolled. Credential serial 1786439411, expires 2026-09-10T11:03:51+02:00.</span></code></pre>
@@ -677,10 +677,10 @@ This device has its keys and its name. It is not on a mesh yet.
 
 <span class="c"># on a machine already in the mesh</span>
 <span class="cmd">shrooms invite</span>
-  shrooms join --invite <span class="p">BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U</span>
+  shrooms join <span class="p">BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U</span>
 
 <span class="c"># back on the new machine</span>
-<span class="cmd">sudo shrooms join --invite BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U</span>
+<span class="cmd">sudo shrooms join BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U</span>
 <span class="p">Enrolled.</span> Credential serial 1786439411, expires 2026-09-26T09:14:02+02:00.</code></pre>
 
 <p>

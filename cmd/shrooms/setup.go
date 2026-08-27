@@ -12,6 +12,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/vpavlin/shrooms/internal/identity"
+	"github.com/vpavlin/shrooms/internal/invite"
 	"github.com/vpavlin/shrooms/internal/keycard"
 	"github.com/vpavlin/shrooms/internal/mesh"
 	"github.com/vpavlin/shrooms/internal/state"
@@ -103,25 +104,46 @@ func cmdJoin(args []string) error {
 	// device for fifteen minutes (ADR-017). Keeping a hand-pasted key beside
 	// them left the weakest way in permanently available, which is not what a
 	// superseded mechanism should be.
+	// The token is positional: it is the one thing this command always needs,
+	// and `shrooms join <TOKEN>` is how somebody who has just been handed one
+	// will type it.
+	//
+	// --invite is still accepted, undocumented. Every invite printed before
+	// today says to use it, and so do QR codes already scanned and notes
+	// already written; breaking those to tidy a flag would be the wrong trade.
 	if tok, rest, ok := inviteFlag(args); ok {
 		return cmdJoinInvite(tok, rest)
 	}
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		// Almost certainly somebody pasting a network key, from habit or an old
-		// note. Say what replaced it rather than "unknown flag".
-		return errors.New("`shrooms join <KEY>` has been removed.\n\n" +
-			"Joining with the network key was how this worked before credentials " +
-			"existed: the key was the membership, so anybody holding it was a " +
-			"member and nobody could be removed. An invite carries the same key " +
-			"sealed to ONE device for fifteen minutes, and what makes that device " +
-			"a member is an admin-signed credential that can be revoked.\n\n" +
-			"On a machine already in the mesh:\n" +
-			"    shrooms invite\n\n" +
-			"and here, with the token it prints:\n" +
-			"    sudo shrooms join --invite <TOKEN>")
+		// Told apart by parsing, not by shape. A token and a network key are
+		// both opaque strings to a person, and the useful answer to the wrong
+		// one depends on WHICH wrong one it is.
+		if _, err := invite.ParseToken(args[0]); err == nil {
+			return cmdJoinInvite(args[0], args[1:])
+		}
+		// A network key, from habit or an old note: say what replaced it.
+		if _, err := identity.ParseNetworkKey(args[0]); err == nil {
+			return errors.New("that is a network key, and joining with one has " +
+				"been removed.\n\n" +
+				"It was how this worked before credentials existed: the key was " +
+				"the membership, so anybody holding it was a member and nobody " +
+				"could be removed. An invite carries the same key sealed to ONE " +
+				"device for fifteen minutes, and what makes that device a member " +
+				"is an admin-signed credential that can be revoked.\n\n" +
+				"On a machine already in the mesh:\n" +
+				"    shrooms invite\n\n" +
+				"and here, with the token it prints:\n" +
+				"    sudo shrooms join <TOKEN>")
+		}
+		// Neither. Most likely a token that was truncated on its way here —
+		// through a chat client, a QR scan, or a line wrap.
+		return fmt.Errorf("%q is not an invite token.\n\n"+
+			"A token looks like BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U — six groups, "+
+			"and it is worth checking none went missing in the paste.\n\n"+
+			"Get one with `shrooms invite` on a machine already in the mesh.", args[0])
 	}
-	return errors.New("usage: shrooms join --invite <TOKEN> [flags]\n\n" +
-		"An invite comes from `shrooms invite` on a machine already in the mesh.")
+	return errors.New("usage: shrooms join <TOKEN> [flags]\n\n" +
+		"The token comes from `shrooms invite` on a machine already in the mesh.")
 }
 
 // addMesh appends a mesh to a config that already names one (ADR-015).
@@ -448,7 +470,7 @@ func cmdPrepare(args []string) error {
 	fmt.Println("  shrooms invite")
 	fmt.Println()
 	fmt.Println("and back here, with the token it prints:")
-	fmt.Println("  sudo shrooms join --invite <TOKEN>")
+	fmt.Println("  sudo shrooms join <TOKEN>")
 	return nil
 }
 
@@ -609,7 +631,7 @@ func rotateKey(cfgPath, stateDir string, cfg state.Config, yes bool) error {
 	fmt.Printf("On each of them, once this node has restarted:\n")
 	fmt.Printf("  sudo rm /etc/shrooms/config.toml     # they are on the old mesh\n")
 	fmt.Printf("  sudo shrooms prepare --name <NAME>\n")
-	fmt.Printf("  sudo shrooms join --invite <TOKEN>   # from `shrooms invite` here\n\n")
+	fmt.Printf("  sudo shrooms join <TOKEN>   # from `shrooms invite` here\n\n")
 	fmt.Printf("Restart this one first:  systemctl restart shrooms\n\n")
 	fmt.Printf("If the goal was to remove ONE device rather than re-key everything,\n")
 	fmt.Printf("this is the wrong command — `shrooms admin revoke --name <NAME> --rotate`\n")

@@ -430,7 +430,7 @@ default  jellyfin  http://jellyfin.nas.mesh  <span class="a">(unreachable now)</
 
 <p>Or join one somebody else runs, giving it a name of your own:</p>
 
-<pre><code><span class="cmd">sudo shrooms join --invite BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U --mesh friends</span></code></pre>
+<pre><code><span class="cmd">sudo shrooms join BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U --mesh friends</span></code></pre>
 
 <pre><code><span class="cmd">shrooms status</span>
 mesh <span class="p">default</span>  fd69:bd41:d9bc:7fb7:…  fd69:bd41:d9bc::/48  shrooms0   peers 2
@@ -534,11 +534,11 @@ test is switched off. It keeps its key and credentials:
 
 <pre><code><span class="host">laptop </span><span class="cmd">shrooms invite</span>
         Invite valid for 15m0s. On the joining device:
-          shrooms join --invite <span class="p">BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U</span>
+          shrooms join <span class="p">BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U</span>
         [QR code]
         Waiting...
 
-<span class="host">vps    </span><span class="cmd">sudo shrooms join --invite BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U --name vps</span>
+<span class="host">vps    </span><span class="cmd">sudo shrooms join BEGUZ-N4WOX-PYMTR-CYKWT-QBYSX-U --name vps</span>
         Asking to join as "vps"...
         <span class="p">Enrolled.</span> Credential serial 1786439411, expires 2026-09-10T11:03:51+02:00.</code></pre>
 

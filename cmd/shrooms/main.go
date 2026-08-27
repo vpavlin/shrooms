@@ -2,7 +2,7 @@
 //
 //	shrooms init [--name N]        create a mesh: keys, authority, credential
 //	shrooms invite                 admit one device, once
-//	shrooms join --invite TOKEN    join a mesh you were invited to
+//	shrooms join TOKEN    join a mesh you were invited to
 //	shrooms daemon                 run the mesh
 //	shrooms status                 roster and tunnel state
 //	shrooms key show               print the network key
@@ -90,7 +90,7 @@ func main() {
 			"for fifteen minutes, with an admin-signed credential deciding "+
 			"membership afterwards:\n"+
 			"    shrooms invite                    on a machine already in the mesh\n"+
-			"    sudo shrooms join --invite TOKEN  here")
+			"    sudo shrooms join TOKEN  here")
 		os.Exit(2)
 	case "version", "--version":
 		fmt.Println(version)
@@ -116,7 +116,7 @@ Usage:
   shrooms init [--name N] [--relay]     create a mesh: network key, admin keys
                                           and this device's own credential
   shrooms invite [--name N]             admit one device, once, within 15 min
-  shrooms join --invite TOKEN           join the mesh that invite came from
+  shrooms join TOKEN           join the mesh that invite came from
   shrooms version                       print the build this binary came from
   shrooms prepare [--name N] [--relay]  write a config with the key left blank,
                                           for setting a machine up without the
@@ -146,7 +146,7 @@ Common flags:
   --state PATH     state directory (default /var/lib/shrooms)
 
 Add a device with `+"`shrooms invite`"+` on a machine that is already a member,
-and `+"`shrooms join --invite`"+` on the one that is not. The network key never
+and `+"`shrooms join`"+` on the one that is not. The network key never
 appears on a screen, and the new device is issued a credential in the same
 exchange.
 `)
