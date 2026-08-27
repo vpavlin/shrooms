@@ -50,6 +50,71 @@ type adminFile struct {
 	// Keys are every public key the mesh trusts, including ones whose private
 	// halves are elsewhere — the recovery key, and later a renewal key.
 	Keys []string `json:"keys"`
+
+	// Account is which authority on the card this mesh uses: the second level
+	// of the derivation path (ADR-022), one per mesh.
+	//
+	// Absent means 0, which is where every card mesh minted before this was.
+	// So an existing authority keeps signing with exactly the key it always
+	// did, and only a mesh minted from now on gets one of its own.
+	//
+	// Recorded here because it cannot be recovered from the card: the card
+	// will derive any path asked of it and says nothing about which was used.
+	// If this file is lost, the way back is to derive forward from the
+	// mnemonic until a key matches admin_keys in the config.
+	Account uint32 `json:"account,omitempty"`
+}
+
+// accountFor is which key on the card a mesh signs with. Zero when the file
+// says nothing, which is every authority minted before there was a choice.
+func accountFor(dir, label string) uint32 {
+	raw, err := os.ReadFile(adminPathFor(dir, label))
+	if err != nil {
+		return 0
+	}
+	var af adminFile
+	if json.Unmarshal(raw, &af) != nil {
+		return 0
+	}
+	return af.Account
+}
+
+// nextAccount is the first derivation account this machine has not used.
+//
+// Max plus one rather than the first gap: a gap means a mesh that was removed,
+// and reusing its account would mint a mesh with the same admin key and so the
+// same mesh id as one this device may still hold credentials for.
+func nextAccount(dir string) uint32 {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0
+	}
+	var used []uint32
+	for _, e := range entries {
+		n := e.Name()
+		if !strings.HasPrefix(n, "admin") || !strings.HasSuffix(n, ".json") {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(dir, n))
+		if err != nil {
+			continue
+		}
+		var af adminFile
+		if json.Unmarshal(raw, &af) != nil {
+			continue
+		}
+		used = append(used, af.Account)
+	}
+	if len(used) == 0 {
+		return 0
+	}
+	max := used[0]
+	for _, u := range used {
+		if u > max {
+			max = u
+		}
+	}
+	return max + 1
 }
 
 func adminPath(dir string) string { return filepath.Join(dir, adminFileName) }
@@ -348,7 +413,7 @@ func signerFor(dir, label, signWith string, external bool) (cred.Signer, *cred.A
 		// question every node already answers about the same bytes — every
 		// admin key is a compressed secp256k1 point, so no file key can sign.
 		if auth, err := authorityFor(dir, label); err == nil && auth.CardOnly() {
-			return cardSignerFor(dir, auth)
+			return cardSignerFor(dir, label, auth)
 		}
 		return loadAdminFor(dir, label)
 	}
@@ -379,7 +444,7 @@ func releaseCards() {
 }
 
 // cardSignerFor opens the card this mesh's authority lives on.
-func cardSignerFor(dir string, auth *cred.Authority) (cred.Signer, *cred.Authority, error) {
+func cardSignerFor(dir, label string, auth *cred.Authority) (cred.Signer, *cred.Authority, error) {
 	t, done, err := keycard.OpenReader("")
 	if done != nil {
 		openCards = append(openCards, done)
@@ -392,7 +457,8 @@ func cardSignerFor(dir string, auth *cred.Authority) (cred.Signer, *cred.Authori
 	if err != nil {
 		return nil, nil, err
 	}
-	signer, err := keycard.NewSigner(t, keycardDir(dir), strings.TrimSpace(pin))
+	signer, err := keycard.NewSigner(t, keycardDir(dir), strings.TrimSpace(pin),
+		accountFor(dir, label))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1017,7 +1083,11 @@ func mintCardAuthorityFull(dir, cfgPath, stateDir, name, label, readerName strin
 	// The signer, not just the key: minting ends by issuing this device its own
 	// credential, and that needs a signature. Opening it now means a wrong PIN
 	// is reported before a mesh id exists rather than after.
-	signer, err := keycard.NewSigner(t, keycardDir(dir), strings.TrimSpace(pin))
+	// One authority per mesh, at its own place on the card (ADR-022). Chosen
+	// before the key is read, because the key IS the choice: a different
+	// account is a different admin key, and so a different mesh id.
+	account := nextAccount(dir)
+	signer, err := keycard.NewSigner(t, keycardDir(dir), strings.TrimSpace(pin), account)
 	if err != nil {
 		return err
 	}
@@ -1029,7 +1099,7 @@ func mintCardAuthorityFull(dir, cfgPath, stateDir, name, label, readerName strin
 	if err := ensureUserDir(dir); err != nil {
 		return err
 	}
-	af := adminFile{Keys: []string{b32.EncodeToString(signer.Public())}}
+	af := adminFile{Keys: []string{b32.EncodeToString(signer.Public())}, Account: account}
 	raw, err := json.MarshalIndent(af, "", "  ")
 	if err != nil {
 		return err
@@ -1091,6 +1161,10 @@ func mintCardAuthorityFull(dir, cfgPath, stateDir, name, label, readerName strin
 	fmt.Printf("  mesh id     %s\n", auth.ID())
 	fmt.Printf("  admin key   %s\n", path)
 	fmt.Printf("  authority   %x\n", signer.Public())
+	// Which key on the card. It cannot be recovered from the card — it will
+	// derive any path asked of it and says nothing about which was used — so
+	// this belongs beside the mnemonic.
+	fmt.Printf("  card path   %s\n", keycard.PathAt(account))
 	if enrolled {
 		fmt.Printf("  this device is enrolled\n")
 	}

@@ -231,7 +231,11 @@ func cmdKeycardPair(args []string) error {
 	if err := ensureUserDir(keycardDir(*dir)); err != nil {
 		return err
 	}
-	key, err := keycard.Enrol(t, keycardDir(*dir), pass, pin)
+	// Account 0. Pairing is per CARD, not per mesh — the key it reports is
+	// "this card is set up on this machine", and the first authority is what
+	// answers that. A mesh minted later gets its own account and derives its
+	// own key over the same pairing.
+	key, err := keycard.Enrol(t, keycardDir(*dir), pass, pin, 0)
 	if err != nil {
 		return err
 	}

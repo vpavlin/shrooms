@@ -88,6 +88,29 @@ type Transport interface {
 // mints at 0'.
 const Path = "m/64265'/0'/0'"
 
+// PathAt is where ONE mesh's authority lives: the second level is the mesh.
+//
+// Reserved by ADR-022 from the day the path changed, and unused until now —
+// every mesh minted at 0', which is what this fixes. Two meshes sharing an
+// admin key are not merely linkable through admin_keys, though that was the
+// stated risk: Authority.ID() is a hash over the admin keys and nothing else,
+// so they also share a MESH ID, and a credential or revocation issued for one
+// verifies against the other.
+//
+// The network key still gates access — topics derive from it, so a credential
+// from another mesh cannot be used without also holding that mesh's key — so
+// this is a lost layer rather than an open door. It is still the layer that
+// says which mesh a device was admitted to.
+//
+// Account 0 is the first mesh a card mints and keeps working untouched: an
+// existing authority stays exactly where it was.
+func PathAt(account uint32) string {
+	if account == 0 {
+		return Path
+	}
+	return fmt.Sprintf("m/64265'/%d'/0'", account)
+}
+
 // DefaultPairingPassword is what a card initialised without a chosen
 // pairing password will have.
 //
@@ -116,14 +139,33 @@ func cardKeyFile(configDir string) string {
 }
 
 // storedKey is what cardKeyFile holds.
+//
+// Keys is a path to public key map, because one card now holds an authority
+// per mesh. Path and Key are the single-entry form this file had before that,
+// still read so an enrolment made by an older build is not thrown away.
 type storedKey struct {
-	Path string `json:"path"`
-	Key  string `json:"key"`
+	Path string            `json:"path,omitempty"`
+	Key  string            `json:"key,omitempty"`
+	Keys map[string]string `json:"keys,omitempty"`
 }
 
-// writeCardKey records the key and the path it was derived at.
-func writeCardKey(configDir, key string) error {
-	b, err := json.Marshal(storedKey{Path: Path, Key: key})
+// writeCardKey records a key against the path it was derived at, keeping every
+// other path already known for this card.
+func writeCardKey(configDir, path, key string) error {
+	all := map[string]string{}
+	if raw, err := os.ReadFile(cardKeyFile(configDir)); err == nil {
+		var sk storedKey
+		if json.Unmarshal(raw, &sk) == nil {
+			for k, v := range sk.Keys {
+				all[k] = v
+			}
+			if sk.Path != "" && sk.Key != "" {
+				all[sk.Path] = sk.Key
+			}
+		}
+	}
+	all[path] = key
+	b, err := json.Marshal(storedKey{Keys: all})
 	if err != nil {
 		return err
 	}
@@ -136,7 +178,7 @@ func writeCardKey(configDir, key string) error {
 // first version of this stored bare hex with no path, and a bare hex key is
 // exactly the case that must not be offered — it predates the path change, so
 // it is the stale one.
-func readCardKey(configDir string) string {
+func readCardKey(configDir, path string) string {
 	raw, err := os.ReadFile(cardKeyFile(configDir))
 	if err != nil {
 		return ""
@@ -145,10 +187,16 @@ func readCardKey(configDir string) string {
 	if json.Unmarshal(raw, &sk) != nil {
 		return ""
 	}
-	if sk.Path != Path {
-		return ""
+	if k, ok := sk.Keys[path]; ok {
+		return strings.TrimSpace(k)
 	}
-	return strings.TrimSpace(sk.Key)
+	// The single-entry form. Still keyed by path, for the same reason it was
+	// then: a bare hex key with no path predates the path change and is the
+	// stale one, so it must not be offered.
+	if sk.Path == path {
+		return strings.TrimSpace(sk.Key)
+	}
+	return ""
 }
 
 // pairingFile is where the pairing for this card is kept.
@@ -242,7 +290,7 @@ func decodePairing(s string) (*ktypes.Pairing, error) {
 // Sparrow reaches for autoPair for the same reason. Calling the V1 path directly
 // meant a modern card could not be paired whatever password was typed — a
 // failure that would have read as "wrong password" while burning slots.
-func Enrol(t Transport, configDir, pairingPassword, pin string) (string, error) {
+func Enrol(t Transport, configDir, pairingPassword, pin string, account uint32) (string, error) {
 	if t == nil {
 		return "", errors.New("no card transport")
 	}
@@ -279,13 +327,13 @@ func Enrol(t Transport, configDir, pairingPassword, pin string) (string, error) 
 		return "", fmt.Errorf("paired, and %w. The pairing is saved, so this "+
 			"card does not need pairing again — only the right PIN", pinError(err))
 	}
-	key, err := cardPublicKey(cs, rec)
+	key, err := cardPublicKey(cs, rec, PathAt(account))
 	if err != nil {
 		return "", err
 	}
 	// Best effort: the enrolment succeeded whether or not this lands, and
 	// failing here would report a failure that did not happen.
-	_ = writeCardKey(configDir, key)
+	_ = writeCardKey(configDir, PathAt(account), key)
 	return key, nil
 }
 
@@ -332,8 +380,8 @@ var enrolDigest = sha256.Sum256([]byte("shrooms/keycard/enrol/v1"))
 // The signature is verified before the key is believed. A card that returns a
 // plausible key and an unverifiable signature is the failure worth catching,
 // and it cannot be caught by exporting a key.
-func cardPublicKey(cs *kc.CommandSet, rec *recorder) (string, error) {
-	sig, err := cs.SignWithPath(enrolDigest[:], Path)
+func cardPublicKey(cs *kc.CommandSet, rec *recorder, path string) (string, error) {
+	sig, err := cs.SignWithPath(enrolDigest[:], path)
 	if err != nil {
 		return "", fmt.Errorf("the card would not sign at %s — it may hold no key "+
 			"yet, which INIT does not create: %w", Path, err)
@@ -385,7 +433,7 @@ func cardPublicKey(cs *kc.CommandSet, rec *recorder) (string, error) {
 //
 // Needs the PIN: EXPORT KEY is only allowed inside an authenticated session, and
 // without one the card answers 6985.
-func PublicKey(t Transport, configDir, pin string) (string, error) {
+func PublicKey(t Transport, configDir, pin string, account uint32) (string, error) {
 	s, err := openCard(t, configDir)
 	if err != nil {
 		return "", err
@@ -393,7 +441,7 @@ func PublicKey(t Transport, configDir, pin string) (string, error) {
 	if err := s.cs.VerifyPIN(pin); err != nil {
 		return "", pinError(err)
 	}
-	return cardPublicKey(s.cs, s.rec)
+	return cardPublicKey(s.cs, s.rec, PathAt(account))
 }
 
 // cardSigner is cred.Signer backed by the card.
@@ -406,19 +454,22 @@ type cardSigner struct {
 	configDir string
 	pin       string
 	pub       []byte
+	// path is this mesh's own, so a card holding several authorities signs
+	// with the right one.
+	path string
 }
 
 // NewSigner opens a card as a cred.Signer: one tap, one signature.
 //
 // Exported because the caller that needs it is in another package now — the
 // phone's invite flow, and shortly whatever mints a mesh from a reader.
-func NewSigner(t Transport, configDir, pin string) (cred.Signer, error) {
-	return newCardSigner(t, configDir, pin)
+func NewSigner(t Transport, configDir, pin string, account uint32) (cred.Signer, error) {
+	return newCardSigner(t, configDir, pin, account)
 }
 
 // newCardSigner opens a session far enough to read the public key, so that a
 // wrong PIN or an unenrolled card is reported before anything is half-done.
-func newCardSigner(t Transport, configDir, pin string) (*cardSigner, error) {
+func newCardSigner(t Transport, configDir, pin string, account uint32) (*cardSigner, error) {
 	s, err := openCard(t, configDir)
 	if err != nil {
 		return nil, err
@@ -426,7 +477,7 @@ func newCardSigner(t Transport, configDir, pin string) (*cardSigner, error) {
 	if err := s.cs.VerifyPIN(pin); err != nil {
 		return nil, pinError(err)
 	}
-	hexPub, err := cardPublicKey(s.cs, s.rec)
+	hexPub, err := cardPublicKey(s.cs, s.rec, PathAt(account))
 	if err != nil {
 		return nil, err
 	}
@@ -434,7 +485,7 @@ func newCardSigner(t Transport, configDir, pin string) (*cardSigner, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &cardSigner{t: t, configDir: configDir, pin: pin, pub: pub}, nil
+	return &cardSigner{t: t, configDir: configDir, pin: pin, pub: pub, path: PathAt(account)}, nil
 }
 
 // Public is the compressed secp256k1 point, which is what an authority holds
@@ -450,7 +501,7 @@ func (c *cardSigner) SignDigest(d [32]byte) ([]byte, error) {
 	if err := s.cs.VerifyPIN(c.pin); err != nil {
 		return nil, fmt.Errorf("PIN refused: %w", err)
 	}
-	sig, err := s.cs.SignWithPath(d[:], Path)
+	sig, err := s.cs.SignWithPath(d[:], c.path)
 	if err != nil {
 		return nil, fmt.Errorf("the card did not sign: %w", err)
 	}
@@ -482,8 +533,8 @@ var _ cred.Signer = (*cardSigner)(nil)
 //
 // Returns the authority key on success, so the caller can see which card it
 // just proved.
-func SelfTest(t Transport, configDir, pin string) (string, error) {
-	s, err := newCardSigner(t, configDir, pin)
+func SelfTest(t Transport, configDir, pin string, account uint32) (string, error) {
+	s, err := newCardSigner(t, configDir, pin, account)
 	if err != nil {
 		return "", err
 	}
@@ -884,7 +935,10 @@ func Enrolment(configDir string) string {
 	if _, err := os.Stat(pairingFile(configDir)); err == nil {
 		out.Paired = true
 	}
-	out.Key = readCardKey(configDir)
+	// Account 0: this reports whether the card is set up on this device, and
+	// the first authority is what answers that. A card holding several says
+	// so through admin show, per mesh.
+	out.Key = readCardKey(configDir, Path)
 	b, err := json.Marshal(out)
 	if err != nil {
 		return `{"paired":false,"key":""}`

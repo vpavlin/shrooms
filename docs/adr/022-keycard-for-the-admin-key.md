@@ -201,6 +201,48 @@ and the overlay prefix derives from the id, so a different path is a different
 mesh. Nothing had been minted from a card when this changed, which is the only
 reason it was free.
 
+### The reserved level is now used: one authority per mesh
+
+Added 2026-08-27, after Vaclav asked whether one path for every mesh leaks
+anything. It does, and it does one thing worse than leak.
+
+The linkage above was the stated risk, and it is real: `admin_keys` is in every
+member's config, so anybody in two of your meshes can see the same admin key and
+know they are yours. But `Authority.ID()` is a hash over the admin keys and
+**nothing else**, so two meshes minted at the same account also share a **mesh
+id** — and a credential names the mesh id it was issued for. A credential or a
+revocation issued for one therefore verifies against the other.
+
+What stops that being an open door is the network key: rendezvous topics derive
+from it, so a credential from another mesh cannot be *used* without also holding
+that mesh's key. So this was a lost layer rather than an exploit — the layer
+that says which mesh a device was admitted to. The overlay prefix is unaffected,
+coming from the network key rather than the mesh id.
+
+`PathAt(account)` now gives each mesh `m/64265'/<account>'/0'`, and the account
+is recorded in that mesh's admin file. It cannot be recovered from the card,
+which will derive any path asked of it and says nothing about which was used —
+so `init --keycard` prints it, to be written beside the mnemonic. If the file is
+lost, the way back is to derive forward from the phrase until a key matches
+`admin_keys`.
+
+**Account 0 is the first mesh and does not move.** Every card mesh minted before
+this sits there, keeps its admin key, its mesh id and its credentials.
+
+Accounts are handed out as max-plus-one rather than filling gaps. A gap is a
+mesh that was removed, and reusing its account would mint a mesh with the same
+admin key — and so the same mesh id — as one this device may still hold
+credentials for, which is the thing this change exists to prevent.
+
+**Not done: the phone.** A phone holds no admin file, so nothing on it records
+which account a mesh uses — `admin_keys` names the key, not where it came from.
+`mobile` therefore signs at account 0, which is every mesh that exists today and
+every mesh a phone can currently admit to. A mesh minted at a later account
+cannot be admitted to from a phone until it learns the account, and the check
+there reports "this card is not an admin of that mesh", which is true but not
+the reason. Either the account travels with the invite, or the phone scans a
+bounded range of accounts against `admin_keys` within one card session.
+
 ### The card is not the only copy of the key
 
 Also 2026-08-25, and it corrects something this ADR has claimed from the start.

@@ -178,7 +178,15 @@ func AdmitWithCard(t CardTransport, configDir, pin, token, requestJSON, name str
 
 	// Opened before the signature so a wrong PIN or an unpaired card is
 	// reported while the invite is still open, rather than after it lapses.
-	signer, err := keycard.NewSigner(t, configDir, pin)
+	// Account 0, which is every mesh minted before authorities were given one
+	// each, and every mesh a phone can currently admit to.
+	//
+	// The phone holds no admin file, so it has nothing that records which key
+	// on the card a mesh uses — admin_keys names the key, not where it came
+	// from. A mesh minted at a later account therefore cannot be admitted to
+	// from a phone yet; the check below catches it and says the card is not an
+	// admin, which is true but not the reason. See docs/adr/022.
+	signer, err := keycard.NewSigner(t, configDir, pin, 0)
 	if err != nil {
 		return "", err
 	}

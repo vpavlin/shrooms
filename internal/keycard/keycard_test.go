@@ -52,7 +52,7 @@ func (deadCard) Transmit([]byte) ([]byte, error) { return nil, errors.New("tag l
 // The pairing file is what enrolment produces, so its absence is the check.
 func TestUnenrolledCardIsReportedBeforeUse(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := PublicKey(deadCard{}, dir, "123456"); err == nil {
+	if _, err := PublicKey(deadCard{}, dir, "123456", 0); err == nil {
 		t.Error("an unenrolled card produced a public key")
 	}
 	// And with a pairing present, the failure comes from the card rather than
@@ -61,7 +61,7 @@ func TestUnenrolledCardIsReportedBeforeUse(t *testing.T) {
 		[]byte(encodePairing(ktypes.NewPairing([32]byte{1}, 0))), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := PublicKey(deadCard{}, dir, "123456"); err == nil {
+	if _, err := PublicKey(deadCard{}, dir, "123456", 0); err == nil {
 		t.Error("a dead transport produced a public key")
 	}
 }
@@ -69,7 +69,7 @@ func TestUnenrolledCardIsReportedBeforeUse(t *testing.T) {
 // A nil transport is a programming error on the Kotlin side and must not panic
 // inside the card library.
 func TestNilTransportIsAnError(t *testing.T) {
-	if _, err := Enrol(nil, t.TempDir(), "x", "123456"); err == nil {
+	if _, err := Enrol(nil, t.TempDir(), "x", "123456", 0); err == nil {
 		t.Error("a nil transport was accepted")
 	}
 }
@@ -237,7 +237,7 @@ func TestEnrolmentIsAnsweredFromDisk(t *testing.T) {
 	}
 	// Written the way enrolment writes it: with the path it was derived at, so
 	// a key from a build that used a different one is never offered.
-	if err := writeCardKey(dir, "02aabb"); err != nil {
+	if err := writeCardKey(dir, Path, "02aabb"); err != nil {
 		t.Fatal(err)
 	}
 	var after struct {
@@ -315,10 +315,10 @@ func TestAKeyFromAnotherPathIsNotOffered(t *testing.T) {
 	dir := t.TempDir()
 
 	// What the current path produces is offered.
-	if err := writeCardKey(dir, "02aabbcc"); err != nil {
+	if err := writeCardKey(dir, Path, "02aabbcc"); err != nil {
 		t.Fatal(err)
 	}
-	if got := readCardKey(dir); got != "02aabbcc" {
+	if got := readCardKey(dir, Path); got != "02aabbcc" {
 		t.Errorf("a key from the current path came back as %q", got)
 	}
 
@@ -330,7 +330,7 @@ func TestAKeyFromAnotherPathIsNotOffered(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "keycard-key"), stale, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got := readCardKey(dir); got != "" {
+	if got := readCardKey(dir, Path); got != "" {
 		t.Errorf("offered %q, which was derived at a path this build no longer uses", got)
 	}
 
@@ -339,7 +339,7 @@ func TestAKeyFromAnotherPathIsNotOffered(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "keycard-key"), []byte("02aabbcc\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got := readCardKey(dir); got != "" {
+	if got := readCardKey(dir, Path); got != "" {
 		t.Errorf("offered %q from a file with no path recorded", got)
 	}
 }

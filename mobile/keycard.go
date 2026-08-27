@@ -39,18 +39,18 @@ const CardDefaultPairingPassword = keycard.DefaultPairingPassword
 // CardEnrol pairs this phone with the card, once, and returns the authority's
 // public key in the form an admin_keys entry takes.
 func CardEnrol(t CardTransport, configDir, pairingPassword, pin string) (string, error) {
-	return keycard.Enrol(t, configDir, pairingPassword, pin)
+	return keycard.Enrol(t, configDir, pairingPassword, pin, 0)
 }
 
 // CardPublicKey reads the authority key from an already-enrolled card.
 func CardPublicKey(t CardTransport, configDir, pin string) (string, error) {
-	return keycard.PublicKey(t, configDir, pin)
+	return keycard.PublicKey(t, configDir, pin, 0)
 }
 
 // CardSelfTest signs a fixed digest on the card and verifies it with the same
 // function a peer applies to a credential.
 func CardSelfTest(t CardTransport, configDir, pin string) (string, error) {
-	return keycard.SelfTest(t, configDir, pin)
+	return keycard.SelfTest(t, configDir, pin, 0)
 }
 
 // CardUnpairOthers frees every pairing slot except this phone's.
