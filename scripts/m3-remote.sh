@@ -199,10 +199,14 @@ S=""; [ "$(id -u)" -eq 0 ] || S=sudo
 
 # SELinux relabels bind mounts; without :Z the container cannot read its config
 # and reports it as missing.
+#
+# :Z, the private label, is right here where :z is right in install.sh: only
+# shrooms-natted ever touches these two directories, and `docker exec` into it
+# shares its categories.
 Z=""
-if command -v getenforce >/dev/null && [ "$(getenforce 2>/dev/null)" = "Enforcing" ]; then
+if [ -e /sys/fs/selinux/enforce ]; then
     Z=":Z"
-    echo "  SELinux enforcing, relabelling mounts"
+    echo "  SELinux enabled, relabelling mounts"
 fi
 
 $S mkdir -p "$REMOTE_DIR/nat/etc" "$REMOTE_DIR/nat/state"
