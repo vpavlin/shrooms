@@ -402,6 +402,14 @@ private fun CardSetupDialog(dir: String, onEnrolled: () -> Unit, onDismiss: () -
     var detail by remember { mutableStateOf("") }
     var working by remember { mutableStateOf("") }
 
+    // What the PIN being typed is for.
+    //
+    // The pad had one caller, so it ran the enrolment unconditionally. Freeing
+    // the other pairing slots also needs a verified PIN — UNPAIR is refused
+    // without one, and the card's refusal is discarded underneath us, so
+    // without this the rescue reported success and freed nothing.
+    var pinFor by remember { mutableStateOf<(String) -> Unit>({}) }
+
     // Whether the pairing is already stored, which changes what the last step
     // does. CardEnrol writes the pairing the moment it succeeds and checks the
     // PIN afterwards, so a mistyped PIN leaves this phone paired — and pairing
@@ -529,12 +537,22 @@ private fun CardSetupDialog(dir: String, onEnrolled: () -> Unit, onDismiss: () -
                     )
                     Spacer(Modifier.height(10.dp))
                     Action(text = "Free the other slots", enabled = true) {
-                        working = "Freeing the other slots"
-                        stage = Setup.Working
-                        tap("freeing the slots", { Mobile.cardUnpairOthers(it, dir) }) {
-                            detail = it
-                            identify()
+                        // Through the PIN pad: UNPAIR needs a verified PIN, and
+                        // without one the card refuses every slot while the
+                        // library discards the refusal — so this used to report
+                        // freed slots and free none.
+                        pin = ""
+                        pinFor = { entered ->
+                            working = "Freeing the other slots"
+                            stage = Setup.Working
+                            tap("freeing the slots", {
+                                Mobile.cardUnpairOthers(it, dir, entered)
+                            }) {
+                                detail = it
+                                identify()
+                            }
                         }
+                        stage = Setup.Pin
                     }
                     Spacer(Modifier.height(10.dp))
                 }
@@ -586,6 +604,7 @@ private fun CardSetupDialog(dir: String, onEnrolled: () -> Unit, onDismiss: () -
                     enabled = rep?.needsPassword != true || password.isNotEmpty(),
                 ) {
                     pin = ""
+                    pinFor = { finish(it) }
                     stage = Setup.Pin
                 }
             }
@@ -602,7 +621,7 @@ private fun CardSetupDialog(dir: String, onEnrolled: () -> Unit, onDismiss: () -
                     style = MaterialTheme.typography.bodySmall,
                     color = Palette.Ash,
                 )
-                PinPad(pin, onChange = { pin = it }, onComplete = { finish(it) })
+                PinPad(pin, onChange = { pin = it }, onComplete = { pinFor(it) })
                 Spacer(Modifier.height(10.dp))
                 Action(text = "Back", enabled = true) { stage = Setup.Ready }
             }
@@ -871,8 +890,8 @@ fun KeycardSetting(dir: String) {
                         "attempts from this phone. This frees the four this phone " +
                         "is not using. Every other device paired with this card " +
                         "stops being able to use it, and that cannot be undone.",
-                    needsPin = false,
-                ) { t, _ -> Mobile.cardUnpairOthers(t, dir) }
+                    needsPin = true,
+                ) { t, pin -> Mobile.cardUnpairOthers(t, dir, pin) }
             }
             Spacer(Modifier.height(10.dp))
             Action(text = "Forget this card", enabled = true, danger = true) { forgetting = true }
