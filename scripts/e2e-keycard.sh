@@ -2,9 +2,9 @@
 # The whole life of a mesh whose authority is a Keycard, against a real card.
 #
 # NOT in CI, and cannot be: it needs a USB reader, a card in it, a PIN, and a
-# binary built with -tags pcsc. Run it on the machine that has those:
+# binary. Run it on the machine that has those:
 #
-#     make shrooms TAGS=pcsc
+#     make shrooms
 #     SHROOMS_CARD_PIN=nnnnnn ./scripts/e2e-keycard.sh
 #
 # It pairs AT MOST ONCE, ever. A card has five pairing slots, they are consumed
@@ -33,11 +33,11 @@ bad()  { printf '    \033[31mFAIL\033[0m %s\n' "$1"; FAIL=$((FAIL+1)); }
 note() { printf '         %s\n' "$1"; }
 skip() { printf '\n  skipped: %s\n' "$1"; exit 77; }
 
-[ -x "$BIN" ] || skip "no $BIN — run 'make shrooms TAGS=pcsc'"
+[ -x "$BIN" ] || skip "no $BIN — run 'make shrooms'"
 
 probe=$("$BIN" keycard status 2>&1)
 case "$probe" in
-  *"no smartcard reader support"*) skip "built without -tags pcsc" ;;
+  *"no PC/SC library"*) skip "no pcsc-lite on this machine" ;;
   *"no smartcard reader found"*)   skip "no reader attached" ;;
   *"No smart card inserted"*)      skip "no card in the reader" ;;
   *"no PC/SC service"*)            skip "pcscd is not reachable" ;;

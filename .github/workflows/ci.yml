@@ -58,14 +58,17 @@ jobs:
       - name: Test
         run: make test
 
-      # The reader build, compiled and vetted but not run: it needs a card and a
-      # USB reader, which no hosted runner has. Without this the smartcard path
-      # would rot silently, since nothing else compiles it.
+      # The reader path, compiled and vetted but not run: it needs a card and a
+      # USB reader, which no hosted runner has.
+      #
+      # No libpcsclite-dev any more. The library is opened at first use rather
+      # than linked, so there is nothing to install to COMPILE this — which is
+      # the whole point, and worth having CI prove on a machine that has never
+      # seen a smartcard.
       - name: Build with reader support
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq libpcsclite-dev
           make vet-pcsc
-          make shrooms TAGS=pcsc
+          make shrooms
 
   # The management surface, end to end, against the real binary.
   #

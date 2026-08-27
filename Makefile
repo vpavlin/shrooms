@@ -55,14 +55,18 @@ check-lib:
 
 ## --- binaries ---
 
-## TAGS=pcsc adds smartcard reader support to `make shrooms` AND `make install`
-## — it was only wired into the first, so `make install TAGS=pcsc` installed a
-## binary without it and said so only when somebody reached for a card.
+## Smartcard reader support needs no tag any more and no build dependency.
 ##
-## TAGS=pcsc adds smartcard reader support, for driving a Keycard from a machine
-## with a reader rather than a phone. Off by default: it links libpcsclite
-## through cgo, which the daemon and the container image have no use for, and
-## which would otherwise be a build dependency for everyone.
+## It was `TAGS=pcsc`, which linked libpcsclite through cgo. That put the
+## library in DT_NEEDED, so a machine without it could not start the binary at
+## all — including the daemon, which never touches a card — and the only way to
+## get a card-capable build was a Go toolchain and the development headers.
+##
+## internal/keycard/pcsc_load.go opens the library at first use instead. One
+## binary everywhere, cards wherever pcsc-lite is installed, and a clear message
+## naming the package to install where it is not.
+##
+## TAGS is kept for anything else worth building conditionally.
 TAGS ?=
 GOTAGS = $(if $(TAGS),-tags $(TAGS),)
 
@@ -350,12 +354,12 @@ build-all: check-lib
 ## misuse. That is the common idiom for FFI userdata and is safe here (a Handle
 ## is a map key, not an address), but silencing it properly means reshaping the
 ## bridge to pass uintptr_t. Left alone rather than blanket-disabling vet.
-## Vet the reader build. A separate target rather than a bare `go vet -tags
-## pcsc` in CI, because the cgo flags for liblogosdelivery are exported by this
-## file — running the command directly fails on a missing header, which is how
-## this was first shipped red.
+## Vet the reader code. No longer a separate build — it is in every build now —
+## but kept as a target because CI names it, and because the cgo flags for
+## liblogosdelivery are exported by this file: running the command directly
+## fails on a missing header, which is how this was first shipped red.
 vet-pcsc: check-lib
-	$(GO) vet -tags pcsc ./cmd/shrooms/... ./internal/keycard/...
+	$(GO) vet ./cmd/shrooms/... ./internal/keycard/...
 
 vet-cgo: check-lib
 	$(GO) vet ./internal/mesh/... ./cmd/...
@@ -395,13 +399,13 @@ e2e: shrooms
 ## The life of a mesh whose authority is a Keycard, against a real card: mint,
 ## issue, install, revoke, teardown. Needs a reader, a card and a PIN, so it
 ## cannot run in CI:
-##     make shrooms TAGS=pcsc && SHROOMS_CARD_PIN=nnnnnn make e2e-keycard
+##     make shrooms && SHROOMS_CARD_PIN=nnnnnn make e2e-keycard
 e2e-keycard:
 	./scripts/e2e-keycard.sh
 
 ## The same, with two nodes and a daemon: mint, invite, join, renew, revoke.
 ## In containers, so no sudo — only a reader with a card on it:
-##     make shrooms TAGS=pcsc && SHROOMS_CARD_PIN=nnnnnn make e2e-keycard-mesh
+##     make shrooms && SHROOMS_CARD_PIN=nnnnnn make e2e-keycard-mesh
 ## KEEP=1 leaves the containers up to look at.
 e2e-keycard-mesh:
 	./scripts/e2e-keycard-mesh.sh

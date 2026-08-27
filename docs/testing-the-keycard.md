@@ -92,7 +92,8 @@ Both with `keycard-cli` or the Keycard app.
 A mesh minted with the card as its authority, and a credential signed by it that
 verifies against that authority — on a laptop with a USB reader and no phone.
 `shrooms keycard {status,init,pair,free-slots,forget,reset}` and
-`admin init --keycard`, built with `-tags pcsc`.
+`admin init --keycard`, in every build — reader support needs no build tag
+since 2026-08-27, only pcsc-lite on the machine.
 
 What it cost getting there, since none of it was in the plan:
 

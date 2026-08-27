@@ -11,13 +11,20 @@ This is how to set one up and admit a phone to it.
 - A **Keycard**. Applet 3.1 or later; `shrooms keycard status` will say.
 - A **USB smartcard reader**, or a phone with NFC. Both work; this guide uses
   the reader because everything can be done from one place.
-- A build with reader support, which is not the default:
+- **pcsc-lite** on the machine, which most desktop Linux installs have:
 
-      sudo apt install libpcsclite-dev      # or your distribution's equivalent
-      make install TAGS=pcsc
+      sudo apt install pcscd libpcsclite1     # Debian, Ubuntu
+      sudo dnf install pcsc-lite              # Fedora, RHEL
+      sudo pacman -S pcsclite                 # Arch
 
-  It is off by default because it links libpcsclite through cgo, and the daemon
-  never touches a card. A build without it says so and says how to get it.
+  No special build. Reader support is in every binary: the library is opened
+  the first time you reach for a card rather than linked, so a machine without
+  it runs the same binary and the card commands name the package to install.
+
+  It used to be `TAGS=pcsc`, which linked libpcsclite and so needed a Go
+  toolchain and the development headers to get a card-capable build — and put
+  the library in DT_NEEDED, meaning a machine without it could not start the
+  binary at all, daemon included.
 
 There is **no service to start**. `pcscd` is socket-activated: it starts when
 something asks for a reader and stops when nothing is using one.
@@ -133,7 +140,8 @@ card-only. There is no passphrase to type, because there is no file to unlock.
 | `6985` reading the key | no PIN verified |
 | `wrong PIN. 2 attempts left` | count them. Three wrong and the card blocks and needs its PUK |
 | `Sharing violation` | something else is holding the reader |
-| `this build has no smartcard reader support` | rebuild with `TAGS=pcsc` |
+| `no PC/SC library on this machine` | install pcsc-lite; the message names the package for your distribution |
+| `the PC/SC service is not running` | plug the reader in — pcscd starts on demand — or `sudo systemctl start pcscd` |
 
 **`shrooms keycard reset`** is the last resort: it wipes the card completely —
 key, PIN, PUK and every pairing — and is the only way back from a card with no
@@ -141,7 +149,7 @@ free slots and no device holding one. The key returns only from the mnemonic.
 
 ## Testing it
 
-    make shrooms TAGS=pcsc
+    make shrooms
     SHROOMS_CARD_PIN=nnnnnn make e2e-keycard        # mint, issue, revoke
     SHROOMS_CARD_PIN=nnnnnn make e2e-keycard-mesh   # and invite, join, renew
 

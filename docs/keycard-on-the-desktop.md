@@ -1,8 +1,10 @@
 # Inviting from Basecamp with a Keycard
 
 > **Update, 2026-08-26.** The first half of this is built: the card protocol
-> moved out of `mobile/` into `internal/keycard`, a PC/SC transport sits behind
-> `-tags pcsc`, and `shrooms keycard` plus `admin init --keycard` drive a card
+> moved out of `mobile/` into `internal/keycard`, a PC/SC transport ships in
+> every build (it opens libpcsclite at first use rather than linking it, so it
+> needs no build tag and no build dependency — amended 2026-08-27, it was
+> `-tags pcsc`), and `shrooms keycard` plus `admin init --keycard` drive a card
 > from a reader. What remains open is the part this document calls a decision
 > rather than a build — whether the group tier may hold an invite — which is
 > still unanswered and still wants an ADR.

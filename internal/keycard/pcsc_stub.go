@@ -1,21 +1,17 @@
-//go:build !pcsc
+//go:build !linux || !cgo
 
 package keycard
 
 import "errors"
 
-// Reader support is a build-time choice (see pcsc.go).
+// Reader support exists on Linux, where PC/SC does.
 //
-// The error says how to get it rather than that it is missing: somebody hitting
-// this has a reader plugged in and a card on it, and "not supported" would be
-// both wrong and unhelpful.
-var errNoPCSC = errors.New("this build has no smartcard reader support. " +
-	"It links libpcsclite through cgo, which the daemon and the container image " +
-	"have no use for, so it is off by default.\n\n" +
-	"Rebuild with it:\n" +
-	"    sudo apt install libpcsclite-dev\n" +
-	"    make install TAGS=pcsc\n\n" +
-	"Or use a phone, which reaches the same card over NFC")
+// Not a build tag any more: on Linux the library is opened at first use, so
+// there is nothing to opt into. This is the genuinely-cannot case — another
+// operating system, or a build with cgo switched off.
+var errNoPCSC = errors.New("this build cannot reach a smartcard reader: it was " +
+	"built without cgo, or for a system with no PC/SC.\n\n" +
+	"Use a phone, which reaches the same card over NFC")
 
 // OpenReader reports that this build cannot reach a reader.
 func OpenReader(string) (Transport, func(), error) { return nil, nil, errNoPCSC }

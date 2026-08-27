@@ -1,4 +1,4 @@
-//go:build pcsc
+//go:build linux && cgo
 
 package keycard
 
@@ -6,29 +6,25 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-
-	"github.com/ebfe/scard"
 )
 
 // A Keycard reached through a USB reader, for machines with no NFC.
 //
-// Built only with `-tags pcsc`, because it links libpcsclite through cgo and
-// most of what this project ships has no business needing a smartcard library:
-// the daemon never touches a card, the container image would carry the
-// dependency for a feature it cannot use, and anybody building from source
-// would need the development headers to compile a VPN. See pcsc_stub.go for
-// what a build without it says.
+// Always built, unlike the -tags pcsc it replaced. The library is opened at
+// first use rather than linked (pcsc_load.go), so this costs a machine without
+// a reader nothing at all — and the guide no longer has to ask somebody to
+// install a Go toolchain to talk to a card.
 //
 // The transport is the only platform-specific part. Everything above it —
 // pairing, the secure channel, the PIN, signing — is the same code the phone
-// runs over NFC, which is the whole point of CardTransport being one method.
+// runs over NFC, which is the whole point of Transport being one method.
 
 // reader is a card in a slot, as a Transport.
 type reader struct {
-	card *scard.Card
+	card *pcscCard
 }
 
-func (r *reader) Transmit(apdu []byte) ([]byte, error) { return r.card.Transmit(apdu) }
+func (r *reader) Transmit(apdu []byte) ([]byte, error) { return r.card.transmit(apdu) }
 
 // OpenReader connects to a card and returns it as a Transport.
 //
@@ -40,17 +36,16 @@ func (r *reader) Transmit(apdu []byte) ([]byte, error) { return r.card.Transmit(
 // when there are several rather than picking. A machine with two readers is a
 // machine where the wrong card is in one of them.
 func OpenReader(name string) (Transport, func(), error) {
-	ctx, err := scard.EstablishContext()
+	ctx, err := pcscEstablish()
 	if err != nil {
-		return nil, nil, fmt.Errorf("no PC/SC service: %w — is pcscd running? "+
-			"`sudo systemctl start pcscd`", err)
+		return nil, nil, err
 	}
-	release := func() { _ = ctx.Release() }
+	release := ctx.release
 
-	readers, err := ctx.ListReaders()
+	readers, err := ctx.readers()
 	if err != nil {
 		release()
-		return nil, nil, fmt.Errorf("could not list readers: %w", err)
+		return nil, nil, err
 	}
 	if len(readers) == 0 {
 		release()
@@ -83,23 +78,23 @@ func OpenReader(name string) (Transport, func(), error) {
 	// Exclusive, because a Keycard session is stateful: the secure channel and
 	// the verified PIN belong to this connection, and anything else touching
 	// the card mid-conversation invalidates both.
-	card, err := ctx.Connect(picked, scard.ShareExclusive, scard.ProtocolAny)
+	card, err := ctx.connect(picked)
 	if err != nil {
 		release()
-		return nil, nil, fmt.Errorf("no card in %q: %w — is it on the reader?", picked, err)
+		return nil, nil, fmt.Errorf("%q: %w", picked, err)
 	}
 	return &reader{card: card}, func() {
-		_ = card.Disconnect(scard.ResetCard)
+		card.disconnect()
 		release()
 	}, nil
 }
 
 // Readers lists what is attached, for a caller that wants to say so.
 func Readers() ([]string, error) {
-	ctx, err := scard.EstablishContext()
+	ctx, err := pcscEstablish()
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = ctx.Release() }()
-	return ctx.ListReaders()
+	defer ctx.release()
+	return ctx.readers()
 }

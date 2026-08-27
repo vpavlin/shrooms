@@ -317,7 +317,7 @@ scenario_a_running_daemon_answers() {
 # A card on a reader, if there is one.
 #
 # Skips itself otherwise, which is every CI runner and most machines: this needs
-# a USB reader, a card in it, and a binary built with -tags pcsc. It reads only
+# a USB reader, a card in it, and pcsc-lite installed. It reads only
 # — SELECT and nothing else — because everything more interesting costs one of
 # five pairing slots that cannot be reclaimed without a factory reset, and a
 # test suite is not a thing that should be able to spend those.
@@ -325,7 +325,7 @@ scenario_a_card_on_a_reader() {
   local out; out=$("$BIN" keycard status 2>&1)
   case "$out" in
     *"no smartcard reader support"*)
-      note "built without -tags pcsc; skipping" ; return ;;
+      note "no pcsc-lite on this machine; skipping" ; return ;;
     *"no smartcard reader found"*|*"No smart card inserted"*|*"no PC/SC service"*)
       note "no reader or no card; skipping" ; return ;;
   esac

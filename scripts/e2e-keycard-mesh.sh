@@ -2,7 +2,7 @@
 # The whole life of a card-backed mesh, in containers, with no sudo:
 # mint, invite, join, renew, revoke, teardown.
 #
-#     make shrooms TAGS=pcsc
+#     make shrooms
 #     SHROOMS_CARD_PIN=nnnnnn ./scripts/e2e-keycard-mesh.sh
 #
 # Not in CI, and only because of the card: it needs a reader with a Keycard on
@@ -52,7 +52,7 @@ trap 'down' EXIT
 a() { docker exec -i shrooms-card-a "$@"; }
 b() { docker exec -i shrooms-card-b "$@"; }
 
-[ -x "$BIN" ] || skip "no $BIN — run 'make shrooms TAGS=pcsc'"
+[ -x "$BIN" ] || skip "no $BIN — run 'make shrooms'"
 command -v docker >/dev/null || skip "no docker/podman"
 [ -e /dev/net/tun ] || skip "no /dev/net/tun on the host"
 [ -S /run/pcscd/pcscd.comm ] || skip "pcscd is not listening — plug in a reader"

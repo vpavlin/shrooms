@@ -96,19 +96,24 @@
 </p>
 
 <p>
-    Reader support is <strong>not in the default build</strong>: it links
-    <code>libpcsclite</code> through cgo, and the daemon itself never touches a
-    card. A build without it says so, and says how to get it.
+    <strong>Reader support is in every build</strong> — install shrooms the
+    normal way. What it needs is <code>pcsc-lite</code> on the machine, which
+    most desktop Linux installs already have. Where it is missing, the card
+    commands name the package to install rather than failing obscurely.
 </p>
 
-<pre><code><span class="cmd">sudo apt install libpcsclite-dev</span>              <span class="c"># or your distribution's equivalent</span>
-<span class="cmd">sudo make install TAGS=pcsc</span></code></pre>
+<pre><code><span class="cmd">sudo apt install pcscd libpcsclite1</span>      <span class="c"># Debian, Ubuntu</span>
+<span class="cmd">sudo dnf install pcsc-lite</span>              <span class="c"># Fedora, RHEL</span>
+<span class="cmd">sudo pacman -S pcsclite</span>                 <span class="c"># Arch</span></code></pre>
 
 <div class="note">
     <p><strong>There is no service to start.</strong> <code>pcscd</code> is
     socket-activated: it starts when something asks for a reader and stops when
     nothing is using one. If a guide anywhere tells you to enable a daemon for
     this, you do not need it.</p>
+    <p>The library is opened when you first reach for a card, not linked at
+    build time. A server that has never seen a smartcard runs the same binary,
+    needs none of this, and does not notice it is there.</p>
 </div>
 
 <h2 id="status">3. Look at the card first</h2>
@@ -276,7 +281,8 @@
 <tr><td><code>6985</code> reading the key</td><td>no PIN verified</td></tr>
 <tr><td><code>wrong PIN. 2 attempts left</code></td><td>count them. Three wrong and the card blocks and needs its PUK</td></tr>
 <tr><td><code>Sharing violation</code></td><td>something else is holding the reader</td></tr>
-<tr><td><code>this build has no smartcard reader support</code></td><td>rebuild with <code>TAGS=pcsc</code></td></tr>
+<tr><td><code>no PC/SC library on this machine</code></td><td>install <code>pcsc-lite</code> — the message names the package for your distribution</td></tr>
+<tr><td><code>the PC/SC service is not running</code></td><td>plug the reader in; <code>pcscd</code> starts on demand, or <code>sudo systemctl start pcscd</code></td></tr>
 </tbody>
 </table>
 
