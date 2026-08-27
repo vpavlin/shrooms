@@ -78,7 +78,7 @@ func cmdInit(args []string) error {
 	// mesh is one act, and asking for two was the first half of why enrolling a
 	// device had grown to six steps.
 	if *card {
-		if err := mintCardAuthorityFull(*adminDir, *cfgPath, *stateDir, *name, "", *reader); err != nil {
+		if err := mintCardAuthorityFull(*adminDir, *cfgPath, *stateDir, *name, "", *reader, *sock); err != nil {
 			return err
 		}
 		reportNext(*sock)
@@ -211,7 +211,7 @@ func addMeshWith(cfgPath, stateDir, adminDir, label string, relay, noAdmin bool,
 	fmt.Println()
 
 	if !noAdmin && card {
-		if err := mintCardAuthorityFull(adminDir, cfgPath, stateDir, cfg.Name, label, reader); err != nil {
+		if err := mintCardAuthorityFull(adminDir, cfgPath, stateDir, cfg.Name, label, reader, sock); err != nil {
 			return err
 		}
 		reportNext(sock)

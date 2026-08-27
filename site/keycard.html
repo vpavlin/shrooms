@@ -224,6 +224,27 @@
 
 <pre><code><span class="cmd">sudo systemctl enable --now shrooms</span></code></pre>
 
+<div class="warn">
+    <p><strong>Mint each mesh once, on one machine.</strong> A card's admin key
+    is <em>derived</em> rather than generated, from an account number the local
+    machine picks — and nothing on the card records which accounts are spent. So
+    running <code>init --keycard</code> from the same card on a second machine
+    picks the same account, derives the same key, and makes a
+    <strong>second mesh with the same id</strong>.</p>
+    <p>That pair of meshes is the worst combination available: they have
+    <em>different network keys</em>, so they cannot reach each other — and the
+    <em>same id</em>, so a credential or a revocation issued for one verifies
+    against the other. Neither looks wrong on its own; both print exactly the
+    mesh id, prefix and admin key you would expect.</p>
+    <p>Mint on one machine and <strong>invite</strong> the others. Minting
+    refuses when this node already knows the id it would duplicate, and
+    <code>shrooms admin show</code> reports the clash if it has already
+    happened — but neither can see a mesh minted somewhere this node has never
+    been, so the rule is worth keeping rather than relying on the check.</p>
+    <p>A file authority cannot collide this way; its key is random. This is
+    specific to deriving one from something two machines share.</p>
+</div>
+
 <h2 id="phone">7. Admit a phone</h2>
 
 <p>On the machine with the card:</p>

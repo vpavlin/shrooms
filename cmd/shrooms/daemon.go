@@ -425,6 +425,18 @@ type meshStatus struct {
 	// into "we announce an address", which is the opposite diagnosis.
 	Announced []string `json:"announced,omitempty"`
 
+	// AuthorityID is the mesh id: a hash over this mesh's admin keys and
+	// nothing else (cred.Authority.ID). Empty for a mesh with no authority.
+	//
+	// Reported so that minting can refuse to create a SECOND mesh with the same
+	// id. That happens with a Keycard: the admin key is derived from the card,
+	// the account is chosen from what THIS machine has already used, and two
+	// machines that have never minted both choose zero. The result is two
+	// meshes sharing an id and an admin key while having different network
+	// keys — indistinguishable in `admin show`, unable to talk to each other,
+	// and with interchangeable credentials and revocations.
+	AuthorityID string `json:"authority_id,omitempty"`
+
 	// RelayUsing is the relay currently carrying traffic, empty when none is.
 	RelayUsing string `json:"relay_using,omitempty"`
 	// RelayUsingBlind says that relay is one somebody else runs.
@@ -1292,6 +1304,9 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 				}
 			}
 			_, ms.BlindRelays = in.mesh.ConfiguredRelays()
+			if a := in.mesh.Authority(); a != nil {
+				ms.AuthorityID = a.ID().String()
+			}
 			ms.Announced = in.mesh.Announced()
 			if at, blind, ok := in.mesh.RelayInUse(); ok {
 				ms.RelayUsing, ms.RelayUsingBlind = at.String(), blind

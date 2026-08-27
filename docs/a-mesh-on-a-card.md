@@ -156,6 +156,50 @@ free slots and no device holding one. The key returns only from the mnemonic.
 The second runs two nodes in containers and needs no root. Both pair at most
 once and reuse it, so running them does not eat the card.
 
+## One card, one minting machine
+
+**Mint each mesh once, on one machine, and invite the others to it.** This is the
+one rule the tooling cannot fully enforce, and the failure is quiet.
+
+A card's admin key is derived, not generated: `m/64265'/<account>'/0'`. The
+account is chosen from what the LOCAL machine has already used, and **nothing on
+the card records which accounts are spent**. So two machines that have never
+minted from this card both pick account 0, derive the same key, and produce:
+
+- the **same admin key**, and therefore the **same mesh id** —
+  `Authority.ID()` is a hash over the admin keys and nothing else
+- **different network keys**, because each `init` generates a fresh one
+
+Which is the worst pair of properties available. The two meshes **cannot reach
+each other**, since the network key decides who can read the control plane. And
+they **share an identity**, so a credential or a revocation issued for one
+verifies against the other — revoking a device on one mesh produces a revocation
+valid on the other, and a member of one holds a credential a peer on the other
+will accept.
+
+Neither mesh looks wrong on its own. `shrooms admin show` on either machine
+prints a mesh id, a prefix and an admin key that are all exactly what they
+should be.
+
+### What protects against it
+
+**Minting refuses when this node already knows the id.** `init --keycard` asks
+the running daemon which mesh ids it is on, and stops if the new authority would
+duplicate one. That catches the realistic case — two devices in one fleet, where
+the second is already a member of the mesh the first minted.
+
+It catches nothing when the other mesh is somewhere this node has never been.
+There is no way to check from here, and the card cannot be asked.
+
+**`shrooms admin show` reports it if it has already happened**, whenever one
+machine holds two authorities with the same id.
+
+**Minting says the rule out loud**, every time, because both protections above
+are partial.
+
+A file authority cannot collide this way: its key is random. This is specific to
+deriving a key from something two machines share.
+
 ## Re-minting the same mesh — decided 2026-08-26
 
 **An earlier version of this section was wrong about where the guard is, and

@@ -924,6 +924,7 @@ func cmdAdminShow(args []string) error {
 			"the mesh and stays there, so if a mesh was created elsewhere its key "+
 			"is on that machine and not this one", *dir)
 	}
+	seen := map[string][]string{}
 	for i, l := range labels {
 		if i > 0 {
 			fmt.Println()
@@ -935,7 +936,38 @@ func cmdAdminShow(args []string) error {
 		fmt.Printf("=== %s (%s) ===\n", name, filepath.Base(adminPathFor(*dir, l)))
 		if err := showAuthority(*dir, l); err != nil {
 			fmt.Printf("unreadable: %v\n", err)
+			continue
 		}
+		if auth, err := authorityFor(*dir, l); err == nil {
+			id := auth.ID().String()
+			seen[id] = append(seen[id], name)
+		}
+	}
+
+	// Two authorities with one mesh id.
+	//
+	// Only possible with a card: a file authority mints a random key, so two of
+	// them cannot collide. A card derives its key from an account, the account
+	// is chosen from what this machine has used, and nothing on the card
+	// records which accounts are spent — so minting from one card on two
+	// machines produces this, and it is silent everywhere else.
+	//
+	// Worth saying loudly because the meshes look fine one at a time. They have
+	// different network keys, so they cannot reach each other; and the same id,
+	// so a credential issued for either verifies against both.
+	for id, names := range seen {
+		if len(names) < 2 {
+			continue
+		}
+		sort.Strings(names)
+		fmt.Printf("\n!! %s and %s have the SAME mesh id: %s\n",
+			strings.Join(names[:len(names)-1], ", "), names[len(names)-1], id)
+		fmt.Printf("   They are different meshes — different network keys, so they\n")
+		fmt.Printf("   cannot reach each other — sharing one identity. A credential\n")
+		fmt.Printf("   or a revocation issued for one verifies against the other.\n")
+		fmt.Printf("   This happens when one card mints on two machines, since both\n")
+		fmt.Printf("   pick the first unused account and the card remembers nothing.\n")
+		fmt.Printf("   Keep one and re-mint the other at an unused account.\n")
 	}
 	return nil
 }
@@ -1133,7 +1165,39 @@ func postToDaemon(sock, path, label string, body []byte) error {
 // which is what every node checks against, and the private half has never
 // existed outside the card except as that mnemonic.
 func mintCardAuthorityAt(dir, label, readerName string) error {
-	return mintCardAuthorityFull(dir, "", "", "", label, readerName)
+	return mintCardAuthorityFull(dir, "", "", "", label, readerName, "")
+}
+
+// refuseDuplicateAuthority stops a mint that would produce a mesh id this node
+// already knows.
+//
+// Best effort about the daemon: minting on a machine with nothing running is
+// normal, and this cannot be the only protection because a mesh minted on a
+// machine this one has never met is invisible from here.
+func refuseDuplicateAuthority(sock string, auth *cred.Authority, account uint32) error {
+	st, err := fetchStatus(sock)
+	if err != nil {
+		return nil
+	}
+	want := auth.ID().String()
+	for _, m := range st.Meshes {
+		if m.AuthorityID == "" || m.AuthorityID != want {
+			continue
+		}
+		return fmt.Errorf("this card would mint a mesh with the same id as %q, "+
+			"which this node is already on.\n\n"+
+			"  mesh id  %s\n"+
+			"  account  %d (%s)\n\n"+
+			"A mesh id is a hash of the admin keys, so the same card at the same "+
+			"account is the same authority. The two meshes would have DIFFERENT "+
+			"network keys, so they could not talk to each other — while sharing "+
+			"an id, so a credential or a revocation issued for one would verify "+
+			"against the other.\n\n"+
+			"Mint each mesh once, on one machine, and invite the others to it. "+
+			"If you meant a second mesh from this card, it needs an account this "+
+			"card has not used.", m.Label, want, account, keycard.PathAt(account))
+	}
+	return nil
 }
 
 // mintCardAuthorityFull is the same, and also writes the keys into a config and
@@ -1145,7 +1209,7 @@ func mintCardAuthorityAt(dir, label, readerName string) error {
 // prepare, set-key, admin init, hand-editing admin_keys into the config, and
 // issuing yourself a credential — five steps and a text editor, for the thing
 // the card exists to make easy.
-func mintCardAuthorityFull(dir, cfgPath, stateDir, name, label, readerName string) error {
+func mintCardAuthorityFull(dir, cfgPath, stateDir, name, label, readerName, sock string) error {
 	t, done, err := keycard.OpenReader(readerName)
 	if err != nil {
 		return err
@@ -1170,6 +1234,25 @@ func mintCardAuthorityFull(dir, cfgPath, stateDir, name, label, readerName strin
 	auth, err := cred.NewAuthority(signer.Public())
 	if err != nil {
 		return err
+	}
+
+	// Refuse to mint a second mesh with the same id.
+	//
+	// The account is chosen from what THIS machine has used, and the card keeps
+	// no record — so two machines that have never minted both choose 0, derive
+	// the same admin key, and produce two meshes with the same id. They cannot
+	// talk to each other (different network keys) and their credentials and
+	// revocations are interchangeable (same id), which is the worst of both.
+	//
+	// The running daemon is the one place that can see across machines: if this
+	// node is already ON a mesh minted from this card elsewhere, it knows that
+	// mesh's id. That catches the realistic case — two devices in one fleet —
+	// and catches nothing when the other mesh is somewhere this node has never
+	// been, which is why the warning below exists as well.
+	if cfgPath != "" {
+		if err := refuseDuplicateAuthority(sock, auth, account); err != nil {
+			return err
+		}
 	}
 
 	if err := ensureUserDir(dir); err != nil {
@@ -1241,6 +1324,19 @@ func mintCardAuthorityFull(dir, cfgPath, stateDir, name, label, readerName strin
 	// derive any path asked of it and says nothing about which was used — so
 	// this belongs beside the mnemonic.
 	fmt.Printf("  card path   %s\n", keycard.PathAt(account))
+	fmt.Println()
+	// The one rule this cannot enforce.
+	//
+	// The account is picked from what THIS machine has used and the card keeps
+	// no record, so a second machine minting from the same card picks the same
+	// account and produces a mesh with the same id. refuseDuplicateAuthority
+	// catches that when this node is already on the other mesh; it cannot when
+	// the other mesh is somewhere this node has never been.
+	fmt.Println("Mint each mesh ONCE, on one machine, and invite the others to it.")
+	fmt.Println("Running `init --keycard` again from this card on a different machine")
+	fmt.Println("makes a second mesh with this same id and a different network key —")
+	fmt.Println("they cannot reach each other, and their credentials are")
+	fmt.Println("interchangeable. See docs/a-mesh-on-a-card.md.")
 	if enrolled {
 		fmt.Printf("  this device is enrolled\n")
 	}
