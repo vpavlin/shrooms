@@ -593,10 +593,28 @@ func rotateKey(cfgPath, stateDir string, cfg state.Config, yes bool) error {
 	fmt.Printf("New network key: %s\n\n", newKey)
 	fmt.Printf("This device:  %s\n", identity.OverlayAddr(newKey, st.Identity.DevicePub))
 	fmt.Printf("Mesh prefix:  %s\n\n", newKey.Prefix())
-	fmt.Printf("On every other device:\n")
-	fmt.Printf("  shrooms join %s --name <NAME>\n", newKey)
-	fmt.Printf("  systemctl restart shrooms\n\n")
-	fmt.Printf("Then restart this one:  systemctl restart shrooms\n")
+	// What to do next, and it is no longer one line.
+	//
+	// This used to print `shrooms join <newkey>`, which was removed on
+	// 2026-08-27 along with every other way of handing somebody a raw network
+	// key. So the instruction named a command that answers "has been removed"
+	// — on the one operation in this tool that takes the whole mesh down until
+	// every device is dealt with.
+	//
+	// A new network key IS a new mesh: the network id is derived from it, so
+	// the other devices are not out of date, they are elsewhere. There is no
+	// hand-over any more; each one joins again.
+	fmt.Printf("Every other device has to JOIN AGAIN. A new network key is a new\n")
+	fmt.Printf("mesh id, so they are not stale — they are on a different mesh.\n\n")
+	fmt.Printf("On each of them, once this node has restarted:\n")
+	fmt.Printf("  sudo rm /etc/shrooms/config.toml     # they are on the old mesh\n")
+	fmt.Printf("  sudo shrooms prepare --name <NAME>\n")
+	fmt.Printf("  sudo shrooms join --invite <TOKEN>   # from `shrooms invite` here\n\n")
+	fmt.Printf("Restart this one first:  systemctl restart shrooms\n\n")
+	fmt.Printf("If the goal was to remove ONE device rather than re-key everything,\n")
+	fmt.Printf("this is the wrong command — `shrooms admin revoke --name <NAME> --rotate`\n")
+	fmt.Printf("withdraws its credential and rotates the announce generation, and every\n")
+	fmt.Printf("other device keeps working.\n")
 	return nil
 }
 

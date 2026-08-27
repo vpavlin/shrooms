@@ -137,7 +137,9 @@ Usage:
   shrooms paths [NAME]               show probed candidates and which won
   shrooms hosts [--write]            /etc/hosts entries, so you can use names
   shrooms key show                   print the network key
-  shrooms key rotate                 replace it (the only revocation before M5)
+  shrooms key rotate                 replace it — a new key is a NEW mesh, and
+                                       every device must join again. To remove
+                                       one device, use "admin revoke" instead
 
 Common flags:
   --config PATH    config file (default /etc/shrooms/config.toml)
