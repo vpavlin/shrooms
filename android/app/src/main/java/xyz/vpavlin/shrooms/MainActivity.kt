@@ -702,6 +702,35 @@ private fun MeshScreen(
         // can report.
         val logs by MeshState.logs.collectAsStateWithLifecycle()
         var showLogs by remember { mutableStateOf(false) }
+        val ctx = LocalContext.current
+
+        // Always offered, not only when the tail has something in it.
+        //
+        // The tail above is in memory, so it is empty precisely after the app
+        // has been killed and restarted — which is the moment somebody wants to
+        // send a report. What this shares comes off disk instead: how the last
+        // sessions ended, the last panic, and the log from before the death.
+        Text(
+            "share diagnostics",
+            style = MaterialTheme.typography.bodySmall,
+            color = Palette.Ash,
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp)
+                .clickable {
+                    val report = runCatching { Mobile.diagnostics(ctx.filesDir.absolutePath) }
+                        .getOrElse { "could not read diagnostics: ${it.message}" }
+                    ctx.startActivity(
+                        Intent.createChooser(
+                            Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_SUBJECT, "shrooms diagnostics")
+                                putExtra(Intent.EXTRA_TEXT, report)
+                            },
+                            "Send diagnostics",
+                        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                    )
+                },
+        )
+
         if (logs.isNotEmpty()) {
             Text(
                 if (showLogs) "hide log" else "show log (${logs.size})",

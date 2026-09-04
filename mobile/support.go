@@ -321,11 +321,16 @@ func snapshot(m *mesh.Mesh, suffix, label string) statusPayload {
 // library, and a log the user can see is the difference between "it does not
 // work" and a bug report.
 type bridge struct {
-	l     Logger
-	attrs []slog.Attr
+	l Logger
+	// configDir so every line the app is shown is also appended to disk. A
+	// crash takes the app's in-memory tail with it; the file is what is left.
+	configDir string
+	attrs     []slog.Attr
 }
 
-func newBridge(l Logger) slog.Handler { return &bridge{l: l} }
+func newBridge(l Logger, configDir string) slog.Handler {
+	return &bridge{l: l, configDir: configDir}
+}
 
 func (b *bridge) Enabled(_ context.Context, lvl slog.Level) bool { return lvl >= slog.LevelInfo }
 
@@ -342,11 +347,14 @@ func (b *bridge) Handle(_ context.Context, r slog.Record) error {
 		return true
 	})
 	b.l.Log(r.Level.String(), msg)
+	// And to disk, where a kill cannot take it. The app's own tail is bounded
+	// and in memory, so it is gone exactly when it is wanted.
+	appendLog(b.configDir, r.Level.String(), msg)
 	return nil
 }
 
 func (b *bridge) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &bridge{l: b.l, attrs: append(append([]slog.Attr(nil), b.attrs...), attrs...)}
+	return &bridge{l: b.l, configDir: b.configDir, attrs: append(append([]slog.Attr(nil), b.attrs...), attrs...)}
 }
 
 func (b *bridge) WithGroup(string) slog.Handler { return b }

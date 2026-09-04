@@ -856,7 +856,7 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 	if err != nil {
 		return err
 	}
-	log := slog.New(newBridge(l))
+	log := slog.New(newBridge(l, configDir))
 
 	dupped, err := dupFd(tunFd)
 	if err != nil {

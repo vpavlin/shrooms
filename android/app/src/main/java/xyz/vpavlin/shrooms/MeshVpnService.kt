@@ -306,6 +306,25 @@ class MeshVpnService : VpnService() {
                     ?: throw IllegalStateException("VpnService.establish() returned null — permission revoked?")
                 tunnel = pfd
 
+                // Mark the session running BEFORE starting, and say what
+                // happened to the last one.
+                //
+                // The marker is removed only by stop(), which is the deliberate
+                // path — the stop action and onRevoke. Deliberately NOT in
+                // onDestroy: Android calls that when it tears the service down
+                // itself, so clearing it there would record every kill as a
+                // clean exit and hide the thing this exists to catch.
+                val version = runCatching {
+                    packageManager.getPackageInfo(packageName, 0).versionName ?: "?"
+                }.getOrDefault("?")
+                runCatching { Mobile.sessionStarted(dir, version) }
+                    .getOrNull()
+                    ?.takeIf { it.isNotEmpty() }
+                    ?.let {
+                        Log.w(TAG, it)
+                        MeshState.log("WARN", it)
+                    }
+
                 // Go dups this, so closing it here later is safe.
                 Mobile.start(pfd.fd.toLong(), dir, upstream, protector, logger)
                 setUnderlying()
@@ -618,6 +637,10 @@ class MeshVpnService : VpnService() {
     private fun stop() {
         scope.launch {
             sessionLock.withLock {
+                // This is the deliberate path — the stop action, and onRevoke
+                // when the user turns the VPN off. Saying so here is what makes
+                // the absence of it meaningful everywhere else.
+                runCatching { Mobile.sessionStopped(filesDir.absolutePath) }
                 runCatching { Mobile.stop() }.onFailure { Log.e(TAG, "stop", it) }
                 runCatching { tunnel?.close() }
                 tunnel = null
