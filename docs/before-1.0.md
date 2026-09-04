@@ -19,10 +19,22 @@ no build dependency.
 
 ## Not tested
 
-**The phone as the admin.** `init` a mesh on the phone, then invite the laptop
-to it. Every part exists and the app can hold the card over NFC, but that
-direction has never been run — everything so far has been the desktop admitting
-the phone. Until it is, "a phone is a full admin" is a claim rather than a fact.
+**The phone as the admin — and half of it is not built.** Checked 2026-08-27
+rather than assumed, which changed the answer.
+
+`AdmitWithCard` exists: the phone can admit a device to a mesh it did not mint,
+signing on the card. That half is built and has never been run, so "a phone is a
+full admin" is a claim rather than a fact.
+
+The other half does not exist. The app's create-a-mesh calls `Mobile.init`,
+which writes a `NetworkKey` and **no admin keys** — an authority-less mesh, the
+pre-credential kind, with nothing revocable. There is no mobile equivalent of
+`mintCardAuthorityFull`. So a phone cannot mint a card-backed mesh at all, and
+`shrooms init` minting an authority by default while the app's equivalent does
+not is also a parity gap.
+
+That matters more since joining by network key was removed: an authority-less
+mesh is the one shape left where membership rests on holding a key.
 
 The APK that can do it is published (versionCode 62); the phone needs a fresh
 invite to whatever mesh it should be on, since it was revoked while testing.
@@ -58,8 +70,12 @@ nobody has checked lately whether it still holds.
   remaining "which shape is this mesh" branches cannot go until it has.
 - `advertise` is per mesh now; whether the relay settings follow is decided
   (they inherit, and a mesh may opt out).
-- Three release tags hold a 31 MB library, and `shrooms-relay` is tracked while
-  `.gitignore` claims to ignore it.
+- Three release tags hold a 31 MB library. `shrooms-relay` and
+  `android/logosvpn-sources.jar` are both tracked while `.gitignore` claims to
+  ignore them, so those rules do nothing — one `git rm --cached` each.
+- [cli-review-2026-08.md](cli-review-2026-08.md) is an outside review of the
+  CLI. Its cheapest findings: `shrooms --help` never mentions the `mesh`,
+  `services` or `keycard` groups, and `-h` errors on exactly those groups.
 
 ## After 1.0
 
