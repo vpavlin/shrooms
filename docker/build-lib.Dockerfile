@@ -78,13 +78,35 @@ RUN set -eux; \
 # The Makefile bootstraps its own pinned nim/nimble via install-nim/install-nimble.
 # Build serially: with -j, a real error surfaces as a 14000-line bogus
 # "Couldn't find a solution for the packages" solver dump.
-# bash with pipefail, because the pipe below otherwise reports the exit status
-# of `tail` and a Nim compile error becomes invisible: make fails, tail
-# succeeds, the build carries on, and the next COPY reports a missing file with
-# no sign of the real cause.
+#
+# bash with pipefail, because a pipe otherwise reports the exit status of the
+# thing on the right and a Nim compile error becomes invisible: make fails, the
+# pipe succeeds, the build carries on, and the next COPY reports a missing file
+# with no sign of the real cause.
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# The whole log, kept, and the FIRST errors shown rather than the last.
+#
+# This was `make liblogosdelivery 2>&1 | tail -40`, which is the exact wrong
+# forty lines. The note above says the solver dump is bogus and enormous; a tail
+# keeps only the bogus part and discards the cause, so every arm64 failure since
+# has read as "nimble cannot resolve the packages" whether or not that is what
+# went wrong. It stopped this being diagnosable at all.
+#
+# Errors from the top, because the first one is the cause and everything after
+# it is consequence — the opposite of what a tail gives you. The last 200 lines
+# come too, for a failure with no line matching at all.
 RUN echo "building liblogosdelivery from $(cat /src/.ld-rev)" \
-    && make liblogosdelivery 2>&1 | tail -40
+    && { make liblogosdelivery > /tmp/build.log 2>&1 || { \
+            echo "=== FIRST errors (the cause) ==="; \
+            grep -nE '^ *Error:|error:|fatal error|cannot open|undefined reference' /tmp/build.log \
+                | head -60 || true; \
+            echo "=== last 200 lines (context) ==="; \
+            tail -200 /tmp/build.log; \
+            echo "=== log was $(wc -l < /tmp/build.log) lines ==="; \
+            exit 1; \
+         }; } \
+    && tail -20 /tmp/build.log
 
 # The public header includes "generated/logosdelivery.h", which upstream says
 # plainly is "a build artifact, not checked in" — written by the build we just

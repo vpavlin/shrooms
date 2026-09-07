@@ -72,6 +72,24 @@ cache key — same device, same ephemeral key — which is a different and sligh
 weaker statement, and it is the sort of thing worth deciding deliberately rather
 than discovering later.
 
+**Whether `:latest` should wait for arm64.**
+
+`image-manifest` needs both architectures, so a broken arm64 build freezes
+`:latest` for amd64 hosts too — which is why vps could not be updated on
+2026-09-07 and had to pull `:<sha>-amd64` by hand. The arm64 job has been red
+since at least 2026-09-04.
+
+The comment guarding this is right about the thing it guards: pushing a
+single-arch *image* to `:latest` hands every arm64 host an amd64 image, silently.
+But a *manifest list* containing only amd64 is a different animal — an arm64
+host pulling it gets "no matching manifest for linux/arm64", which is a refusal,
+not a wrong image.
+
+So the manifest could be assembled from whichever arches pushed, with the job
+failing loudly afterwards if one is missing. amd64 keeps moving; arm64 gets an
+honest error instead of a stale image. **Your call** — it trades "everyone waits
+for the slowest arch" for "arm64 can be behind, visibly".
+
 ## Wants an outside look
 
 **The CLI.** Vaclav's instinct on 2026-08-27, and it is right: the shape has
