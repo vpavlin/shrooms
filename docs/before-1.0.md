@@ -148,6 +148,45 @@ different moments and pick differently. Preferring a live discovered member
 relay over a configured one that has never once answered is narrower and keeps
 that property in every case that currently works.
 
+**One refused port mapping costs half an hour of unreachability.**
+
+`cmd/shrooms/portmap.go`: `keepMapped` asks the router at startup and, on
+refusal, waits `mapRetry = 30 * time.Minute` before asking again — a flat wait,
+no ramp — publishing an empty mapping meanwhile.
+
+The constant's own comment defends it well, and for the case it was written for
+it is right: "the overwhelmingly common refusal is a router that does not speak
+either protocol, or has them switched off, and that answer will not change
+today."
+
+But a **restart** is exactly when a refusal is most likely to be temporary — the
+router is still holding the previous two-hour lease against client state that
+has just gone away. And it is also exactly when the cost is highest, because
+nothing else has a public address for this node either.
+
+Watched happen twice on 2026-09-07, on both ends of the same mesh. k11 restarted
+and lost `178.213.45.235:1814`; the laptop restarted and lost
+`85.160.39.54:5772`. Both had been granted by their routers minutes earlier.
+With neither dialable there was no direct path to find, and both fell back to
+relaying through vps — correctly, and about 50ms more slowly than necessary,
+for thirty minutes.
+
+Worth noting only one side needs a mapping: whichever end is dialable can be
+dialled, and the reply opens the other's pinhole on the way out. So the retry
+ladder decides how long a restarted mesh stays on its relays.
+
+A ramp — a few seconds, then a minute, then settling to the existing 30 — costs
+nothing and keeps the property the comment cares about: a router that will never
+answer is still only asked twice an hour.
+
+**All three of the items above share a shape**, which is why they are together:
+a constant or an assumption that is defensible in the steady state and wrong at
+the moment of restart. `selectRelay` trusts a config flag over a measurement,
+prefers a configured relay that has never answered, and `keepMapped` treats a
+refusal at startup like a refusal from a router that cannot do it at all. None
+of them is wrong about the case it was written for. Each of them made 2026-09-07
+take an afternoon.
+
 ## Wants an outside look
 
 **The CLI.** Vaclav's instinct on 2026-08-27, and it is right: the shape has
