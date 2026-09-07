@@ -72,7 +72,46 @@ cache key — same device, same ephemeral key — which is a different and sligh
 weaker statement, and it is the sort of thing worth deciding deliberately rather
 than discovering later.
 
-**Whether `:latest` should wait for arm64.**
+**Whether `:latest` should wait for arm64 — and arm64 may not be fixable here.**
+
+Diagnosed properly on 2026-09-07, after two wrong answers from me. The arm64 job
+is the only one that builds liblogosdelivery from source (amd64 fetches a
+checksum-pinned tarball), and that build fails inside nimble's resolver before a
+line of Nim is compiled.
+
+It is **not** our taskpools patch — removing it changes which error surfaces and
+fixes nothing. It is **not** the lock file — deleting that gets past
+`solveLockFileDeps` and into `resolveNim`, which fails too. The actual cause:
+
+    Package libp2p:                             No version selected!  Available versions: (none)
+    Package https://github.com/vacp2p/nim-libp2p.git:   No version selected!  (none)
+
+Fifteen packages, each appearing two or three times — as a bare name, as a URL,
+and as a URL ending `.git` — with zero candidate versions for any of them.
+`logos_delivery.nimble` declares them as `URL#ref`:
+
+    "https://github.com/vacp2p/nim-libp2p.git#v2.0.0",
+    "https://github.com/status-im/nim-json-rpc.git#v0.6.1",
+
+and nimble treats each spelling as a different package. This is the same
+`URL#ref` staging bug `docker/build-lib.Dockerfile` already documents for
+`bearssl_pkey_decoder`, hitting the whole dependency set.
+
+Everything is pinned — Nim 2.2.4 and nimble 0.22.3 at commit `42ef70c2`, both
+from the `.nimble`'s own `RequiredNimVersion` / `RequiredNimbleVersion` — so
+nothing drifted on our side and no change to our Dockerfile fixes it. The same
+failure hits the `build from source (upstream master)` job, so it is not
+specific to the pinned revision either.
+
+**That makes decoupling `:latest` from arm64 much more attractive than it was**,
+because "wait for the arm64 build to be fixed" may mean waiting on upstream
+nimble. Meanwhile amd64 hosts have been stuck on a stale `:latest` since at
+least 4 September, and vps and k11 both had to be updated by per-architecture
+tag by hand.
+
+The reasoning below still holds and the shape of the fix is unchanged.
+
+
 
 `image-manifest` needs both architectures, so a broken arm64 build freezes
 `:latest` for amd64 hosts too — which is why vps could not be updated on
