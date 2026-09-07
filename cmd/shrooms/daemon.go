@@ -255,9 +255,11 @@ func cmdDaemon(args []string) error {
 	// day one of them is wrong. Buffered for every mesh plus the socket, so a
 	// send never blocks a caller that is holding a lock.
 	errs := make(chan error, len(instances)+1)
+	// Fed, not reading: see the fan-out below and rendezvous.Fed.
+	invites := rendezvous.Fed(node)
 	rt := &runtimeBits{
 		tail: tail, restart: errs, dns: &atomic.Pointer[dnsStatus]{},
-		invites: rendezvous.InviteTransport(node), st: st, cfgPath: *cfgPath,
+		invites: invites, st: st, cfgPath: *cfgPath,
 	}
 	rl := &reloader{cfgPath: *cfgPath, log: log, instances: instances, baseline: cfg}
 	srv, err := serveControl(ctx, log, *sock, instances, cfg, rl, rt)
@@ -314,34 +316,49 @@ func cmdDaemon(args []string) error {
 		}
 	}
 
-	// One reader, every mesh.
+	// One reader, everything that wants events.
 	//
-	// The node's event channel delivers each event to exactly one reader, so
-	// meshes reading it directly take turns and each drops what the other
-	// should have had — which presents as a second mesh that discovers peers
-	// slowly, or in one direction only. Left alone for a single mesh, where
-	// there is nothing to share and the existing path is well travelled.
-	if len(instances) > 1 {
-		for _, in := range instances {
-			in.mesh.SetFed()
-		}
-		go func() {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case ev, ok := <-node.Events():
-					if !ok {
-						return
-					}
-					for _, in := range instances {
-						in.mesh.Deliver(ev)
-					}
-				}
-			}
-		}()
-		log.Info("rendezvous events fanned out", "meshes", len(instances))
+	// The node's event channel delivers each event to exactly ONE reader, so a
+	// second `range node.Events()` in this process is not an observer — it is a
+	// thief. Meshes reading it directly took turns and each dropped what the
+	// other should have had, which presented as a second mesh that discovered
+	// peers slowly, or in one direction only.
+	//
+	// This used to run only for a second mesh, "where there is nothing to share
+	// and the existing path is well travelled". That was wrong from the moment
+	// the invite transport was added: it reads the same channel, in every
+	// daemon, single mesh or not. So a one-mesh node was already splitting its
+	// rendezvous traffic with an invite exchange that was not happening — and
+	// during one that was, the exchange and the mesh each got about half. Round
+	// two of an enrolment is published exactly once and cannot be asked for
+	// again, so enrolling became a coin toss that failed as "the mesh answered
+	// but did not issue a credential" while the inviter reported success.
+	//
+	// Unconditional now. There is always more than one thing here that wants
+	// these events.
+	for _, in := range instances {
+		in.mesh.SetFed()
 	}
+	go func() {
+		// The exchange is told when the events stop, rather than waiting out
+		// its deadline on a node that has gone.
+		defer invites.Close()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case ev, ok := <-node.Events():
+				if !ok {
+					return
+				}
+				for _, in := range instances {
+					in.mesh.Deliver(ev)
+				}
+				invites.Deliver(ev)
+			}
+		}
+	}()
+	log.Info("rendezvous events fanned out", "meshes", len(instances), "invites", true)
 
 	// Every mesh runs; the first one to stop stops the daemon, because a node
 	// that is half up is worse than one that restarts.

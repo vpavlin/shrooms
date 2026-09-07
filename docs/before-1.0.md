@@ -39,6 +39,39 @@ mesh is the one shape left where membership rests on holding a key.
 The APK that can do it is published (versionCode 62); the phone needs a fresh
 invite to whatever mesh it should be on, since it was revoked while testing.
 
+## Needs a decision
+
+**Round two of an enrolment is published once and cannot be asked for again.**
+
+The daemon's second reader on `node.Events()` is fixed (2026-09-07), and that
+was the cause of enrolments failing about half the time with
+
+    the mesh answered but did not issue a credential: context deadline exceeded
+
+on the joiner while the inviter printed `Admitted`. But the reason a single lost
+message could end the exchange at all is still there, and Waku will lose an
+ephemeral message occasionally without anybody's help.
+
+The asymmetry is in `internal/mesh/invite.go:handleInvite`. A **first**-round
+request is answered every time it is seen — `answerDeferred` runs per request —
+so the joiner's five-second retry recovers a lost answer for free. A
+**second**-round request is pushed to `held.reqs` once and every repeat is
+dropped by the `default:` arm, because "an invite admits one device". The
+credential response is therefore published exactly once. Lose it and the joiner
+retries into silence until its deadline, having already consumed the invite.
+
+The fix would be to remember the response published for an invite and re-publish
+it when the *same* request arrives again. It is safe as far as I can tell: a
+retry inside one `invite.Redeem` re-sends the identical sealed blob, same
+`EphPub` and same `DevicePub`, so a cached response still opens for it and for
+nobody else.
+
+**It is your call because it touches what "once" means.** Today the guarantee is
+enforced by the response existing once. Afterwards it would be enforced by the
+cache key — same device, same ephemeral key — which is a different and slightly
+weaker statement, and it is the sort of thing worth deciding deliberately rather
+than discovering later.
+
 ## Wants an outside look
 
 **The CLI.** Vaclav's instinct on 2026-08-27, and it is right: the shape has
@@ -65,7 +98,10 @@ nobody has checked lately whether it still holds.
 - The delivery plane reconnects ~23 times an hour and re-subscribes each time.
   Found 2026-08-27 while chasing something else; low bandwidth, unexplained, and
   the sort of thing that shows up as battery on a phone rather than bytes on a
-  laptop.
+  laptop. Worth re-measuring now that the daemon no longer runs two readers on
+  the node's event channel — half of every mesh's rendezvous traffic was going
+  to the invite transport and being discarded, which is exactly the shape of
+  "discovers peers slowly, in one direction only".
 - `shrooms config flatten` exists and has not been run on any node. The 78
   remaining "which shape is this mesh" branches cannot go until it has.
 - `advertise` is per mesh now; whether the relay settings follow is decided
