@@ -119,6 +119,28 @@ tunnels to both. The laptop kept sending into the dead one — 2.0K out, 0 back 
 and never looked at vps. The fix on the day was to unpin the blind relay by
 hand.
 
+**And a relay never registers with a relay.** Same function, ten lines down:
+
+```go
+// A relay is publicly reachable by definition, so it has no use for one.
+if m.relaySrv != nil {
+    return relayChoice{}
+}
+```
+
+That is not a definition, it is an assumption, and k11 is the counter-example:
+`relay = true` on the home mesh, behind a NAT whose mapped port answers vps and
+not the laptop. So k11 selects no relay, registers with nobody, and is
+unreachable from anyone without a direct path — while continuing to advertise
+itself as a relay for others to use. Nothing anywhere says so; it presents as a
+peer that is online and never handshakes.
+
+Being a relay and needing one are independent. A node can forward for others
+over the addresses that reach it and still want a path out for itself. The
+information to decide this exists — reflexive addresses, and whether anyone has
+ever probed us successfully — so the check could be "publicly reachable" rather
+than "flagged as a relay".
+
 **Your call what the fallback should be.** Falling through to discovery when
 nothing configured is live is the obvious answer and it breaks the "everyone
 agrees without negotiating" property — two devices could fall through at
