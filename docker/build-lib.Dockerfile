@@ -42,35 +42,55 @@ RUN git clone https://github.com/logos-messaging/logos-delivery.git . \
     && git checkout "$LD_REF" \
     && git rev-parse HEAD > /src/.ld-rev
 
-# Two patches to the pinned tree, both reported and verified in issue #11.
+# One patch to the pinned tree, reported and verified in issue #11.
 #
 # Carried here rather than by pinning a different revision because this rev is
 # the one the Android bindings use, and building the library from a different
-# source than the phone runs is a worse problem than two sed lines. Both are
-# fixed upstream on master; when the pin moves forward, delete this.
+# source than the phone runs is a worse problem than a sed line. It is fixed
+# upstream on master; when the pin moves forward, delete this.
 #
 # Verified by outcome, not by whether the patch matched. Upstream master has
-# already fixed both, and this same file builds master in the build-from-source
+# already fixed it, and this same file builds master in the build-from-source
 # job — so "the sed changed something" is the wrong test: it would fail on the
 # tree that needs no patching. What must hold either way is that the bad
 # construct is absent by the time make runs.
+#
+# THERE WAS A SECOND PATCH HERE, and it was the reason arm64 had not built since
+# at least 2026-09-04. It rewrote
+#
+#     "taskpools",
+#
+# in logos_delivery.nimble into a git URL naming commit 9e8ccc754631, against
+# this note:
+#
+#     nimble re-resolves taskpools past the lockfile pin (0.2.1 instead of
+#     0.1.0), and 0.2.1 dropped taskpools/channels_spsc_single.nim, so the
+#     build dies on a missing import. Naming the commit leaves nothing to
+#     resolve.
+#
+# The pinned tree ships a nimble.lock (v2, 46 packages) which already pins
+#
+#     taskpools  0.1.0  vcsRevision 9e8ccc754631
+#
+# — the same commit. So the patch bought nothing, and it cost the build: nimble
+# resolves the lock by package NAME (solveLockFileDeps), and the rewritten
+# requires entry is a URL, so the lock became unsatisfiable. The failure arrived
+# as "Couldn't find a solution for the packages", which this file's own comment
+# describes as a bogus dump that appears when something else went wrong — so it
+# was read as upstream breakage for a week.
+#
+# It was probably true when written, against a nimble that ignored the lock
+# file. The vnext solver honours it, and the workaround became the fault.
 RUN set -eux; \
-    # 1. nimble re-resolves taskpools past the lockfile pin (0.2.1 instead of
-    #    0.1.0), and 0.2.1 dropped taskpools/channels_spsc_single.nim, so the
-    #    build dies on a missing import. Naming the commit leaves nothing to
-    #    resolve. `nimble setup --localdeps` re-runs on every make, so fixing
-    #    the staged tree by hand is undone; the requirement is the durable fix.
-    sed -i 's|^\( *\)"taskpools",|\1"https://github.com/status-im/nim-taskpools#9e8ccc754631ac55ac2fd495e167e74e86293edb",|' logos_delivery.nimble; \
-    ! grep -qE '^ *"taskpools",' logos_delivery.nimble; \
-    # 2. chronos 4.4.0 refuses `waitFor` inside an async handler — NestedPoll —
-    #    and this call site is already inside one that awaits eight lines up.
-    #    Upstream master uses the await form.
-    #    Matched on the construct, not on one spelling of its arguments. The
-    #    report quoted `let _ = waitFor node.publish(some(...))`; the pinned
-    #    tree has it inside `if not (...)`, and master has `Opt.some(...)`
-    #    after an API change. A pattern tied to the argument list matched one
-    #    of the three and silently skipped the others — which is how this
-    #    reached CI. `waitFor node.publish` is the part that is actually wrong.
+    # chronos 4.4.0 refuses `waitFor` inside an async handler — NestedPoll —
+    # and this call site is already inside one that awaits eight lines up.
+    # Upstream master uses the await form.
+    # Matched on the construct, not on one spelling of its arguments. The
+    # report quoted `let _ = waitFor node.publish(some(...))`; the pinned tree
+    # has it inside `if not (...)`, and master has `Opt.some(...)` after an API
+    # change. A pattern tied to the argument list matched one of the three and
+    # silently skipped the others — which is how this reached CI.
+    # `waitFor node.publish` is the part that is actually wrong.
     sed -i 's|waitFor node\.publish|await node.publish|g' \
         logos_delivery/waku/rest_api/endpoint/relay/handlers.nim; \
     ! grep -rq 'waitFor node.publish' logos_delivery/waku/rest_api/endpoint/relay/
