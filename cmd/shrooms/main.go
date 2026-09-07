@@ -2,7 +2,7 @@
 //
 //	shrooms init [--name N]        create a mesh: keys, authority, credential
 //	shrooms invite                 admit one device, once
-//	shrooms join TOKEN    join a mesh you were invited to
+//	shrooms join TOKEN             join a mesh you were invited to
 //	shrooms daemon                 run the mesh
 //	shrooms status                 roster and tunnel state
 //	shrooms key show               print the network key
@@ -116,7 +116,9 @@ Usage:
   shrooms init [--name N] [--relay]     create a mesh: network key, admin keys
                                           and this device's own credential
   shrooms invite [--name N]             admit one device, once, within 15 min
-  shrooms join TOKEN           join the mesh that invite came from
+  shrooms join TOKEN                    join the mesh that invite came from
+  shrooms join TOKEN --mesh N           join a second mesh, beside the ones
+                                          this device is already in
   shrooms version                       print the build this binary came from
   shrooms prepare [--name N] [--relay]  write a config with the key left blank,
                                           for setting a machine up without the

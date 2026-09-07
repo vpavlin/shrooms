@@ -383,7 +383,7 @@ func TestJoinAnotherRefusesBadLabels(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := joinAnother(context.Background(), log, nil, path, st,
-				"tok", "laptop", tc.label, false)
+				"tok", "laptop", tc.label, joinOpts{})
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("got %v, want an error mentioning %q", err, tc.want)
 			}
@@ -397,7 +397,7 @@ func TestJoinAnotherRefusesBadLabels(t *testing.T) {
 func TestJoinAnotherNeedsATransport(t *testing.T) {
 	_, path := controlFixture(t)
 	_, err := joinAnother(context.Background(), slog.New(slog.DiscardHandler), nil, path,
-		&state.State{}, "tok", "laptop", "work", false)
+		&state.State{}, "tok", "laptop", "work", joinOpts{})
 	if err == nil || !strings.Contains(err.Error(), "rendezvous plane is not available") {
 		t.Fatalf("got %v, want the missing-transport error", err)
 	}

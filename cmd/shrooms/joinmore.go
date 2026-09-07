@@ -42,10 +42,29 @@ import (
 // leave one, and read every peer's endpoints; granting the socket is a real
 // decision, and ADR-025 says so.
 
+// joinOpts are the settings a join carries beside the token.
+//
+// A struct rather than four more positional booleans and strings: they are all
+// per-mesh settings of the mesh being joined, and the two callers that pass
+// them are far apart from the one that reads them.
+type joinOpts struct {
+	Relay bool
+
+	// Port pins this mesh's UDP port. Zero means "work it out", which is the
+	// right answer unless somebody asked for a specific one — an additional
+	// mesh takes its port from its position in the label-sorted list, and
+	// pinning the first mesh's port here would give two meshes one socket.
+	Port uint16
+
+	// Advertise is this mesh's public endpoint. Per mesh, and NOT inherited
+	// from the device-wide setting — see state.Mesh.Advertise for why.
+	Advertise string
+}
+
 // joinAnother redeems an invite into an additional mesh, writing it to the
 // config for the next start.
 func joinAnother(ctx context.Context, log *slog.Logger, tr invite.Transport,
-	cfgPath string, st *state.State, token, name, label string, relay bool) (*joinResult, error) {
+	cfgPath string, st *state.State, token, name, label string, opts joinOpts) (*joinResult, error) {
 
 	label = mesh.SanitiseName(label)
 	if label == "" {
@@ -121,12 +140,17 @@ func joinAnother(ctx context.Context, log *slog.Logger, tr invite.Transport,
 	if cfg.MeshSet == nil {
 		cfg.MeshSet = map[string]state.Mesh{}
 	}
-	cfg.MeshSet[label] = state.Mesh{
+	m := state.Mesh{
 		Label:      label,
 		NetworkKey: nk.String(),
 		AdminKeys:  adminKeys,
-		Relay:      relay,
+		Relay:      opts.Relay,
+		ListenPort: opts.Port,
 	}
+	if opts.Advertise != "" {
+		m.Advertise = []string{opts.Advertise}
+	}
+	cfg.MeshSet[label] = m
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -211,6 +235,12 @@ func joinHandler(log *slog.Logger, tr invite.Transport, cfgPath string, st *stat
 			Mesh  string `json:"mesh"`
 			Relay bool   `json:"relay"`
 			WaitS int    `json:"wait_s"`
+			// Both spelled as the waiting daemon's /join spells them, for the
+			// same reason: one CLI command posts to whichever of the two is
+			// listening, and a field it drops on the way is a flag that was
+			// accepted and did nothing.
+			Port      uint16 `json:"port"`
+			Advertise string `json:"advertise"`
 		}
 		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&in); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -231,7 +261,8 @@ func joinHandler(log *slog.Logger, tr invite.Transport, cfgPath string, st *stat
 		ctx, cancel := context.WithTimeout(r.Context(), wait)
 		defer cancel()
 
-		res, err := joinAnother(ctx, log, tr, cfgPath, st, in.Token, in.Name, in.Label, in.Relay)
+		res, err := joinAnother(ctx, log, tr, cfgPath, st, in.Token, in.Name, in.Label,
+			joinOpts{Relay: in.Relay, Port: in.Port, Advertise: in.Advertise})
 		if err != nil {
 			log.Warn("join failed", "err", err)
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -241,9 +272,11 @@ func joinHandler(log *slog.Logger, tr invite.Transport, cfgPath string, st *stat
 			"result": fmt.Sprintf("joined %s as %s; it starts on the next restart",
 				res.Mesh, res.Overlay),
 			"mesh":       res.Mesh,
+			"name":       res.Name,
 			"overlay":    res.Overlay,
 			"prefix":     res.Prefix,
 			"credential": res.Credential,
+			"serial":     res.Serial,
 			"expires":    res.Expires,
 		})
 	}

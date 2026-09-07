@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -319,6 +320,22 @@ func cmdJoinInvite(token string, args []string) error {
 		return err
 	}
 
+	// Whether --port was TYPED, not what it holds: its default is the port the
+	// first mesh listens on, so passing it through unconditionally would pin
+	// every additional mesh to a socket that is already taken. Asked of the
+	// flag set rather than compared against 51820, because somebody asking for
+	// 51820 explicitly means it.
+	portGiven := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "port" {
+			portGiven = true
+		}
+	})
+	pinPort := uint16(0)
+	if portGiven {
+		pinPort = uint16(*port)
+	}
+
 	if _, err := invite.ParseToken(token); err != nil {
 		return err
 	}
@@ -332,9 +349,18 @@ func cmdJoinInvite(token string, args []string) error {
 	if !*local {
 		st, err := fetchStatus(*sock)
 		switch {
+		case err == nil && !st.Waiting && additionalMesh(*label):
+			// A second mesh beside the ones it is already running, which the
+			// daemon has been able to do since ADR-015 — it was only ever this
+			// end that refused. Different endpoint from the one below despite
+			// the shared path: that one writes this device's first mesh and
+			// re-execs into it, this one adds to a config that must survive.
+			return joinAnotherViaDaemon(*sock, token, deviceName, *label, *relay,
+				pinPort, *advertise, *timeout)
 		case err == nil && !st.Waiting:
 			return errors.New("the daemon on this machine already has a mesh; " +
-				"stop it and remove its config to join another one")
+				"to join a second one beside it, give it a name: " +
+				"shrooms join <TOKEN> --mesh <name>")
 		case err == nil:
 			return joinViaDaemon(*sock, token, deviceName, *label, uint16(*port), *advertise, *relay, *timeout)
 		default:
@@ -346,8 +372,17 @@ func cmdJoinInvite(token string, args []string) error {
 		}
 	}
 
+	// A config already here is not necessarily in the way. With a label this is
+	// an additional mesh, which is an edit to that config rather than a
+	// replacement for it — the same operation the daemon does above, done here
+	// because there is no daemon to ask.
+	addition := false
 	if _, err := os.Stat(*cfgPath); err == nil {
-		return fmt.Errorf("%s already exists — remove it or use a different --config", *cfgPath)
+		if !additionalMesh(*label) {
+			return fmt.Errorf("%s already exists — remove it, or name a second mesh "+
+				"with --mesh, or use a different --config", *cfgPath)
+		}
+		addition = true
 	}
 
 	// The identity first, because it is what the credential names. Generating
@@ -414,6 +449,26 @@ func cmdJoinInvite(token string, args []string) error {
 		Name:      deviceName,
 	}
 	tr := rendezvous.InviteTransport(node)
+
+	// Everything below this point writes a fresh config. An addition must not,
+	// so it goes through joinAnother — which merges under the config lock and
+	// stores the credential against the identity derived for this mesh.
+	if addition {
+		unhush()
+		res, err := joinAnother(ctx, slog.New(slog.DiscardHandler), tr, *cfgPath, st,
+			token, deviceName, *label, joinOpts{Relay: *relay, Port: pinPort, Advertise: *advertise})
+		if err != nil {
+			return err
+		}
+		printJoinedAnother(res)
+		if askRestart(*sock) {
+			fmt.Println("\nThe daemon is restarting into it now.")
+		} else {
+			fmt.Println("\nRestart the daemon to bring it up:\n  sudo systemctl restart shrooms")
+		}
+		return nil
+	}
+
 	var resp *invite.Response
 	// See perMeshRequest: only an additional mesh derives, because the first
 	// one is what the single-mesh config form describes.
@@ -493,6 +548,80 @@ func cmdJoinInvite(token string, args []string) error {
 	// that reports "waiting for a mesh" after a join that plainly worked.
 	if nudgeDaemon(*sock) {
 		fmt.Println("\nThe daemon was waiting for this and is bringing the mesh up now.")
+	}
+	return nil
+}
+
+// additionalMesh says whether a label names a mesh beside the ones a device
+// already has, rather than the one it was built around.
+//
+// The empty label and "default" both mean the first mesh — the one the
+// single-mesh config form describes — so neither can name a second. Kept in one
+// place because three callers ask the same question and answering it differently
+// in any of them puts two meshes under one name.
+func additionalMesh(label string) bool {
+	return label != "" && label != state.DefaultLabel
+}
+
+// printJoinedAnother reports a mesh that has been joined but is not running.
+//
+// The "not yet" is the point. A join that prints success and leaves a mesh that
+// does nothing until the next restart is the thing people remember, so it is
+// said here rather than left for `shrooms status` to imply.
+func printJoinedAnother(res *joinResult) {
+	fmt.Printf("\nJoined %s as %s.\n", res.Mesh, res.Name)
+	fmt.Printf("Overlay IP:  %s\n", res.Overlay)
+	fmt.Printf("Mesh prefix: %s\n", res.Prefix)
+	if res.Credential {
+		fmt.Printf("Credential:  serial %d, expires %s\n", res.Serial, res.Expires)
+	}
+}
+
+// joinAnotherViaDaemon asks a running daemon to add a mesh to the ones it has.
+//
+// Same URL as joinViaDaemon and a different operation: which one answers is
+// decided by whether the daemon is waiting for its first mesh, and the two write
+// the config in incompatible ways. Split here rather than at the endpoint
+// because the *reporting* differs too — a waiting daemon re-execs and comes up
+// on the mesh, this one needs a restart it cannot do to itself mid-request.
+func joinAnotherViaDaemon(sock, token, name, label string, relay bool,
+	port uint16, advertise string, timeout time.Duration) error {
+
+	fmt.Printf("Asking to join %q as %q, via the daemon...\n", label, name)
+
+	body, _ := json.Marshal(map[string]any{
+		"token": token, "name": name, "mesh": label, "relay": relay,
+		"port": port, "advertise": advertise,
+		"wait_s": int(timeout.Seconds()),
+	})
+	client := socketClient(sock, timeout+time.Minute)
+	resp, err := client.Post("http://unix/join", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return errors.New(strings.TrimSpace(string(msg)))
+	}
+
+	var res joinResult
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return err
+	}
+	if res.Name == "" {
+		res.Name = name
+	}
+	printJoinedAnother(&res)
+
+	// The daemon builds every mesh's device at startup, so a mesh added while
+	// it runs has no interface until it starts again. Asked for here rather
+	// than printed as an instruction: the socket is already open and the
+	// restart endpoint is already there.
+	if askRestart(sock) {
+		fmt.Printf("\nThe daemon is restarting to bring %s up. Check it with:\n  shrooms status\n", label)
+	} else {
+		fmt.Printf("\n%s starts on the next restart:\n  sudo systemctl restart shrooms\n", label)
 	}
 	return nil
 }

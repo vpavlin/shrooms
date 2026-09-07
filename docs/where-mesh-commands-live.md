@@ -14,8 +14,8 @@ Two different things, and every command does some mixture of them:
 |---|---|---|
 | `init` | yes | mints one |
 | `init --mesh X` | no | mints one |
-| `join KEY` | yes | joins one |
-| `join --invite --mesh X` | no | joins one |
+| `join TOKEN` | yes | joins one |
+| `join TOKEN --mesh X` | no | joins one |
 | `prepare` | yes | — |
 | `mesh remove` / `list` / `rename` / `enable` / `disable` | no | yes |
 
@@ -48,12 +48,12 @@ Two primitives and two conveniences:
 
     shrooms prepare                 the device: name, port, preset, mode, keys
     shrooms mesh new                mint a mesh on a prepared device
-    shrooms mesh join --invite T    join one on a prepared device
+    shrooms mesh join TOKEN         join one on a prepared device
     shrooms mesh remove             the opposite of `mesh new`, where it belongs
     shrooms mesh list|rename|enable|disable
 
     shrooms init                    prepare + mesh new, for a fresh machine
-    shrooms join KEY                prepare + mesh join, likewise
+    shrooms join TOKEN              prepare + mesh join, likewise
 
 Every mesh verb lives under `mesh` and each has its opposite beside it.
 `init` and `join` stay exactly as they are for a first run, because "one command
@@ -69,7 +69,10 @@ guides, the completion and the e2e scripts all name these commands, and the
 muscle memory is one person's.
 
 The code cost is small: `addMeshWith` and the `--mesh` half of `cmdJoinInvite`
-already exist and already do the work. `mesh new` and `mesh join` would be
+already exist and already do the work — the latter only since 2026-09-07, when
+it turned out `join TOKEN --mesh X` had been refused by the CLI since it was
+added: the daemon implemented it, the flag was parsed and forwarded, and the
+guard in front of it never looked at the label. `mesh new` and `mesh join` would be
 thin wrappers, and `init --mesh` can keep working as an alias for as long as
 anybody wants.
 
