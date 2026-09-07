@@ -323,11 +323,25 @@ scenario_a_running_daemon_answers() {
 # test suite is not a thing that should be able to spend those.
 scenario_a_card_on_a_reader() {
   local out; out=$("$BIN" keycard status 2>&1)
+  # Matched against what the binary SAYS, so these have to move when the
+  # messages do. They did not: reader support stopped being a build tag on
+  # 2026-08-27 and the wording changed with it, leaving patterns that could
+  # never match — so a runner with no reader stopped skipping and started
+  # asserting "applet" against an error string. CI had been red since.
   case "$out" in
-    *"no smartcard reader support"*)
+    *"no PC/SC library"*|*"cannot reach a smartcard reader"*)
       note "no pcsc-lite on this machine; skipping" ; return ;;
-    *"no smartcard reader found"*|*"No smart card inserted"*|*"no PC/SC service"*)
+    *"no smartcard reader found"*|*"No smart card inserted"*|    *"PC/SC service is not running"*|*"no card on the reader"*|    *"in use by something else"*)
       note "no reader or no card; skipping" ; return ;;
+    error:*)
+      # An error nothing above recognises. Said plainly rather than falling
+      # through, because the fall-through asserts "applet" against an error
+      # string and reports "the report is missing fields" — which sends you
+      # looking at the JSON instead of at these patterns.
+      bad "keycard status failed in a way this script does not know about"
+      note "${out:0:160}"
+      note "if this is a new 'no reader' case, add it to the skip list above"
+      return ;;
   esac
 
   expect "the card answers SELECT" "applet" "$out"
