@@ -90,6 +90,42 @@ failing loudly afterwards if one is missing. amd64 keeps moving; arm64 gets an
 honest error instead of a stale image. **Your call** — it trades "everyone waits
 for the slowest arch" for "arm64 can be behind, visibly".
 
+**A configured relay that has never answered still beats a live discovered one.**
+
+`internal/mesh/paths.go:206`, `selectRelay`:
+
+```go
+if len(m.relays) > 0 {
+    if t, ok := m.liveRelay(now); ok {
+        return relayChoice{ok: true, addr: t.addr}
+    }
+    return relayChoice{ok: true, addr: m.relays[0].addr}
+}
+```
+
+"Configured relays override discovery" is right, and the reason given for it is
+right: every device with the same list agrees on one relay without negotiating,
+which matters because a relay only forwards between peers that have BOTH
+registered with it (`internal/relay/server.go:328`).
+
+What is not right is the second return. When no configured relay is live, this
+picks the first one anyway and discovery is never reached — so a stale or
+mismatched blind relay permanently hides a member relay that is up, reachable
+and already carrying traffic.
+
+Found on 2026-09-07: the laptop had a blind relay pinned, k11 was reachable only
+through a relay, and vps was sitting there as a live member relay with working
+tunnels to both. The laptop kept sending into the dead one — 2.0K out, 0 back —
+and never looked at vps. The fix on the day was to unpin the blind relay by
+hand.
+
+**Your call what the fallback should be.** Falling through to discovery when
+nothing configured is live is the obvious answer and it breaks the "everyone
+agrees without negotiating" property — two devices could fall through at
+different moments and pick differently. Preferring a live discovered member
+relay over a configured one that has never once answered is narrower and keeps
+that property in every case that currently works.
+
 ## Wants an outside look
 
 **The CLI.** Vaclav's instinct on 2026-08-27, and it is right: the shape has
