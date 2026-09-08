@@ -77,6 +77,11 @@ cp packaging/shrooms.bash "$DIST/"
 cp packaging/install-dist.sh "$DIST/install.sh"
 chmod +x "$DIST/install.sh"
 
+# The uninstaller ships alongside, because the machine this lands on is the one
+# with no checkout to fetch it from later.
+cp scripts/uninstall.sh "$DIST/uninstall.sh"
+chmod +x "$DIST/uninstall.sh"
+
 echo
 echo "==> $DIST"
 find "$DIST" -maxdepth 2 -type f -printf '  %P\n' | sort
@@ -88,3 +93,6 @@ echo
 echo "Install on a target — no container runtime, no Go toolchain:"
 echo "  scp -r $DIST/ host:shrooms-dist"
 echo "  ssh host 'sudo ./shrooms-dist/install.sh'"
+echo
+echo "Remove it again:"
+echo "  ssh host 'sudo ./shrooms-dist/uninstall.sh --purge'"

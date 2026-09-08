@@ -33,6 +33,9 @@
 # Re-running is safe: an existing config and identity are left alone unless
 # --force is given. Losing the identity means a new overlay address and looking
 # like a different device to every peer, so it is never destroyed by accident.
+#
+# To undo all of it, scripts/uninstall.sh — `--purge` for the config and
+# identity as well, which is what "test this again on a clean machine" means.
 set -euo pipefail
 
 IMAGE=${IMAGE:-ghcr.io/vpavlin/shrooms:latest}
@@ -325,6 +328,15 @@ The daemon is running now, and starts on boot.
   shrooms status                # who is on the mesh
   shrooms paths                 # why a peer is or is not reachable
   journalctl -u shrooms -f      # follow the log
+
+To remove everything this installed, fetch uninstall.sh from beside this script:
+
+  sudo bash uninstall.sh            # the software; this device stays a member
+  sudo bash uninstall.sh --purge    # config, identity and image too
+
+--purge lists what it found here and asks before removing any of it. It never
+takes the admin key — losing that ends the mesh — so it is safe on the machine
+that minted one.
 
 EOF
 

@@ -25,7 +25,7 @@ GO ?= go
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 .PHONY: all deps deps-basecamp check-lib shrooms wakuspike s3topics m0demo \
-        s1 s3 probe relay relay-image m0 m1 m2 m2-edm m3 m3-remote dist image push-image deps-release install uninstall build-all vet-cgo vet-pcsc test test-unit e2e e2e-two-nodes e2e-keycard e2e-keycard-mesh android-deps android-core aar apk fdroid basecamp-check basecamp-lgx site-adrs fmt clean
+        s1 s3 probe relay relay-image m0 m1 m2 m2-edm m3 m3-remote dist image push-image deps-release install uninstall purge build-all vet-cgo vet-pcsc test test-unit e2e e2e-two-nodes e2e-keycard e2e-keycard-mesh android-deps android-core aar apk fdroid basecamp-check basecamp-lgx site-adrs fmt clean
 
 all: shrooms
 
@@ -145,15 +145,37 @@ install: check-lib
 	@echo
 	@echo "completion applies to new shells; for this one:"
 	@echo "  source $(PREFIX)/share/bash-completion/completions/shrooms"
+	@echo
+	@echo "to undo this:"
+	@echo "  sudo make uninstall    # the software; config and identity stay"
+	@echo "  sudo make purge        # those too, as if never installed"
 
+## Remove the software. Config and identity stay, so this machine rejoins as
+## the same device; `make purge` takes those too.
+##
+## Both delegate to one script, which also undoes the other two installers
+## (install.sh, packaging/install-dist.sh) and the things a running daemon
+## leaves behind — you should not have to remember which way this machine was
+## installed in order to remove it.
 uninstall:
-	systemctl disable --now shrooms 2>/dev/null || true
-	rm -f $(DESTDIR)$(PREFIX)/bin/shrooms $(DESTDIR)/etc/systemd/system/shrooms.service \
-	      $(DESTDIR)$(PREFIX)/share/bash-completion/completions/shrooms
-	rm -rf $(DESTDIR)$(LIBDIR)
-	@echo "removed the binary, libraries and unit."
-	@echo "config and identity are left alone:"
-	@echo "  /etc/shrooms  /var/lib/shrooms"
+	PREFIX=$(PREFIX) LIBDIR=$(LIBDIR) DESTDIR=$(DESTDIR) ./scripts/uninstall.sh
+
+## As if never installed: also removes /etc/shrooms, /var/lib/shrooms, the
+## pre-rename paths and the container image. This is the one to use before
+## testing the install flow — the device identity goes, so the machine comes
+## back as a new device rather than a returning one.
+##
+## It lists what it found and asks first. `make purge YES=1` does not, which is
+## what an unattended run needs: without a terminal to read an answer from, the
+## question is a failure rather than a prompt.
+##
+## Neither takes the mesh authority — /etc/shrooms/admin or ~/.config/shrooms.
+## A lost admin key cannot be replaced and the mesh could then never admit
+## another device, so removing it is `./scripts/uninstall.sh --purge
+## --admin-keys-too` and nothing shorter.
+purge:
+	PREFIX=$(PREFIX) LIBDIR=$(LIBDIR) DESTDIR=$(DESTDIR) \
+		./scripts/uninstall.sh --purge $(if $(YES),--yes,)
 
 ## --- spikes and milestones ---
 

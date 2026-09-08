@@ -20,6 +20,9 @@
 #
 # It does not create a config or start anything. On a fresh machine the daemon
 # comes up waiting for a mesh, and `shrooms join --invite <TOKEN>` finishes it.
+#
+# uninstall.sh beside this script undoes it, and knows about /opt/shrooms as
+# well as the paths the other two installers use.
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -86,4 +89,8 @@ If this machine is publicly reachable, open its port (51820, plus one per
 extra mesh):
   sudo firewall-cmd --add-port=51820/udp --permanent && sudo firewall-cmd --reload
   # or: sudo ufw allow 51820/udp
+
+To undo this, from the same directory:
+  sudo ./uninstall.sh            # the software
+  sudo ./uninstall.sh --purge    # config and identity too
 NEXT

@@ -253,7 +253,9 @@ $ sudo systemctl enable --now shrooms
 `make install` relinks the binary with an rpath pointing at
 `/usr/local/lib/shrooms`, so it keeps working after you delete the checkout.
 To run it in the foreground instead, skip the install and use
-`sudo ./bin/shrooms daemon -v`.
+`sudo ./bin/shrooms daemon -v`. `sudo make uninstall` reverses it, and
+[`make purge`](#8-removing-it-again) goes further and leaves the machine as it
+was before.
 
 **Otherwise, push from your machine** with `deploy.sh`, which builds a container
 image and ships it over ssh:
@@ -645,6 +647,81 @@ itself in its ordinary announce and every other node picks it up, so there are
 no relay addresses to distribute or keep up to date. You do not need a VPS if
 one of your own machines is reachable; see
 [ADR-012](docs/adr/012-relay-hosting.md).
+
+### 8. Removing it again
+
+One script undoes all three install paths, so you do not have to remember which
+one this machine used:
+
+```console
+$ sudo ./scripts/uninstall.sh            # the software
+$ sudo ./scripts/uninstall.sh --purge    # config and identity too
+```
+
+From a checkout, `sudo make uninstall` and `sudo make purge` are the same two
+things.
+
+The default removes the binary, libraries, `/opt/shrooms`, the unit, the
+completion, the container — and the parts no installer created and nothing else
+cleans up: the managed `/etc/hosts` block, any stranded `shrooms*` interface
+left by a daemon that was killed, and the pre-rename `logos-vpn` names.
+
+A link is only ever deleted if it is **a tunnel**, checked with `ip -d link
+show` and not inferred from its name. A NIC, wifi, bridge, bond, vlan or veth
+cannot be deleted by this script whatever it is called and whatever the config
+says `interface` is — a name is how a link is found here, never why it is
+removed. Interfaces are also left alone entirely if a daemon is still running
+outside systemd, since deleting its tunnel would leave it believing it is up.
+
+`--purge` adds `/etc/shrooms` and `/var/lib/shrooms`, plus the container image.
+That means the **network key**, the **device identity** and this device's
+**credential**, so it lists what it found on the machine and asks before
+touching any of it:
+
+```
+--purge will remove, on this machine:
+
+  /etc/shrooms                       config — all of it but the admin directory
+  /var/lib/shrooms                   device identity ("devbox")
+  ghcr.io/vpavlin/shrooms:latest     image, so the next install pulls one
+
+and stop the shrooms.service unit and the shrooms container.
+
+and leave alone, because losing it cannot be undone:
+
+  /etc/shrooms/admin                 the mesh authority
+```
+
+**The mesh authority is never removed by default, even under `--yes`.** An admin
+key set is fixed when a mesh is minted, so a lost one cannot be replaced and the
+mesh can never admit another device — see
+[when a node loses its state](docs/when-a-node-loses-its-state.md). Two places
+hold it and both are stepped around: `/etc/shrooms/admin`, which
+`docker/compose-node.yml` mounts for a mesh minted in a container, and
+`~/.config/shrooms`, which `install.sh` creates and the CLI defaults to. The
+latter is reported on every run and never touched, because it belongs to you
+rather than to the machine. `--purge --admin-keys-too` removes both, which is
+for decommissioning the mesh itself and nothing less.
+
+This machine then rejoins as a new device with a different overlay address that
+every peer has to learn, and it needs a fresh invite to get back in: membership
+is a credential an admin signs, so a copy of the old config is not a way back.
+Use `--purge` when a clean machine is the point —
+testing the install flow, or handing the box on. Keep the identity when you are
+going to reinstall, or every cycle leaves another dead peer in everyone's
+roster. `--yes` skips the question.
+
+Two things it will not do for you, and says so: the firewall rules you opened by
+hand (it prints the commands to reverse them, for whichever firewall is actually
+running) and the Android app, which is removed on the phone.
+
+A node you put there with `deploy.sh` has no checkout to run this from, so pipe
+it over ssh — `--yes` because the script itself is on stdin and the prompt would
+have nowhere to read an answer from:
+
+```console
+$ ssh user@vps 'sudo bash -s -- --purge --yes' < scripts/uninstall.sh
+```
 
 ### Troubleshooting
 
@@ -1232,6 +1309,11 @@ $ journalctl -u shrooms -f      # follow the log
 
 Read the script before running it as root, as you should with anything fetched
 this way.
+
+`uninstall.sh`, from the same directory of the repository, takes it all off
+again — `--purge` including the config and identity, which is what you want
+before running the install a second time to see it as a stranger would. See
+[Removing it again](#8-removing-it-again).
 
 Use `scripts/deploy.sh` instead when you want to push to a remote host *from* a
 machine that has the repo — for example to deploy an unpushed change.

@@ -236,27 +236,52 @@ error — the daemon must not take a port from an application that binds it.
 
 The install path, run as a stranger would.
 
-**Do:** on a clean host, `install.sh prepare`, paste the key, start.
+**Do:** on a clean host, `install.sh prepare`, then redeem an invite from a node
+already on the mesh — `sudo shrooms join --invite <TOKEN>`.
 **Pass:** it appears in every other node's `status` within seconds, is reachable
 by name, and survives a reboot.
 
 **Watch for:** anything requiring knowledge not in the README. That is the
 actual test.
 
+A host that has run this before is not a clean host, and the difference is
+usually invisible: an identity in `/var/lib/shrooms` makes it a *returning*
+device, a cached image skips the pull, and a leftover `/etc/hosts` block makes
+names resolve before anything has registered them. `scripts/uninstall.sh
+--purge` puts the machine back to before, which is what makes this test worth
+running twice.
+
+```console
+$ sudo ./scripts/uninstall.sh --purge --yes
+```
+
 ---
 
 ## Tearing down
 
 ```console
-$ sudo systemctl stop shrooms && sudo systemctl disable shrooms
-$ sudo rm -rf /etc/shrooms /var/lib/shrooms
+$ sudo ./scripts/uninstall.sh            # the software; identity stays
+$ sudo ./scripts/uninstall.sh --purge    # identity and config too
 ```
 
-Removing `/var/lib/shrooms` discards the device identity, so the machine
-returns as a **new** device with a different overlay address if it rejoins.
-Keep it to keep the identity — which is usually what you want when testing
-repeatedly, or every run pollutes every other node's roster with a peer that
-never comes back.
+`--purge` lists what it found on the machine and asks before removing any of it,
+so there is no separate preview to run. It undoes all three install
+paths — `make install`, `install.sh` and the portable installer — plus what a
+running daemon leaves behind: the managed `/etc/hosts` block and any stranded
+`shrooms*` interface. `make uninstall` and `make purge` are the same two things
+from a checkout.
+
+`--purge` discards the device identity and this device's credential, so the
+machine returns as a **new** device with a different overlay address and needs a
+fresh invite. Without it the identity stays — which is usually what you want when
+testing repeatedly, or every run pollutes every other node's roster with a peer
+that never comes back.
+
+What `--purge` never takes without `--admin-keys-too`, including under `--yes`,
+is the mesh authority: `/etc/shrooms/admin` and `~/.config/shrooms`. Testing the
+install flow on the machine that *minted* the mesh would otherwise end the mesh
+rather than reset the node — see
+[when a node loses its state](docs/when-a-node-loses-its-state.md).
 
 Peers that vanish drop out after `OfflineAfter` (3 minutes) and are removed from
 the data plane once they have no live tunnel.
