@@ -20,7 +20,7 @@ import (
 // copying the admin key onto it would defeat the whole separation.
 func cmdKeys(args []string) error {
 	fs := flag.NewFlagSet("keys", flag.ExitOnError)
-	_, stateDir := commonFlags(fs)
+	cfgPath, stateDir := commonFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -39,30 +39,101 @@ func cmdKeys(args []string) error {
 	fmt.Printf("      --wg %x \\\n", st.Identity.WGPub[:])
 	fmt.Printf("      --seal %x\n", st.Identity.SealPub[:])
 
-	if len(st.Credential) > 0 {
-		c, err := cred.UnmarshalCredential(st.Credential)
-		if err != nil {
-			fmt.Printf("\ncredential: unreadable (%v)\n", err)
-			return nil
-		}
-		fmt.Printf("\ncredential  %s, serial %d, expires %s\n",
-			c.Name, c.Serial, time.Unix(c.NotAfter, 0).Format(time.RFC3339))
-		// Version 1 has no sealing key, so nothing on the control plane can be
-		// addressed to this device — which is what a rotation after a
-		// revocation needs. Said here because `keys` is where somebody looks
-		// when a device is not behaving, and the remedy is the command printed
-		// above with --seal on it.
-		if len(c.SealPub) == 0 {
-			fmt.Println("            version 1 — reissue with --seal (above) so this")
-			fmt.Println("            device can be rekeyed after a revocation")
-		}
-		if time.Now().After(time.Unix(c.NotAfter, 0)) {
-			fmt.Println("            EXPIRED — ask the admin to issue another")
-		}
-	} else {
+	// Every mesh's credential, from the slot that mesh actually announces.
+	//
+	// This printed st.Credential and nothing else, which is the single-mesh
+	// field — and a device with a per-mesh credential (ADR-015) stops keeping
+	// that field in step. internal/state/meshstate.go says so in as many words:
+	// "the single-mesh field stopped being kept in step and `shrooms keys`
+	// reported a credential the device had stopped using". It was fixed there
+	// and not here.
+	//
+	// Found on pi5 on 2026-09-08, where `keys` reported an expiry eleven days
+	// before the one the device was announcing, under a name it had not used
+	// since it was enrolled — while `status` on a peer, `admin renew
+	// --dry-run` and the device's own log all agreed on the real one. Somebody
+	// checking whether a node needs renewing looks HERE, so being wrong here is
+	// worse than being silent.
+	if !printMeshCredentials(*cfgPath, st) {
 		fmt.Println("\ncredential  none yet")
 	}
 	return nil
+}
+
+// printMeshCredentials reports one line per mesh, and says whether it found any.
+//
+// Read-only by construction: it looks the mesh state up rather than calling
+// State.MeshState, which CREATES an entry and derives an identity for a mesh it
+// has not seen. `keys` is what somebody runs when a device is misbehaving, and
+// it must not change what it is describing.
+func printMeshCredentials(cfgPath string, st *state.State) bool {
+	// Unvalidated: a device waiting to be enrolled has no network key, and
+	// that is exactly when `keys` is most useful.
+	cfg, err := state.LoadConfigUnvalidated(cfgPath)
+	if err != nil {
+		// No config to enumerate, so the single-mesh field is all there is.
+		return printOneCredential("", st.Credential)
+	}
+
+	found := false
+	for _, m := range cfg.Meshes() {
+		nk, err := m.Key()
+		if err != nil {
+			continue
+		}
+		raw := st.Credential
+		if ms, ok := st.Meshes[state.NetworkID(nk)]; ok && ms != nil && len(ms.Credential) > 0 {
+			// The per-mesh slot wins wherever it exists. On the mesh that
+			// inherits the device's original identity the two are usually the
+			// same blob; when they differ, this is the one being announced.
+			raw = ms.Credential
+		}
+		label := m.Label
+		if len(cfg.Meshes()) == 1 {
+			// One mesh needs no naming, and printing "default" invites the
+			// question of what the other one is.
+			label = ""
+		}
+		if printOneCredential(label, raw) {
+			found = true
+		}
+	}
+	return found
+}
+
+// printOneCredential renders a credential, or reports nothing and says so.
+func printOneCredential(label string, raw []byte) bool {
+	if len(raw) == 0 {
+		if label != "" {
+			fmt.Printf("\ncredential  %s: none yet\n", label)
+			return true
+		}
+		return false
+	}
+	c, err := cred.UnmarshalCredential(raw)
+	if err != nil {
+		fmt.Printf("\ncredential: unreadable (%v)\n", err)
+		return true
+	}
+	where := ""
+	if label != "" {
+		where = label + ": "
+	}
+	fmt.Printf("\ncredential  %s%s, serial %d, expires %s\n",
+		where, c.Name, c.Serial, time.Unix(c.NotAfter, 0).Format(time.RFC3339))
+	// Version 1 has no sealing key, so nothing on the control plane can be
+	// addressed to this device — which is what a rotation after a revocation
+	// needs. Said here because `keys` is where somebody looks when a device is
+	// not behaving, and the remedy is the command printed above with --seal on
+	// it.
+	if len(c.SealPub) == 0 {
+		fmt.Println("            version 1 — reissue with --seal (above) so this")
+		fmt.Println("            device can be rekeyed after a revocation")
+	}
+	if time.Now().After(time.Unix(c.NotAfter, 0)) {
+		fmt.Println("            EXPIRED — ask the admin to issue another")
+	}
+	return true
 }
 
 // cmdCredential installs a credential an admin issued elsewhere.
