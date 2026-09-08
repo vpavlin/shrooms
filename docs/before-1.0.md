@@ -103,6 +103,51 @@ nothing drifted on our side and no change to our Dockerfile fixes it. The same
 failure hits the `build from source (upstream master)` job, so it is not
 specific to the pinned revision either.
 
+**Upstream fixed it on 2026-09-07**, in `67ac6616` — "fix(build): bump Nimble and
+chronos, simplify build" — which replaces
+
+    const RequiredNimbleVersion = "0.24.1"
+    const RequiredNimbleRevision = "1a2b3ae9..."
+
+with
+
+    const RequiredNimblePin = "07caee397d628c9e93d81048268365c4c2414a80"
+      ## This revision matches URL requirements to nimble.lock by URL.
+
+That last line is this bug, named by the people who own it. **Our pinned tree
+asks for nimble 0.22.3**, and upstream has gone 0.22.3 → 0.24.1 → an unreleased
+revision since. No patch to our Dockerfile substitutes for a newer nimble, which
+is why every attempt failed:
+
+| tried on the pinned tree | result |
+|---|---|
+| drop the taskpools sed | fails in `solveLockFileDeps` |
+| drop `nimble.lock` | fails later, in `resolveNim` |
+| normalise the `.git` URL suffixes | fails in `solveLockFileDeps` |
+| drop the lock AND normalise | fails in `resolveNim`, 307k lines |
+| **build upstream master instead** | **clears the resolver completely** |
+
+Master then fails elsewhere: `git -C .../pkgcache/githubcom_logosmessagingnimffi_<sha>_<sha>
+fetch --depth 1 origin <sha>` exits 128 — a staging path with the sha twice,
+the same class as the `#`-truncation bug `docker/build-lib.Dockerfile` describes
+for `bearssl_pkey_decoder`. NOT a git version issue: git 2.39.5 in bookworm
+performs that exact fetch successfully, checked directly. The same upstream
+commit added a `~/.nimble/pkgcache` cache to their CI, so their builds run warm
+and ours is the cold case.
+
+**So the recommendation is to stop building it.** The arm64 library already
+exists — recovered from the 2026-08-27 image, `ELF 64-bit ARM aarch64`, carrying
+`.ld-rev = 7a3a064b`, the exact revision we pin. Published as
+`deps-v1/liblogosdelivery-linux-arm64.tar.gz` (75.5 MB gzipped, unstripped) it
+would let the arm64 job fetch exactly as amd64 does, and the from-source path —
+build step, cache and all — could be deleted. Revisit `LD_REF` afterwards, on
+its own merits, once upstream's new build has settled.
+
+Moving `LD_REF` forward is a real decision either way: master is Nim 2.2.6
+against our 2.2.4, with a reworked Makefile, and it breaks what the pin is for —
+"this revision is what the Android bindings pin", so desktop and phone would run
+different library revisions until Android moves too.
+
 **That makes decoupling `:latest` from arm64 much more attractive than it was**,
 because "wait for the arm64 build to be fixed" may mean waiting on upstream
 nimble. Meanwhile amd64 hosts have been stuck on a stale `:latest` since at
