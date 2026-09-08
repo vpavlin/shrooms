@@ -116,6 +116,11 @@ type Mesh struct {
 	// A registration is unacknowledged; a challenge is not.
 	relayMu   sync.Mutex
 	relayLive map[netip.AddrPort]time.Time
+	// relaySince is the discovered relay we are timing, and since when, so a
+	// live one can displace a configured blind relay without flapping. See
+	// RelaySwitchAfter.
+	relaySince   netip.AddrPort
+	relaySinceAt time.Time
 	// relaySrv is non-nil only when this node acts as a relay for others.
 	relaySrv *relay.Server
 	// relays are the hand-configured relays, in the order given, each with the

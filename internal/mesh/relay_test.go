@@ -190,12 +190,21 @@ func TestSelectRelaySkippedWhenActingAsRelay(t *testing.T) {
 	}
 }
 
-// An explicit relay_addr still wins, so a mesh whose relay has not announced
-// yet can be brought up by hand.
-func TestSelectRelayPinOverridesDiscovery(t *testing.T) {
+// An explicit relay_addr wins while it is answering, and is still the fallback
+// when nothing else is — so a mesh whose relay has not announced yet can be
+// brought up by hand.
+//
+// It no longer wins when it has NEVER answered and a live relay has been
+// discovered. That was the old contract, and it meant an address left in a
+// config outranked a working relay indefinitely; see relaypriority_test.go for
+// what it cost.
+func TestSelectRelayPinWinsWhileItAnswers(t *testing.T) {
 	f := newRelayFixture(t)
 	pin := netip.MustParseAddrPort("192.0.2.7:51820")
 	f.m.relays = []relayTarget{{addr: pin}}
+	f.m.relayMu.Lock()
+	f.m.relayLive = map[netip.AddrPort]time.Time{pin: f.now}
+	f.m.relayMu.Unlock()
 
 	got := f.m.selectRelay(f.now)
 	if !got.ok || got.addr != pin {
@@ -203,6 +212,19 @@ func TestSelectRelayPinOverridesDiscovery(t *testing.T) {
 	}
 	if got.id != "" {
 		t.Errorf("pinned relay reported a device id %q", got.id)
+	}
+}
+
+// The bring-it-up-by-hand case, unchanged: a pin that has not answered yet is
+// still the answer when there is nothing to discover.
+func TestSelectRelayPinUsedBeforeAnythingAnswers(t *testing.T) {
+	f := newRelayFixture(t)
+	f.m.roster = NewRoster(f.m.nk, make([]byte, 32)) // nobody announced
+	pin := netip.MustParseAddrPort("192.0.2.7:51820")
+	f.m.relays = []relayTarget{{addr: pin}}
+
+	if got := f.m.selectRelay(f.now); !got.ok || got.addr != pin {
+		t.Errorf("relay addr = %v, want the pinned %v", got.addr, pin)
 	}
 }
 

@@ -213,17 +213,91 @@ func (m *Mesh) selectRelay(now time.Time) relayChoice {
 	//
 	// Liveness only ever *promotes* the same ordering, never reshuffles it: a
 	// relay that has gone quiet is skipped, and the rest keep their order.
-	if len(m.relays) > 0 {
-		if t, ok := m.liveRelay(now); ok {
-			return relayChoice{ok: true, addr: t.addr}
-		}
-		return relayChoice{ok: true, addr: m.relays[0].addr}
-	}
-	// A relay is publicly reachable by definition, so it has no use for one.
-	if m.relaySrv != nil {
-		return relayChoice{}
+	member, blind := m.liveConfigured(now)
+
+	// 1. A live member relay named in the config. One of your own, chosen
+	//    deliberately, and answering — nothing beats that.
+	if member.ok {
+		return member
 	}
 
+	// A relay is publicly reachable by DEFINITION only in the config's terms:
+	// relaySrv is non-nil because somebody wrote relay = true, which is a
+	// setting and not a measurement. Kept here for now — see
+	// docs/before-1.0.md — but note it only decides whether to go LOOKING for
+	// one, and no longer suppresses a relay the operator named.
+	discovered := relayChoice{}
+	if m.relaySrv == nil {
+		discovered = m.discoveredRelay(now)
+	}
+
+	// 2. A live member relay found by discovery, over
+	// 3. a live blind relay from the config.
+	//
+	// Preferring our own to a stranger's is what the configured order already
+	// says (see mesh.New: member relays are appended first). This extends the
+	// same preference to the ones discovery finds, which it previously could
+	// not reach at all.
+	//
+	// The hysteresis matters. A relay forwards only between peers registered
+	// with IT, so two devices that switch at different moments cannot reach
+	// each other at all — worse than both sitting on a mediocre relay. Waiting
+	// until the discovered one has been usable for a while makes a single
+	// missed challenge unable to split them. It costs nothing when the blind
+	// relay is dead, which is the case that matters: `blind.ok` is false then,
+	// and the switch is immediate.
+	if discovered.ok && (!blind.ok || m.relaySteady(discovered.addr, now)) {
+		return discovered
+	}
+	if blind.ok {
+		return blind
+	}
+	if discovered.ok {
+		return discovered
+	}
+
+	// 4. Nothing is answering. Fall back to the first configured relay, which
+	//    is where this function used to START — and the reason a stale relay
+	//    could hide a working one for as long as it stayed in the config.
+	if len(m.relays) > 0 {
+		return relayChoice{ok: true, addr: m.relays[0].addr}
+	}
+	return relayChoice{}
+}
+
+// liveConfigured reports the first live member relay and the first live blind
+// one, in the operator's order.
+//
+// Both, rather than "the first live one of either kind", because the choice
+// between them is no longer decided by position once discovery is in the
+// running.
+func (m *Mesh) liveConfigured(now time.Time) (member, blind relayChoice) {
+	m.relayMu.Lock()
+	defer m.relayMu.Unlock()
+	for _, t := range m.relays {
+		seen, ok := m.relayLive[t.addr]
+		if !ok || now.Sub(seen) >= RelayLiveFor {
+			continue
+		}
+		switch {
+		case t.blind && !blind.ok:
+			blind = relayChoice{ok: true, addr: t.addr}
+		case !t.blind && !member.ok:
+			member = relayChoice{ok: true, addr: t.addr}
+		}
+	}
+	return member, blind
+}
+
+// discoveredRelay is the member relay the mesh has announced, lowest device ID
+// first so every device agrees without negotiating.
+func (m *Mesh) discoveredRelay(now time.Time) relayChoice {
+	// A mesh assembled for a test of the configured path alone has neither.
+	// Guarded rather than required, because discovery is now consulted on paths
+	// that previously returned before either was touched.
+	if m.roster == nil || m.prober == nil {
+		return relayChoice{}
+	}
 	var best relayChoice
 	for _, p := range m.roster.Peers() {
 		if !p.Relay || !p.Online(now) {
@@ -241,7 +315,45 @@ func (m *Mesh) selectRelay(now time.Time) relayChoice {
 			best = relayChoice{ok: true, id: p.ID(), addr: path.Addr}
 		}
 	}
+	m.noteDiscovered(best, now)
 	return best
+}
+
+// RelaySwitchAfter is how long a discovered member relay must have been usable
+// before it displaces a live blind relay from the config.
+//
+// Long enough that a single missed challenge cannot split two devices onto
+// different relays, short enough that nobody is left on a stranger's relay for
+// an afternoon. Only ever delays an upgrade: nothing here can keep a device on
+// a relay that has stopped answering.
+const RelaySwitchAfter = 2 * RelayRefresh
+
+// noteDiscovered records since when a discovered relay has been continuously
+// usable, and forgets any that is not the current answer.
+//
+// One entry, not a history: the question is only ever about the relay we would
+// switch TO, and a relay that drops out and comes back should serve its waiting
+// period again rather than inherit the old one.
+func (m *Mesh) noteDiscovered(c relayChoice, now time.Time) {
+	m.relayMu.Lock()
+	defer m.relayMu.Unlock()
+	if !c.ok {
+		m.relaySince = netip.AddrPort{}
+		return
+	}
+	if m.relaySince != c.addr {
+		m.relaySince = c.addr
+		m.relaySinceAt = now
+	}
+}
+
+// relaySteady reports whether a discovered relay has been usable long enough to
+// switch to it.
+func (m *Mesh) relaySteady(addr netip.AddrPort, now time.Time) bool {
+	m.relayMu.Lock()
+	defer m.relayMu.Unlock()
+	return m.relaySince == addr && !m.relaySinceAt.IsZero() &&
+		now.Sub(m.relaySinceAt) >= RelaySwitchAfter
 }
 
 // RelayRefresh is how often a relay registration is renewed.
