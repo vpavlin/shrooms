@@ -239,21 +239,32 @@ func (m *Mesh) selectRelay(now time.Time) relayChoice {
 	// same preference to the ones discovery finds, which it previously could
 	// not reach at all.
 	//
-	// The hysteresis matters. A relay forwards only between peers registered
-	// with IT, so two devices that switch at different moments cannot reach
-	// each other at all — worse than both sitting on a mediocre relay. Waiting
-	// until the discovered one has been usable for a while makes a single
-	// missed challenge unable to split them. It costs nothing when the blind
-	// relay is dead, which is the case that matters: `blind.ok` is false then,
-	// and the switch is immediate.
-	if discovered.ok && (!blind.ok || m.relaySteady(discovered.addr, now)) {
+	// Taken IMMEDIATELY, and the first version of this was wrong about that.
+	// It made the upgrade wait until the discovered relay had been usable for a
+	// couple of minutes, to stop two devices switching at different moments —
+	// a relay forwards only between peers registered with IT, so a
+	// disagreement means they cannot reach each other.
+	//
+	// But that disagreement is TRANSIENT: both ends are moving to the same
+	// relay, chosen by the same rule, and they converge within a probe cycle or
+	// two. Waiting produced a permanent failure instead of a brief one — a
+	// phone stayed on a blind relay that its peer was not registered with,
+	// indefinitely, because a backgrounded VPN service loses a probed path for
+	// longer than PathFresh often enough that the timer never ran out. The
+	// thing being avoided cost seconds; the avoidance cost the connection.
+	if discovered.ok {
 		return discovered
+	}
+	// The hysteresis belongs on the way BACK. A discovered relay whose path has
+	// just gone stale is not the same as one that was never there, and dropping
+	// to a stranger's relay the instant a pong is late means alternating
+	// between the two — which is the flapping the delay was meant to prevent,
+	// in the direction where it actually happens.
+	if held, ok := m.heldDiscovered(now); ok {
+		return held
 	}
 	if blind.ok {
 		return blind
-	}
-	if discovered.ok {
-		return discovered
 	}
 
 	// 4. Nothing is answering. Fall back to the first configured relay, which
@@ -319,41 +330,42 @@ func (m *Mesh) discoveredRelay(now time.Time) relayChoice {
 	return best
 }
 
-// RelaySwitchAfter is how long a discovered member relay must have been usable
-// before it displaces a live blind relay from the config.
+// RelayHold is how long a discovered member relay keeps being used after its
+// probed path goes stale, before a configured relay takes over.
 //
-// Long enough that a single missed challenge cannot split two devices onto
-// different relays, short enough that nobody is left on a stranger's relay for
-// an afternoon. Only ever delays an upgrade: nothing here can keep a device on
-// a relay that has stopped answering.
-const RelaySwitchAfter = 2 * RelayRefresh
+// Several times disco.PathFresh, because the thing being ridden out is a peer
+// that has not answered a probe for a moment — a phone with its screen off, a
+// laptop that just woke — and not a relay that has gone. Long enough that a
+// missed pong does not move anything; short enough that a relay which really
+// has vanished is abandoned in well under a minute.
+const RelayHold = 45 * time.Second
 
-// noteDiscovered records since when a discovered relay has been continuously
-// usable, and forgets any that is not the current answer.
+// noteDiscovered remembers the discovered relay that was last usable, and when.
 //
-// One entry, not a history: the question is only ever about the relay we would
-// switch TO, and a relay that drops out and comes back should serve its waiting
-// period again rather than inherit the old one.
+// Only ever updated on success: the whole point is to remember what worked, so
+// a stale moment can be ridden out rather than acted on.
 func (m *Mesh) noteDiscovered(c relayChoice, now time.Time) {
-	m.relayMu.Lock()
-	defer m.relayMu.Unlock()
 	if !c.ok {
-		m.relaySince = netip.AddrPort{}
 		return
 	}
-	if m.relaySince != c.addr {
-		m.relaySince = c.addr
-		m.relaySinceAt = now
-	}
-}
-
-// relaySteady reports whether a discovered relay has been usable long enough to
-// switch to it.
-func (m *Mesh) relaySteady(addr netip.AddrPort, now time.Time) bool {
 	m.relayMu.Lock()
 	defer m.relayMu.Unlock()
-	return m.relaySince == addr && !m.relaySinceAt.IsZero() &&
-		now.Sub(m.relaySinceAt) >= RelaySwitchAfter
+	m.relaySince = c.addr
+	m.relaySinceAt = now
+}
+
+// heldDiscovered is the discovered relay we were using, while it is recent
+// enough to keep trusting.
+func (m *Mesh) heldDiscovered(now time.Time) (relayChoice, bool) {
+	m.relayMu.Lock()
+	defer m.relayMu.Unlock()
+	if !m.relaySince.IsValid() || m.relaySinceAt.IsZero() {
+		return relayChoice{}, false
+	}
+	if now.Sub(m.relaySinceAt) >= RelayHold {
+		return relayChoice{}, false
+	}
+	return relayChoice{ok: true, addr: m.relaySince}, true
 }
 
 // RelayRefresh is how often a relay registration is renewed.
