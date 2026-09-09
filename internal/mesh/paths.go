@@ -406,10 +406,30 @@ func (m *Mesh) registerWithRelay() {
 	m.relayRegistered = now
 
 	targets := m.registerWith(now)
-	if len(targets) == 0 {
-		// A relay found by discovery rather than configured, which is always a
-		// member of this mesh and so speaks the mesh's own key.
-		targets = []relayTarget{{addr: rl.addr, key: m.relayKey}}
+
+	// The relay actually being used must be among them, however it was found.
+	//
+	// registerWith only knows the CONFIGURED relays, so this used to fall back
+	// to the selected one only when nothing was configured at all. Once a
+	// discovered relay could outrank a configured one, that made the two halves
+	// disagree: selectRelay routed every peer through the discovered relay
+	// while registerWith registered with the configured one and never with the
+	// relay carrying the traffic.
+	//
+	// A relay forwards only between peers registered with IT, and checks the
+	// SOURCE as well (internal/relay/server.go), so the result was silence in
+	// both directions. Seen on a phone on 2026-09-09: it logged
+	// "using relay addr=128.140.55.128:51821 discovered=true", held a tunnel to
+	// that relay, discovered k11 through it, and never established a tunnel —
+	// because its registration had gone to a blind relay nobody else used.
+	if !hasRelay(targets, rl.addr) {
+		t, ok := m.targetFor(rl.addr)
+		if !ok {
+			// Found by discovery, which is always a member of this mesh and so
+			// speaks the mesh's own key.
+			t = relayTarget{addr: rl.addr, key: m.relayKey}
+		}
+		targets = append(targets, t)
 	}
 	// One frame per relay, because the key and the handle both depend on which
 	// relay it is going to: a member sees our tunnel key, a stranger sees a tag.
@@ -446,6 +466,16 @@ const maxRelayRegistrations = 2
 //
 // Untried are included because a device that has just started has no liveness
 // information at all and would otherwise register nowhere.
+// hasRelay reports whether a relay at addr is already in the list.
+func hasRelay(ts []relayTarget, addr netip.AddrPort) bool {
+	for _, t := range ts {
+		if t.addr == addr {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *Mesh) registerWith(now time.Time) []relayTarget {
 	if len(m.relays) == 0 {
 		return nil

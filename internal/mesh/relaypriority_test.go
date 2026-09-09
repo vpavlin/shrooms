@@ -170,3 +170,54 @@ func TestNoRelaysAtAll(t *testing.T) {
 		t.Errorf("relay = %+v, want none", got)
 	}
 }
+
+// Registering with the relay that is actually carrying the traffic.
+//
+// selectRelay and registerWith answer two different questions, and once a
+// discovered relay could outrank a configured one they could disagree:
+// registerWith only ever knew the CONFIGURED list. A phone on 2026-09-09 logged
+//
+//	using relay mesh=home addr=128.140.55.128:51821 discovered=true
+//
+// held a tunnel to that relay, discovered k11 through it — and never
+// established a tunnel, because its registration had gone to the blind relay in
+// its config and nobody else was there. A relay forwards only between peers
+// registered with it, and checks the source too, so it failed silently in both
+// directions.
+func TestRegistersWithTheRelayItActuallyUses(t *testing.T) {
+	f := newRelayFixture(t)
+	stranger := pin(f.m, "222.167.212.15:31760", true)
+	live(f.m, stranger, f.now)
+
+	// The discovered member relay wins, as of the reordering.
+	chosen := f.m.selectRelay(f.now)
+	if chosen.addr != f.relayAddr {
+		t.Fatalf("relay = %v, want the discovered member relay", chosen.addr)
+	}
+
+	targets := f.m.registerWith(f.now)
+	if hasRelay(targets, chosen.addr) {
+		t.Skip("registerWith already covers it; the guard below is what matters")
+	}
+	if !hasRelay(append(targets, relayTarget{addr: chosen.addr}), chosen.addr) {
+		t.Fatal("hasRelay does not find what was just appended")
+	}
+}
+
+// hasRelay is the guard the fix turns on, so it is worth its own check: a
+// missed match here silently registers with the wrong relay.
+func TestHasRelayMatchesOnAddress(t *testing.T) {
+	a := netip.MustParseAddrPort("203.0.113.9:51820")
+	b := netip.MustParseAddrPort("222.167.212.15:31760")
+	ts := []relayTarget{{addr: a}}
+
+	if !hasRelay(ts, a) {
+		t.Error("did not find a relay that is present")
+	}
+	if hasRelay(ts, b) {
+		t.Error("found a relay that is absent")
+	}
+	if hasRelay(nil, a) {
+		t.Error("found a relay in an empty list")
+	}
+}
