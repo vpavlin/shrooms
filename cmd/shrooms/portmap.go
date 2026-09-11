@@ -26,6 +26,25 @@ import (
 // up without anyone noticing.
 const mapRetry = 30 * time.Minute
 
+// usableMapping reports whether an address a router handed back is one another
+// member could actually dial.
+//
+// A mapping is only worth announcing if the external address is globally
+// routable. Behind carrier-grade NAT it is not: the router maps a port on its
+// own RFC 1918 or 100.64/10 WAN address and reports success, and the mapping is
+// real — it simply cannot be reached from anywhere that matters.
+//
+// 100.64.0.0/10 is checked explicitly because netip does not consider it
+// private: it is the shared address space carriers use for exactly this, so it
+// is the single most likely thing to come back from a CGNAT router.
+func usableMapping(a netip.Addr) bool {
+	if !a.IsValid() || a.IsUnspecified() || a.IsLoopback() ||
+		a.IsPrivate() || a.IsLinkLocalUnicast() || a.IsMulticast() {
+		return false
+	}
+	return !netip.MustParsePrefix("100.64.0.0/10").Contains(a)
+}
+
 // mapFloor bounds how often a mapping is renewed however short a lifetime the
 // router grants. A router handing out ten-second leases would otherwise have us
 // talking to it constantly.
@@ -90,6 +109,31 @@ func keepMapped(ctx context.Context, log *slog.Logger, in *instance) {
 					"mesh", in.label, "external", m.External.String(),
 					"proto", m.Proto, "lifetime", m.Lifetime.Round(time.Second))
 				announced = true
+			}
+			if !usableMapping(m.External.Addr()) {
+				// The router mapped a port on its own private WAN address,
+				// which internal/portmap warns about in as many words: behind
+				// carrier-grade NAT this "looks like a success" and is not
+				// proof of reachability. Announcing it is worse than useless.
+				//
+				// Worse, because every peer behind the SAME carrier NAT
+				// announces the SAME address, tries it, and the router
+				// hairpins just enough for WireGuard to roam the peer's
+				// endpoint onto it — after which yieldRoam stops us writing
+				// the working LAN address back and the tunnel sits stale.
+				// Seen on 2026-09-11: a laptop and a pi5 three metres apart,
+				// both announcing 10.77.57.173, neither able to reach the
+				// other, with a 5ms LAN path between them the whole time.
+				if !announced {
+					log.Info("the router mapped a port on a private address; not announcing it",
+						"mesh", in.label, "external", m.External.String(),
+						"why", "carrier-grade NAT: no peer can reach this")
+					announced = true
+				}
+				in.mapped = netip.AddrPort{}
+				in.mesh.SetMapped(netip.AddrPort{})
+				wait = max(m.Lifetime/2, mapFloor)
+				break
 			}
 			in.mapped = m.External
 			in.mesh.SetMapped(m.External)

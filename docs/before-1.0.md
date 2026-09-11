@@ -263,11 +263,33 @@ A ramp — a few seconds, then a minute, then settling to the existing 30 — co
 nothing and keeps the property the comment cares about: a router that will never
 answer is still only asked twice an hour.
 
-**All three of the items above share a shape**, which is why they are together:
+**A port mapping outlives the network it came from.**
+
+The daemon already detects a move — `"the network changed underneath us"`,
+cmd/shrooms/daemon.go — and does not tell `keepMapped`, which runs on its own
+timer and keeps announcing the previous router's answer until its next renewal,
+up to an hour later.
+
+Watched on 2026-09-11: the laptop moved from a 192.168.10.0/24 network to a
+192.168.0.0/24 one, and went on announcing `10.77.57.173` on all three meshes —
+an external address obtained from the router it had left. Vaclav spotted it
+before I did: *"That feels like an old IP."* A different gateway returning the
+same external address is not something a fresh mapping produces.
+
+The cost is not cosmetic. That address is announced FIRST, peers try it first,
+and it is the one address in the list guaranteed not to work. pi5 spent a day
+unreachable partly because of it.
+
+The mapping should be invalidated the moment the underlay changes, and re-asked
+at once rather than at the next renewal. The detection exists; nothing is wired
+to it.
+
+**All four of the items above share a shape**, which is why they are together:
 a constant or an assumption that is defensible in the steady state and wrong at
-the moment of restart. `selectRelay` trusts a config flag over a measurement,
-prefers a configured relay that has never answered, and `keepMapped` treats a
-refusal at startup like a refusal from a router that cannot do it at all. None
+the moment something changes. `selectRelay` trusts a config flag over a
+measurement and prefers a configured relay that has never answered; `keepMapped`
+treats a refusal at startup like a refusal from a router that cannot do it at
+all, and keeps announcing a mapping from a network it has left. None
 of them is wrong about the case it was written for. Each of them made 2026-09-07
 take an afternoon.
 
