@@ -280,9 +280,10 @@ The cost is not cosmetic. That address is announced FIRST, peers try it first,
 and it is the one address in the list guaranteed not to work. pi5 spent a day
 unreachable partly because of it.
 
-The mapping should be invalidated the moment the underlay changes, and re-asked
-at once rather than at the next renewal. The detection exists; nothing is wired
-to it.
+**Fixed 2026-09-11.** The watchdog now nudges every mesh's mapper when the
+underlay changes: it drops what it holds, stops announcing it, and asks the new
+router at once rather than at the next renewal. The nudge never blocks — it runs
+on the same tick that drives restarts.
 
 **All four of the items above share a shape**, which is why they are together:
 a constant or an assumption that is defensible in the steady state and wrong at

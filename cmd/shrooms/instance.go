@@ -42,6 +42,15 @@ type instance struct {
 	// if it gave one (ADR-024).
 	mapped netip.AddrPort
 
+	// remap asks keepMapped to forget what it has and ask again now.
+	//
+	// Sent when the underlay changes. A mapping describes one router, and this
+	// node has just left it — see the watchdog in daemon.go, which already
+	// notices and, until 2026-09-11, told nobody. Buffered and written without
+	// blocking: a missed nudge costs one renewal interval, a blocked watchdog
+	// costs the restart it exists to perform.
+	remap chan struct{}
+
 	// primary marks the mesh written as network_key — the one this device was
 	// built around. It wins an unqualified name (see named).
 	primary bool

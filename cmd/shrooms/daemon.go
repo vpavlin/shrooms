@@ -373,6 +373,7 @@ func cmdDaemon(args []string) error {
 	// was (ADR-024).
 	if cfg.PortMapping {
 		for _, in := range instances {
+			in.remap = make(chan struct{}, 1)
 			go keepMapped(ctx, log, in)
 		}
 	}
@@ -1146,6 +1147,11 @@ func watchRendezvous(ctx context.Context, log *slog.Logger, instances []*instanc
 					"was", underlay, "now", cur)
 				underlay = cur
 				netChanged = now
+				// And the port mappings describe the router we just left.
+				// Nothing used to be told, so each mesh went on announcing the
+				// old external address until its next renewal — up to an hour
+				// of offering peers the one address that cannot work.
+				nudgeRemap(instances)
 			}
 
 			if now.Sub(started) < rendezvousGrace {

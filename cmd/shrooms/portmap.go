@@ -26,6 +26,24 @@ import (
 // up without anyone noticing.
 const mapRetry = 30 * time.Minute
 
+// nudgeRemap asks every mesh's mapper to forget what it has and ask again.
+//
+// Called when the underlay changes. Never blocks: this runs on the watchdog's
+// tick, which also drives restarts, and a mapper that is busy talking to a
+// router must not be able to hold that up. A nudge already pending is as good
+// as two, because what it triggers is idempotent.
+func nudgeRemap(instances []*instance) {
+	for _, in := range instances {
+		if in == nil || in.remap == nil {
+			continue
+		}
+		select {
+		case in.remap <- struct{}{}:
+		default:
+		}
+	}
+}
+
 // usableMapping reports whether an address a router handed back is one another
 // member could actually dial.
 //
@@ -152,6 +170,24 @@ func keepMapped(ctx context.Context, log *slog.Logger, in *instance) {
 		case <-ctx.Done():
 			return
 		case <-time.After(wait):
+		case <-in.remap:
+			// The ground moved. Whatever the last router said describes a
+			// network this node has left, and announcing it is not merely
+			// stale — it is the one address in the list guaranteed not to
+			// work, and it is announced first.
+			//
+			// Cleared before asking rather than after: the request can fail,
+			// or take a moment, and a peer reading the announce in between
+			// should see an address short by one rather than a wrong one.
+			log.Info("the network changed; asking the new router for a mapping",
+				"mesh", in.label, "dropping", in.mapped.String())
+			in.mapped = netip.AddrPort{}
+			in.mesh.SetMapped(netip.AddrPort{})
+			// Say what the new one answers, whatever it is.
+			announced = false
+			// And ask for our own port again. `want` holds whatever the last
+			// router assigned, which means nothing to this one.
+			want = in.port
 		}
 	}
 }
