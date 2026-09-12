@@ -33,10 +33,23 @@ func TestBootstrapPrefersRoutableAddress(t *testing.T) {
 			want: "203.0.113.9:51820",
 		},
 		{
-			// Two machines on one LAN have nothing else, and it works.
-			name: "private is better than nothing",
+			// A private address the guess cannot justify.
+			//
+			// This case used to expect "10.0.0.5:51820", under the heading
+			// "private is better than nothing" and the reasoning that two
+			// machines on one LAN have nothing else. The reasoning is right and
+			// is still honoured — see the same-LAN case in
+			// bootstrapguess_test.go — but this test never set that situation
+			// up: neither candidate is on the test machine's network, so it was
+			// asserting "take the first private address, wherever it is".
+			//
+			// That is how a laptop came to dial a pi5 at 10.222.140.253, a
+			// carrier-NAT address first in its announce and reachable from
+			// nowhere. Announcing nothing is the better answer: SetPeers then
+			// leaves the endpoint WireGuard learned alone.
+			name: "a private address on nobody's network is not a guess",
 			in:   []string{"10.0.0.5:51820", "192.168.1.9:51820"},
-			want: "10.0.0.5:51820",
+			want: "",
 		},
 		{
 			name: "ipv6 global preferred over private v4",

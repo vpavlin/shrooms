@@ -1977,23 +1977,87 @@ func (m *Mesh) handle(ev waku.Event) {
 // taking the list head meant a LAN address could be chosen over a public one
 // purely because of interface ordering on the far side.
 func bootstrapEndpoint(candidates []string) string {
-	var fallback string
+	return bootstrapFrom(candidates, localAddrs())
+}
+
+// bootstrapFrom is bootstrapEndpoint against a given set of local addresses, so
+// the choice can be tested without depending on this machine's interfaces.
+//
+// A public address wins outright. Failing that, a PRIVATE address is worth
+// trying only when it is one this node could plausibly reach — which means it
+// shares a /24 with an address of our own. It used to take the first private
+// candidate in the list, whatever it was, and that is how a laptop spent two
+// days dialling a pi5 at 10.222.140.253: a carrier-NAT address the pi5's router
+// had handed it, first in its announce, and unreachable from anywhere.
+//
+// Returning "" is a real answer and a better one than a guess that cannot work.
+// SetPeers writes no endpoint line for it, so WireGuard keeps whatever it
+// learned from the peer's own packets — see wg.Peer.KeepEndpoint, which makes
+// exactly this argument: "saying nothing is strictly better than replacing a
+// working endpoint with a guess".
+//
+// Nothing is lost where the guess used to help. Every announced candidate is
+// probed regardless (probeAll), so an address that genuinely works is confirmed
+// and wins as a probed path; the guess only ever covers the window before that,
+// or a peer whose disco never answers.
+func bootstrapFrom(candidates []string, mine []netip.Addr) string {
+	var plausible string
 	for _, c := range candidates {
 		ap, err := netip.ParseAddrPort(c)
 		if err != nil {
 			continue
 		}
-		if ap.Addr().IsGlobalUnicast() && !ap.Addr().IsPrivate() &&
-			!ap.Addr().IsLinkLocalUnicast() && !ap.Addr().IsLoopback() {
+		a := ap.Addr()
+		if !a.IsValid() || a.IsLoopback() || a.IsLinkLocalUnicast() ||
+			a.IsMulticast() || a.IsUnspecified() {
+			continue
+		}
+		// Ours. A peer announcing 172.17.0.1 is naming its own docker bridge,
+		// which on this machine is this machine — dialling it talks to
+		// ourselves.
+		if isOwnAddr(a, mine) {
+			continue
+		}
+		if a.IsGlobalUnicast() && !a.IsPrivate() {
 			return c
 		}
-		if fallback == "" {
-			fallback = c
+		if plausible == "" && sharesSubnet(a, mine) {
+			plausible = c
 		}
 	}
-	// A private address is still worth trying when it is all we have: two nodes
-	// on the same LAN reach each other that way and nothing else.
-	return fallback
+	return plausible
+}
+
+// isOwnAddr reports whether an announced address belongs to this machine.
+func isOwnAddr(a netip.Addr, mine []netip.Addr) bool {
+	for _, m := range mine {
+		if m == a {
+			return true
+		}
+	}
+	return false
+}
+
+// sharesSubnet reports whether a is close enough to one of ours to be worth
+// dialling without having probed it.
+//
+// A /24 for IPv4, which is what home and office networks are in practice. It is
+// a heuristic and it only gates the GUESS: a routed private network that this
+// misses is still probed, and a working path there is confirmed and used.
+func sharesSubnet(a netip.Addr, mine []netip.Addr) bool {
+	for _, m := range mine {
+		if a.Is4() != m.Is4() {
+			continue
+		}
+		bits := 24
+		if !a.Is4() {
+			bits = 64
+		}
+		if p, err := m.Prefix(bits); err == nil && p.Contains(a) {
+			return true
+		}
+	}
+	return false
 }
 
 func hasBest(m *Mesh, id string, now time.Time) bool {
