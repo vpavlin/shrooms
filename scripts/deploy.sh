@@ -18,6 +18,14 @@
 #   a `shrooms` container, and a TUN interface
 #
 # Nothing is destroyed: an existing config is left alone unless you pass --force.
+#
+# To take it off again there is no counterpart script, because the remote has no
+# checkout to run one from — pipe the uninstaller to it instead:
+#
+#   ssh user@vps 'sudo bash -s -- --purge --yes' < scripts/uninstall.sh
+#
+# --yes is not optional there: the script itself is on stdin, so the
+# confirmation prompt has nowhere to read an answer from.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/vpavlin/shrooms/internal/cred"
+	dnssrv "github.com/vpavlin/shrooms/internal/dns"
 )
 
 // fetchStatus reads the daemon's status over its unix socket.
@@ -217,6 +218,18 @@ func cmdStatus(args []string) error {
 	if bad := staleHosts(st); len(bad) > 0 {
 		fmt.Fprintf(head, "hosts\t!! %d stale entr%s\t/etc/hosts is answering ahead of the resolver — %s\n",
 			len(bad), plural(len(bad), "y", "ies"), "`sudo shrooms hosts --write` to correct it")
+	}
+	// Serving DNS and being asked are different things, and the second half
+	// fails on its own. The daemon warns in its log and the payload has carried
+	// the answer all along — "reported because it fails on its own and quietly"
+	// is what the field says — while this output, the thing anybody actually
+	// looks at, said nothing. So `ping6 laptop.mesh` returned "Name or service
+	// not known" beside a status page reporting a perfectly healthy mesh.
+	//
+	// The container install fails registration EVERY time: the image has no
+	// resolvectl. That makes this the common case rather than an oddity.
+	if st.DNS.Serving && !st.DNS.Registered {
+		fmt.Fprintf(head, "names\t!! not resolving here\t%s\n", dnsRegisterFix(st, inContainer()))
 	}
 
 	// What this node has done as a relay, on the node that is one.
@@ -663,6 +676,43 @@ func hostOf(p peerStatus) string {
 		return p.DNSName
 	}
 	return p.Name
+}
+
+// dnsRegisterFix says how to point this host's resolver at ours.
+//
+// The commands, filled in, rather than a description of them: the address is
+// this device's overlay address and the interface is this mesh's, so nobody can
+// type either from memory and both are already known here. It is the same hint
+// the daemon logs, put where somebody will see it.
+func dnsRegisterFix(st statusPayload, containerised bool) string {
+	iface := "shrooms0"
+	if len(st.Meshes) > 0 && st.Meshes[0].Iface != "" {
+		iface = st.Meshes[0].Iface
+	}
+	addr := st.DNS.Address
+	if addr == "" {
+		addr = st.Overlay
+	}
+	// The same builder the daemon logs its hint with, and the same suffix list
+	// Register itself would have used — including the legacy one, which the
+	// resolver answers and which a command naming only the configured suffix
+	// would leave dead.
+	fix := "`" + dnssrv.RegisterCommand("sudo ", iface, addr,
+		st.DNS.Suffix, dnssrv.LegacySuffix) + "`"
+	// A container install, which is every install done by scripts/install.sh:
+	// the image has no resolvectl, so registration cannot happen from inside
+	// and these have to be typed on the host. Through the `shrooms` wrapper
+	// they would run where the binary is missing, which is where the daemon
+	// already tried.
+	//
+	// Asked of the process rather than matched against the daemon's error text.
+	// Reading "resolvectl" out of that string made the message an API nobody
+	// had agreed to — and said "on the host, not through the wrapper" to a host
+	// install that simply has no systemd-resolved, where it means nothing.
+	if containerised {
+		return "on the host, not through the wrapper — " + fix
+	}
+	return fix
 }
 
 // staleHosts reports managed /etc/hosts entries that no longer match the mesh.
