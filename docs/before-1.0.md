@@ -362,6 +362,17 @@ nobody has checked lately whether it still holds.
 
 ## Open, not urgent
 
+- **A VPN on the machine stops the mesh dead**, and says "node is offline"
+  while the network is fine. The delivery library resolves through
+  `1.1.1.1` and never reads `/etc/resolv.conf`, so anything that blocks direct
+  DNS fails both the entry nodes and the library's own online probe.
+  [dns-the-library-insists-on.md](dns-the-library-insists-on.md) has the
+  proposal — one config key, already supported by the library.
+- **The bootstrap address in an invite reaches only one of the two join
+  paths**, and not the one the install page recommends
+  ([the-bootstrap-address-an-invite-carries.md](the-bootstrap-address-an-invite-carries.md)).
+  ADR-031's escape hatch is missing on the default route, and only matters on
+  the day it is needed.
 - The delivery plane reconnects ~23 times an hour and re-subscribes each time.
   Found 2026-08-27 while chasing something else; low bandwidth, unexplained, and
   the sort of thing that shows up as battery on a phone rather than bytes on a

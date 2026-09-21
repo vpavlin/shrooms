@@ -236,27 +236,108 @@ error — the daemon must not take a port from an application that binds it.
 
 The install path, run as a stranger would.
 
-**Do:** on a clean host, `install.sh prepare`, paste the key, start.
+**Do:** on a clean host, `install.sh prepare`, then redeem an invite from a node
+already on the mesh — `sudo shrooms join <TOKEN>`.
 **Pass:** it appears in every other node's `status` within seconds, is reachable
 by name, and survives a reboot.
 
 **Watch for:** anything requiring knowledge not in the README. That is the
 actual test.
 
+A host that has run this before is not a clean host, and the difference is
+usually invisible: an identity in `/var/lib/shrooms` makes it a *returning*
+device, a cached image skips the pull, and a leftover `/etc/hosts` block makes
+names resolve before anything has registered them. `scripts/uninstall.sh
+--purge` puts the machine back to before, which is what makes this test worth
+running twice.
+
+```console
+$ sudo ./scripts/uninstall.sh --purge --yes
+```
+
+---
+
+## T12 — the first mesh, minted in a container
+
+The other half of T11, and the one nothing else covers: the machine that
+*creates* the mesh when the binary is in an image rather than on the host.
+
+**Do:** on a clean host, `sudo bash install.sh init --name a`. Write down the
+recovery key. Then `sudo systemctl restart shrooms`, `sudo shrooms invite`, and
+redeem the token on a second host prepared with `install.sh prepare --name b`.
+
+**Pass:** `admin.json` is in the invoking user's `~/.config/shrooms` on the
+**host** — not root's, and not inside the container — and is still there after
+the restart. `invite` finds it, b enrols, and each appears in the other's
+`status`.
+
+**Watch for:** the admin key written into the container. That has no symptom at
+all until the first invite, by which time the `--rm` container holding it has
+been replaced and the mesh can never admit another device. The wrapper runs
+`init`, `invite`, `admin` and `keycard` in a sibling container for exactly this
+reason, so `shrooms invite` — through the wrapper, not `docker exec` by hand —
+is what this test has to use.
+
+**Then:** on that same prepared-but-not-yet-joined machine, check the other
+order too. `sudo bash install.sh init --name a` — no `--force` — must mint a
+mesh into the config `prepare` wrote, and the name, port and relay setting from
+that config must survive it: set `--relay` during `prepare`, leave it off during
+`init`, and check it is still on afterwards. On a host that is already *in* a
+mesh the same command must refuse rather than mint a second one.
+
+**And names, which nothing inside the container can arrange.** `ping6 b.mesh`
+from a, with no manual step in between — and on **b**, the machine that was
+`prepare`d and then joined, which is the case that broke: the join re-execs the
+daemon in place, so no systemd event marks the moment names became answerable.
+`shrooms-resolved.service` should register within ~30s of the join without
+anyone restarting anything, and its log should name the interface and address.
+
+Then `sudo systemctl restart shrooms` and ping again — the tun is new and
+resolved forgets the old one. `sudo systemctl stop shrooms` should revert,
+leaving no link settings behind in `resolvectl status`. And while b sits
+prepared but unjoined, its journal should stay quiet: no `podman exec` every
+thirty seconds to be told there is still no mesh.
+
+**Watch for:** `shrooms status` claiming `names !! not resolving here` when they
+do resolve, or staying silent when they do not. It reads that from a marker the
+host-side unit drops in `/run/shrooms`, which is the only place the two sides
+can both see.
+
 ---
 
 ## Tearing down
 
 ```console
-$ sudo systemctl stop shrooms && sudo systemctl disable shrooms
-$ sudo rm -rf /etc/shrooms /var/lib/shrooms
+$ sudo ./scripts/uninstall.sh            # the software; identity stays
+$ sudo ./scripts/uninstall.sh --purge    # identity and config too
 ```
 
-Removing `/var/lib/shrooms` discards the device identity, so the machine
-returns as a **new** device with a different overlay address if it rejoins.
-Keep it to keep the identity — which is usually what you want when testing
-repeatedly, or every run pollutes every other node's roster with a peer that
-never comes back.
+`--purge` lists what it found on the machine and asks before removing any of it,
+so there is no separate preview to run. It undoes all three install
+paths — `make install`, `install.sh` and the portable installer — plus what a
+running daemon leaves behind: the managed `/etc/hosts` block and any stranded
+`shrooms*` or `logos*` interface — both bases, because a mesh after the first
+gets a derived name that is never written to the config. `make uninstall` and
+`make purge` are the same two things from a checkout.
+
+**Most of that is testable without a machine to wreck.** `make test-uninstall`
+runs the script against a staged tree — `DESTDIR` for every path, `HOSTS_FILE`
+pointed at a copy, no root — and checks all three install paths are removed, the
+hosts block is stripped without disturbing anything else, and the mesh authority
+survives `--purge`. CI runs it. What it cannot cover is the interface sweep,
+which needs a real tun: that is what the run below is for.
+
+`--purge` discards the device identity and this device's credential, so the
+machine returns as a **new** device with a different overlay address and needs a
+fresh invite. Without it the identity stays — which is usually what you want when
+testing repeatedly, or every run pollutes every other node's roster with a peer
+that never comes back.
+
+What `--purge` never takes without `--admin-keys-too`, including under `--yes`,
+is the mesh authority: `/etc/shrooms/admin` and `~/.config/shrooms`. Testing the
+install flow on the machine that *minted* the mesh would otherwise end the mesh
+rather than reset the node — see
+[when a node loses its state](docs/when-a-node-loses-its-state.md).
 
 Peers that vanish drop out after `OfflineAfter` (3 minutes) and are removed from
 the data plane once they have no live tunnel.

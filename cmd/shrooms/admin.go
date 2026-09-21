@@ -187,14 +187,34 @@ func cmdAdminInit(args []string) error {
 	// default mesh - the exact machine a second mesh gets added to.
 	path := adminPathFor(*dir, *label)
 	if _, err := os.Stat(path); err == nil {
-		return fmt.Errorf("%s already exists; minting again would create a different mesh",
-			path)
+		return adminExists(path)
 	}
 
 	if *card {
 		return mintCardAuthorityAt(*dir, *label, *reader)
 	}
 	return mintAuthorityAt(*dir, *plain, "", "", "", *label)
+}
+
+// adminExists refuses to mint over an authority that is already there, and says
+// where that file is in terms the reader can act on.
+//
+// The path is the one THIS process sees, which inside a container is not the one
+// anybody has. The shipped install mounts the invoking user's ~/.config/shrooms
+// at /root/.config/shrooms, so the refusal named a path that does not exist on
+// the host — and root's home is the first place somebody then goes looking,
+// finds nothing, and concludes the message is about something else.
+//
+// It is an ordinary thing to meet, not a corner: `uninstall.sh --purge` keeps
+// the admin key deliberately, so re-installing after one lands exactly here.
+func adminExists(path string) error {
+	msg := fmt.Sprintf("%s already exists; minting again would create a different mesh", path)
+	if inContainer() {
+		msg += "\n\nThat is the path inside this container. On the host it is whatever is " +
+			"mounted there — with scripts/install.sh, ~/.config/shrooms belonging to the " +
+			"user who ran sudo."
+	}
+	return errors.New(msg)
 }
 
 // mintAuthority mints a mesh's authority, writes admin_keys into the config and
@@ -218,7 +238,7 @@ func mintAuthorityAt(dir string, plain bool, cfgPath, stateDir, name, label stri
 	}
 	path := adminPathFor(dir, label)
 	if _, err := os.Stat(path); err == nil {
-		return fmt.Errorf("%s already exists; minting again would create a different mesh", path)
+		return adminExists(path)
 	}
 	primary, err := cred.NewAdmin()
 	if err != nil {

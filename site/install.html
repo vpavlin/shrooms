@@ -72,8 +72,24 @@
 
 <ol class="steps">
 <li>
-<pre><code><span class="cmd">curl -fsSLO https://raw.githubusercontent.com/vpavlin/shrooms/master/scripts/install.sh</span>
-<span class="cmd">sudo bash install.sh prepare --name nas</span></code></pre>
+<pre><code><span class="cmd">curl -fsSLO https://raw.githubusercontent.com/vpavlin/shrooms/master/scripts/install.sh</span></code></pre>
+<p>
+    Then one of two verbs, not both. On your <strong>first</strong> machine,
+    the one that creates the mesh and keeps its admin key:
+</p>
+<pre><code><span class="cmd">sudo bash install.sh init --name laptop</span></code></pre>
+<p>
+    It prints a recovery key once and never again, so read
+    <a href="#first">The first mesh</a> before running it. On
+    <strong>every machine after that</strong>, which is admitted rather than
+    creating anything:
+</p>
+<pre><code><span class="cmd">sudo bash install.sh prepare --name nas</span></code></pre>
+<p>
+    <code>prepare</code> installs the same daemon with no mesh at all and
+    leaves it waiting, which is what <a href="#second">an invite</a> needs it
+    to be doing.
+</p>
 </li>
 <li>
 <p>If a firewall is running, open the port — on laptops too, not only servers:</p>
@@ -82,9 +98,11 @@
 </li>
 <li>
 <p>
-    You now have a daemon running with no mesh.
-    <a href="#first">Create one</a> if this is your first device, or
-    <a href="#second">redeem an invite</a> if it is not.
+    The daemon is running either way. After <code>init</code> you are on a mesh
+    of one and the next thing to do is
+    <a href="#second">admit a second device</a>. After <code>prepare</code> it
+    is waiting, and <a href="#second">redeeming an invite</a> brings it up
+    without a restart.
 </p>
 </li>
 </ol>
@@ -95,7 +113,7 @@
         It installs a container, writes a systemd unit and hands a network
         interface to a daemon — which is what you want, and is
         indistinguishable from what you would not want until you have read it.
-        It is 343 lines with nothing clever in it:
+        It is 953 lines with nothing clever in it:
         <a href="https://github.com/vpavlin/shrooms/blob/master/scripts/install.sh">scripts/install.sh</a>.
     </p>
 </div>
@@ -125,6 +143,7 @@
 
 <details>
 <summary>What you should see</summary>
+<p>After <code>prepare</code>:</p>
 <pre><code>==&gt; checking this machine
 ==&gt; fetching ghcr.io/vpavlin/shrooms:latest
 ==&gt; generating config (prepare)
@@ -137,6 +156,11 @@ On a machine already on one:
 
 and back here:
   sudo shrooms join &lt;TOKEN&gt; --name nas</code></pre>
+<p>
+    After <code>init</code> the same three lines, and then the mesh itself —
+    network key, admin key, and the recovery key printed once. That output is
+    in <a href="#first">The first mesh</a>.
+</p>
 </details>
 
 <details>
@@ -171,12 +195,27 @@ and back here:
 <p>
     It touches <code>/etc/shrooms/</code> (config), <code>/var/lib/shrooms/</code>
     (device identity), <code>/run/shrooms/</code> (control socket), a
-    <code>shrooms</code> systemd unit and container, and
+    <code>shrooms</code> systemd unit and container, a
+    <code>shrooms-resolved</code> unit that registers mesh names with the host's
+    resolver, and
     <code>/usr/local/bin/shrooms</code> — a wrapper so <code>shrooms status</code>
-    works on the host without anyone remembering the docker incantation. The
-    wrapper runs <code>docker exec -i</code>, so the commands that prompt —
-    <code>invite</code>, <code>admin init</code>, <code>key rotate</code> — work
-    through it.
+    works on the host without anyone remembering the docker incantation. It runs
+    <code>docker exec -i</code>, with a stdin, so the commands that prompt work
+    through it. Under <code>sudo</code> on a podman host: the daemon's container
+    is root's, and a rootless podman cannot see it.
+</p>
+
+<p>
+    With one exception, which is the whole reason the wrapper is more than one
+    line. The commands that touch the mesh authority —
+    <code>init</code>, <code>invite</code>, <code>admin</code>,
+    <code>keycard</code> — read and write <code>~/.config/shrooms</code>, and the
+    daemon container has no such directory: its unit mounts the config, the state
+    and the socket, and nothing of yours. So those run in a <em>sibling</em>
+    container with your admin directory mounted, rather than inside the daemon's.
+    The daemon is deliberately left without it: it verifies credentials and never
+    signs one, and a process that cannot read a key cannot leak it
+    (<a href="adr/025-control-from-a-desktop-app.html">ADR-025</a>).
 </p>
 
 <p>
@@ -537,7 +576,9 @@ A firewall is running here. Peers reach this node on UDP 51820, so open it:
 <h2 id="first">The first mesh</h2>
 
 <p>
-    One command, on the machine that will hold the admin key. It mints the
+    One command, on the machine that will hold the admin key —
+    <code>shrooms init</code> where the binary is on the host, and
+    <code>bash install.sh init</code> where it is in a container. It mints the
     network key, a pair of admin keys, and this device's own credential, then
     asks twice for a passphrase to encrypt the admin key at rest:
 </p>
@@ -592,15 +633,32 @@ Store it away from this machine. A password manager, a Keycard, paper.</code></p
 <pre><code><span class="cmd">sudo systemctl enable --now shrooms</span></code></pre>
 
 <p>
-    The container installer takes the same verb —
-    <code>sudo bash install.sh init --name laptop</code> — and works the same
-    way: the setup container is given a stdin so the passphrase prompt has
-    somewhere to read from, and your own <code>~/.config/shrooms</code> is
-    mounted into it so the admin key survives the container it was minted in.
-    <code>--no-admin</code> creates a mesh with no authority at all, where
-    membership is the network key alone and nothing can be revoked short of
-    rotating it for everybody.
+    The container installer's <code>init</code> works the same way, and does the
+    starting for you: the setup container is given a stdin so the passphrase
+    prompt has somewhere to read from, and your own
+    <code>~/.config/shrooms</code> is mounted into it so the admin key survives
+    the container it was minted in. <code>--no-admin</code>, on either, creates
+    a mesh with no authority at all, where membership is the network key alone
+    and nothing can be revoked short of rotating it for everybody.
 </p>
+
+<div class="note">
+    <p>
+        <strong>If this machine already ran <code>install.sh prepare</code></strong>,
+        run the installer again with the other verb — there is nothing to undo
+        first:
+    </p>
+    <pre><code><span class="cmd">sudo bash install.sh init --name laptop</span></code></pre>
+    <p>
+        <code>init</code> mints into the config <code>prepare</code> wrote,
+        keeping the name, port, mode and relay setting already chosen there, and
+        anything you pass on the command line wins over them. The device
+        identity under <code>/var/lib/shrooms</code> is untouched either way, so
+        the machine keeps the keys it generated. A config that is already
+        <em>on</em> a mesh is refused instead, since minting over it would leave
+        this device holding a key no peer has heard of.
+    </p>
+</div>
 
 <h2 id="second">The second device</h2>
 
@@ -751,11 +809,55 @@ NAME         OVERLAY IP                              ANNOUNCE  TUNNEL  ENDPOINT 
 </p>
 
 <p>
-    Names need nothing set up: the daemon runs a resolver for the mesh and
-    registers it with the system on startup, scoped to its own interface, so
-    <code>.mesh</code> is answered there and every other name keeps going
-    wherever it went before.
+    Names need nothing set up <em>on a host install</em>: the daemon runs a
+    resolver for the mesh and registers it with the system on startup, scoped to
+    its own interface, so mesh names are answered there and every other name
+    keeps going wherever it went before.
 </p>
+
+<div class="note">
+    <p>
+        <strong>The container install cannot do that half itself</strong>, so
+        the installer arranges it. Registering means running
+        <code>resolvectl</code>, which belongs to systemd and is not in the
+        image — the daemon serves names correctly and nothing on the host ever
+        asks it. So <code>install.sh</code> writes a second unit,
+        <code>shrooms-resolved.service</code>, which runs those two commands
+        from the host on the daemon's behalf.
+    </p>
+    <p>
+        It <em>watches</em> rather than firing once, and that is not
+        belt-and-braces. Redeeming an invite produces no systemd event at all:
+        <code>shrooms join</code> hands the token to the waiting daemon, which
+        re-executes itself into the mesh — same pid, no restart — so the moment
+        names first become answerable is invisible to the service manager. On a
+        machine set up with <code>prepare</code>, which is every device after
+        the first, nothing would ever register them. So it reconciles every
+        thirty seconds: registered already and resolved still holding the link,
+        do nothing; no mesh in the config yet, do nothing and do not even wake
+        the container; otherwise register. That also covers a later restart in
+        place and resolved forgetting a link. Stopping it reverts.
+    </p>
+    <p>
+        Mounting the host's D-Bus socket into the container would also work, and
+        is deliberately not what happens: that hands a VPN daemon the whole
+        system bus in order to register one domain.
+    </p>
+    <p>
+        If the host has no <code>resolvectl</code>, the installer says so and
+        names resolve through <code>/etc/hosts</code> instead. Note that
+        <code>shrooms hosts --write</code> through the wrapper writes the
+        <em>container's</em> copy, which nothing reads and the next restart
+        destroys — so print it and write it yourself:
+    </p>
+    <pre><code><span class="cmd">sudo shrooms hosts | sudo tee -a /etc/hosts</span></code></pre>
+    <p>
+        Either way <code>shrooms status</code> is where you find out: it says
+        <code>names !! not resolving here</code>, with the two commands and this
+        device's own address, whenever the resolver is serving and nothing has
+        registered it.
+    </p>
+</div>
 
 <pre><code><span class="cmd">shrooms paths</span>
 reflexive addresses (as peers observe us):
@@ -805,9 +907,60 @@ reflexive addresses (as peers observe us):
 </tr>
 
 <tr>
-    <td><code>.mesh</code> names do not resolve</td>
-    <td>the resolver is running but the host is not asking it — serving DNS and being asked are different things</td>
-    <td><code>resolvectl status shrooms0</code> should list the overlay address under DNS Servers and <code>~mesh</code> as the domain. The daemon log says why not. <code>sudo shrooms hosts --write</code> is the fallback for hosts without systemd-resolved</td>
+    <td>mesh names do not resolve — <code>ping6 nas.mesh</code> says
+    <code>Name or service not known</code> while <code>status</code> shows the
+    peer up</td>
+    <td>the resolver is running but the host is not asking it — serving DNS and
+    being asked are different things. The daemon cannot do the second half from
+    inside a container (no <code>resolvectl</code> in the image), which is what
+    <code>shrooms-resolved.service</code> is for; if that unit is missing,
+    failed, or the host has no systemd-resolved, nothing registered</td>
+    <td><code>systemctl status shrooms-resolved</code> first — it logs which
+    interface and address it registered, or why it gave up.
+    <code>shrooms status</code> prints the two commands with this device's
+    address filled in, to run on the host rather than through the wrapper. Then
+    <code>resolvectl status shrooms0</code> should list the overlay address
+    under DNS Servers and the suffix as a routing domain.
+    <code>sudo shrooms hosts | sudo tee -a /etc/hosts</code> is the fallback
+    where there is no resolved at all; <code>--write</code> is for a host
+    install, since through the wrapper it writes the container's own file</td>
+</tr>
+
+<tr>
+    <td><code>shrooms join</code> times out, and the daemon log repeats
+    <code>connectToRelayPeers: won't attempt new connections - node is
+    offline</code> beside <code>Failed to query DNS … address=one.one.one.one
+    error="(1) Operation not permitted"</code></td>
+    <td>the delivery library does not use the system resolver. Its
+    <code>dnsAddrsNameServers</code> defaults to <code>1.1.1.1</code> and
+    <code>1.0.0.1</code>, which is how it resolves the fleet's
+    <code>/dns4/</code> entry nodes and how it probes whether it is online at
+    all. Anything that blocks direct DNS to those addresses — a VPN with
+    DNS-leak protection, a network that permits only its own resolver, a local
+    service holding <code>1.1.1.1</code> — fails the probe, and the node then
+    declares itself offline and dials nothing. The mesh never gets as far as
+    being unreachable</td>
+    <td><code>dig +short @1.1.1.1 one.one.one.one</code>. If that fails while
+    <code>host one.one.one.one</code> works, this is it — the two go through
+    different paths and only the direct one matters here. Disconnecting the VPN
+    restores it; if it does not, look for a "block when disconnected" setting,
+    which keeps the firewall rules on while the tunnel is off. Then restart
+    shrooms and read the log with <code>--since</code>: <code>journalctl … |
+    head</code> shows the <em>oldest</em> entries, and diagnosing last week's
+    failure as though it were this minute's is the easiest mistake here</td>
+</tr>
+
+<tr>
+    <td><code>shrooms status</code> says <code>the shrooms container is not
+    running</code>, and <code>systemctl status shrooms</code> says it plainly
+    is</td>
+    <td>a container install on podman, run as yourself. The daemon's container
+    belongs to root, and rootless podman is a <em>separate store</em> that
+    cannot see root's containers at all — including through the
+    <code>docker</code> shim that <code>podman-docker</code> installs</td>
+    <td><code>sudo shrooms ...</code>. On a real docker host the equivalent is
+    membership of the <code>docker</code> group, which is what lets the check
+    see the container without root</td>
 </tr>
 
 <tr>
