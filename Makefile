@@ -22,7 +22,14 @@ export CGO_CFLAGS  += -I$(abspath $(LD_INC))
 export CGO_LDFLAGS += -L$(abspath $(LD_LIB)) -llogosdelivery -Wl,-rpath,$(abspath $(LD_LIB))
 
 GO ?= go
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+# Release tags only, so this never names a dependency drop.
+#
+# The one tag this repo had was deps-v1 — the release holding the
+# liblogosdelivery tarballs — so `git describe` produced names like
+# "deps-v1-592-g20e303d": the nearest tag, 592 commits, the commit. True, and
+# no use to anybody reading it on a phone. --match 'v*' means only release
+# tags count, whatever else gets tagged later.
+VERSION ?= $(shell git describe --tags --match 'v*' --always --dirty 2>/dev/null || echo dev)
 
 .PHONY: all deps deps-basecamp check-lib shrooms wakuspike s3topics m0demo \
         s1 s3 probe relay relay-image m0 m1 m2 m2-edm m3 m3-remote dist image push-image deps-release install uninstall test-uninstall purge build-all vet-cgo vet-pcsc test test-unit e2e e2e-two-nodes e2e-keycard e2e-keycard-mesh android-deps android-core aar apk fdroid basecamp-check basecamp-lgx site-adrs fmt clean

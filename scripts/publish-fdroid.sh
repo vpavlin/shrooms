@@ -47,7 +47,9 @@ APP_ID=${APP_ID:-xyz.vpavlin.shrooms}
 # them could tell which was installed. A name that has to be remembered is a
 # name that stops being true; --dirty is kept so a publish from an uncommitted
 # tree says so out loud.
-VERSION_NAME=${VERSION_NAME:-$(git describe --tags --always --dirty 2>/dev/null || echo dev)}
+# Release tags only: the deps-v1 tag holds dependency tarballs, and naming an
+# APK after it produced "deps-v1-592-g20e303d" on the public repo. See Makefile.
+VERSION_NAME=${VERSION_NAME:-$(git describe --tags --match 'v*' --always --dirty 2>/dev/null || echo dev)}
 
 echo "==> checking $HOST"
 ssh "$HOST" "test -f $FDROID_DIR/config.yml" || { echo "no fdroid config on $HOST"; exit 1; }

@@ -17,7 +17,8 @@ cd "$(dirname "$0")/.."
 
 LIB_FROM=${LIB_FROM:-source}
 LD_REF=${LD_REF:-master}
-VERSION=${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo dev)}
+# Release tags only; deps-v1 is a dependency drop, not a version. See Makefile.
+VERSION=${VERSION:-$(git describe --tags --match 'v*' --always --dirty 2>/dev/null || echo dev)}
 BASECAMP_LIB=${BASECAMP_LIB:-$HOME/.local/share/Logos/LogosBasecamp/modules/delivery_module}
 
 STAGE=docker/build
