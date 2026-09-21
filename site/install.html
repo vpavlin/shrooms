@@ -711,11 +711,12 @@ Asking to join as "nas"...
 </p>
 
 <p>
-    <code>shrooms join &lt;NETWORK-KEY&gt; --name nas</code> is still there for
-    bootstrapping and recovery, and for a mesh minted with
-    <code>--no-admin</code> that has no credentials to issue. Credentials expire
-    in thirty days by default, and renewal by hand is another
-    <code>shrooms invite</code>.
+    Joining is by <strong>invite only</strong>. <code>shrooms join
+    &lt;NETWORK-KEY&gt;</code> was removed on 2026-08-27: a raw network key no longer makes
+    a device a member. A machine set up by someone who never sees the key still joins by
+    <code>shrooms invite</code>. Credentials expire in thirty days by default, so renewal
+    is another invite - and on a mesh minted with <code>--no-admin</code> the invite
+    carries the network key instead of a credential.
 </p>
 
 <h2 id="prepared">A machine set up by somebody who never sees the key</h2>
