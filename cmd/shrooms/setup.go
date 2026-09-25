@@ -619,9 +619,28 @@ func readSecret(prompt string) (string, error) {
 	fmt.Fprint(os.Stderr, "(not a terminal — what you type will be visible) ")
 	line, err := stdin().ReadString('\n')
 	if err != nil && line == "" {
-		return "", err
+		// Not the bare "error: EOF" this used to end in. A passphrase prompt
+		// that nobody can answer is the likeliest way to meet this — `shrooms
+		// admin renew` from a script, or anything run without a terminal — and
+		// "EOF" names the mechanism rather than the problem. Seen on
+		// 2026-09-25, when renewing k11 the obvious way said only that.
+		return "", noSecret(err)
 	}
 	return line, nil
+}
+
+// noSecret explains an unanswerable passphrase prompt.
+//
+// Separate from noInput because the remedies differ: --yes answers a
+// confirmation, and nothing answers a passphrase except the passphrase.
+func noSecret(err error) error {
+	if errors.Is(err, io.EOF) {
+		return errors.New("nothing to read the passphrase from — this is not a " +
+			"terminal. Run it from one, or pipe the passphrase in:\n" +
+			"    printf '%s\\n' \"$PASSPHRASE\" | shrooms admin ...\n" +
+			"A key on a card takes --keycard instead and asks for the PIN")
+	}
+	return err
 }
 
 // readPhrase reads one line WITH echo, for a confirmation that is not a secret.

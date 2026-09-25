@@ -340,6 +340,60 @@ private fun JoinScreen(dir: String, onScan: ((String) -> Unit) -> Unit, onDone: 
             style = MaterialTheme.typography.bodySmall, color = Palette.Ash,
         )
 
+        // Diagnostics BEFORE there is a mesh, which is where they were missing.
+        //
+        // This screen is all an unenrolled device shows — there is no settings
+        // gear until a mesh exists — so a join that fails had nowhere to be
+        // read from and nothing to send. A tablet on 2026-09-25 sat here
+        // through two attempts while the inviter heard nothing, and the way to
+        // find out why was adb. The Go side records the fleet and the outcome
+        // of every attempt now, and this is where that comes out.
+        Spacer(Modifier.height(24.dp))
+        val diagCtx = LocalContext.current
+        var showDiag by remember { mutableStateOf(false) }
+        Row {
+            Text(
+                if (showDiag) "hide diagnostics" else "diagnostics",
+                style = MaterialTheme.typography.bodySmall,
+                color = Palette.Ash,
+                modifier = Modifier.clickable { showDiag = !showDiag },
+            )
+            Spacer(Modifier.width(16.dp))
+            Text(
+                "share",
+                style = MaterialTheme.typography.bodySmall,
+                color = Palette.Ash,
+                modifier = Modifier.clickable {
+                    val report = runCatching { Mobile.diagnostics(dir) }
+                        .getOrElse { "could not read diagnostics: ${it.message}" }
+                    diagCtx.startActivity(
+                        Intent.createChooser(
+                            Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_SUBJECT, "shrooms diagnostics (not joined)")
+                                putExtra(Intent.EXTRA_TEXT, report)
+                            },
+                            "Send diagnostics",
+                        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                    )
+                },
+            )
+        }
+        if (showDiag) {
+            val report = remember(showDiag) {
+                runCatching { Mobile.diagnostics(dir) }
+                    .getOrElse { "could not read diagnostics: ${it.message}" }
+            }
+            Spacer(Modifier.height(8.dp))
+            Column(Modifier.fillMaxWidth().heightIn(max = 240.dp).verticalScroll(rememberScrollState())) {
+                Text(
+                    report.takeLast(4000),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Palette.Ash,
+                )
+            }
+        }
+
         Spacer(Modifier.height(32.dp))
         Text(
             "no mesh yet? create one",

@@ -181,9 +181,78 @@ func JoinWithInvite(token, name, configDir string, timeoutSeconds int) error {
 	return joinInvite(token, name, "", configDir, timeoutSeconds)
 }
 
-// joinInvite is the exchange itself. label empty writes the single-mesh form;
-// otherwise the mesh is added alongside whatever is already there.
+// fleetFor is the fleet settings a node on this device should use: the shipped
+// defaults, overridden by whatever this device's config already says.
+//
+// One function because the node and the log line must agree. A join that never
+// meets its inviter is usually two devices on different fleets — "both sides
+// work perfectly and never meet", as internal/mesh/invite.go puts it — and a
+// log line that reported the defaults while the node used something else would
+// hide exactly that.
+func fleetFor(cfgPath string) state.Config {
+	fleet := phoneDefaults()
+	if onDisk, err := state.LoadConfigUnvalidated(cfgPath); err == nil {
+		if onDisk.Preset != "" {
+			fleet.Preset = onDisk.Preset
+		}
+		if onDisk.Mode != "" {
+			fleet.Mode = onDisk.Mode
+		}
+		fleet.ClusterID = onDisk.ClusterID
+		fleet.EntryNodes = onDisk.EntryNodes
+	}
+	return fleet
+}
+
+// noteJoinAttempt records what an enrolment is about to try, in the file
+// Diagnostics reads.
+//
+// Until this existed, a device that had not joined yet produced no diagnostics
+// at all: the log is written by the session logger, and there is no session
+// before the first mesh. So the one moment somebody most needs to see the
+// fleet settings — a tablet stuck on the join screen, 2026-09-25 — was the one
+// moment nothing was recorded, and the app's own screen has no way to show it
+// either.
+func noteJoinAttempt(configDir string, fleet state.Config, reusing bool) {
+	where := "started a node for this"
+	if reusing {
+		where = "reusing the running node"
+	}
+	appendLog(configDir, "INFO", fmt.Sprintf(
+		"redeeming an invite: preset=%s cluster=%d entry_nodes=%d mode=%s, %s",
+		fleet.Preset, fleet.ClusterID, len(fleet.EntryNodes), fleet.Mode, where))
+}
+
+// noteJoinResult records how it ended, so a timeout is distinguishable from a
+// refusal when somebody sends the diagnostics in.
+func noteJoinResult(configDir string, err error) {
+	if err == nil {
+		appendLog(configDir, "INFO", "the invite was accepted")
+		return
+	}
+	appendLog(configDir, "ERROR", "the invite was not accepted: "+err.Error())
+}
+
+// joinInvite records the attempt around the exchange, so a device that has
+// never joined still leaves something for Diagnostics to show.
+//
+// A wrapper rather than a defer inside: the exchange returns unnamed errors
+// from a dozen places, and a deferred closure over a local `err` would have
+// reported every one of them as a success.
 func joinInvite(token, name, label, configDir string, timeoutSeconds int) error {
+	cfgPath, _ := paths(configDir)
+	mu.Lock()
+	reusing := node != nil && running != nil
+	mu.Unlock()
+	noteJoinAttempt(configDir, fleetFor(cfgPath), reusing)
+	err := redeemInvite(token, name, label, configDir, timeoutSeconds)
+	noteJoinResult(configDir, err)
+	return err
+}
+
+// redeemInvite is the exchange itself. label empty writes the single-mesh form;
+// otherwise the mesh is added alongside whatever is already there.
+func redeemInvite(token, name, label, configDir string, timeoutSeconds int) error {
 	cfgPath, stateDir := paths(configDir)
 	secret, err := invite.ParseToken(token)
 	if err != nil {
@@ -1353,19 +1422,7 @@ func sharedNode(cfgPath string) (*waku.Node, error) {
 	if node != nil {
 		return node, nil
 	}
-	// This device's own fleet settings when it has them, since the shipped
-	// defaults may name a different cluster than the mesh it is joining.
-	fleet := phoneDefaults()
-	if onDisk, err := state.LoadConfigUnvalidated(cfgPath); err == nil {
-		if onDisk.Preset != "" {
-			fleet.Preset = onDisk.Preset
-		}
-		if onDisk.Mode != "" {
-			fleet.Mode = onDisk.Mode
-		}
-		fleet.ClusterID = onDisk.ClusterID
-		fleet.EntryNodes = onDisk.EntryNodes
-	}
+	fleet := fleetFor(cfgPath)
 	n, err := waku.New(nodeConfig(fleet))
 	if err != nil {
 		return nil, fmt.Errorf("rendezvous plane: %w", err)
