@@ -233,6 +233,18 @@ func noteJoinResult(configDir string, err error) {
 	appendLog(configDir, "ERROR", "the invite was not accepted: "+err.Error())
 }
 
+// NoteRestart records that somebody restarted the app by hand, so the next
+// diagnostics say why the log begins again.
+//
+// The delivery node is process-global and cannot be rebuilt in place: a node
+// that never reached the fleet stays that way for the life of the process.
+// Before the first mesh there is no session and therefore no watchdog, so the
+// only cure is ending the process — which a tablet owner discovered on
+// 2026-09-25 by force-stopping the app after two invites went nowhere.
+func NoteRestart(configDir, why string) {
+	appendLog(configDir, "WARN", "restarting the app on purpose: "+why)
+}
+
 // joinInvite records the attempt around the exchange, so a device that has
 // never joined still leaves something for Diagnostics to show.
 //

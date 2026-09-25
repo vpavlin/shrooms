@@ -1,5 +1,6 @@
 package xyz.vpavlin.shrooms
 
+import android.app.Activity
 import android.Manifest
 import android.content.Intent
 import android.net.Uri
@@ -237,6 +238,10 @@ private fun JoinScreen(dir: String, onScan: ((String) -> Unit) -> Unit, onDone: 
     var error by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var waiting by remember { mutableStateOf(false) }
+    // Whether an attempt has already failed, which is when the restart below
+    // is worth offering. Not shown up front: on a first run it would read as
+    // an instruction rather than a remedy.
+    var failed by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     // An invite, and only an invite. A network key used to be accepted here
@@ -295,6 +300,37 @@ private fun JoinScreen(dir: String, onScan: ((String) -> Unit) -> Unit, onDone: 
             Text(error, color = Palette.Rust, style = MaterialTheme.typography.bodySmall)
         }
 
+        // A failed join usually means the delivery node never reached the
+        // fleet, and that cannot be repaired in place: the library keeps
+        // process-global state, so a node that did not connect stays that way
+        // for the life of the process. The service has a watchdog for exactly
+        // this (hardRestart), but it only runs inside a live session — and
+        // before the first mesh there is no session, so this screen was the one
+        // place with a wedge and no cure.
+        //
+        // A tablet hit it on 2026-09-25: two invites went nowhere, the inviter
+        // heard nothing, and what fixed it was force-stopping the app from
+        // Android's settings. This is that, one tap away and said out loud.
+        if (failed) {
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "If it keeps failing, the connection to the fleet may be stuck. " +
+                    "Restarting the app rebuilds it — nothing is lost, this device " +
+                    "has not joined anything yet.",
+                style = MaterialTheme.typography.bodySmall, color = Palette.Ash,
+            )
+            Spacer(Modifier.height(10.dp))
+            val restartCtx = LocalContext.current
+            Action("RESTART THE APP", enabled = !busy) {
+                runCatching { Mobile.noteRestart(dir, "a join failed and the fleet connection looked stuck") }
+                // Ending the process is the point: it is what rebuilds the
+                // node. Android brings the app back when it is tapped again,
+                // which is what the notification below says.
+                (restartCtx as? Activity)?.finishAndRemoveTask()
+                android.os.Process.killProcess(android.os.Process.myPid())
+            }
+        }
+
         Spacer(Modifier.height(28.dp))
         Action(
             when {
@@ -318,7 +354,11 @@ private fun JoinScreen(dir: String, onScan: ((String) -> Unit) -> Unit, onDone: 
                     waiting = false
                     result
                         .onSuccess { onDone() }
-                        .onFailure { error = it.message ?: "could not join"; busy = false }
+                        .onFailure {
+                            error = it.message ?: "could not join"
+                            failed = true
+                            busy = false
+                        }
                 }
             } else {
                 // Not a token, so there is nothing to redeem. The button is
