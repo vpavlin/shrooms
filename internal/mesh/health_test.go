@@ -9,7 +9,7 @@ import (
 )
 
 func TestHealthTracksConnectionStatus(t *testing.T) {
-	h := newHealth()
+	h := newHealth(time.Now())
 	now := time.Now()
 
 	if got := h.snapshot().Status; got != "unknown" {
@@ -28,7 +28,7 @@ func TestHealthTracksConnectionStatus(t *testing.T) {
 // Undecryptable traffic from other applications on the shard still proves the
 // subscription is live, so it must count.
 func TestHealthCountsForeignTraffic(t *testing.T) {
-	h := newHealth()
+	h := newHealth(time.Now())
 	now := time.Now()
 
 	h.observe(waku.Event{JSON: `{"eventType":"connection_status_change","connectionStatus":"Connected"}`}, now)
@@ -43,7 +43,7 @@ func TestHealthCountsForeignTraffic(t *testing.T) {
 // The failure that motivated all of this: connected, subscribed, but the shard
 // has gone quiet. Tunnels are fine; discovery is not.
 func TestHealthDetectsSilentShard(t *testing.T) {
-	h := newHealth()
+	h := newHealth(time.Now())
 	now := time.Now()
 
 	h.observe(waku.Event{JSON: `{"eventType":"connection_status_change","connectionStatus":"Connected"}`}, now)
@@ -62,7 +62,7 @@ func TestHealthDetectsSilentShard(t *testing.T) {
 // A node that has just started has not received anything yet, and that is not
 // the same as a broken one. It must still say so rather than claim health.
 func TestHealthBeforeFirstMessage(t *testing.T) {
-	h := newHealth()
+	h := newHealth(time.Now())
 	now := time.Now()
 	h.observe(waku.Event{JSON: `{"eventType":"connection_status_change","connectionStatus":"Connected"}`}, now)
 	h.setTopics(3)
@@ -142,7 +142,7 @@ func statusChange(s string) waku.Event {
 //
 // The churn pattern is the recoverable signal.
 func TestHealthDetectsClusterMismatchPattern(t *testing.T) {
-	h := newHealth()
+	h := newHealth(time.Now())
 	now := time.Now()
 
 	for i, p := range []string{"16UpeerA", "16UpeerB", "16UpeerC", "16UpeerD"} {
@@ -163,7 +163,7 @@ func TestHealthDetectsClusterMismatchPattern(t *testing.T) {
 // disconnect, not a refusal. Counting those would fire the mismatch warning at
 // every node that has simply been running a while.
 func TestHealthDoesNotCountNormalDisconnects(t *testing.T) {
-	h := newHealth()
+	h := newHealth(time.Now())
 	now := time.Now()
 
 	for i, p := range []string{"16UpeerA", "16UpeerB", "16UpeerC", "16UpeerD"} {
@@ -184,7 +184,7 @@ func TestHealthDoesNotCountNormalDisconnects(t *testing.T) {
 // Once some peer accepts us the mismatch theory is dead. Without this the
 // warning would stick to a node that had recovered.
 func TestHealthChurnResetsOnConnected(t *testing.T) {
-	h := newHealth()
+	h := newHealth(time.Now())
 	now := time.Now()
 
 	for _, p := range []string{"16UpeerA", "16UpeerB", "16UpeerC"} {
@@ -204,7 +204,7 @@ func TestHealthChurnResetsOnConnected(t *testing.T) {
 // An unmatched disconnect (connect never seen, e.g. from before we started)
 // must not be counted or crash.
 func TestHealthIgnoresUnmatchedDisconnect(t *testing.T) {
-	h := newHealth()
+	h := newHealth(time.Now())
 	now := time.Now()
 	h.observe(connChange("16Uunknown", "EventDisconnected"), now)
 	if c := h.snapshot().Churn; c != 0 {
@@ -251,5 +251,92 @@ func TestADeadPlaneIsNotSilent(t *testing.T) {
 	}
 	if h.Silent(now) {
 		t.Error("a dead plane was reported as merely silent")
+	}
+}
+
+// The case the check above could not see: a node that came up already deaf.
+//
+// It never opens an announce, so LastAnnounce stays zero — and requiring that
+// field meant the one clock able to prove deafness was the one a deaf node
+// never sets. A laptop sat exactly here for fourteen hours on 2026-09-28 with
+// the watchdog running and nothing firing.
+func TestANodeThatStartsDeafIsNoticed(t *testing.T) {
+	now := time.Now()
+	h := Health{
+		Status:      "Connected",
+		Started:     now.Add(-30 * time.Minute),
+		HadPeers:    true,
+		LastMessage: now.Add(-2 * time.Second),
+	}
+	if !h.OK(now) {
+		t.Fatal("this test is about a plane OK calls healthy")
+	}
+	if !h.Silent(now) {
+		t.Error("a node deaf since it started was not noticed")
+	}
+}
+
+// Without a remembered roster there is no reason to think a peer would have
+// been heard, so the same shape is a node alone on its mesh. Restarting that
+// in a loop is what the LastAnnounce guard was protecting against, and the
+// protection has to survive.
+func TestANodeThatStartsAloneIsNotDeaf(t *testing.T) {
+	now := time.Now()
+	h := Health{
+		Status:      "Connected",
+		Started:     now.Add(-30 * time.Minute),
+		LastMessage: now.Add(-2 * time.Second),
+	}
+	if h.Silent(now) {
+		t.Error("a node alone on its mesh was called deaf")
+	}
+}
+
+// And starting is not itself a fault: a node has SilentAfter to hear its
+// first announce before anyone concludes anything.
+func TestANodeThatJustStartedIsNotYetDeaf(t *testing.T) {
+	now := time.Now()
+	h := Health{
+		Status:      "Connected",
+		Started:     now.Add(-time.Minute),
+		HadPeers:    true,
+		LastMessage: now.Add(-time.Second),
+	}
+	if h.Silent(now) {
+		t.Error("a node one minute old was called deaf")
+	}
+}
+
+// Problem has to name it, or the only cure is knowing to look. This was the
+// gap that mattered in practice: `shrooms status` reported a healthy
+// rendezvous and an empty roster, and said nothing connecting the two.
+func TestProblemNamesAPlaneCarryingNothingOfOurs(t *testing.T) {
+	now := time.Now()
+	h := Health{
+		Status:       "Connected",
+		Started:      now.Add(-time.Hour),
+		HadPeers:     true,
+		LastMessage:  now.Add(-time.Second),
+		LastAnnounce: now.Add(-30 * time.Minute),
+		Topics:       3,
+	}
+	got := h.Problem(now)
+	if got == "" {
+		t.Fatal("a silent plane reported no problem at all")
+	}
+	if !strings.Contains(got, "nothing of this mesh's") {
+		t.Errorf("Problem() = %q, which does not say what is wrong", got)
+	}
+	// And a working plane still says nothing, or the line becomes noise.
+	well := Health{
+		Status:       "Connected",
+		Started:      now.Add(-time.Hour),
+		HadPeers:     true,
+		LastMessage:  now.Add(-time.Second),
+		LastAnnounce: now.Add(-10 * time.Second),
+		Topics:       3,
+	}
+	if p := well.Problem(now); p != "" {
+		t.Errorf("a healthy plane reported %q", p)
 	}
 }

@@ -187,6 +187,9 @@ func (m *Mesh) loadRememberedPeers(now time.Time) {
 		restored++
 	}
 	if restored > 0 {
+		// Evidence that peers exist, which is what lets Silent time a node
+		// that has opened no announce yet rather than assuming it is alone.
+		m.health.hadPeers()
 		m.log.Info("remembered peers from the last run", "devices", restored,
 			"carried_for", ProvisionalWindow)
 	}
