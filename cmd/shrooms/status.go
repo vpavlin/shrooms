@@ -273,6 +273,14 @@ func cmdStatus(args []string) error {
 		fmt.Println()
 		fmt.Println("   Peer discovery is stalled; established tunnels are unaffected.")
 	}
+	// Separate from the problem above, because it is a cause rather than a
+	// symptom and can be true while everything else looks well. Printed only
+	// when it has happened, which on a healthy node is never.
+	if st.Rendezvous.Dropped > 0 {
+		fmt.Printf("\n!! rendezvous: %d event(s) arrived faster than this daemon read them\n",
+			st.Rendezvous.Dropped)
+		fmt.Println("   Announces among them would have been missed.")
+	}
 	fmt.Println()
 
 	if len(st.Peers) == 0 {
