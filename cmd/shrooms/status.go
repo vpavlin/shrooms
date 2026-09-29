@@ -258,7 +258,14 @@ func cmdStatus(args []string) error {
 	// roster simply stops changing — which looks exactly like "nobody else is
 	// online", and sends you debugging the wrong plane. This is the line that
 	// distinguishes them.
-	if !st.Rendezvous.OK {
+	//
+	// Gated on there being a problem rather than on OK, because they are not
+	// the same question. OK counts any traffic on the shard, deliberately, so
+	// a plane carrying everything except this mesh's is OK and broken at once
+	// — the state that emptied a roster for fourteen hours while this command
+	// printed nothing but "no peers seen yet". Every condition that makes OK
+	// false also names a problem, so nothing that used to print stops.
+	if st.Rendezvous.Problem != "" {
 		fmt.Printf("\n!! rendezvous: %s", st.Rendezvous.Problem)
 		if st.Rendezvous.Detail != "" {
 			fmt.Printf(" (%s)", st.Rendezvous.Detail)

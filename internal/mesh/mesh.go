@@ -290,6 +290,10 @@ func New(log *slog.Logger, cfg state.Config, st *state.State, node *waku.Node, d
 	if err != nil {
 		return nil, err
 	}
+	// One clock for the timings and for health, so "how long has this node
+	// been up" means the same thing to both. Health needs it because a node
+	// that never opens an announce has no other clock to be judged by.
+	started := time.Now()
 	m := &Mesh{
 		log:            log,
 		cfg:            cfg,
@@ -310,8 +314,8 @@ func New(log *slog.Logger, cfg state.Config, st *state.State, node *waku.Node, d
 		resync:         make(chan struct{}, 1),
 		reannounce:     make(chan struct{}, 1),
 		repliedTo:      make(map[string]time.Time),
-		health:         newHealth(),
-		timing:         newTimings(time.Now()),
+		health:         newHealth(started),
+		timing:         newTimings(started),
 		rates:          newRates(),
 		subscribed:     make(map[string]bool),
 	}

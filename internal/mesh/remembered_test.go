@@ -9,6 +9,7 @@ import (
 	"github.com/vpavlin/shrooms/internal/cred"
 	"github.com/vpavlin/shrooms/internal/identity"
 	"github.com/vpavlin/shrooms/internal/state"
+	"github.com/vpavlin/shrooms/internal/waku"
 	"github.com/vpavlin/shrooms/internal/wg"
 )
 
@@ -19,6 +20,7 @@ func rememberingMesh(t *testing.T, dir string, auth *cred.Authority, nk identity
 	if err != nil {
 		t.Fatal(err)
 	}
+	started := time.Now()
 	m := &Mesh{
 		log:            slog.New(slog.DiscardHandler),
 		st:             st,
@@ -28,7 +30,10 @@ func rememberingMesh(t *testing.T, dir string, auth *cred.Authority, nk identity
 		revoked:        cred.NewList(),
 		expiry:         map[string]int64{},
 		expiredDropped: map[string]bool{},
-		timing:         newTimings(time.Now()),
+		timing:         newTimings(started),
+		// As New builds it: restoring a roster records that this node has had
+		// peers, which is what Silent needs to tell deaf from alone.
+		health: newHealth(started),
 	}
 	m.networkID = state.NetworkID(nk)
 	return m
@@ -326,4 +331,61 @@ func TestAFreshMemoryIsCarriedByTheOrdinaryRule(t *testing.T) {
 	if !next.carry(p, wg.PeerStat{}, false, now.Add(ProvisionalWindow+time.Second)) {
 		t.Error("dropped at the provisional window a peer the ordinary rule still covers")
 	}
+}
+
+// Restoring a roster is what tells Silent this node is deaf rather than alone.
+//
+// The wiring is the point. Silent can time a node that has opened no announce
+// only if something says peers exist, and the roster on disk is that
+// something — so a node that remembered peers, hears the shard, and opens
+// nothing of its own is reported. The same node with nothing remembered is
+// not, because it has no reason to expect anyone.
+func TestARestoredRosterMakesASilentNodeDeafRatherThanAlone(t *testing.T) {
+	dir := t.TempDir()
+	nk, _ := identity.NewNetworkKey()
+	admin, _ := cred.NewAdmin()
+	auth, _ := cred.NewAuthority(admin.Pub)
+	peer, _ := identity.New()
+	now := time.Now()
+	seen := now.Add(-30 * time.Minute)
+
+	first := rememberingMesh(t, dir, auth, nk)
+	raw := credentialFor(t, admin, auth, peer, 1, seen, 24*time.Hour)
+	first.roster.Apply(announceWithCred(t, peer, raw, []string{"203.0.113.7:51820"}, 1), seen)
+	if err := first.checkMembership(announceWithCred(t, peer, raw, nil, 1), seen); err != nil {
+		t.Fatal(err)
+	}
+	first.saveRememberedPeers()
+
+	// A node with nothing written down has heard nobody and expects nobody.
+	alone := rememberingMesh(t, t.TempDir(), auth, nk)
+	alone.loadRememberedPeers(now)
+	alone.health.observe(foreignTraffic(), now)
+	if h := alone.Health(); h.Silent(now.Add(SilentAfter + time.Minute)) {
+		t.Error("a node with no remembered peers was called deaf")
+	}
+
+	// The same node, having restored one, and still hearing nothing of ours.
+	second := rememberingMesh(t, dir, auth, nk)
+	second.loadRememberedPeers(now)
+	second.health.observe(foreignTraffic(), now)
+
+	h := second.Health()
+	if !h.HadPeers {
+		t.Fatal("restoring a roster did not record that this node has had peers")
+	}
+	later := now.Add(SilentAfter + time.Minute)
+	// Traffic is still arriving, which is what makes this deafness rather
+	// than a plane that is simply down.
+	second.health.observe(foreignTraffic(), later.Add(-time.Second))
+	if !second.Health().Silent(later) {
+		t.Error("a node that restored peers and opened no announce was not called deaf")
+	}
+}
+
+// foreignTraffic is a message from another application on the shard: proof the
+// subscription is live, and undecryptable to us. It is what keeps a deaf
+// plane looking healthy, which is the whole difficulty Silent addresses.
+func foreignTraffic() waku.Event {
+	return waku.Event{JSON: `{"eventType":"message_received","message":{"payload":[1],"contentTopic":"/someone-else/1/x/proto"}}`}
 }
