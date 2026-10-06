@@ -1,6 +1,7 @@
 # Shrooms Agents in cages, and off the machine
 
-**Status:** research and a proposal, 2026-10-05. Nothing built. For a decision.
+**Status:** research and a proposal, 2026-10-05; the open questions decided 2026-10-06
+(see the end). Nothing built.
 
 Two wishes that share a mechanism:
 
@@ -42,17 +43,20 @@ the session's process is inside. A session gets a "cage" setting, chosen in
   its process ends and started again on the next message, deleted with the
   session: what the agent installed is still there tomorrow, and gone when
   the session is.
-- **The image: a small workbench of ours.** Debian slim with git, curl, a
-  compiler toolchain, Node (Claude Code), pi and Python; anything else the
-  agent installs itself. Published like the agent's own image, separate from
-  `shrooms:latest`.
+- **The image: a small workbench of ours, by default.** Debian slim with git,
+  curl, a compiler toolchain, Node (Claude Code), pi and Python; anything else
+  the agent installs itself. Published like the agent's own image, separate
+  from `shrooms:latest`. The image is a setting — per machine in the agent's
+  config, and overridable per session in "+ session" — so a project with its
+  own toolchain image can use that instead.
 - **Credentials.** Claude Code's login: the owner's `~/.claude` mounted (it
   refreshes its token there), or a long-lived token from `claude setup-token`
   in the environment. pi: its settings mounted, a local model reached over
   the network as now.
 - **Network.** Podman's default rootless network reaches the internet and,
-  through the host's routes, the mesh. Cutting it to an allow-list (the model's
-  API only) needs an egress proxy — later, and a choice per session.
+  through the host's routes, the mesh — unlimited by default. An allow-list
+  (the model's API and what else you name) comes later as a choice per
+  session, through an egress proxy the container is pointed at.
 - **What it does not stop:** a session can still spend tokens, reach the
   internet and the mesh, and do anything inside its project. It cannot read
   the rest of the machine, take it over, or keep anything once deleted.
@@ -68,7 +72,7 @@ the session's process is inside. A session gets a "cage" setting, chosen in
 
 ## Off the machine: Akash
 
-**What would run there:** one deployment with the agent, its harness, the
+**What would run there:** one deployment per agent, with the agent, its harness, the
 session's tools — and, for the interesting case, a model on a rented GPU
 (pi with vLLM or Ollama beside it). It joins the mesh as a machine; the apps
 list it like atlas; usage (`GET /v1/usage`) counts it like any other, so what
@@ -121,9 +125,11 @@ and a remote spawn always asks you first.
    after 3)
 5. **Spawning**, locally then on Akash — after tasks. (~3–4 days)
 
-## Open questions
+## Decided (2026-10-06)
 
-- A cage per session, or one per machine shared by its sessions?
-- The workbench: one image for all, or per language (and who keeps them current)?
-- On Akash: one agent per deployment, or an agent hosting many sessions?
-- Is an egress allow-list wanted from the start, or only on request?
+- **A container per session**, not one shared by a machine's sessions.
+- **One workbench image by default, customisable** — per machine, and per
+  session.
+- **On Akash, one agent per deployment.**
+- **No egress limit by default;** a per-session allow-list is a feature for
+  later.
