@@ -618,7 +618,7 @@ private fun NewSession(h: AgentHost, onDone: () -> Unit, onOpen: (String) -> Uni
         when {
             convError.isNotEmpty() -> Text(convError, style = MaterialTheme.typography.bodySmall, color = Palette.Rust)
             convs == null -> Row(verticalAlignment = Alignment.CenterVertically) { Pulse(Palette.Amber); Spacer(Modifier.width(8.dp)); Label("looking…") }
-            convs.isEmpty() -> Label("none here yet — only conversations that ran in a directory on this machine are listed")
+            convs?.isEmpty() == true -> Label("none here yet — only conversations that ran in a directory on this machine are listed")
         }
         for (c in convs.orEmpty()) {
             val taken = c.adoptedBy.isNotEmpty()
