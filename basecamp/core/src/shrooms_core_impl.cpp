@@ -421,7 +421,7 @@ std::string prefPath()
     base += "/shrooms";
     // Best effort, and the failure is handled by the write failing after it:
     // a preference that cannot be saved is not worth an error path of its own.
-    ::mkdir(base.c_str(), 0700);
+    agents::makeDirs(base);
     return base + "/view.conf";
 }
 

@@ -9,6 +9,7 @@
 #include <cstring>
 #include <fstream>
 #include <unistd.h>
+#include <sys/stat.h>
 #include <thread>
 
 using namespace agents;
@@ -164,7 +165,22 @@ int main(int argc, char** argv)
         if (ev.find("\"seq\":") != std::string::npos) break;
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
-    CHECK(ev.find("\"connected\":true") != std::string::npos && ev.find("\"seq\":1,") != std::string::npos,
+    // From the first event — or, on a session longer than the core keeps
+    // (kKeepEvents, 4000), from the first it keeps: by the time this reads,
+    // the follower may have filled the window and dropped the start.
+    long long listedLast = 0;
+    {
+        size_t at = found.find("{\"name\":\"" + session + "\",\"dir\":");
+        size_t ls = at == std::string::npos ? at : found.find("\"last_seq\":", at);
+        if (ls != std::string::npos) listedLast = std::atoll(found.c_str() + ls + 11);
+    }
+    long long firstSeen = 0;
+    {
+        size_t at = ev.find("\"seq\":");
+        if (at != std::string::npos) firstSeen = std::atoll(ev.c_str() + at + 6);
+    }
+    CHECK(ev.find("\"connected\":true") != std::string::npos &&
+              (firstSeen == 1 || (listedLast > 4000 && firstSeen > 1 && firstSeen <= listedLast - 4000 + 1 + 50)),
           "%s", ev.substr(0, 200).c_str());
     // Read to the end (the core answers in pieces); after that, only what
     // the session has said since — it may be this one, and talking.
@@ -342,6 +358,26 @@ int main(int argc, char** argv)
         CHECK(jobs.find("\"kind\":\"voice\",\"state\":\"done\"") != std::string::npos &&
               jobs.find("voice.wav") != std::string::npos && jobs.find("\"recording\":false") != std::string::npos,
               "voice job did not finish: %s", jobs.substr(jobs.find("voice") == std::string::npos ? 0 : jobs.find("voice")).substr(0, 200).c_str());
+    }
+
+    // A fresh machine has no ~/.local/share yet: what is kept under it (the
+    // outbox, kept copies, a file attached) makes every missing parent, as
+    // mkdir -p does, rather than failing at the first.
+    {
+        char tmpl[] = "/tmp/fresh-home-XXXXXX";
+        std::string home = ::mkdtemp(tmpl);
+        std::string share = home + "/.local/share";
+        setenv("XDG_DATA_HOME", share.c_str(), 1);
+        std::string kept = Hub::historyPath("fd00::1", "fresh");
+        struct stat st {};
+        CHECK(::stat((share + "/shrooms/history").c_str(), &st) == 0 && S_ISDIR(st.st_mode),
+              "no history directory made under a missing %s (%s)", share.c_str(), kept.c_str());
+        CHECK(makeDirs(home + "/a/b/c") && makeDirs(home + "/a/b/c"), "makeDirs, made and made again");
+        std::ofstream(home + "/file") << "x";
+        CHECK(!makeDirs(home + "/file") && !makeDirs(home + "/file/below"), "a file taken for a directory");
+        std::string rm = "rm -rf " + home;
+        (void)!std::system(rm.c_str());
+        unsetenv("XDG_DATA_HOME");
     }
 
     // The outbox, in a directory of its own (XDG_DATA_HOME): written to an

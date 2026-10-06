@@ -257,6 +257,17 @@ bool safePath(const std::string& path)
     return path.find("..") == std::string::npos;
 }
 
+bool makeDirs(const std::string& path, unsigned mode)
+{
+    if (path.empty()) return false;
+    struct stat st {};
+    if (::stat(path.c_str(), &st) == 0) return S_ISDIR(st.st_mode);
+    size_t cut = path.find_last_of('/');
+    if (cut != std::string::npos && cut > 0 && !makeDirs(path.substr(0, cut), mode)) return false;
+    if (::mkdir(path.c_str(), static_cast<mode_t>(mode)) == 0) return true;
+    return errno == EEXIST && ::stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+}
+
 bool isMeshAddress(const std::string& address)
 {
     unsigned char b[16];
@@ -956,7 +967,7 @@ void Hub::voiceSetup()
         std::string arch = machineArch();
         std::string dir = dataDir("piper"), stage = dir + "/.setup";
         run({"rm", "-rf", stage});
-        ::mkdir(stage.c_str(), 0700);
+        makeDirs(stage);
         if (arch.empty()) {
             fail("Piper has no build for this machine's architecture");
         } else if (step("downloading Piper (25 MB)"),
@@ -1449,11 +1460,8 @@ std::string Hub::dataDir(const std::string& sub)
         const char* home = std::getenv("HOME");
         base = std::string(home && *home ? home : "/tmp") + "/.local/share";
     }
-    std::string dir = base + "/shrooms";
-    ::mkdir(base.c_str(), 0700);
-    ::mkdir(dir.c_str(), 0700);
-    dir += "/" + sub;
-    ::mkdir(dir.c_str(), 0700);
+    std::string dir = base + "/shrooms/" + sub;
+    makeDirs(dir);
     return dir;
 }
 

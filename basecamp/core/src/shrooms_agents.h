@@ -57,6 +57,13 @@ std::string trimStrings(const std::string& ev, size_t max);
 bool isMeshAddress(const std::string& address);
 
 /**
+ * Makes a directory and every missing parent, like mkdir -p; true when it
+ * exists afterwards. A plain mkdir per level failed on a fresh machine with no
+ * ~/.local yet, and with it everything kept under it.
+ */
+bool makeDirs(const std::string& path, unsigned mode = 0700);
+
+/**
  * One plain HTTP request to an agent. Returns true on a 2xx, with the body;
  * otherwise false and why, including the agent's own error text.
  */
