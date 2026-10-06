@@ -115,6 +115,9 @@ data class Rendezvous(
     // while still reporting Connected. See MeshVpnService.poll.
     val libraryDead: Boolean = false,
     val libraryEvidence: String = "",
+    // The core's verdict that the plane is deaf: traffic, none of it ours, for
+    // long enough — including since the start. ok stays true meanwhile.
+    val deaf: Boolean = false,
 )
 
 /**
@@ -287,6 +290,7 @@ object MeshState {
                 problem = r?.optString("problem") ?: "",
                 detail = r?.optString("detail") ?: "",
                 libraryDead = r?.optBoolean("library_dead") ?: false,
+                deaf = r?.optBoolean("deaf") ?: false,
                 libraryEvidence = r?.optString("library_evidence") ?: "",
             ),
             announced = announced,

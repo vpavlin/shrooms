@@ -290,6 +290,13 @@ type statusPayload struct {
 		// with that path's own cooldowns.
 		LibraryDead     bool   `json:"library_dead,omitempty"`
 		LibraryEvidence string `json:"library_evidence,omitempty"`
+		// Deaf is mesh.Health.Silent on any of the phone's meshes: traffic
+		// arriving, none of it ours, for SilentAfter — including a node that
+		// came up that way (it opened no announce at all). Its OK says
+		// healthy throughout, because other applications' traffic proves the
+		// subscription live; only a new process has cured it. The app acts
+		// on it through hardRestart, with that path's own floor.
+		Deaf bool `json:"deaf,omitempty"`
 	} `json:"rendezvous"`
 
 	// DNS counts what each layer of name resolution actually saw.
@@ -331,6 +338,11 @@ func snapshotAll(instances []*meshInstance, suffix string) statusPayload {
 	now := time.Now()
 	// Before the single-mesh return, so a phone on one mesh is told too.
 	out.Due = dueAcross(instances, now)
+	for _, in := range instances[1:] {
+		if in.mesh.Health().Silent(now) {
+			out.Rendezvous.Deaf = true
+		}
+	}
 	if len(instances) == 1 {
 		return out
 	}
@@ -375,6 +387,7 @@ func snapshot(m *mesh.Mesh, suffix, label string) statusPayload {
 	out.Rendezvous.Problem = h.Problem(now)
 	out.Rendezvous.Detail = h.Detail(now)
 	out.Rendezvous.LibraryDead, out.Rendezvous.LibraryEvidence = waku.LibraryVerdict(now)
+	out.Rendezvous.Deaf = h.Silent(now)
 
 	// Never nil: the app distinguishes "none" from "this build does not report
 	// it", and a nil slice marshals to null, which is the same ambiguity the

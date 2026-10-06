@@ -62,6 +62,21 @@ type Health struct {
 	// Churn counts peers that connected and were dropped again almost
 	// immediately. See ShortLived.
 	Churn int
+
+	// Started is when this mesh began running.
+	//
+	// Silent needs a clock, and until this existed the only one was
+	// LastAnnounce — which is precisely the field a node that came up deaf
+	// never sets. See silentSince.
+	Started time.Time
+
+	// HadPeers is whether this node restored a roster from its last run.
+	//
+	// It is what separates deaf from alone before the first announce is
+	// opened. A node that has never had a peer and hears none is alone, and
+	// restarting it would achieve nothing; a node that remembered peers and
+	// has heard none since it started is the one worth acting on.
+	HadPeers bool
 }
 
 // OK reports whether the rendezvous plane looks usable.
@@ -95,7 +110,7 @@ const SilentAfter = 12 * time.Minute
 // Requires that we heard one of ours at some point: a node that has never had a
 // peer is not deaf, it is alone, and restarting it would achieve nothing at all.
 func (h Health) Silent(now time.Time) bool {
-	if h.LastAnnounce.IsZero() || h.LastMessage.IsZero() {
+	if h.LastMessage.IsZero() {
 		return false
 	}
 	// Traffic still arriving is what distinguishes this from the plane simply
@@ -103,7 +118,37 @@ func (h Health) Silent(now time.Time) bool {
 	if now.Sub(h.LastMessage) >= RendezvousStale {
 		return false
 	}
-	return now.Sub(h.LastAnnounce) >= SilentAfter
+	since, ok := h.silentSince()
+	if !ok {
+		return false
+	}
+	return now.Sub(since) >= SilentAfter
+}
+
+// silentSince is the moment from which to measure having heard nothing of
+// ours: the last announce this node opened, or — for one that has opened none
+// at all — when it started.
+//
+// The second case is what this function exists for. Requiring LastAnnounce
+// meant a node that came up already deaf could never be detected, because the
+// field that would prove deafness is the one it never sets. A laptop sat like
+// that for fourteen hours on 2026-09-28: relaying its own mesh's announces on
+// the shard, opening none, roster empty, `status` green, and every watchdog
+// quiet. Its restart fixed it in 680ms.
+//
+// Timing from the start instead needs some reason to believe a peer would have
+// been heard by now, or every node alone on its mesh becomes a restart loop.
+// HadPeers is that reason: a roster restored from the last run is evidence
+// that peers exist, and loadRememberedPeers has already checked each one is
+// still admissible.
+func (h Health) silentSince() (time.Time, bool) {
+	if !h.LastAnnounce.IsZero() {
+		return h.LastAnnounce, true
+	}
+	if h.HadPeers && !h.Started.IsZero() {
+		return h.Started, true
+	}
+	return time.Time{}, false
 }
 
 // Problem states the condition, and only the condition. It returns "" when the
@@ -129,6 +174,14 @@ func (h Health) Problem(now time.Time) string {
 		return "nothing has arrived yet"
 	case now.Sub(h.LastMessage) >= RendezvousStale:
 		return "nothing received for " + now.Sub(h.LastMessage).Round(time.Second).String()
+	// Last, because it is the only one that describes a plane which by every
+	// other measure is working. Said out loud because the alternative is what
+	// happened: a roster that empties while status reports a healthy
+	// rendezvous and the log, at INFO, says nothing at all.
+	case h.Silent(now):
+		since, _ := h.silentSince()
+		return "carrying other applications' traffic, but nothing of this mesh's for " +
+			now.Sub(since).Round(time.Second).String()
 	}
 	return ""
 }
@@ -167,11 +220,19 @@ type health struct {
 	connectedAt map[string]time.Time
 }
 
-func newHealth() *health {
+func newHealth(started time.Time) *health {
 	return &health{
-		h:           Health{Status: "unknown"},
+		h:           Health{Status: "unknown", Started: started},
 		connectedAt: make(map[string]time.Time),
 	}
+}
+
+// hadPeers records that this node began with a roster, so Silent can time a
+// node that has not opened an announce yet. See silentSince.
+func (s *health) hadPeers() {
+	s.mu.Lock()
+	s.h.HadPeers = true
+	s.mu.Unlock()
 }
 
 // observe folds a raw Waku event into the health record.

@@ -263,6 +263,7 @@ func cmdDaemon(args []string) error {
 	rt := &runtimeBits{
 		tail: tail, restart: errs, dns: &atomic.Pointer[dnsStatus]{},
 		invites: invites, st: st, cfgPath: *cfgPath,
+		dropped: node.Dropped,
 	}
 	rl := &reloader{cfgPath: *cfgPath, log: log, instances: instances, baseline: cfg}
 	srv, err := serveControl(ctx, log, *sock, instances, cfg, rl, rt)
@@ -374,7 +375,7 @@ func cmdDaemon(args []string) error {
 		go func(in *instance) { errs <- in.mesh.Run(ctx) }(in)
 	}
 
-	go watchRendezvous(ctx, log, instances, *stateDir, errs)
+	go watchRendezvous(ctx, log, instances, *stateDir, errs, node.Dropped)
 	// And the library itself, which watchRendezvous cannot judge: it reasons
 	// from connection state and traffic, and once hung inside a library call
 	// for hours on a node whose library had died. See libwatch.go.
@@ -722,6 +723,11 @@ type rendezvousStatus struct {
 	// crossed every threshold for a restart (waku.Liveness, libwatch.go).
 	LibraryDead     bool   `json:"library_dead,omitempty"`
 	LibraryEvidence string `json:"library_evidence,omitempty"`
+
+	// Dropped is rendezvous events the library discarded because this process
+	// was not reading fast enough. Almost always zero; anything else is a
+	// cause of exactly the symptoms above and was, until now, invisible.
+	Dropped uint64 `json:"dropped_events,omitempty"`
 }
 
 type peerStatus struct {
@@ -1103,8 +1109,16 @@ const silentCooldown = time.Hour
 // running process. The unit file says Restart=always, so this is a five-second
 // gap and a clean node; run by hand, it stops visibly, which is also better
 // than pretending.
-func watchRendezvous(ctx context.Context, log *slog.Logger, instances []*instance, stateDir string, errs chan<- error) {
+func watchRendezvous(ctx context.Context, log *slog.Logger, instances []*instance, stateDir string,
+	errs chan<- error, dropped func() uint64) {
+
 	started := time.Now()
+	// Events the library threw away because this process was behind. Reported
+	// as it moves rather than as a total, because the number only means
+	// something against a period: a Core node carries every shard in the
+	// cluster, so a burst here is a plausible cause of announces going missing
+	// and nothing else in the daemon would ever mention it.
+	var lastDropped uint64
 	// Restart history, which has to be read from disk because the last one
 	// exited this process. See restartlog.go.
 	restarts := loadRestartLog(stateDir)
@@ -1143,6 +1157,15 @@ func watchRendezvous(ctx context.Context, log *slog.Logger, instances []*instanc
 			// Mesh.Deaf catches that, because a peer whose tunnel is still
 			// rekeying is a peer whose daemon is running, and a running daemon
 			// announces.
+			if dropped != nil {
+				if d := dropped(); d > lastDropped {
+					log.Warn("the rendezvous plane dropped events we did not read in time",
+						"since_last_check", d-lastDropped, "total", d,
+						"effect", "announces may be missed, so peers can go quiet or never appear")
+					lastDropped = d
+				}
+			}
+
 			deafTo := ""
 			silent := false
 			for _, in := range instances {
@@ -1375,6 +1398,13 @@ type runtimeBits struct {
 	invites invite.Transport
 	st      *state.State
 	cfgPath string
+
+	// dropped reports how many rendezvous events the library discarded
+	// because this process was not reading fast enough.
+	//
+	// A function rather than the node, so nothing here has to know about cgo
+	// and a test can supply a number. Nil where there is no node.
+	dropped func() uint64
 }
 
 func memPtr(s memstat.Snapshot) *memstat.Snapshot { return &s }
@@ -1566,6 +1596,9 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 		if !h.LastMessage.IsZero() {
 			out.Rendezvous.LastMessage = h.LastMessage.Format(time.RFC3339)
 			out.Rendezvous.LastMsgAgeS = int64(now.Sub(h.LastMessage).Seconds())
+		}
+		if rt != nil && rt.dropped != nil {
+			out.Rendezvous.Dropped = rt.dropped()
 		}
 
 		// Every mesh's peers, not just the first one's. A node with two meshes

@@ -524,6 +524,20 @@ class MeshVpnService : VpnService() {
                         hardRestart("delivery library unreachable: ${s.rendezvous.libraryEvidence}")
                     }
 
+                    // Deaf: traffic arriving, none of it ours, for long enough
+                    // (mesh.Health.Silent) — the other fault a reported-OK
+                    // plane hides, since other applications' traffic is what
+                    // makes it OK. A phone came up like that on 2026-10-05 and
+                    // heard nothing for at least 24 minutes, its tunnels fine
+                    // and nothing new learnt. The desktop's cure is a new
+                    // process, and the node outlives a session here, so so is
+                    // the phone's — under the same persisted floor.
+                    s.connected && s.rendezvous.deaf && hasUsableNetwork() &&
+                        libraryRestartAllowed() -> {
+                        noteLibraryRestart()
+                        hardRestart("rendezvous deaf: ${s.rendezvous.problem.ifEmpty { "nothing of ours heard" }}")
+                    }
+
                     !s.connected || s.rendezvous.ok -> healthy = now
 
                     // Offline is not a fault, and the cure for a fault makes it
