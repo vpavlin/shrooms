@@ -200,6 +200,16 @@ func (n *Node) Stop() error {
 }
 
 // Close stops and destroys the node and releases its handles.
+//
+// Stopped first, always: the library's destroy only ends the node's thread,
+// and stopping is what releases the process-wide state a node holds — its
+// persistency singleton (Persistency.reset in waku.stop). Destroyed without
+// it, the singleton is left pointing into the dead thread's heap, and the
+// next node in the process fails to start: "Persistency already initialised
+// with rootDir ; cannot re-init with ./data" (logos-delivery 7a3a064b,
+// 2026-10-06). Stopped and then destroyed, nodes can be made again and
+// again in one process. A node that was never started, or already stopped,
+// answers stop with an error, which is not this call's business.
 func (n *Node) Close() error {
 	n.mu.Lock()
 	if n.closed {
@@ -211,6 +221,7 @@ func (n *Node) Close() error {
 	n.evHandle = nil
 	n.mu.Unlock()
 
+	_, _ = call("stop", func(ud unsafe.Pointer) C.int { return C.bridge_stop(n.ctx, ud) })
 	_, err := call("destroy", func(ud unsafe.Pointer) C.int { return C.bridge_destroy(n.ctx, ud) })
 
 	// Only safe once the C side can no longer invoke the callback.
