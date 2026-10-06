@@ -34,7 +34,9 @@ func Handler(log *slog.Logger, m *Manager, who Who) http.Handler {
 	// and model (usage.go); ?since=2006-01-02 limits it.
 	mux.HandleFunc("GET /v1/usage", func(w http.ResponseWriter, r *http.Request) {
 		host, _ := os.Hostname()
-		writeJSON(w, http.StatusOK, map[string]any{"machine": host, "rows": m.Usage(r.URL.Query().Get("since"))})
+		// Rows first: reading them is what brings the limits up to date.
+		rows := m.Usage(r.URL.Query().Get("since"))
+		writeJSON(w, http.StatusOK, map[string]any{"machine": host, "rows": rows, "limits": m.UsageLimits()})
 	})
 	mux.HandleFunc("GET /v1/harnesses", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"harnesses": m.Harnesses()})

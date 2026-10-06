@@ -1181,10 +1181,65 @@ Item {
     // answers shown as they come: asked one after another from here, each
     // call held the window, and a machine away held it the longest.
     property var usageHosts: []
+    // Where each Claude subscription stands (the agent's "limits", Claude
+    // Code's own reports): the phone's UsageView.parseLimits and accounts.
+    property var usagePlans: []
+    function planLimits(machine, l) {
+        if (!l || typeof l !== "object") return null
+        var ws = [], order = { five_hour: 0, seven_day: 1 }
+        for (var k in (l.windows || {})) ws.push({ name: k, utilization: Number(l.windows[k].utilization) || 0, resetsAt: Date.parse(l.windows[k].resets_at) || 0 })
+        ws.sort(function(a, b) { return (a.name in order ? order[a.name] : 2) - (b.name in order ? order[b.name] : 2) })
+        if (ws.length === 0 && !l.status) return null
+        return { machines: [machine], at: Date.parse(l.at) || 0, status: l.status || "", window: l.window || "", overage: !!l.overage, windows: ws }
+    }
+    // Once per account: machines whose windows reset at the same moments share
+    // a subscription; the newest reading among them is shown.
+    function planAccounts(all) {
+        var groups = {}, keys = []
+        for (var i = 0; i < all.length; i++) {
+            var l = all[i]
+            var key = l.windows.map(function(w) { return w.name + "@" + Math.floor(w.resetsAt / 60000) }).sort().join(",")
+            if (!(key in groups)) { groups[key] = []; keys.push(key) }
+            groups[key].push(l)
+        }
+        var out = keys.map(function(k) {
+            var ls = groups[k], newest = ls[0], machines = []
+            for (var j = 0; j < ls.length; j++) {
+                if (ls[j].at > newest.at) newest = ls[j]
+                for (var m = 0; m < ls[j].machines.length; m++) if (machines.indexOf(ls[j].machines[m]) < 0) machines.push(ls[j].machines[m])
+            }
+            return Object.assign({}, newest, { machines: machines.sort() })
+        })
+        return out.sort(function(a, b) { return b.at - a.at })
+    }
+    function planWindowLabel(n) {
+        return n === "five_hour" ? "5 hours" : n === "seven_day" ? "7 days" : n === "seven_day_opus" ? "7 days, Opus"
+             : n === "seven_day_sonnet" ? "7 days, Sonnet" : String(n).replace(/_/g, " ")
+    }
+    function planResets(ms, now) {
+        if (!ms) return "?"
+        now = now || Date.now()
+        var d = new Date(ms)
+        var hm = ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2)
+        return ms - now < 20 * 3600000 ? hm : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getDay()] + " " + hm
+    }
+    function planStatus(l, now) {
+        var w = l.windows.filter(function(x) { return x.name === l.window })[0]
+        var which = l.window ? " (" + planWindowLabel(l.window) + ")" : ""
+        if (l.status === "rejected") return "limit reached" + which + (w ? " — back at " + planResets(w.resetsAt, now) : "")
+        if (l.status === "allowed_warning") return "close to the limit" + which
+        return ""
+    }
+    function planAge(at, now) {
+        if (!at) return "?"
+        var m = Math.floor(((now || Date.now()) - at) / 60000)
+        return m < 1 ? "just now" : m < 60 ? m + " min ago" : m < 48 * 60 ? Math.floor(m / 60) + " h ago" : Math.floor(m / 1440) + " d ago"
+    }
     property var usageWaiting: []
     function loadUsage() {
         root.usageRows = null
         root.usageMissing = []
+        root.usagePlans = []
         var since = usageSince(usageDays)
         root.usageHosts = agentHosts.map(function(h) { return { name: h.name, address: h.address } })
         root.usageWaiting = usageHosts.map(function(h) { return h.name })
@@ -1196,16 +1251,19 @@ Item {
         if (usageWaiting.length === 0) return
         var g = unwrap(callCore("agentGathered", []))
         if (!g || !Array.isArray(g.results)) return
-        var rows = [], missing = [], waiting = []
+        var rows = [], missing = [], waiting = [], limits = []
         for (var i = 0; i < usageHosts.length; i++) {
             var h = usageHosts[i]
             var r = g.results.filter(function(x) { return x.address === h.address })[0]
             if (!r || !r.done) { waiting.push(h.name); continue }
             if (!r.body || !Array.isArray(r.body.rows)) { missing.push(h.name); continue }
             for (var j = 0; j < r.body.rows.length; j++) { var row = r.body.rows[j]; row.machine = h.name; rows.push(row) }
+            var pl = planLimits(h.name, r.body.limits)
+            if (pl) limits.push(pl)
         }
         root.usageWaiting = waiting
         root.usageMissing = missing
+        root.usagePlans = planAccounts(limits)
         // Shown once something came, or everything did.
         if (rows.length > 0 || waiting.length === 0) root.usageRows = rows
     }
@@ -1277,6 +1335,45 @@ Item {
                     Lnk { required property var modelData
                           text: modelData[1]; base: root.usageMeasure === modelData[0] ? cPhosphor : cAsh; font.pixelSize: root.fs(10)
                           onClicked: root.usageMeasure = modelData[0] }
+                }
+            }
+            // Where the subscription stands, whatever the period.
+            Column {
+                Layout.fillWidth: true
+                visible: root.usagePlans.length > 0
+                spacing: root.sz(4)
+                Text { text: "PLAN LIMITS"; color: cAmber; font.family: "monospace"; font.pixelSize: root.fs(10); font.letterSpacing: 1; topPadding: root.sz(6) }
+                Repeater {
+                    model: root.usagePlans
+                    Column {
+                        id: plan
+                        required property var modelData
+                        width: parent.width
+                        spacing: 2
+                        Text { text: plan.modelData.machines.join(", ") + " · as of " + root.planAge(plan.modelData.at); color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(9) }
+                        Text { visible: text !== ""; text: root.planStatus(plan.modelData)
+                               color: plan.modelData.status === "rejected" ? cRust : cAmber; font.family: "monospace"; font.pixelSize: root.fs(10) }
+                        Repeater {
+                            model: plan.modelData.windows
+                            Column {
+                                id: pw
+                                required property var modelData
+                                width: plan.width
+                                spacing: 2
+                                RowLayout {
+                                    width: parent.width
+                                    Text { text: root.planWindowLabel(pw.modelData.name); color: cBone; font.family: "monospace"; font.pixelSize: root.fs(11); Layout.fillWidth: true }
+                                    Text { text: Math.floor(pw.modelData.utilization * 100) + "% · resets " + root.planResets(pw.modelData.resetsAt); color: cBone; font.family: "monospace"; font.pixelSize: root.fs(11) }
+                                }
+                                Rectangle {
+                                    width: parent.width; height: root.sz(5); radius: height / 2; color: cLine
+                                    Rectangle { height: parent.height; radius: parent.radius
+                                                color: pw.modelData.utilization >= 0.9 ? cRust : pw.modelData.utilization >= 0.7 ? cAmber : cPhosphor
+                                                width: parent.width * Math.max(0, Math.min(1, pw.modelData.utilization)) }
+                                }
+                            }
+                        }
+                    }
                 }
             }
             Text { visible: root.usageRows === null; text: "asking the machines…"; color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(11) }

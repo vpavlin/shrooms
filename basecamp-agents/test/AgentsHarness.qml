@@ -66,7 +66,11 @@ Item {
     property bool noConversations: false
     property var gatherAddrs: []
     property int gatheredAsked: 0
-    property var usageBody: ({ machine: "laptop", rows: [
+    property var usageBody: ({ machine: "laptop",
+        limits: { at: "2026-10-06T21:04:00+02:00", status: "rejected", window: "five_hour",
+                  windows: { seven_day: { utilization: 0.49, resets_at: "2026-10-11T11:00:00+02:00" },
+                             five_hour: { utilization: 1, resets_at: "2026-10-06T21:20:00+02:00" } } },
+        rows: [
         { day: "2026-10-05", session: "shrooms", by: "nothing.office", model: "claude-opus-5[1m]", turns: 3, input: 10, cache_read: 1000, cache_write: 200, output: 900, cost_usd: 1.5, busy_ms: 120000 },
         { day: "2026-10-05", session: "notes", by: "", model: "ollama/qwen3", turns: 5, input: 50, cache_read: 0, cache_write: 0, output: 2000, cost_usd: 0, busy_ms: 3600000 } ] })
     property var voiceNow: ({ installed: false, busy: false, step: "", error: "", engine: "spd-say", voice: "en_US-lessac-medium" })
@@ -445,6 +449,17 @@ Item {
                           + " bycost=" + byCost + " busy=" + view.usageHours(secs[0].lines[0].busy)
                           + " since7=" + view.usageSince(7, "2026-10-05T12:00:00") + " sinceAll=[" + view.usageSince(0) + "]"
                           + " first=" + waitingFirst + " then=" + view.usageWaiting.length)
+            // Plan limits: the same account on two machines shows once, newest
+            // reading first, worded as the phone words it.
+            var p0 = view.usagePlans[0]
+            var older = view.planLimits("desk", { at: "2026-10-06T18:21:00+02:00", status: "allowed_warning", window: "five_hour",
+                windows: { five_hour: { utilization: 0.98, resets_at: "2026-10-06T21:20:00+02:00" }, seven_day: { utilization: 0.49, resets_at: "2026-10-11T11:00:00+02:00" } } })
+            var merged = view.planAccounts([older, p0])
+            var now = Date.parse("2026-10-06T21:05:00+02:00")
+            console.error("PLANS n=" + view.usagePlans.length + " windows=" + p0.windows.map(function(w) { return w.name }).join(",")
+                          + " merged=" + merged.length + ":" + merged[0].machines.join("+") + ":" + merged[0].status
+                          + " status=[" + view.planStatus(merged[0], now).replace(/back at .*/, "back at T") + "]"
+                          + " warn=[" + view.planStatus(older, now) + "] label=" + view.planWindowLabel("seven_day"))
             view.usageMeasure = "output"
 
             // The voice section: says what reads now, sets the natural one up.

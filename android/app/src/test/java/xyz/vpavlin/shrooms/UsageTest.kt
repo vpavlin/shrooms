@@ -1,6 +1,7 @@
 package xyz.vpavlin.shrooms
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class UsageTest {
@@ -37,5 +38,35 @@ class UsageTest {
         assertEquals("2026-10-05", UsageView.since(1, today))
         assertEquals("2026-09-29", UsageView.since(7, today))
         assertEquals("", UsageView.since(0, today))
+    }
+
+    // A subscription's limits, as an agent reports them, once per account:
+    // machines whose windows reset at the same moments share one, and the
+    // newest reading among them is the one shown.
+    @Test fun planLimitsPerAccount() {
+        val json = { at: String, five: Double, status: String -> """{"machine":"m","rows":[],"limits":{"at":"$at","status":"$status","window":"five_hour",
+            "windows":{"seven_day":{"utilization":0.49,"resets_at":"2026-10-11T11:00:00+02:00"},
+                       "five_hour":{"utilization":$five,"resets_at":"2026-10-06T21:20:00+02:00"}}}}""" }
+        val laptop = UsageView.parseLimits("laptop", json("2026-10-06T18:21:00+02:00", 0.98, "allowed_warning"))!!
+        val atlas = UsageView.parseLimits("atlas", json("2026-10-06T21:04:00+02:00", 1.0, "rejected"))!!
+        val other = UsageView.parseLimits("vps", """{"limits":{"at":"2026-10-06T10:00:00Z","status":"allowed",
+            "windows":{"five_hour":{"utilization":0.1,"resets_at":"2026-10-06T12:00:00Z"}}}}""")!!
+        assertEquals(listOf("five_hour", "seven_day"), laptop.windows.map { it.name })
+        val accounts = UsageView.accounts(listOf(laptop, other, atlas))
+        assertEquals(2, accounts.size)
+        val shared = accounts.first()
+        assertEquals(listOf("atlas", "laptop"), shared.machines)
+        assertEquals("rejected", shared.status)
+        assertEquals(1.0, shared.windows.first { it.name == "five_hour" }.utilization, 1e-9)
+        assertEquals(listOf("vps"), accounts[1].machines)
+        val now = java.time.OffsetDateTime.parse("2026-10-06T21:05:00+02:00").toInstant().toEpochMilli()
+        assertTrue(UsageView.status(shared, now).startsWith("limit reached (5 hours) — back at "))
+        assertEquals("close to the limit (5 hours)", UsageView.status(laptop, now))
+        assertEquals("", UsageView.status(other, now))
+        assertEquals("7 days", UsageView.windowLabel("seven_day"))
+        assertEquals("1 min ago", UsageView.age(now - 60_000, now))
+        // An agent with nothing to say, or older than limits: none.
+        assertEquals(null, UsageView.parseLimits("x", """{"rows":[]}"""))
+        assertEquals(null, UsageView.parseLimits("x", """{"rows":[],"limits":null}"""))
     }
 }

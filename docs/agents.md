@@ -277,6 +277,19 @@ counting from the last figure counted every dip twice), the log's first
 result only setting where the count starts; busy time is from the asking to
 the answer, a turn left waiting over two hours counted by its own duration.
 
+**Plan limits** (top of "usage", both apps): where each Claude subscription
+stands — the 5-hour and 7-day windows' share used and when each starts again,
+and what the newest request was told (allowed; close to the limit, past 90%;
+limit reached, and when it is back). Claude Code reports this after every turn
+(`rate_limit_event` in its stream, which the agent logs like everything else);
+`GET /v1/usage` returns the newest report among the machine's sessions as
+`limits` (`at`, `status`, `window`, `overage`, `windows.{five_hour,seven_day,…}
+.{utilization, resets_at}`), or null when Claude Code never reported one.
+Machines whose windows reset at the same moments share an account and are
+shown once, with the newest reading. A reading is only as fresh as the last
+turn on that machine, which "as of" says; and it is Claude Code's own stream,
+not a documented API, so the fields are read defensively.
+
 **Unread replies** show as a count on each session in both apps: the
 session's turns (one per reply, counted by the agent) less those there were
 when it was last open on that device with the app in front. Each device

@@ -205,7 +205,7 @@ mkdir -p "$work/agents"
 cp basecamp-agents/Main.qml basecamp-agents/test/AgentsHarness.qml "$work/agents/"
 shot=${AGENTS_SHOT:-$work/agents.png}
 out=$(run "$QML" -I "$work/agents" "$work/agents/AgentsHarness.qml" "$shot")
-echo "$out" | grep -E "^qml: (HOSTS|PROBED|ROWS|STREAMING|PROMPT|CALLS|ATTACHED|SENT|CONVERSATIONS|TAKEOVER|LISTWIDTH)" || true
+echo "$out" | grep -E "^qml: (HOSTS|PROBED|ROWS|STREAMING|PROMPT|CALLS|ATTACHED|SENT|CONVERSATIONS|TAKEOVER|LISTWIDTH|PLANS)" || true
 expect() { echo "$out" | grep -qF "$1" || { echo "FAIL: $2"; exit 1; }; }
 # The first one also says why, when the view did not load at all: a QML
 # module the runner lacks (QtQuick.Dialogs, 2026-10-03) prints nothing else.
@@ -246,6 +246,7 @@ expect "UNDERSCORE=built basecamp_voice_core.lgx for x86_64, really" "underscore
 expect "CZECH=true,false" "Czech is not told from English"
 expect 'SPEAK sentences="Running them|\nFirst session.go, line 654 is fixed.|Then tests." key=shrooms/3 paused=true lit=true read="en:Running them|en:Running them|en:First session.go, line 654 is fixed.|en:Then tests." done=true auto=[cs:Hotovo, všechno běží.] then=[cs:Hotovo, všechno běží.|en:Second reply.] queue=0' "replies are not read sentence by sentence, paused, resumed, skipped and lit, or auto-play reads the past, tool calls, or the same reply twice"
 expect "USAGE asked=/v1/usage?since=D who=laptop:2.0k,nothing:900 where=laptop:8 model=ollama/qwen3,claude-opus-5[1m] bycost=nothing,laptop busy=1h 0m since7=2026-09-29 sinceAll=[] first=laptop:true then=0" "usage is not asked of each machine in the background, or not summed by who, where and which model"
+expect "PLANS n=1 windows=five_hour,seven_day merged=1:desk+laptop:rejected status=[limit reached (5 hours) — back at T] warn=[close to the limit (5 hours)] label=7 days" "plan limits are not read, grouped by account or worded as on the phone"
 expect "VOICE before=[Replies are read with speech-dispatcher (espeak), which sounds robotic.] during=[downloading Piper (25 MB)…] after=[Natural voice: Piper, en_US-lessac-medium. Replies are read with it.] calls=state,setup,state" "the voice section does not say what reads, or does not set the natural voice up"
 expect "CARDCLICK found=true deferred=true" "a click on a session card runs its work inside the card, which a refresh can destroy"
 expect "PLACEHOLDER first=[reaching laptop…] then=[no messages yet]" "an empty pane does not say it is loading, or that it is empty"

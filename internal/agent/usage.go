@@ -38,12 +38,59 @@ type UsageRow struct {
 	BusyMs     int64   `json:"busy_ms"`  // from the asking to the answer
 }
 
+// Limits is where the machine's Claude subscription stands, as Claude Code
+// last reported it (a rate_limit_event, after a turn): each window's share
+// used and when it starts again, and whether the newest request was allowed.
+// Not a documented API — Claude Code's own stream — so read defensively; and
+// only as fresh as the last turn on this machine, which At says.
+type Limits struct {
+	At      time.Time              `json:"at"`
+	Status  string                 `json:"status"`           // allowed, allowed_warning, rejected
+	Window  string                 `json:"window,omitempty"` // which window the status is about
+	Overage bool                   `json:"overage,omitempty"`
+	Windows map[string]LimitWindow `json:"windows"` // five_hour, seven_day, …
+}
+
+// LimitWindow is one window: the share of it used (0 to 1) and when it resets.
+type LimitWindow struct {
+	Utilization float64   `json:"utilization"`
+	ResetsAt    time.Time `json:"resets_at"`
+}
+
+type rawLimits struct {
+	Status         string   `json:"status"`
+	ResetsAt       int64    `json:"resetsAt"`
+	RateLimitType  string   `json:"rateLimitType"`
+	Utilization    *float64 `json:"utilization"`
+	IsUsingOverage bool     `json:"isUsingOverage"`
+	UnifiedWindows map[string]struct {
+		Utilization float64 `json:"utilization"`
+		ResetsAt    int64   `json:"resetsAt"`
+	} `json:"unifiedWindows"`
+}
+
+func (r *rawLimits) limits(at time.Time) *Limits {
+	l := &Limits{At: at, Status: r.Status, Window: r.RateLimitType, Overage: r.IsUsingOverage, Windows: map[string]LimitWindow{}}
+	for name, w := range r.UnifiedWindows {
+		l.Windows[name] = LimitWindow{Utilization: w.Utilization, ResetsAt: time.Unix(w.ResetsAt, 0)}
+	}
+	// An older Claude Code reports only the window the status is about.
+	if _, ok := l.Windows[r.RateLimitType]; !ok && r.RateLimitType != "" && r.Utilization != nil {
+		l.Windows[r.RateLimitType] = LimitWindow{Utilization: *r.Utilization, ResetsAt: time.Unix(r.ResetsAt, 0)}
+	}
+	if l.Status == "" && len(l.Windows) == 0 {
+		return nil
+	}
+	return l
+}
+
 type usageKey struct{ day, by, model string }
 
 // usageScan reads one session's log as it grows: only what was added since.
 type usageScan struct {
 	offset int64
 	rows   map[usageKey]*UsageRow
+	limits *Limits // the newest the log holds
 	turnState
 }
 
@@ -106,6 +153,20 @@ func (m *Manager) Usage(since string) []UsageRow {
 	return out
 }
 
+// UsageLimits is the newest subscription reading across this machine's
+// sessions, from what Usage last read; nil when Claude Code never reported one.
+func (m *Manager) UsageLimits() *Limits {
+	m.usage.mu.Lock()
+	defer m.usage.mu.Unlock()
+	var newest *Limits
+	for _, sc := range m.usage.scans {
+		if sc.limits != nil && (newest == nil || sc.limits.At.After(newest.At)) {
+			newest = sc.limits
+		}
+	}
+	return newest
+}
+
 // read takes in what the log gained since the last read. A log shorter than
 // what was read is a session made again: read from the start.
 func (sc *usageScan) read(path, session, harness string) {
@@ -155,14 +216,21 @@ func (sc *usageScan) event(e Event, session, harness string) {
 			Message struct {
 				Usage *rawUsage
 			}
-			Usage        *rawUsage
-			TotalCostUSD *float64 `json:"total_cost_usd"`
-			DurationMs   int64    `json:"duration_ms"`
+			Usage         *rawUsage
+			TotalCostUSD  *float64   `json:"total_cost_usd"`
+			DurationMs    int64      `json:"duration_ms"`
+			RateLimitInfo *rawLimits `json:"rate_limit_info"`
 		}
 		if json.Unmarshal(e.Data, &d) != nil {
 			return
 		}
 		switch d.Type {
+		case "rate_limit_event":
+			if d.RateLimitInfo != nil {
+				if l := d.RateLimitInfo.limits(e.Time); l != nil {
+					sc.limits = l
+				}
+			}
 		case "system":
 			if d.Subtype == "init" && d.Model != "" {
 				sc.model = d.Model

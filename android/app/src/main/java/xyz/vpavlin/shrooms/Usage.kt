@@ -47,11 +47,98 @@ data class UsageRow(
     val costUsd: Double, val busyMs: Long,
 )
 
+/** One window of a Claude subscription: the share used (0..1) and when it starts again. */
+data class PlanWindow(val name: String, val utilization: Double, val resetsAt: Long)
+
+/**
+ * Where a Claude subscription stands, as Claude Code last reported it on
+ * [machines] (several when they share one account): the newest request's
+ * [status] and the [window] it was about, and every window.
+ */
+data class PlanLimits(
+    val machines: List<String>, val at: Long, val status: String, val window: String,
+    val overage: Boolean, val windows: List<PlanWindow>,
+)
+
+/** One machine's answer: its rows, and its subscription's limits if Claude Code ever reported them. */
+data class UsageAnswer(val rows: List<UsageRow>, val limits: PlanLimits?)
+
 /** One line of the dashboard: a device, machine or model, and its sums. */
 data class UsageLine(val name: String, val turns: Int, val output: Long, val input: Long, val costUsd: Double, val busyMs: Long)
 
 object UsageView {
     enum class Measure(val label: String) { OUTPUT("tokens out"), TURNS("turns"), COST("cost"), BUSY("busy") }
+
+    fun answer(machine: String, json: String) = UsageAnswer(parse(machine, json), parseLimits(machine, json))
+
+    private fun epochMs(t: String): Long = runCatching { java.time.OffsetDateTime.parse(t).toInstant().toEpochMilli() }.getOrDefault(0L)
+
+    /** The machine's limits, or null when its agent has none to report (or is older than them). */
+    fun parseLimits(machine: String, json: String): PlanLimits? {
+        val o = JSONObject(json).optJSONObject("limits") ?: return null
+        val ws = o.optJSONObject("windows")
+        val windows = ws?.keys()?.asSequence()?.map { k ->
+            val w = ws.getJSONObject(k)
+            PlanWindow(k, w.optDouble("utilization", 0.0), epochMs(w.optString("resets_at")))
+        }?.sortedBy { windowOrder(it.name) }?.toList().orEmpty()
+        if (windows.isEmpty() && o.optString("status").isEmpty()) return null
+        return PlanLimits(listOf(machine), epochMs(o.optString("at")), o.optString("status"), o.optString("window"),
+            o.optBoolean("overage"), windows)
+    }
+
+    private fun windowOrder(name: String) = when (name) { "five_hour" -> 0; "seven_day" -> 1; else -> 2 }
+
+    /**
+     * One entry per account: machines that report the same windows resetting
+     * at the same moments share a subscription, so they are shown once, with
+     * the newest reading among them.
+     */
+    fun accounts(all: List<PlanLimits>): List<PlanLimits> =
+        all.groupBy { l -> l.windows.map { it.name to it.resetsAt / 60_000 }.sortedBy { it.first } }
+            .map { (_, ls) ->
+                val newest = ls.maxBy { it.at }
+                newest.copy(machines = ls.flatMap { it.machines }.distinct().sorted())
+            }
+            .sortedByDescending { it.at }
+
+    fun windowLabel(name: String): String = when (name) {
+        "five_hour" -> "5 hours"
+        "seven_day" -> "7 days"
+        "seven_day_opus" -> "7 days, Opus"
+        "seven_day_sonnet" -> "7 days, Sonnet"
+        else -> name.replace('_', ' ')
+    }
+
+    /** When a window starts again, as a person reads it: a time today, else a day and time. */
+    fun resets(at: Long, now: Long = System.currentTimeMillis()): String {
+        if (at <= 0) return "?"
+        val z = java.time.ZoneId.systemDefault()
+        val t = java.time.Instant.ofEpochMilli(at).atZone(z)
+        val p = if (at - now < 20 * 3600_000L) "HH:mm" else "EEE HH:mm"
+        return t.format(java.time.format.DateTimeFormatter.ofPattern(p, java.util.Locale.ENGLISH))
+    }
+
+    /** What the newest request was told, when it is worth saying. */
+    fun status(l: PlanLimits, now: Long = System.currentTimeMillis()): String {
+        val w = l.windows.firstOrNull { it.name == l.window }
+        val which = if (l.window.isEmpty()) "" else " (" + windowLabel(l.window) + ")"
+        return when (l.status) {
+            "rejected" -> "limit reached$which" + (w?.let { " — back at " + resets(it.resetsAt, now) } ?: "")
+            "allowed_warning" -> "close to the limit$which"
+            else -> ""
+        }
+    }
+
+    fun age(at: Long, now: Long = System.currentTimeMillis()): String {
+        val m = (now - at) / 60_000
+        return when {
+            at <= 0 -> "?"
+            m < 1 -> "just now"
+            m < 60 -> "${m} min ago"
+            m < 48 * 60 -> "${m / 60} h ago"
+            else -> "${m / (24 * 60)} d ago"
+        }
+    }
 
     fun parse(machine: String, json: String): List<UsageRow> {
         val a = JSONObject(json).optJSONArray("rows") ?: return emptyList()
@@ -117,14 +204,14 @@ fun UsageScreen(hosts: List<AgentHost>, onBack: () -> Unit) {
     // seconds while this is open, and restarting on each refresh never let a
     // machine that was away time out — the screen asked forever (2026-10-06).
     val targets = remember(hosts) { hosts.map { it.name to it.address }.distinct() }
-    var got by remember { mutableStateOf<Map<String, List<UsageRow>?>>(emptyMap()) }
+    var got by remember { mutableStateOf<Map<String, UsageAnswer?>>(emptyMap()) }
     LaunchedEffect(days, targets) {
         got = emptyMap()
         val since = UsageView.since(days)
         coroutineScope {
             for ((name, address) in targets) launch {
                 val r = withContext(Dispatchers.IO) {
-                    runCatching { UsageView.parse(name, AgentClient(address).usage(since)) }.getOrNull()
+                    runCatching { UsageView.answer(name, AgentClient(address).usage(since)) }.getOrNull()
                 }
                 got = got + (name to r)
             }
@@ -132,7 +219,8 @@ fun UsageScreen(hosts: List<AgentHost>, onBack: () -> Unit) {
     }
     val waiting = targets.map { it.first }.filter { it !in got }
     val missing = got.filterValues { it == null }.keys.toList()
-    val rows = got.values.filterNotNull().flatten().takeIf { it.isNotEmpty() || waiting.isEmpty() }
+    val rows = got.values.filterNotNull().flatMap { it.rows }.takeIf { it.isNotEmpty() || waiting.isEmpty() }
+    val plans = UsageView.accounts(got.values.mapNotNull { it?.limits })
     Column(Modifier.fillMaxSize().background(Palette.Void).padding(horizontal = 16.dp, vertical = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("‹", color = Palette.Phosphor, style = MaterialTheme.typography.titleLarge,
@@ -149,6 +237,9 @@ fun UsageScreen(hosts: List<AgentHost>, onBack: () -> Unit) {
         }
         val r = rows
         Column(Modifier.verticalScroll(rememberScrollState()).padding(top = 8.dp)) {
+            // Where the subscription stands, whatever the period: how close to
+            // its limits, and when they start again.
+            if (plans.isNotEmpty()) PlanSection(plans)
             when {
                 r == null -> Text("asking the machines…", style = MaterialTheme.typography.bodySmall, color = Palette.Ash)
                 r.isEmpty() -> Text("nothing used in this period", style = MaterialTheme.typography.bodySmall, color = Palette.Ash)
@@ -162,6 +253,38 @@ fun UsageScreen(hosts: List<AgentHost>, onBack: () -> Unit) {
                 style = MaterialTheme.typography.labelSmall, color = Palette.Ash, modifier = Modifier.padding(top = 10.dp))
             if (missing.isNotEmpty()) Text("not reached: " + missing.joinToString(", "),
                 style = MaterialTheme.typography.labelSmall, color = Palette.Amber, modifier = Modifier.padding(top = 10.dp))
+        }
+    }
+}
+
+@Composable
+private fun PlanSection(plans: List<PlanLimits>) {
+    Text("PLAN LIMITS", style = MaterialTheme.typography.labelSmall, color = Palette.Amber,
+        modifier = Modifier.padding(top = 8.dp, bottom = 6.dp))
+    for (p in plans) {
+        Column(Modifier.padding(vertical = 4.dp)) {
+            Text(p.machines.joinToString(", ") + " · as of " + UsageView.age(p.at),
+                style = MaterialTheme.typography.labelSmall, color = Palette.Ash)
+            val st = UsageView.status(p)
+            if (st.isNotEmpty()) Text(st, style = MaterialTheme.typography.labelSmall,
+                color = if (p.status == "rejected") Palette.Rust else Palette.Amber, modifier = Modifier.padding(top = 2.dp))
+            for (w in p.windows) {
+                val colour = when {
+                    w.utilization >= 0.9 -> Palette.Rust
+                    w.utilization >= 0.7 -> Palette.Amber
+                    else -> Palette.Phosphor
+                }
+                Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(UsageView.windowLabel(w.name), style = MaterialTheme.typography.bodyMedium, color = Palette.Bone,
+                        modifier = Modifier.weight(1f))
+                    Text("${(w.utilization * 100).toInt()}% · resets " + UsageView.resets(w.resetsAt),
+                        style = MaterialTheme.typography.labelMedium, color = Palette.Bone)
+                }
+                Box(Modifier.fillMaxWidth().padding(top = 3.dp).height(6.dp).background(Palette.Line, RoundedCornerShape(3.dp))) {
+                    Box(Modifier.fillMaxWidth(w.utilization.toFloat().coerceIn(0f, 1f)).height(6.dp)
+                        .background(colour, RoundedCornerShape(3.dp)))
+                }
+            }
         }
     }
 }

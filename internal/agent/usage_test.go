@@ -159,3 +159,46 @@ func TestUsageReadsALog(t *testing.T) {
 		t.Errorf("counted again: %+v", r)
 	}
 }
+
+// Where the subscription stands is Claude Code's newest report on this
+// machine, whichever session it came from: both windows, with what the
+// newest request was told. An older Claude Code reports only one window.
+func TestUsageLimitsAreTheNewestReport(t *testing.T) {
+	at := time.Date(2026, 10, 6, 18, 21, 0, 0, time.Local)
+	write := func(name string, lines ...string) string {
+		var b strings.Builder
+		for i, l := range lines {
+			e := map[string]any{"seq": i + 1, "time": at.Add(time.Duration(i) * time.Minute), "kind": "claude", "data": json.RawMessage(l)}
+			line, _ := json.Marshal(e)
+			b.Write(line)
+			b.WriteByte('\n')
+		}
+		p := filepath.Join(t.TempDir(), name+".jsonl")
+		os.WriteFile(p, []byte(b.String()), 0o600)
+		return p
+	}
+	older := write("a", `{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour","utilization":0.4,"resetsAt":1791314400}}`)
+	newer := write("b",
+		`{"type":"result","subtype":"success"}`,
+		`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","resetsAt":1791314400,"rateLimitType":"five_hour","utilization":0.98,"isUsingOverage":false,"unifiedWindows":{"five_hour":{"utilization":0.98,"resetsAt":1791314400},"seven_day":{"utilization":0.49,"resetsAt":1791709200}}}}`)
+
+	m := &Manager{}
+	m.usage.scans = map[string]*usageScan{}
+	for name, p := range map[string]string{"a": older, "b": newer} {
+		sc := &usageScan{rows: map[usageKey]*UsageRow{}}
+		sc.read(p, name, "claude")
+		m.usage.scans[name] = sc
+	}
+	l := m.UsageLimits()
+	if l == nil || l.Status != "allowed_warning" || l.Window != "five_hour" || !l.At.Equal(at.Add(time.Minute)) {
+		t.Fatalf("newest: %+v", l)
+	}
+	fh, sd := l.Windows["five_hour"], l.Windows["seven_day"]
+	if !near(fh.Utilization, 0.98) || !fh.ResetsAt.Equal(time.Unix(1791314400, 0)) || !near(sd.Utilization, 0.49) || !sd.ResetsAt.Equal(time.Unix(1791709200, 0)) {
+		t.Errorf("windows: %+v", l.Windows)
+	}
+	one := m.usage.scans["a"].limits
+	if one == nil || len(one.Windows) != 1 || !near(one.Windows["five_hour"].Utilization, 0.4) {
+		t.Errorf("an older report's one window: %+v", one)
+	}
+}
