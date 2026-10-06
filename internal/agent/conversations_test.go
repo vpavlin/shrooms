@@ -34,8 +34,12 @@ func TestConversationsAreListedNewestFirstWithWhereTheyRan(t *testing.T) {
 	base := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", base)
 	now := time.Now()
-	writeTranscript(t, base, "old-1", "/home/x/notes", "what is this", "notes", now.Add(-48*time.Hour))
-	writeTranscript(t, base, "new-2", "/home/x/logos-vpn", "fix the tether", "Fixed by moving ports.", now)
+	notes, vpn := t.TempDir(), t.TempDir()
+	writeTranscript(t, base, "old-1", notes, "what is this", "notes", now.Add(-48*time.Hour))
+	writeTranscript(t, base, "new-2", vpn, "fix the tether", "Fixed by moving ports.", now)
+	// Ran on another machine, its transcript copied here with ~/.claude:
+	// newest of all, and not listed — nor counted against the limit.
+	writeTranscript(t, base, "elsewhere-3", "/home/somebody-else/duet", "from atlas", "yes", now.Add(time.Hour))
 
 	m := newTestManager(t, t.TempDir())
 	cs, err := m.Conversations(10)
@@ -45,7 +49,7 @@ func TestConversationsAreListedNewestFirstWithWhereTheyRan(t *testing.T) {
 	if len(cs) != 2 || cs[0].ID != "new-2" || cs[1].ID != "old-1" {
 		t.Fatalf("order: %+v", cs)
 	}
-	if cs[0].Dir != "/home/x/logos-vpn" || cs[0].LastUser != "fix the tether" || cs[0].LastAssistant != "Fixed by moving ports." {
+	if cs[0].Dir != vpn || cs[0].LastUser != "fix the tether" || cs[0].LastAssistant != "Fixed by moving ports." {
 		t.Errorf("first: %+v", cs[0])
 	}
 	if one, _ := m.Conversations(1); len(one) != 1 {
@@ -188,5 +192,27 @@ func TestTheConversationsAPI(t *testing.T) {
 	r, _ = http.Post(srv.URL+fmt.Sprintf("/v1/terminals/%d/stop", os.Getpid()), "", nil)
 	if r.StatusCode != http.StatusNotFound {
 		t.Errorf("stopping a non-terminal: %s", r.Status)
+	}
+}
+
+// A conversation that ran on another machine — its transcript came with a
+// copied ~/.claude — is not continued here, and nothing is made for it: a
+// new session makes a missing directory, continuing one does not.
+func TestAConversationFromElsewhereIsNotContinued(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", base)
+	gone := filepath.Join(t.TempDir(), "not-here", "duet")
+	writeTranscript(t, base, "elsewhere-1", gone, "hi", "hello", time.Now())
+
+	m := newTestManager(t, t.TempDir())
+	_, err := m.Adopt("took", "", "elsewhere-1")
+	if err == nil || !strings.Contains(err.Error(), "not on this machine") {
+		t.Fatalf("continued a conversation from elsewhere: %v", err)
+	}
+	if _, err := os.Stat(filepath.Dir(gone)); !os.IsNotExist(err) {
+		t.Fatalf("made its directory: %v", err)
+	}
+	if _, ok := m.Get("took"); ok {
+		t.Fatal("a session was left behind")
 	}
 }

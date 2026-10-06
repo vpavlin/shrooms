@@ -117,7 +117,7 @@ On each machine's overlay addresses, port 7387.
 | `POST /v1/sessions/{name}/voice?name=&id=` | a voice note as a turn: kept like a file, answered at once (202 `{path}`); transcribed here in the background and sent as the device's message (`message` event with `voice`: the recording's path). Its progress is a `voice` event (`transcribing`, or `failed` with `error`). The same `id` again answers 200 `{"duplicate":true}` |
 | `POST /v1/sessions/{name}/voice/{id}/retry` | transcribe a failed voice note again, from its kept recording |
 | `POST /v1/sessions/{name}/transcribe?name=&lang=` | a voice note, kept like a file and transcribed on this machine; returns `{path, text}`. Parakeet v3 (the default) detects the language and ignores `lang`; with a Whisper model (`--stt-model`), naming it halves the time |
-| `GET /v1/conversations?limit=N` | this machine's Claude Code conversations, newest first: where each ran, its last exchange, the session continuing it, and any terminal `claude` open in the same directory (with its tmux session) |
+| `GET /v1/conversations?limit=N` | this machine's Claude Code conversations, newest first: where each ran, its last exchange, the session continuing it, and any terminal `claude` open in the same directory (with its tmux session). Only those whose directory is on this machine: a `~/.claude` copied from another machine brings its transcripts along, and those cannot be continued here (`POST /v1/sessions {name, resume}` refuses them, and never makes their directory) |
 | `POST /v1/terminals/{pid}/stop` | end a terminal's `claude` so its conversation can be continued here; only Claude Code run by this user by hand |
 | `GET /v1/peers` | the mesh as this machine sees it, so a client that knows one agent finds the rest |
 

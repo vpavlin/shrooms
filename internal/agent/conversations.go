@@ -73,9 +73,6 @@ func (m *Manager) Conversations(limit int) ([]Conversation, error) {
 		}
 	}
 	sort.Slice(fs, func(i, j int) bool { return fs[i].info.ModTime().After(fs[j].info.ModTime()) })
-	if limit > 0 && len(fs) > limit {
-		fs = fs[:limit]
-	}
 
 	adopted := map[string]string{}
 	m.mu.Lock()
@@ -93,6 +90,9 @@ func (m *Manager) Conversations(limit int) ([]Conversation, error) {
 
 	out := make([]Conversation, 0, len(fs))
 	for _, f := range fs {
+		if limit > 0 && len(out) >= limit {
+			break
+		}
 		c := Conversation{
 			ID:       strings.TrimSuffix(filepath.Base(f.path), ".jsonl"),
 			Modified: f.info.ModTime(),
@@ -112,6 +112,14 @@ func (m *Manager) Conversations(limit int) ([]Conversation, error) {
 				}
 			}
 			fh.Close()
+		}
+		// Not one that ran somewhere else: a ~/.claude copied from another
+		// machine (to bring its login along) brings that machine's
+		// transcripts too, in directories this one does not have — the
+		// Duet listed atlas's /home/vpavlin/duet, and continuing it tried to
+		// make /home/vpavlin (2026-10-06).
+		if c.Dir != "" && !isDir(c.Dir) {
+			continue
 		}
 		for _, t := range terms {
 			if c.Dir != "" && t.Dir == c.Dir {
@@ -277,6 +285,12 @@ func (m *Manager) Adopt(name, dir, conversation string) (Info, error) {
 			return Info{}, errors.New("the conversation does not say which directory it ran in")
 		}
 	}
+	// Continued where it ran, which must be here already: a new session
+	// makes a missing directory, but a conversation whose directory is not
+	// on this machine ran on another one and was copied here with ~/.claude.
+	if !isDir(dir) {
+		return Info{}, fmt.Errorf("it ran in %s, which is not on this machine: its transcript was copied here from another one", dir)
+	}
 	m.mu.Lock()
 	for _, s := range m.sessions {
 		s.mu.Lock()
@@ -299,4 +313,9 @@ func (m *Manager) Adopt(name, dir, conversation string) (Info, error) {
 	err = m.save()
 	m.mu.Unlock()
 	return s.Info(), err
+}
+
+func isDir(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.IsDir()
 }
