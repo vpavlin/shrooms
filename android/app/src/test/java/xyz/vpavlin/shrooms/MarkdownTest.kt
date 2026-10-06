@@ -144,6 +144,18 @@ class AgentListTest {
 
 class LinksTest {
     // Bare URLs as Claude writes them, ending a sentence or in brackets.
+    // Agents write **https://…**: the closing marks are not part of the link,
+    // in markdown or in what was typed.
+    @Test fun emphasisAroundAUrlIsNotPartOfIt() {
+        val u = "https://github.com/vpavlin/shrooms/blob/master/docs/adr/037-agents-in-cages.md"
+        val bold = Markdown.inline("See **$u** now").single { it.link != null }
+        assertEquals(u, bold.link)
+        assertTrue(bold.bold)
+        assertEquals(u, Markdown.links("**$u**").single { it.link != null }.link)
+        assertEquals(u, Markdown.links("_${u}_").single { it.link != null }.link)
+        assertEquals("https://x.io/a*b", Markdown.links("https://x.io/a*b").single { it.link != null }.link)
+    }
+
     @Test fun bareUrlsBecomeLinksWithoutTheirPunctuation() {
         val s = Markdown.inline("Same link: http://vps.office.mesh:8099/shrooms-preview.apk. Done")
         val link = s.single { it.link != null }

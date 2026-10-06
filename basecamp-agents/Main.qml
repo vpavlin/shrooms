@@ -76,8 +76,9 @@ Item {
         root.saidBad = false
     }
     // Bare URLs as links, by the phone's rule (Markdown.kt bareUrl): no
-    // trailing punctuation, nothing inside brackets or quotes.
-    readonly property var bareUrl: /https?:\/\/[^\s<>()\[\]`"']+[^\s<>()\[\]`"'.,;:!?]/g
+    // trailing punctuation or emphasis marks (**https://…** kept its closing
+    // ** in the link), nothing inside brackets or quotes.
+    readonly property var bareUrl: /https?:\/\/[^\s<>()\[\]`"']+[^\s<>()\[\]`"'.,;:!?*_~]/g
     // Markdown with its bare URLs made autolinks (<url>), leaving code — fenced
     // or inline — and URLs already in a link alone. Qt's markdown does not
     // link a bare URL by itself.

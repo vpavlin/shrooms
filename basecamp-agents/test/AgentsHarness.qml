@@ -299,6 +299,7 @@ Item {
             // code and links already written are left alone.
             console.error("LINKMD=" + view.linkMarkdown("see https://pi.dev, or [docs](https://x.io/a) and `curl http://no.pe`\n```\nhttp://in.code\n```\n<https://already.io>"))
             console.error("LINKPLAIN=" + view.linkPlain("a <b> & http://vps.office.mesh:8099/x."))
+            console.error("LINKBOLD=" + view.linkMarkdown("see **https://x.io/a.md** and _https://y.io/b_") + " | " + view.linkPlain("**https://x.io/a*b**"))
 
             // A link goes to the core, which may open it (the view's sandbox
             // may not); one it refuses is copied and said so.

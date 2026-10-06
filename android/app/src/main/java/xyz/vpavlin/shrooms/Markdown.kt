@@ -105,7 +105,9 @@ object Markdown {
     private fun cells(row: String): List<List<Span>> =
         row.trim().removePrefix("|").removeSuffix("|").split('|').map { inline(it.trim()) }
 
-    private val bareUrl = Regex("""https?://[^\s<>()\[\]`"']+[^\s<>()\[\]`"'.,;:!?]""")
+    // Not ending in punctuation, nor in markdown's emphasis marks: an agent
+    // writes **https://…** and the closing ** was taken into the link.
+    private val bareUrl = Regex("""https?://[^\s<>()\[\]`"']+[^\s<>()\[\]`"'.,;:!?*_~]""")
 
     /**
      * Plain text with its bare URLs made links, and nothing else touched — for

@@ -234,6 +234,7 @@ expect 'LINKMD=see <https://pi.dev>, or [docs](https://x.io/a) and `curl http://
 expect '<https://already.io>' "an autolink was wrapped twice"
 if echo "$out" | grep -qF '<http://in.code>' || echo "$out" | grep -qF '<<https://already.io>>'; then echo "FAIL: a URL in a code block or an autolink was made a link again"; exit 1; fi
 expect 'LINKPLAIN=<span style="white-space:pre-wrap">a &lt;b&gt; &amp; <a href="http://vps.office.mesh:8099/x" style="color:#5AA9FF">http://vps.office.mesh:8099/x</a>.</span>' "a bare URL in typed text is not a link, or the text is not escaped"
+expect 'LINKBOLD=see **<https://x.io/a.md>** and _<https://y.io/b>_ | <span style="white-space:pre-wrap">**<a href="https://x.io/a*b" style="color:#5AA9FF">https://x.io/a*b</a>**</span>' "emphasis around a URL was taken into the link"
 expect "EXPLAIN=true,no session" "a core older than the view is not explained"
 expect "OPENURL=https://example.org/a refused=true" "a link is not handed to the core to open, or a refused one is lost"
 expect "FLAKY stayed=laptop:2 now=true later=false forgotten=0" "a machine that misses a round vanishes, or is never greyed or forgotten"
