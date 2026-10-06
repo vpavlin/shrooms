@@ -108,6 +108,33 @@ echo "==> $DIST"
 find "$DIST" -maxdepth 2 -type f -printf '  %P\n' | sort
 echo
 echo "built for: $(file -b "$DIST/bin/shrooms" | cut -d, -f1-2)"
+
+# arm64: run it on the oldest core it must run on. The library is native code
+# built elsewhere; one built with -march=native on a CPU with LSE atomics died
+# with SIGILL on a Chromebook's Cortex-A53/A73 (ARMv8.0, 2026-10-06), while the
+# Pi 5 and plain emulation, both with LSE, ran it fine. QEMU_CPU makes the
+# emulator an A53. Passing needs the daemon to have started the delivery node
+# and gone on waiting, not merely not to have crashed.
+if [ "$ARCH" = arm64 ] && [ "${SKIP_A53:-0}" != 1 ]; then
+    echo "==> running it on an emulated Cortex-A53 (ARMv8.0, no LSE)"
+    # Into a file, not a variable piped to grep -q: with pipefail, grep -q
+    # stopping at its match kills printf with SIGPIPE and a match reads as none.
+    a53=$(mktemp)
+    docker run --rm --platform linux/arm64 -e QEMU_CPU=cortex-a53 -v "$PWD/$DIST:/d:ro" \
+        debian:trixie timeout 150 /d/bin/shrooms daemon > "$a53" 2>&1 || true
+    if grep -q "SIGILL" "$a53"; then
+        echo "FAIL: illegal instruction on an ARMv8.0 core — the library was built for a newer CPU" >&2
+        echo "      (rebuild it with -d:disableMarchNative, docker/build-lib.Dockerfile)" >&2
+        rm -f "$a53"; exit 1
+    fi
+    grep -q "waiting to be told which mesh" "$a53" || {
+        echo "FAIL: the daemon did not get as far as waiting for a mesh on the A53:" >&2
+        grep -v "^TRC\|^DBG" "$a53" | tail -8 >&2
+        rm -f "$a53"; exit 1
+    }
+    rm -f "$a53"
+    echo "    ok: the delivery node starts on ARMv8.0"
+fi
 echo "glibc requirement:"
 objdump -T "$DIST/bin/shrooms" 2>/dev/null \
     | grep -oE 'GLIBC_[0-9.]+' | sort -Vu | tail -1 | sed 's/^/  /'

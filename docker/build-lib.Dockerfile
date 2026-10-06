@@ -152,7 +152,7 @@ RUN cd /src \
            && make librln \
            && bash /src/docker/build-lib-nimblefree.sh /src; \
        else \
-           make liblogosdelivery; \
+           make liblogosdelivery NIMFLAGS="-d:disableMarchNative"; \
        fi
 
 # tinycbor, on the new build system only: master's generated header includes <tinycbor/cbor.h>

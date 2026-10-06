@@ -233,7 +233,14 @@ export NIM_PARAMS="--passL:$LIBRLN --passL:-lm"
 CPU="--cpu:amd64"
 [ "$(uname -m)" = "aarch64" ] && CPU="--cpu:arm64"
 
+# -d:disableMarchNative: without it logos-delivery's config.nims passes
+# -march=native on every Linux build, so the library takes on the instruction
+# set of whatever machine built it. An arm64 build made on a CPU with LSE
+# atomics died with SIGILL on an ARMv8.0 Chromebook (Cortex-A53/A73,
+# 2026-10-06); with it, arm64 gets GCC's generic armv8-a (outline atomics:
+# LSE where the CPU has it, found at run time) and amd64 -mssse3.
 nim c --out:build/liblogosdelivery.so --threads:on --app:lib --opt:speed --noMain --mm:refc --header \
+    -d:disableMarchNative \
     -d:metrics --nimMainPrefix:liblogosdelivery --skipParentCfg:off -d:discv5_protocol_id=d5waku \
     $CPU $NIM_PARAMS -d:chronicles_line_numbers --warning:Deprecated:off --warning:UnusedImport:on \
     -d:chronicles_log_level=TRACE $PATHS library/liblogosdelivery.nim
