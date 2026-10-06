@@ -266,6 +266,10 @@ Item {
             seen[h.name] = true
             hosts.push({ name: h.name, mesh: h.mesh, address: h.address,
                          sessions: (h.list && h.list.sessions) ? h.list.sessions : [] })
+            // Where its subscription stands comes with the list: kept for the
+            // usage link at a glance (one that misses a round keeps its last).
+            var pl = h.list ? planLimits(h.name, h.list.limits) : null
+            if (pl) { var lv = Object.assign({}, liveLimits); lv[h.name] = pl; root.liveLimits = lv }
         }
         var now = Date.now()
         root.nowMs = now
@@ -1184,6 +1188,25 @@ Item {
     // Where each Claude subscription stands (the agent's "limits", Claude
     // Code's own reports): the phone's UsageView.parseLimits and accounts.
     property var usagePlans: []
+    // Each machine's newest reading, from its session list (refreshAgents).
+    property var liveLimits: ({})
+    // The session quota at a glance — the phone's UsageView.glance: the
+    // 5-hour window's share on the busiest account, and a level: 0 fine, 1
+    // from half of it (slow down), 2 from 80% or once a request was refused.
+    function planGlance(plans) {
+        var top = null
+        for (var i = 0; i < plans.length; i++) {
+            var p = plans[i], w = p.windows.filter(function(x) { return x.name === "five_hour" })[0]
+            if (!w) w = p.windows.slice().sort(function(a, b) { return b.utilization - a.utilization })[0]
+            var share = w ? w.utilization : 0, refused = p.status === "rejected"
+            var rank = refused ? 2 : share
+            if (!top || rank > top.rank) top = { rank: rank, share: share, refused: refused }
+        }
+        if (!top) return null
+        return { percent: Math.floor(top.share * 100), level: top.refused || top.share >= 0.8 ? 2 : top.share >= 0.5 ? 1 : 0 }
+    }
+    function planLevel(u) { return u >= 0.8 ? 2 : u >= 0.5 ? 1 : 0 }
+    readonly property var usageGlance: planGlance(planAccounts(Object.keys(liveLimits).map(function(k) { return liveLimits[k] })))
     function planLimits(machine, l) {
         if (!l || typeof l !== "object") return null
         var ws = [], order = { five_hour: 0, seven_day: 1 }
@@ -1370,7 +1393,7 @@ Item {
                                 Rectangle {
                                     width: parent.width; height: root.sz(5); radius: height / 2; color: cLine
                                     Rectangle { height: parent.height; radius: parent.radius
-                                                color: pw.modelData.utilization >= 0.9 ? cRust : pw.modelData.utilization >= 0.7 ? cAmber : cPhosphor
+                                                color: root.planLevel(pw.modelData.utilization) === 2 ? cRust : root.planLevel(pw.modelData.utilization) === 1 ? cAmber : cPhosphor
                                                 width: parent.width * Math.max(0, Math.min(1, pw.modelData.utilization)) }
                                 }
                             }
@@ -1728,7 +1751,10 @@ Item {
                     Pulse {}
                     Text { text: "AGENTS"; color: cPhosphor; font.family: "monospace"; font.pixelSize: root.fs(12); font.letterSpacing: 1.5 }
                     Item { Layout.fillWidth: true }
-                    Lnk { visible: root.haveCore; text: "usage"; base: cAsh; font.pixelSize: root.fs(10); onClicked: Qt.callLater(root.openUsage) }
+                    // The session quota at a glance: amber from half, red from 80%.
+                    Lnk { visible: root.haveCore; text: root.usageGlance ? "usage " + root.usageGlance.percent + "%" : "usage"
+                          base: !root.usageGlance ? cAsh : root.usageGlance.level === 2 ? cRust : root.usageGlance.level === 1 ? cAmber : cAsh
+                          font.pixelSize: root.fs(10); onClicked: Qt.callLater(root.openUsage) }
                     Lnk { visible: root.haveCore; text: "voice"; base: cAsh; font.pixelSize: root.fs(10); onClicked: Qt.callLater(root.openVoice) }
                 }
                 Text {

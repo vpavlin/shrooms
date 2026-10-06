@@ -86,7 +86,7 @@ data class AgentEvent(
     val time: Long = 0,
 )
 
-class AgentClient(address: String) {
+class AgentClient(private val address: String) {
     private val base: String
 
     init {
@@ -95,7 +95,11 @@ class AgentClient(address: String) {
     }
 
     fun sessions(timeoutMs: Int = 4000): List<AgentSession> {
-        val o = JSONObject(request("GET", "/v1/sessions", null, timeoutMs))
+        val raw = request("GET", "/v1/sessions", null, timeoutMs)
+        val o = JSONObject(raw)
+        // Where the machine's subscription stands comes with the list, kept
+        // for the at-a-glance usage link (PlanLive).
+        runCatching { PlanLive.note(address, UsageView.parseLimits("", raw)) }
         val a = o.optJSONArray("sessions") ?: return emptyList()
         return (0 until a.length()).map { i ->
             val s = a.getJSONObject(i)

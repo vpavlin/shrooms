@@ -287,7 +287,13 @@ reached, and when it is back). Claude Code reports this after every turn
 `limits` (`at`, `status`, `window`, `overage`, `windows.{five_hour,seven_day,…}
 .{utilization, resets_at}`), or null when Claude Code never reported one.
 Machines whose windows reset at the same moments share an account and are
-shown once, with the newest reading. A reading is only as fresh as the last
+shown once, with the newest reading. Bars turn amber
+from half a window and red from 80%. The session quota — the 5-hour window —
+is also on the link that opens usage, at a glance ("usage 62%"), coloured the
+same way and red once a request was refused: time to slow down. For that,
+`GET /v1/sessions` carries the same `limits`, which the agent keeps as Claude
+Code reports them (and reads from the logs once at startup, so a restart does
+not forget the last one). A reading is only as fresh as the last
 turn on that machine, which "as of" says; and it is Claude Code's own stream,
 not a documented API, so the fields are read defensively.
 

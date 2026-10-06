@@ -69,4 +69,22 @@ class UsageTest {
         assertEquals(null, UsageView.parseLimits("x", """{"rows":[]}"""))
         assertEquals(null, UsageView.parseLimits("x", """{"rows":[],"limits":null}"""))
     }
+
+    // The usage link at a glance: the session quota (the 5-hour window) on
+    // the busiest account — amber from half, red from 80% or once refused.
+    @Test fun glanceAtTheSessionQuota() {
+        fun plan(five: Double, status: String = "allowed", seven: Double = 0.3) = PlanLimits(listOf("m"), 0, status, "five_hour", false,
+            listOf(PlanWindow("five_hour", five, 1), PlanWindow("seven_day", seven, 2)))
+        assertEquals(21 to 0, UsageView.glance(listOf(plan(0.21))))
+        assertEquals(50 to 1, UsageView.glance(listOf(plan(0.5))))
+        assertEquals(80 to 2, UsageView.glance(listOf(plan(0.8))))
+        // The 7-day window past half does not colour it: the session quota does.
+        assertEquals(10 to 0, UsageView.glance(listOf(plan(0.1, seven = 0.6))))
+        assertEquals(30 to 2, UsageView.glance(listOf(plan(0.3, "rejected"))))
+        assertEquals(62 to 1, UsageView.glance(listOf(plan(0.2), plan(0.62))))
+        assertEquals(null, UsageView.glance(emptyList()))
+        assertEquals(1, UsageView.level(0.5))
+        assertEquals(2, UsageView.level(0.8))
+        assertEquals(0, UsageView.level(0.49))
+    }
 }

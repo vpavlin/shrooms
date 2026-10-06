@@ -130,6 +130,12 @@ type Manager struct {
 	// usage is what the session logs say the model did, read incrementally
 	// (Usage).
 	usage usageCache
+	// live is the newest subscription reading as Claude Code reports it,
+	// kept as it happens so the session list can carry it (Limits).
+	live struct {
+		sync.Mutex
+		l *Limits
+	}
 
 	// harnesses this machine can run sessions of, by name, and the program
 	// each is run as. Claude Code always; others when Register finds them.
@@ -201,6 +207,11 @@ func NewManager(ctx context.Context, log *slog.Logger, stateDir, claudeBin strin
 		}
 	}
 	go m.reap()
+	// The logs read once now, in the background: the session list carries
+	// the newest subscription reading (Limits), and after a restart that is
+	// in the logs until Claude Code reports again. Later reads take only
+	// what the logs gained.
+	go m.Usage("9999-12-31")
 	return m, nil
 }
 
@@ -950,7 +961,10 @@ func (s *Session) read(p *proc) {
 		if s.state != Idle {
 			s.lastUsed = time.Now()
 		}
-		s.record("claude", "", raw)
+		ev := s.record("claude", "", raw)
+		if head.Type == "rate_limit_event" {
+			s.m.noteLimits(ev.Time, raw)
+		}
 		if autoAnswer != "" {
 			// Switched on after this process started, so it still asks.
 			if err := s.answer(autoAnswer, true, "", nil, "auto-approve"); err != nil {

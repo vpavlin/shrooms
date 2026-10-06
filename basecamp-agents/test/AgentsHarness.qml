@@ -14,7 +14,9 @@ Item {
 
     readonly property var hosts: [{
         name: "laptop", mesh: "office", address: "fdb0:9afc:a5ef:388c:8264:7716:36fc:64eb",
-        list: { sessions: [
+        list: { limits: { at: "2026-10-06T21:40:00+02:00", status: "allowed", window: "five_hour",
+                          windows: { five_hour: { utilization: 0.62, resets_at: "2026-10-07T02:20:00+02:00" } } },
+                sessions: [
             { name: "shrooms", dir: "/home/someone/logos-vpn", state: "waiting", pending: 1, running: true,
               last_seq: 9, last_time: "2026-10-03T14:27:31+02:00", auto_approve: false,
               context_used: 678705, context_window: 1000000, model: "claude-opus-5[1m]",
@@ -460,6 +462,9 @@ Item {
                           + " merged=" + merged.length + ":" + merged[0].machines.join("+") + ":" + merged[0].status
                           + " status=[" + view.planStatus(merged[0], now).replace(/back at .*/, "back at T") + "]"
                           + " warn=[" + view.planStatus(older, now) + "] label=" + view.planWindowLabel("seven_day"))
+            function gl(five, status) { var g = view.planGlance([{ status: status || "allowed", windows: [{ name: "five_hour", utilization: five }, { name: "seven_day", utilization: 0.6 }] }]); return g.percent + "/" + g.level }
+            console.error("GLANCE " + [gl(0.21), gl(0.5), gl(0.8), gl(0.3, "rejected")].join(" ")
+                          + " live=" + (view.usageGlance ? view.usageGlance.percent + "/" + view.usageGlance.level : "none"))
             view.usageMeasure = "output"
 
             // The voice section: says what reads now, sets the natural one up.

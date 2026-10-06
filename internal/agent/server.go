@@ -36,7 +36,7 @@ func Handler(log *slog.Logger, m *Manager, who Who) http.Handler {
 		host, _ := os.Hostname()
 		// Rows first: reading them is what brings the limits up to date.
 		rows := m.Usage(r.URL.Query().Get("since"))
-		writeJSON(w, http.StatusOK, map[string]any{"machine": host, "rows": rows, "limits": m.UsageLimits()})
+		writeJSON(w, http.StatusOK, map[string]any{"machine": host, "rows": rows, "limits": m.Limits()})
 	})
 	mux.HandleFunc("GET /v1/harnesses", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"harnesses": m.Harnesses()})
@@ -98,7 +98,9 @@ func (h *handler) session(w http.ResponseWriter, r *http.Request) (*Session, boo
 }
 
 func (h *handler) list(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"sessions": h.m.List()})
+	// With where the subscription stands, so an app shows it at a glance
+	// without asking for usage (Limits).
+	writeJSON(w, http.StatusOK, map[string]any{"sessions": h.m.List(), "limits": h.m.Limits()})
 }
 
 func (h *handler) create(w http.ResponseWriter, r *http.Request) {

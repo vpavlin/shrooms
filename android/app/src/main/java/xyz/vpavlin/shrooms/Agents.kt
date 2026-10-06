@@ -380,7 +380,13 @@ fun AgentsScreen(peers: List<Peer>, onClose: () -> Unit, initial: OpenSession? =
                 Link("refresh") { refresh++ }
                 Link(if (addingMachine) "cancel" else "+ machine") { addingMachine = !addingMachine }
                 Spacer(Modifier.weight(1f))
-                Link("usage", Palette.Ash) { usageOpen = true }
+                // The session quota at a glance: amber from half of it, red
+                // from 80% — time to slow down.
+                val live by PlanLive.byAddress.collectAsState()
+                val glance = UsageView.glance(UsageView.accounts(hosts.orEmpty().mapNotNull { h ->
+                    live[h.address]?.copy(machines = listOf(h.name)) }))
+                Link(glance?.let { "usage ${it.first}%" } ?: "usage",
+                    when (glance?.second) { 2 -> Palette.Rust; 1 -> Palette.Amber; else -> Palette.Ash }) { usageOpen = true }
                 Link("voice", Palette.Ash) { voiceOpen = true }
                 Link("close", Palette.Ash) { onClose() }
             }

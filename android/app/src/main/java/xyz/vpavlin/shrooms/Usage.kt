@@ -60,6 +60,18 @@ data class PlanLimits(
     val overage: Boolean, val windows: List<PlanWindow>,
 )
 
+/**
+ * The newest subscription reading of each agent, by address, as its session
+ * list brings it — what the usage link shows at a glance.
+ */
+object PlanLive {
+    val byAddress = kotlinx.coroutines.flow.MutableStateFlow<Map<String, PlanLimits>>(emptyMap())
+    fun note(address: String, l: PlanLimits?) {
+        if (l == null || byAddress.value[address] == l) return
+        byAddress.value = byAddress.value + (address to l)
+    }
+}
+
 /** One machine's answer: its rows, and its subscription's limits if Claude Code ever reported them. */
 data class UsageAnswer(val rows: List<UsageRow>, val limits: PlanLimits?)
 
@@ -100,6 +112,33 @@ object UsageView {
                 newest.copy(machines = ls.flatMap { it.machines }.distinct().sorted())
             }
             .sortedByDescending { it.at }
+
+    /**
+     * How hard the subscription is being used, for the link that opens
+     * usage: the 5-hour window's share on the busiest account (the session
+     * quota), and a level — 0 fine, 1 from half of it (slow down), 2 from
+     * 80% or when a request was refused.
+     */
+    fun glance(plans: List<PlanLimits>): Pair<Int, Int>? {
+        val shares = plans.map { p ->
+            val w = p.windows.firstOrNull { it.name == "five_hour" } ?: p.windows.maxByOrNull { it.utilization }
+            Triple(p, w?.utilization ?: 0.0, p.status == "rejected")
+        }
+        val top = shares.maxByOrNull { if (it.third) 2.0 else it.second } ?: return null
+        val level = when {
+            top.third || top.second >= 0.8 -> 2
+            top.second >= 0.5 -> 1
+            else -> 0
+        }
+        return (top.second * 100).toInt() to level
+    }
+
+    /** The bars' colour level: amber from half, red from 80%. */
+    fun level(utilization: Double): Int = when {
+        utilization >= 0.8 -> 2
+        utilization >= 0.5 -> 1
+        else -> 0
+    }
 
     fun windowLabel(name: String): String = when (name) {
         "five_hour" -> "5 hours"
@@ -271,9 +310,9 @@ private fun PlanSection(plans: List<PlanLimits>) {
             if (st.isNotEmpty()) Text(st, style = MaterialTheme.typography.labelSmall,
                 color = if (p.status == "rejected") Palette.Rust else Palette.Amber, modifier = Modifier.padding(top = 2.dp))
             for (w in p.windows) {
-                val colour = when {
-                    w.utilization >= 0.9 -> Palette.Rust
-                    w.utilization >= 0.7 -> Palette.Amber
+                val colour = when (UsageView.level(w.utilization)) {
+                    2 -> Palette.Rust
+                    1 -> Palette.Amber
                     else -> Palette.Phosphor
                 }
                 Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {

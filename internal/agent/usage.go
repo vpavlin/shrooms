@@ -153,6 +153,38 @@ func (m *Manager) Usage(since string) []UsageRow {
 	return out
 }
 
+// noteLimits keeps a reading as Claude Code reports it.
+func (m *Manager) noteLimits(at time.Time, raw []byte) {
+	var d struct {
+		RateLimitInfo *rawLimits `json:"rate_limit_info"`
+	}
+	if json.Unmarshal(raw, &d) != nil || d.RateLimitInfo == nil {
+		return
+	}
+	l := d.RateLimitInfo.limits(at)
+	if l == nil {
+		return
+	}
+	m.live.Lock()
+	if m.live.l == nil || !l.At.Before(m.live.l.At) {
+		m.live.l = l
+	}
+	m.live.Unlock()
+}
+
+// Limits is the newest reading this machine has: one reported since it
+// started, or what its logs held (read by Usage, which the agent runs once
+// in the background at startup so a restart does not forget).
+func (m *Manager) Limits() *Limits {
+	m.live.Lock()
+	l := m.live.l
+	m.live.Unlock()
+	if logged := m.UsageLimits(); logged != nil && (l == nil || logged.At.After(l.At)) {
+		return logged
+	}
+	return l
+}
+
 // UsageLimits is the newest subscription reading across this machine's
 // sessions, from what Usage last read; nil when Claude Code never reported one.
 func (m *Manager) UsageLimits() *Limits {

@@ -202,3 +202,26 @@ func TestUsageLimitsAreTheNewestReport(t *testing.T) {
 		t.Errorf("an older report's one window: %+v", one)
 	}
 }
+
+// A reading Claude Code reports while the agent runs is kept as it comes,
+// newer than what the logs held, and the session list carries it.
+func TestTheSessionListCarriesTheNewestLimits(t *testing.T) {
+	m := newTestManager(t, t.TempDir())
+	at := time.Now()
+	m.noteLimits(at, []byte(`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour","utilization":0.62,"resetsAt":1791332400,"unifiedWindows":{"five_hour":{"utilization":0.62,"resetsAt":1791332400}}}}`))
+	m.noteLimits(at.Add(-time.Hour), []byte(`{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","rateLimitType":"five_hour","utilization":1,"resetsAt":1791314400}}`))
+	srv := httptest.NewServer(Handler(slog.New(slog.DiscardHandler), m, func(netip.Addr) string { return "" }))
+	defer srv.Close()
+	resp, err := http.Get(srv.URL + "/v1/sessions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var got struct {
+		Limits *Limits `json:"limits"`
+	}
+	json.NewDecoder(resp.Body).Decode(&got)
+	if got.Limits == nil || got.Limits.Status != "allowed" || !near(got.Limits.Windows["five_hour"].Utilization, 0.62) {
+		t.Fatalf("the newest reading, not an older one: %+v", got.Limits)
+	}
+}
