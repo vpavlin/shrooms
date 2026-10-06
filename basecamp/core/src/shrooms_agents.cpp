@@ -1049,6 +1049,29 @@ bool Hub::speaking(std::string& engine)
     return true;
 }
 
+namespace {
+std::string slurp(const std::string& path);
+}  // namespace
+
+// What a recording that came out empty says: which recorder, and its own
+// last words (kept beside the recording), so "the file is empty" on a new
+// machine says whether there is no microphone, no permission or no daemon.
+std::string emptyRecordingWhy(const std::string& recorder, const std::string& path)
+{
+    std::string said = slurp(path + ".err");
+    while (!said.empty() && (said.back() == '\n' || said.back() == ' ')) said.pop_back();
+    if (said.size() > 300) said = said.substr(said.size() - 300);
+    return "nothing was recorded (" + (recorder.empty() ? std::string("the recorder") : recorder) + ")" +
+           (said.empty() ? ": is there a microphone, and is it the default input?" : ": " + said);
+}
+
+// A WAV with nothing after its 44-byte header is as empty as no file.
+bool recordedSomething(const std::string& path)
+{
+    struct stat st {};
+    return ::stat(path.c_str(), &st) == 0 && st.st_size > 44;
+}
+
 std::string Hub::recordStart()
 {
     std::lock_guard<std::mutex> g(mu_);
@@ -1060,10 +1083,14 @@ std::string Hub::recordStart()
     std::string path = std::string(tmpl) + ".wav";
     ::rename(tmpl, path.c_str());
 
+    // Its errors beside the recording, not thrown away: a recorder that
+    // starts and hears nothing is otherwise silent until the empty file is
+    // sent (the Duet, 2026-10-06: "the file is empty").
+    std::string errPath = path + ".err";
     posix_spawn_file_actions_t fa;
     posix_spawn_file_actions_init(&fa);
     posix_spawn_file_actions_addopen(&fa, 1, "/dev/null", O_WRONLY, 0);
-    posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", O_WRONLY, 0);
+    posix_spawn_file_actions_addopen(&fa, 2, errPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
     // Speech for a model that resamples to 16 kHz mono anyway.
     std::vector<std::vector<std::string>> tries = {
         {"pw-record", "--rate", "16000", "--channels", "1", path},
@@ -1077,16 +1104,28 @@ std::string Hub::recordStart()
         argv.push_back(nullptr);
         pid_t pid;
         int rc = posix_spawnp(&pid, argv[0], &fa, nullptr, argv.data(), childEnv().ptrs.data());
-        if (rc == 0) {
-            recorder_ = pid;
-            recording_ = path;
-            posix_spawn_file_actions_destroy(&fa);
-            return "";
+        if (rc != 0) {
+            why = std::string(argv[0]) + ": " + std::strerror(rc);
+            continue;
         }
-        why = std::string(argv[0]) + ": " + std::strerror(rc);
+        // One that ends at once — no PipeWire, no PulseAudio, no device — is
+        // not recording: the next one may be (arecord, straight to ALSA).
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        if (::waitpid(pid, nullptr, WNOHANG) == pid) {
+            std::string said = slurp(errPath);
+            while (!said.empty() && (said.back() == '\n' || said.back() == ' ')) said.pop_back();
+            why = std::string(argv[0]) + " stopped at once" + (said.empty() ? "" : ": " + said.substr(0, 200));
+            continue;
+        }
+        recorder_ = pid;
+        recording_ = path;
+        recorderName_ = argv[0];
+        posix_spawn_file_actions_destroy(&fa);
+        return "";
     }
     posix_spawn_file_actions_destroy(&fa);
     ::unlink(path.c_str());
+    ::unlink(errPath.c_str());
     return why;
 }
 
@@ -1119,18 +1158,22 @@ void Hub::recordCancel()
         recording_.clear();
     }
     if (pid > 0) stopRecorder(pid);
-    if (!path.empty()) ::unlink(path.c_str());
+    if (!path.empty()) {
+        ::unlink(path.c_str());
+        ::unlink((path + ".err").c_str());
+    }
 }
 
 long Hub::recordStop(const std::string& address, const std::string& session, const std::string& lang,
                      std::string& err)
 {
     int pid;
-    std::string path;
+    std::string path, recorder;
     {
         std::lock_guard<std::mutex> g(mu_);
         pid = recorder_;
         path = recording_;
+        recorder = recorderName_;
         recorder_ = -1;
         recording_.clear();
     }
@@ -1139,11 +1182,14 @@ long Hub::recordStop(const std::string& address, const std::string& session, con
         return -1;
     }
     long id = addJob("voice", "voice note");
-    std::thread([this, id, pid, path, address, session, lang]() {
+    std::thread([this, id, pid, path, recorder, address, session, lang]() {
         stopRecorder(pid);
         std::string body, out, err;
-        bool ok = readFile(path, body, err);
+        bool ok = recordedSomething(path);
+        if (!ok) err = emptyRecordingWhy(recorder, path);
+        else ok = readFile(path, body, err);
         ::unlink(path.c_str());
+        ::unlink((path + ".err").c_str());
         if (ok) {
             // A transcription takes a while on a laptop CPU: a minute of
             // speech is most of one.
@@ -1570,11 +1616,12 @@ std::string Hub::queueText(const std::string& address, const std::string& sessio
 std::string Hub::recordSend(const std::string& address, const std::string& session, std::string& err)
 {
     int pid;
-    std::string path;
+    std::string path, recorder;
     {
         std::lock_guard<std::mutex> g(mu_);
         pid = recorder_;
         path = recording_;
+        recorder = recorderName_;
         recorder_ = -1;
         recording_.clear();
     }
@@ -1583,6 +1630,15 @@ std::string Hub::recordSend(const std::string& address, const std::string& sessi
         return "";
     }
     stopRecorder(pid); // the WAV header is written on SIGINT; wait for it
+    // Nothing heard is said here, with why, rather than queued and failing
+    // at the agent as "the file is empty".
+    if (!recordedSomething(path)) {
+        err = emptyRecordingWhy(recorder, path);
+        ::unlink(path.c_str());
+        ::unlink((path + ".err").c_str());
+        return "";
+    }
+    ::unlink((path + ".err").c_str());
     Outgoing o;
     o.id = newId();
     o.address = address;

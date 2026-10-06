@@ -205,7 +205,7 @@ mkdir -p "$work/agents"
 cp basecamp-agents/Main.qml basecamp-agents/test/AgentsHarness.qml "$work/agents/"
 shot=${AGENTS_SHOT:-$work/agents.png}
 out=$(run "$QML" -I "$work/agents" "$work/agents/AgentsHarness.qml" "$shot")
-echo "$out" | grep -E "^qml: (HOSTS|PROBED|ROWS|STREAMING|PROMPT|CALLS|ATTACHED|SENT|CONVERSATIONS|TAKEOVER)" || true
+echo "$out" | grep -E "^qml: (HOSTS|PROBED|ROWS|STREAMING|PROMPT|CALLS|ATTACHED|SENT|CONVERSATIONS|TAKEOVER|LISTWIDTH)" || true
 expect() { echo "$out" | grep -qF "$1" || { echo "FAIL: $2"; exit 1; }; }
 # The first one also says why, when the view did not load at all: a QML
 # module the runner lacks (QtQuick.Dialogs, 2026-10-03) prints nothing else.
@@ -271,6 +271,7 @@ expect 'SENT="look files=/home/x/.local/share/shrooms/outbox/b-19a2b-3c4-0-shot.
 # hold it, named after its directory without colliding with "shrooms", and
 # continued by id — then opened.
 expect "CONVERSATIONS=2 TERMINAL=cl-logos-vpn NAME=shrooms-2" "conversations, or the name for one, are wrong"
+expect "LISTWIDTH kept=true dragged=true grew=true" "the session list does not keep its width beside a long line, or does not follow the divider"
 expect "TAKEOVER name=shrooms-2 resume=c-new open=shrooms-2" "taking a conversation over did not continue it by id"
 expect "CONVEMPTY loaded=true n=0" "an agent with no conversations of its own still reads as looking"
 # Deleting a session: the dialog says what is kept and what is cut off, and

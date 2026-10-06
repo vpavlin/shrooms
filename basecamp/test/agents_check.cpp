@@ -360,6 +360,37 @@ int main(int argc, char** argv)
               "voice job did not finish: %s", jobs.substr(jobs.find("voice") == std::string::npos ? 0 : jobs.find("voice")).substr(0, 200).c_str());
     }
 
+    // A recorder that dies at once is passed over for the next; one that runs
+    // and records nothing is said to have done so, with its own words, and
+    // nothing is queued (the Duet: "the file is empty", 2026-10-06).
+    {
+        char tmpl[] = "/tmp/fake-rec-XXXXXX";
+        std::string bin = ::mkdtemp(tmpl);
+        std::ofstream(bin + "/pw-record") << "#!/bin/sh\necho 'no default source' >&2\nexit 1\n";
+        std::ofstream(bin + "/parecord") << "#!/bin/sh\necho 'Stream error: No such entity' >&2\ntrap 'exit 0' INT\nwhile :; do sleep 0.1; done\n";
+        (void)!std::system(("chmod +x " + bin + "/pw-record " + bin + "/parecord").c_str());
+        std::string oldPath = std::getenv("PATH") ? std::getenv("PATH") : "";
+        setenv("PATH", (bin + ":/usr/bin:/bin").c_str(), 1);
+        char dtmpl[] = "/tmp/fake-rec-data-XXXXXX";
+        std::string data = ::mkdtemp(dtmpl);
+        setenv("XDG_DATA_HOME", data.c_str(), 1);
+        {
+            Hub h;
+            std::string why = h.recordStart();
+            CHECK(why.empty(), "no recorder after pw-record failed: %s", why.c_str());
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+            std::string err;
+            std::string id = h.recordSend("fd00::1", "nowhere", err);
+            CHECK(id.empty() && err.find("nothing was recorded (parecord)") != std::string::npos &&
+                      err.find("No such entity") != std::string::npos,
+                  "empty recording: id=%s err=%s", id.c_str(), err.c_str());
+            CHECK(h.outbox() == "[]", "an empty recording was queued: %s", h.outbox().c_str());
+        }
+        setenv("PATH", oldPath.c_str(), 1);
+        unsetenv("XDG_DATA_HOME");
+        (void)!std::system(("rm -rf " + bin + " " + data).c_str());
+    }
+
     // A fresh machine has no ~/.local/share yet: what is kept under it (the
     // outbox, kept copies, a file attached) makes every missing parent, as
     // mkdir -p does, rather than failing at the first.

@@ -299,6 +299,7 @@ private:
     int speaker_ = -1;        // process group of the speech pipeline
     std::string speakEngine_;
     std::string recording_;
+    std::string recorderName_;   // which recorder is running, for saying why it heard nothing
 
     struct Gathered {
         std::string address, body, error;

@@ -127,6 +127,11 @@ Item {
     }
 
     property bool prefsLoaded: false
+    // The machines-and-sessions list's width, set by dragging the divider and
+    // kept (agent_list_width), in unscaled pixels like everything sz() takes.
+    // Bounded so neither pane can be dragged away.
+    property real listWidth: 320
+    function listWidthPx() { return Math.max(sz(200), Math.min(sz(listWidth), agentsPanel.width * 0.6)) }
     function loadPrefs() {
         if (prefsLoaded || !haveCore) return
         prefsLoaded = true
@@ -144,6 +149,8 @@ Item {
             var ap = JSON.parse(String(callCore("getPref", ["agent_autoplay"]) || "{}"))
             if (ap && typeof ap === "object" && !Array.isArray(ap)) root.autoPlay = ap
         } catch (e) {}
+        var lw = parseFloat(String(callCore("getPref", ["agent_list_width"]) || ""))
+        if (!isNaN(lw)) root.listWidth = lw
         var n = parseFloat(String(callCore("getPref", ["ui_nudge"]) || ""))
         if (!isNaN(n)) root.uiNudge = Math.max(-0.4, Math.min(1.0, n))
     }
@@ -1607,9 +1614,13 @@ Item {
             spacing: root.sz(18)
 
             // --- machines and their sessions ---------------------------------
+            // Exactly as wide as set: a preferred width alone let the
+            // conversation's longest line take room from it.
             ColumnLayout {
-                Layout.preferredWidth: root.sz(320)
-                Layout.maximumWidth: root.sz(380)
+                objectName: "agentList"
+                Layout.preferredWidth: root.listWidthPx()
+                Layout.minimumWidth: root.listWidthPx()
+                Layout.maximumWidth: root.listWidthPx()
                 Layout.fillHeight: true
                 spacing: root.sz(10)
 
@@ -1704,11 +1715,43 @@ Item {
                 }
             }
 
-            Rectangle { Layout.fillHeight: true; width: 1; color: cLine }
+            // The divider: drag to resize the list; double-click for the
+            // default width.
+            Item {
+                Layout.fillHeight: true
+                Layout.preferredWidth: root.sz(9)
+                Rectangle {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: dividerMouse.containsMouse || dividerMouse.pressed ? 3 : 1
+                    height: parent.height
+                    color: dividerMouse.containsMouse || dividerMouse.pressed ? cPhosphor : cLine
+                }
+                MouseArea {
+                    id: dividerMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.SplitHCursor
+                    property real startX: 0
+                    property real startWidth: 0
+                    onPressed: function(ev) { startX = mapToItem(agentsPanel, ev.x, 0).x; startWidth = root.listWidth }
+                    onPositionChanged: function(ev) {
+                        if (!pressed) return
+                        var dx = mapToItem(agentsPanel, ev.x, 0).x - startX
+                        var px = Math.max(root.sz(200), Math.min(root.sz(startWidth) + dx, agentsPanel.width * 0.6))
+                        root.listWidth = px / root.uiScale
+                    }
+                    onReleased: root.savePref("agent_list_width", Math.round(root.listWidth))
+                    onDoubleClicked: { root.listWidth = 320; root.savePref("agent_list_width", 320) }
+                }
+            }
 
             // --- the conversation -------------------------------------------
+            // Its width is what is left, never what its text would like: an
+            // implicit width from a long line made it grow and the list shrink.
             ColumnLayout {
                 Layout.fillWidth: true
+                Layout.preferredWidth: 0
+                Layout.minimumWidth: 0
                 Layout.fillHeight: true
                 spacing: root.sz(8)
 

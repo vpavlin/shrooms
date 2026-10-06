@@ -188,6 +188,35 @@ Item {
             view.openSession(view.agentHosts[0], "shrooms")
         }
     }
+    // The list keeps the width it was given, however long a line the
+    // conversation shows; dragging sets it. Measured a frame after each
+    // change: layouts settle on the next frame (forceLayout here hung).
+    property var widthCheck: ({})
+    Timer {
+        interval: 2000; running: true
+        onTriggered: {
+            top.widthCheck.kept = view.agentStreaming
+            view.agentStreaming = new Array(60).join("averyveryverylongunbrokenword")
+        }
+    }
+    Timer {
+        interval: 2300; running: true
+        onTriggered: {
+            var list = top.findByName(view, "agentList")
+            top.widthCheck.w1 = list.width; top.widthCheck.want1 = view.listWidthPx()
+            view.listWidth = 400
+        }
+    }
+    Timer {
+        interval: 2600; running: true
+        onTriggered: {
+            var c = top.widthCheck, list = top.findByName(view, "agentList")
+            var w2 = list.width, want2 = view.listWidthPx()
+            view.agentStreaming = c.kept
+            view.listWidth = 320
+            console.error("LISTWIDTH kept=" + (Math.abs(c.w1 - c.want1) < 1) + " dragged=" + (Math.abs(w2 - want2) < 1) + " grew=" + (w2 > c.w1))
+        }
+    }
     // Just after opening, before the view's next poll: everything is read.
     Timer {
         interval: 1600; running: true
