@@ -1,7 +1,7 @@
 # Shrooms Agents in cages, and off the machine
 
 **Status:** research and a proposal, 2026-10-05; the open questions decided 2026-10-06
-(see the end). Nothing built.
+(see the end; recorded as [ADR-037](adr/037-agents-in-cages.md)). Nothing built.
 
 Two wishes that share a mechanism:
 

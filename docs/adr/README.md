@@ -46,3 +46,7 @@ number appears, its source is named.
 | [034](034-the-admin-names-the-blind-relays.md) | The admin names the blind relays | accepted; built |
 | [035](035-an-edge-port-is-nobodys-contract.md) | An Edge node's port is nobody's contract | accepted; built — a tethering phone stranded the old one |
 | [036](036-agents-grow-out-of-the-mesh.md) | Agents grow out of the mesh | accepted; built — Shrooms Agents, a separate app over the mesh |
+| [037](037-agents-in-cages.md) | Agents in cages, and off the machine | accepted; not built — a container per session, Akash needs shrooms in user space |
+| [038](038-usage-is-counted-by-the-mesh-address.md) | Usage is counted by the mesh address | accepted; built — who asked, where it ran, which model |
+| [039](039-the-phone-tells-the-core-what-it-cannot-see.md) | On a phone, the app tells the core what it cannot see | accepted; built — its addresses, and when its node is deaf |
+| [040](040-voices-come-from-the-system.md) | Read-aloud uses the system's voice, set up rather than bundled | accepted; built |
