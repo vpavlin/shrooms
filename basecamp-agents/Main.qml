@@ -200,6 +200,9 @@ Item {
     // Conversations on the host a new session is being made on.
     property var conversations: []
     property string conversationsProblem: ""
+    // Asked and answered: an empty list now means there are none, not that
+    // they are still being looked for (it said "looking…" for ever).
+    property bool conversationsLoaded: false
 
     function unwrap(raw) {
         var r = raw
@@ -976,9 +979,10 @@ Item {
     function loadConversations(h) {
         root.conversations = []
         root.conversationsProblem = ""
+        root.conversationsLoaded = false
         if (!h) return
         var r = unwrap(callCore("agentGet", [h.address, "/v1/conversations?limit=15"]))
-        if (r && r.conversations) root.conversations = r.conversations
+        if (r && r.conversations) { root.conversations = r.conversations; root.conversationsLoaded = true }
         else root.conversationsProblem = (r && (r.detail || r.error)) || "the agent does not list conversations — update shrooms-agent"
     }
     // A session name from the directory the conversation ran in, unique on
@@ -1771,7 +1775,8 @@ Item {
                     }
                     Text {
                         visible: root.nsHarness === "claude" && root.conversations.length === 0
-                        text: root.conversationsProblem !== "" ? root.conversationsProblem : "looking…"
+                        text: root.conversationsProblem !== "" ? root.conversationsProblem
+                            : root.conversationsLoaded ? "none here yet — only conversations that ran in a directory on this machine are listed" : "looking…"
                         color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(10)
                     }
                     ListView {

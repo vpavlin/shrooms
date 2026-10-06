@@ -63,6 +63,7 @@ Item {
     property bool speakingNow: false
     property var voiceCalls: []
     property var usageAsked: []
+    property bool noConversations: false
     property var gatherAddrs: []
     property int gatheredAsked: 0
     property var usageBody: ({ machine: "laptop", rows: [
@@ -157,6 +158,7 @@ Item {
                 if (method === "agentGet" && String(args[1]) === "/v1/harnesses") return JSON.stringify({ harnesses: [
                     { name: "claude", title: "Claude Code", caps: { approve: true, takeover: true } },
                     { name: "pi", title: "pi", caps: { approve: false, takeover: false } } ] })
+                if (method === "agentGet" && String(args[1]).indexOf("/v1/conversations") === 0 && top.noConversations) return JSON.stringify({ conversations: [] })
                 if (method === "agentGet" && String(args[1]).indexOf("/v1/conversations") === 0) return JSON.stringify({ conversations: [
                     { id: "c-new", dir: "/home/someone/shrooms", modified: "2026-10-03T15:00:00+02:00", size: 1000,
                       last_user: "fix the tether", last_assistant: "Fixed.",
@@ -454,6 +456,11 @@ Item {
             view.takeOver(view.agentHosts[0], view.conversations[0])
             var took = JSON.parse(top.lastPost)
             console.error("TAKEOVER name=" + took.name + " resume=" + took.resume + " open=" + view.agentOpen.session)
+            // A machine with none of its own: answered, and empty — not "looking…".
+            top.noConversations = true
+            view.loadConversations(view.agentHosts[0])
+            console.error("CONVEMPTY loaded=" + view.conversationsLoaded + " n=" + view.conversations.length)
+            top.noConversations = false
 
             // Deleting the open session: asks what the phone asks, then goes.
             console.error("DELETETEXT=" + (view.deleteSessionText("working").indexOf("cut off") > 0)

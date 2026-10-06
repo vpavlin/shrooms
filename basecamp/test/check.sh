@@ -272,6 +272,7 @@ expect 'SENT="look files=/home/x/.local/share/shrooms/outbox/b-19a2b-3c4-0-shot.
 # continued by id — then opened.
 expect "CONVERSATIONS=2 TERMINAL=cl-logos-vpn NAME=shrooms-2" "conversations, or the name for one, are wrong"
 expect "TAKEOVER name=shrooms-2 resume=c-new open=shrooms-2" "taking a conversation over did not continue it by id"
+expect "CONVEMPTY loaded=true n=0" "an agent with no conversations of its own still reads as looking"
 # Deleting a session: the dialog says what is kept and what is cut off, and
 # the session is removed by its own path, then closed.
 expect "DELETETEXT=true,true" "the delete dialog does not say what is lost and what is kept"
