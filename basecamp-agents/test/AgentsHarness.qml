@@ -63,6 +63,11 @@ Item {
     property bool speakingNow: false
     property var voiceCalls: []
     property var usageAsked: []
+    property var gatherAddrs: []
+    property int gatheredAsked: 0
+    property var usageBody: ({ machine: "laptop", rows: [
+        { day: "2026-10-05", session: "shrooms", by: "nothing.office", model: "claude-opus-5[1m]", turns: 3, input: 10, cache_read: 1000, cache_write: 200, output: 900, cost_usd: 1.5, busy_ms: 120000 },
+        { day: "2026-10-05", session: "notes", by: "", model: "ollama/qwen3", turns: 5, input: 50, cache_read: 0, cache_write: 0, output: 2000, cost_usd: 0, busy_ms: 3600000 } ] })
     property var voiceNow: ({ installed: false, busy: false, step: "", error: "", engine: "spd-say", voice: "en_US-lessac-medium" })
     function findByName(item, name) {
         if (item.objectName === name) return item
@@ -93,6 +98,13 @@ Item {
                     top.outbox = top.outbox.concat([q]); top.lastQueued = args[2]
                     return JSON.stringify({ id: q.id })
                 }
+                if (method === "agentKeep") return JSON.stringify({ file: "/home/x/.local/share/shrooms/outbox/b-19a2b-3c4-0-" + String(args[0]).split("/").pop() })
+                if (method === "agentQueueFiles") {
+                    var qf = { id: "b-" + (top.outbox.length + 1), address: args[0], session: args[1], kind: "text", text: args[2], created: 1, error: "",
+                               files: String(args[3]).split("\n").map(function(f) { return { name: f.split("/").pop(), sent: false } }) }
+                    top.outbox = top.outbox.concat([qf]); top.lastQueued = args[2] + " files=" + args[3]
+                    return JSON.stringify({ id: qf.id })
+                }
                 if (method === "agentOutbox") return JSON.stringify(top.outbox)
                 if (method === "agentUnqueue") { top.outbox = top.outbox.filter(function(x) { return x.id !== args[0] }); return JSON.stringify({ ok: true }) }
                 if (method === "agentRecord" && args[0] === "send") {
@@ -107,11 +119,13 @@ Item {
                 if (method === "agentSearched") return JSON.stringify({ id: 1, done: true, error: "", found: [
                     { seq: 3, time: "2026-10-03T14:22:00+02:00", role: "assistant", snippet: "All **tests** pass." },
                     { seq: 0, time: "2026-10-02T10:00:00+02:00", role: "user", snippet: "the tests, in a terminal", text: "Earlier: the tests, in a terminal." } ] })
-                if (method === "agentGet" && String(args[1]).indexOf("/v1/usage") === 0) {
-                    top.usageAsked = top.usageAsked.concat([args[1]])
-                    return JSON.stringify({ machine: "laptop", rows: [
-                        { day: "2026-10-05", session: "shrooms", by: "nothing.office", model: "claude-opus-5[1m]", turns: 3, input: 10, cache_read: 1000, cache_write: 200, output: 900, cost_usd: 1.5, busy_ms: 120000 },
-                        { day: "2026-10-05", session: "notes", by: "", model: "ollama/qwen3", turns: 5, input: 50, cache_read: 0, cache_write: 0, output: 2000, cost_usd: 0, busy_ms: 3600000 } ] })
+                if (method === "agentGather") { top.usageAsked = top.usageAsked.concat([args[1]]); top.gatherAddrs = String(args[0]).split("\n"); top.gatheredAsked = 0
+                    return JSON.stringify({ gather: 1 }) }
+                // Nothing yet the first time it is asked, as over a real mesh.
+                if (method === "agentGathered") {
+                    var done = top.gatheredAsked++ > 0
+                    return JSON.stringify({ id: 1, results: top.gatherAddrs.map(function(a) {
+                        return { address: a, done: done, error: "", body: done ? top.usageBody : null } }) })
                 }
                 if (method === "agentVoice") {
                     top.voiceCalls = top.voiceCalls.concat([args[0]])
@@ -195,13 +209,14 @@ Item {
             }
             view.answerPrompt("p1", true)
 
-            // A file and a voice note, finishing in the core's own time.
+            // A file, kept by the core at once — nothing asked of the agent's
+            // machine — and a voice note, finishing in the core's own time.
+            view.attachFile("file:///home/x/Pictures/shot.png")
             top.jobsNow = [
-                { id: 1, kind: "upload", state: "done", name: "shot.png", path: "/home/x/.local/share/shrooms-agent/uploads/shrooms/20261003-150000-shot.png", text: "", error: "" },
                 { id: 2, kind: "voice", state: "done", name: "voice note", path: "/x/voice.wav", text: "ahoj, tady Vašek", error: "" } ]
             view.pumpJobs()
             view.pumpJobs()
-            console.error("ATTACHED=" + view.agentAttached.length + " STICK=" + view.chatStick)
+            console.error("ATTACHED=" + view.agentAttached.length + " " + view.attachedName(view.agentAttached[0]) + " STICK=" + view.chatStick)
             console.error("COMPOSER=[" + view.composerText() + "]")
             view.sendToAgent("look")
 
@@ -385,6 +400,9 @@ Item {
             // who asked, where it ran and which model.
             view.usageDays = 7
             view.loadUsage()
+            view.pumpUsage()               // nobody has answered yet
+            var waitingFirst = view.usageWaiting.join(",") + ":" + (view.usageRows === null)
+            view.pumpUsage()
             var secs = view.usageSections()
             view.usageMeasure = "cost"
             var byCost = view.usageSections()[0].lines.map(function(l) { return l.name }).join(",")
@@ -393,7 +411,8 @@ Item {
                           + " where=" + secs[1].lines.map(function(l) { return l.name + ":" + l.turns }).join(",")
                           + " model=" + secs[2].lines.map(function(l) { return l.name }).join(",")
                           + " bycost=" + byCost + " busy=" + view.usageHours(secs[0].lines[0].busy)
-                          + " since7=" + view.usageSince(7, "2026-10-05T12:00:00") + " sinceAll=[" + view.usageSince(0) + "]")
+                          + " since7=" + view.usageSince(7, "2026-10-05T12:00:00") + " sinceAll=[" + view.usageSince(0) + "]"
+                          + " first=" + waitingFirst + " then=" + view.usageWaiting.length)
             view.usageMeasure = "output"
 
             // The voice section: says what reads now, sets the natural one up.

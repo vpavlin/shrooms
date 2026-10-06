@@ -139,7 +139,8 @@ class AgentClient(address: String) {
 
     /** What the model did, per day, session, device and model (UsageView.parse); since a local date or "". */
     fun usage(since: String): String =
-        request("GET", "/v1/usage" + if (since.isEmpty()) "" else "?since=" + enc(since), null)
+        // Long: a machine's first count reads every log it has.
+        request("GET", "/v1/usage" + if (since.isEmpty()) "" else "?since=" + enc(since), null, 30_000)
 
     /** The machine's Claude Code conversations, newest first. */
     fun conversations(limit: Int = 15): List<Conversation> {

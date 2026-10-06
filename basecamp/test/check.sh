@@ -244,7 +244,7 @@ expect 'SPEAKABLE="Results\nThe agent found three papers and go test passed.\n\n
 expect "UNDERSCORE=built basecamp_voice_core.lgx for x86_64, really" "underscores inside a word are dropped"
 expect "CZECH=true,false" "Czech is not told from English"
 expect 'SPEAK sentences="Running them|\nFirst session.go, line 654 is fixed.|Then tests." key=shrooms/3 paused=true lit=true read="en:Running them|en:Running them|en:First session.go, line 654 is fixed.|en:Then tests." done=true auto=[cs:Hotovo, všechno běží.] then=[cs:Hotovo, všechno běží.|en:Second reply.] queue=0' "replies are not read sentence by sentence, paused, resumed, skipped and lit, or auto-play reads the past, tool calls, or the same reply twice"
-expect "USAGE asked=/v1/usage?since=D who=laptop:2.0k,nothing:900 where=laptop:8 model=ollama/qwen3,claude-opus-5[1m] bycost=nothing,laptop busy=1h 0m since7=2026-09-29 sinceAll=[]" "usage is not asked of each machine, or not summed by who, where and which model"
+expect "USAGE asked=/v1/usage?since=D who=laptop:2.0k,nothing:900 where=laptop:8 model=ollama/qwen3,claude-opus-5[1m] bycost=nothing,laptop busy=1h 0m since7=2026-09-29 sinceAll=[] first=laptop:true then=0" "usage is not asked of each machine in the background, or not summed by who, where and which model"
 expect "VOICE before=[Replies are read with speech-dispatcher (espeak), which sounds robotic.] during=[downloading Piper (25 MB)…] after=[Natural voice: Piper, en_US-lessac-medium. Replies are read with it.] calls=state,setup,state" "the voice section does not say what reads, or does not set the natural voice up"
 expect "CARDCLICK found=true deferred=true" "a click on a session card runs its work inside the card, which a refresh can destroy"
 expect "PLACEHOLDER first=[reaching laptop…] then=[no messages yet]" "an empty pane does not say it is loading, or that it is empty"
@@ -257,15 +257,15 @@ expect "CONTEXT=67% of 1M MODEL=opus-5 1m" "context and model are not read from 
 expect "PROMPT open=true id=p1" "the waiting prompt is not offered"
 # Events (the copy kept by the core) before the transcript (agentGet): asked
 # first, the transcript held the pane blank for a round trip over the mesh.
-expect "CALLS=agentsFind,agentWatch,agentOutbox,agentEvents,agentJobs,agentGet,agentPost,agentQueue,agentRecord,agentUnqueue" "the core was not called as expected, or the transcript is asked for before the events are shown"
+expect "CALLS=agentsFind,agentWatch,agentOutbox,agentEvents,agentJobs,agentGet,agentPost,agentKeep,agentQueueFiles,agentRecord,agentUnqueue" "the core was not called as expected, or the transcript is asked for before the events are shown"
 # A file and a voice note: the file is named in the next message, once, and
 # the transcript lands in the composer, not sent on its own.
-expect "ATTACHED=1 STICK=true" "a finished upload was not attached, or attached twice"
+expect "ATTACHED=1 shot.png STICK=true" "a picked file was not attached at once, or under another name"
 expect "COMPOSER=[ahoj, tady Vašek]" "the voice note's text did not land in the message box"
 expect "OUTBOX=1,2 voice=voice label=[QUEUED · waiting for laptop — connect: no route to host]" "a message or voice note does not go through the outbox, or is not shown queued"
 expect "CANCELLED=1" "a queued voice note cannot be taken back"
 expect "VOICE first=voicenote failed=true:model not found retry=/v1/sessions/shrooms/voice/v1/retry then=you:true:ahoj notes=0" "a voice note does not show its way to a turn"
-expect 'SENT="look\n\nAttached from Basecamp (on this machine):\n- /home/x/.local/share/shrooms-agent/uploads/shrooms/20261003-150000-shot.png" ATTACHED_AFTER=0' "the attachment was not sent with the message"
+expect 'SENT="look files=/home/x/.local/share/shrooms/outbox/b-19a2b-3c4-0-shot.png" ATTACHED_AFTER=0' "the attachment was not queued with the message"
 # Taking over a terminal's conversation: listed with the terminal that may
 # hold it, named after its directory without colliding with "shrooms", and
 # continued by id — then opened.

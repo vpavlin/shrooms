@@ -29,9 +29,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
@@ -113,23 +112,27 @@ object UsageView {
 fun UsageScreen(hosts: List<AgentHost>, onBack: () -> Unit) {
     var days by remember { mutableStateOf(7) }
     var measure by remember { mutableStateOf(UsageView.Measure.OUTPUT) }
-    var rows by remember { mutableStateOf<List<UsageRow>?>(null) }
-    var missing by remember { mutableStateOf<List<String>>(emptyList()) }
-    LaunchedEffect(days, hosts) {
-        rows = null
+    // Each machine's answer as it comes, null for one not reached. Keyed by
+    // which machines, not by the list itself: that is refreshed every ten
+    // seconds while this is open, and restarting on each refresh never let a
+    // machine that was away time out — the screen asked forever (2026-10-06).
+    val targets = remember(hosts) { hosts.map { it.name to it.address }.distinct() }
+    var got by remember { mutableStateOf<Map<String, List<UsageRow>?>>(emptyMap()) }
+    LaunchedEffect(days, targets) {
+        got = emptyMap()
         val since = UsageView.since(days)
-        val got = withContext(Dispatchers.IO) {
-            coroutineScope {
-                hosts.map { h ->
-                    async {
-                        h.name to runCatching { UsageView.parse(h.name, AgentClient(h.address).usage(since)) }.getOrNull()
-                    }
-                }.awaitAll()
+        coroutineScope {
+            for ((name, address) in targets) launch {
+                val r = withContext(Dispatchers.IO) {
+                    runCatching { UsageView.parse(name, AgentClient(address).usage(since)) }.getOrNull()
+                }
+                got = got + (name to r)
             }
         }
-        missing = got.filter { it.second == null }.map { it.first }
-        rows = got.flatMap { it.second.orEmpty() }
     }
+    val waiting = targets.map { it.first }.filter { it !in got }
+    val missing = got.filterValues { it == null }.keys.toList()
+    val rows = got.values.filterNotNull().flatten().takeIf { it.isNotEmpty() || waiting.isEmpty() }
     Column(Modifier.fillMaxSize().background(Palette.Void).padding(horizontal = 16.dp, vertical = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("‹", color = Palette.Phosphor, style = MaterialTheme.typography.titleLarge,
@@ -155,6 +158,8 @@ fun UsageScreen(hosts: List<AgentHost>, onBack: () -> Unit) {
                     UsageSection("MODEL", UsageView.group(r, measure) { it.model.ifEmpty { "?" } }, measure, Palette.Violet)
                 }
             }
+            if (rows != null && waiting.isNotEmpty()) Text("still asking: " + waiting.joinToString(", "),
+                style = MaterialTheme.typography.labelSmall, color = Palette.Ash, modifier = Modifier.padding(top = 10.dp))
             if (missing.isNotEmpty()) Text("not reached: " + missing.joinToString(", "),
                 style = MaterialTheme.typography.labelSmall, color = Palette.Amber, modifier = Modifier.padding(top = 10.dp))
         }

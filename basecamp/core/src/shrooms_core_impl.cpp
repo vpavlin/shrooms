@@ -8,6 +8,7 @@
 #include <cstring>
 #include <fstream>
 #include <map>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -897,6 +898,54 @@ std::string ShroomsCoreImpl::agentQueue(const std::string& address, const std::s
     return "{\"id\":\"" + hub().queueText(address, session, text) + "\"}";
 }
 
+namespace {
+std::vector<std::string> lines(const std::string& s)
+{
+    std::vector<std::string> out;
+    std::stringstream in(s);
+    std::string l;
+    while (std::getline(in, l))
+        if (!l.empty()) out.push_back(l);
+    return out;
+}
+}  // namespace
+
+std::string ShroomsCoreImpl::agentQueueFiles(const std::string& address, const std::string& session,
+                                             const std::string& text, const std::string& files)
+{
+    if (!agents::isMeshAddress(address)) return errorJson("not a mesh address", address);
+    if (!safeSession(session)) return errorJson("not a session name", session);
+    auto fs = lines(files);
+    if (fs.empty() && text.find_first_not_of(" \t\r\n") == std::string::npos) return errorJson("an empty message", "");
+    // Only what agentKeep or agentPaste kept: a view names no other file.
+    std::string dir = hub().keptDir() + "/";
+    for (const auto& f : fs)
+        if (f.compare(0, dir.size(), dir) != 0 || f.find("/..") != std::string::npos) return errorJson("not a kept file", f);
+    return "{\"id\":\"" + hub().queueText(address, session, text, fs) + "\"}";
+}
+
+std::string ShroomsCoreImpl::agentKeep(const std::string& localPath)
+{
+    std::string err;
+    std::string file = hub().keepFile(localPath, err);
+    if (file.empty()) return errorJson("cannot attach it", err);
+    return "{\"file\":" + jsonString(file) + "}";
+}
+
+std::string ShroomsCoreImpl::agentGather(const std::string& addresses, const std::string& path)
+{
+    if (!agents::safePath(path)) return errorJson("not an agent path", path);
+    auto as = lines(addresses);
+    for (const auto& a : as)
+        if (!agents::isMeshAddress(a)) return errorJson("not a mesh address", a);
+    return "{\"gather\":" + std::to_string(hub().gather(as, path)) + "}";
+}
+
+std::string ShroomsCoreImpl::agentGathered()
+{
+    return hub().gathered();
+}
+
 std::string ShroomsCoreImpl::agentOutbox()
 {
     return hub().outbox();
@@ -926,15 +975,13 @@ std::string ShroomsCoreImpl::agentOpenUrl(const std::string& url)
     return "{\"ok\":true}";
 }
 
-std::string ShroomsCoreImpl::agentPaste(const std::string& address, const std::string& session)
+std::string ShroomsCoreImpl::agentPaste(const std::string&, const std::string&)
 {
-    if (!agents::isMeshAddress(address)) return errorJson("not a mesh address", address);
-    if (!safeSession(session)) return errorJson("not a session name", session);
     std::string err;
-    long id = hub().pasteImage(address, session, err);
-    if (id < 0) return errorJson("cannot paste", err);
-    if (id == 0) return "{\"none\":true}";
-    return "{\"job\":" + std::to_string(id) + "}";
+    std::string file = hub().pasteImage(err);
+    if (!err.empty()) return errorJson("cannot paste", err);
+    if (file.empty()) return "{\"none\":true}";
+    return "{\"file\":" + jsonString(file) + "}";
 }
 
 std::string ShroomsCoreImpl::agentDelete(const std::string& address, const std::string& path)

@@ -404,7 +404,31 @@ public:
      */
     std::string agentQueue(const std::string& address, const std::string& session, const std::string& text);
 
-    /** @brief What is queued and not yet sent: [{id,address,session,kind,text,created,error}]. */
+    /**
+     * @brief Queues a message with files kept by agentKeep or agentPaste
+     * (one path per line): each is sent to the machine just before the
+     * message, which names where it was kept there. {"id":"…"}.
+     */
+    std::string agentQueueFiles(const std::string& address, const std::string& session, const std::string& text,
+                                const std::string& files);
+
+    /**
+     * @brief Keeps a local file for the next message, needing nothing from
+     * the agent's machine: {"file":"<where it is kept>"}, or an error.
+     */
+    std::string agentKeep(const std::string& localPath);
+
+    /**
+     * @brief The same GET (an agent path) to several machines (one address
+     * per line), in the background, each on its own: {"gather":N}.
+     * agentGathered() reports each machine's answer as it comes.
+     */
+    std::string agentGather(const std::string& addresses, const std::string& path);
+
+    /** @brief The latest gathering: {"id","results":[{"address","done","error","body"}]}. */
+    std::string agentGathered();
+
+    /** @brief What is queued and not yet sent: [{id,address,session,kind,text,created,error,files}]. */
     std::string agentOutbox();
 
     /** @brief Takes something out of the queue. */
@@ -426,9 +450,11 @@ public:
     std::string agentOpenUrl(const std::string& url);
 
     /**
-     * @brief Sends an image on the clipboard to the session's machine, in the
-     * background: {"job":N}, or {"none":true} when the clipboard holds no
-     * image and the view should paste its text as usual.
+     * @brief Keeps an image on the clipboard for the next message, as
+     * agentKeep keeps a file: {"file":"…"}, or {"none":true} when the
+     * clipboard holds no image and the view should paste its text as usual.
+     * (The session is not needed since the image goes with the message;
+     * the arguments stay for the views that pass them.)
      */
     std::string agentPaste(const std::string& address, const std::string& session);
 

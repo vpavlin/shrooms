@@ -477,3 +477,34 @@ func TestEventsCanStartAtTheTail(t *testing.T) {
 		t.Errorf("a reconnect after %d with tail=3 gave %d events, want all %d after it", mid, len(rest), len(all)-3)
 	}
 }
+
+// A directory that is not there yet is made for the session — a new project
+// started from the phone — but a refused request makes nothing, and a file
+// where the directory would be is still refused.
+func TestCreateMakesAMissingDirectory(t *testing.T) {
+	m := newTestManager(t, t.TempDir())
+	base := t.TempDir()
+
+	dir := filepath.Join(base, "new", "project")
+	in, err := m.Create("fresh", dir)
+	if err != nil {
+		t.Fatalf("create in a missing directory: %v", err)
+	}
+	if st, err := os.Stat(dir); err != nil || !st.IsDir() || in.Dir != dir {
+		t.Fatalf("directory not made: %v (dir %q)", err, in.Dir)
+	}
+
+	refused := filepath.Join(base, "refused")
+	if _, err := m.Create("fresh", refused); err == nil {
+		t.Fatal("a second session of the same name was made")
+	}
+	if _, err := os.Stat(refused); !os.IsNotExist(err) {
+		t.Fatalf("a refused request left a directory behind: %v", err)
+	}
+
+	file := filepath.Join(base, "a-file")
+	os.WriteFile(file, []byte("x"), 0o644)
+	if _, err := m.Create("onfile", file); err == nil || !strings.Contains(err.Error(), "not a directory") {
+		t.Fatalf("a file accepted as the directory: %v", err)
+	}
+}

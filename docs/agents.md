@@ -104,7 +104,7 @@ On each machine's overlay addresses, port 7387.
 |---|---|
 | `GET /v1/sessions` | list: name, directory, state (idle / working / waiting), pending prompts, context used and window, model, the last reply, auto-approve, `harness` and its `caps`, and `turns` — how many turns have ended, which the phone notifies on, once each (events are no use for that: a session waiting on background work sends heartbeats and progress between turns). A turn Claude Code starts by itself, when background work finishes, makes the session working |
 | `GET /v1/harnesses` | `{"harnesses":[{name, title, caps:{approve, takeover}}]}` — the coding agents this machine runs sessions of, Claude Code first (docs/agents-harnesses.md) |
-| `POST /v1/sessions` | `{name, dir, harness?, auto_approve?}` — create, with Claude Code unless `harness` names another; `{name, resume: id}` — continue an existing Claude Code conversation, in the directory it ran in |
+| `POST /v1/sessions` | `{name, dir, harness?, auto_approve?}` — create, with Claude Code unless `harness` names another; `dir` (`~` is the agent user's home) is made if it does not exist, once the request is otherwise accepted, and refused if it is a file; `{name, resume: id}` — continue an existing Claude Code conversation, in the directory it ran in |
 | `DELETE /v1/sessions/{name}` | stop and forget |
 | `PATCH /v1/sessions/{name}`, `POST …/settings` | `{auto_approve?, starred?}` (POST for clients that cannot send PATCH). A star is kept on the agent, so every device lists starred sessions first, above each machine's others |
 | `GET /v1/sessions/{name}/search?q=…[&limit=N]` | `{"found":[{seq, time, role, snippet, text}]}`, newest first (50 by default, at most 200): the turns of the whole conversation containing q — what was typed and the model's text, not tools — ignoring case and Czech diacritics. From the session's events (`seq` to jump to) and, for what came before them, the transcript (`seq` 0, with the whole `text`). About a second on a 190 MB transcript |
@@ -181,6 +181,18 @@ the agent takes once (`POST …/messages {text, id}` answers
 `{"duplicate":true}` to a repeat, from memory of the last thousand and the
 log), so sending again after a lost answer cannot send twice.
 
+**Files go with their message.** A file picked (or, in Basecamp, an image
+pasted) is copied into the outbox's folder at once — nothing is asked of the
+agent's machine, so attaching works with it away and holds up nothing — and
+queued with the message. When it is sent, each file is uploaded first
+(`POST …/files`), where the agent kept it recorded as soon as it is known, so
+a send that fails after it does not upload it again; then the message, naming
+every file by that path. A queued message lists its files, ticked once
+uploaded. Cancelling it deletes the copies; a copy no message took is
+deleted a day later. (Uploading on attach waited on an unreachable machine —
+a minute on the phone, two in Basecamp — with sending blocked, and then lost
+the file.)
+
 **Voice notes are turns**: the recording itself is sent, the agent keeps it,
 transcribes it on its machine and sends what was said — nothing comes back
 to read and confirm. Kept first, so one that fails (no model, nothing
@@ -201,7 +213,12 @@ copy's last are asked for — usually none or a few. Opening by replaying the
 last 300 instead, tool output and all, took tens of seconds over the mesh,
 and the conversation was rebuilt under the reader as it came: the scrolling
 on every switch. With no copy, the replay is gathered and shown once it
-reaches the session's newest event as listed. A session whose numbers are
+reaches the session's newest event as listed. A copy more than those 300
+events behind the session's newest as listed — it went on from another
+device while nothing here watched it — is not caught up from either: that is
+the same replay, of every event since, and opens at the end as without one
+(Basecamp, whose copies are kept only while a conversation is open; on the
+phone the watcher keeps them current). A session whose numbers are
 below its copy's was deleted and made again: the copy is dropped and it is
 opened without one. On the phone the copies are in the app's files
 (`history/`), with the 30 turns from before the agent had the conversation,
@@ -246,7 +263,10 @@ the basis of sharing a model on a machine of your own fairly, or of billing
 for it. Each agent reads it out of its session logs (`GET /v1/usage
 [?since=2006-01-02]`: rows per day, session, device and model with turns,
 tokens, cost and busy time), history included; the apps ask every machine and
-sum it by **who asked**, **where it ran** and **which model**, over today, 7
+sum it by **who asked**, **where it ran** and **which model**, each machine
+asked on its own and shown as it answers ("still asking", "not reached" for
+one that is away; Basecamp asks through its core in the background,
+`agentGather`),  over today, 7
 or 30 days or all, by tokens out, turns, cost or busy time. Who asked is the
 turn's sender: the mesh peer its request came from, which WireGuard makes
 unforgeable, or the agent's own machine for its local socket (Basecamp on it)

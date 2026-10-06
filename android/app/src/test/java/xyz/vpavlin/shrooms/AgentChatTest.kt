@@ -245,6 +245,40 @@ class OutboxTest {
         assertTrue(Outbox.newId() != Outbox.newId())
     }
 
+    // Files go with their message, kept as written across a restart.
+    @Test fun attachmentsKeptAsWritten() {
+        val items = listOf(q("a1", "a", 10).copy(attachments = listOf(
+            Attachment("/o/x-shot.png", "shot.png"), Attachment("/o/y-notes.txt", "notes.txt", "/up/notes.txt"))))
+        assertEquals(items, Outbox.decode(Outbox.encode(items)))
+    }
+
+    // With the machine away: nothing is sent, nothing is lost, and what did
+    // go before the failure is not sent again on the next try — the message
+    // then names every file where the machine kept it.
+    @Test fun filesGoFirstEachOnce() {
+        var item = q("m", "s", 1).copy(text = "look", attachments = listOf(
+            Attachment("/o/1-a.png", "a.png"), Attachment("/o/2-b.pdf", "b.pdf")))
+        val uploads = mutableListOf<String>()
+        val sent = mutableListOf<String>()
+        var reachable = 1 // uploads that succeed before the machine goes away
+        fun attempt() = runCatching {
+            Outbox.sendOne(item,
+                upload = { a -> if (reachable-- <= 0) error("connect timed out"); uploads += a.name; "/up/${a.name}" },
+                send = { _, text -> sent += text },
+                voice = { error("not a voice note") },
+                progress = { item = it })
+        }
+        assertTrue(attempt().isFailure)
+        assertEquals(listOf("a.png"), uploads)
+        assertEquals(emptyList<String>(), sent)
+        assertEquals(listOf("/up/a.png", ""), item.attachments.map { it.sent })
+
+        reachable = 10
+        assertTrue(attempt().isSuccess)
+        assertEquals(listOf("a.png", "b.pdf"), uploads)
+        assertEquals(listOf(withAttachments("look", listOf("/up/a.png", "/up/b.pdf"))), sent)
+    }
+
     @Test fun whereItIsSaysWhy() {
         assertEquals("QUEUED · sending to laptop…", queuedLabel(q("a", "s", 1), "laptop"))
         assertEquals("QUEUED · waiting for laptop — connect timed out",

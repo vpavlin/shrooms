@@ -896,8 +896,10 @@ Item {
     // Through the core's outbox: sent now if the machine answers, later if
     // not, so a message can be written with it unreachable (the phone's Outbox).
     function sendToAgent(text) {
-        if (!agentOpen || (text.trim() === "" && agentAttached.length === 0) || agentSending !== "") return false
-        var r = agentCall("agentQueue", [agentOpen.address, agentOpen.session, withAttachments(text.trim(), agentAttached)])
+        if (!agentOpen || (text.trim() === "" && agentAttached.length === 0)) return false
+        var r = agentAttached.length === 0
+            ? agentCall("agentQueue", [agentOpen.address, agentOpen.session, text.trim()])
+            : agentCall("agentQueueFiles", [agentOpen.address, agentOpen.session, text.trim(), agentAttached.join("\n")])
         if (r !== null) { root.agentAttached = []; root.chatStick = true; refreshOutbox() }
         return r !== null
     }
@@ -922,10 +924,16 @@ Item {
         var u = String(url)
         return u.indexOf("file://") === 0 ? decodeURIComponent(u.slice(7)) : u
     }
+    // Kept by the core at once, and sent with the message through the
+    // outbox: a machine that is not there holds up nothing, and loses nothing.
     function attachFile(url) {
         if (!agentOpen) return
-        agentCall("agentUpload", [agentOpen.address, agentOpen.session, localPath(url)])
-        pumpJobs()
+        var r = agentCall("agentKeep", [localPath(url)])
+        if (r && r.file) root.agentAttached = agentAttached.concat([r.file])
+    }
+    // A kept file's name as it was: the core keeps it as b-<id>-<name>.
+    function attachedName(path) {
+        return String(path).split("/").pop().replace(/^b-[0-9a-f]+-[0-9a-f]+-[0-9a-f]+-/, "").replace(/^\d{8}-\d{6}-(\d+-)?/, "")
     }
     function toggleRecording() {
         if (!agentOpen || agentTranscribing) return
@@ -1157,18 +1165,39 @@ Item {
         usageDialog.open()
         loadUsage()
     }
+    // Every machine asked at once, in the background (agentGather), and the
+    // answers shown as they come: asked one after another from here, each
+    // call held the window, and a machine away held it the longest.
+    property var usageHosts: []
+    property var usageWaiting: []
     function loadUsage() {
         root.usageRows = null
-        var since = usageSince(usageDays), rows = [], missing = []
-        for (var i = 0; i < agentHosts.length; i++) {
-            var h = agentHosts[i]
-            var r = unwrap(callCore("agentGet", [h.address, "/v1/usage" + (since ? "?since=" + since : "")]))
-            if (!r || r.error || !Array.isArray(r.rows)) { missing.push(h.name); continue }
-            for (var j = 0; j < r.rows.length; j++) { var row = r.rows[j]; row.machine = h.name; rows.push(row) }
-        }
-        root.usageMissing = missing
-        root.usageRows = rows
+        root.usageMissing = []
+        var since = usageSince(usageDays)
+        root.usageHosts = agentHosts.map(function(h) { return { name: h.name, address: h.address } })
+        root.usageWaiting = usageHosts.map(function(h) { return h.name })
+        if (usageHosts.length === 0) { root.usageRows = []; return }
+        agentCall("agentGather", [usageHosts.map(function(h) { return h.address }).join("\n"),
+                                  "/v1/usage" + (since ? "?since=" + since : "")])
     }
+    function pumpUsage() {
+        if (usageWaiting.length === 0) return
+        var g = unwrap(callCore("agentGathered", []))
+        if (!g || !Array.isArray(g.results)) return
+        var rows = [], missing = [], waiting = []
+        for (var i = 0; i < usageHosts.length; i++) {
+            var h = usageHosts[i]
+            var r = g.results.filter(function(x) { return x.address === h.address })[0]
+            if (!r || !r.done) { waiting.push(h.name); continue }
+            if (!r.body || !Array.isArray(r.body.rows)) { missing.push(h.name); continue }
+            for (var j = 0; j < r.body.rows.length; j++) { var row = r.body.rows[j]; row.machine = h.name; rows.push(row) }
+        }
+        root.usageWaiting = waiting
+        root.usageMissing = missing
+        // Shown once something came, or everything did.
+        if (rows.length > 0 || waiting.length === 0) root.usageRows = rows
+    }
+    Timer { interval: 300; repeat: true; running: usageDialog.visible && root.usageWaiting.length > 0; onTriggered: root.pumpUsage() }
     // Who asked, as a person reads it: "nothing.office" is "nothing"; "" is
     // the agent's own machine, counted under its name — the same device as
     // when it asks another machine.
@@ -1239,7 +1268,9 @@ Item {
                 }
             }
             Text { visible: root.usageRows === null; text: "asking the machines…"; color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(11) }
-            Text { visible: root.usageRows !== null && root.usageRows.length === 0; text: "nothing used in this period"; color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(11) }
+            Text { visible: root.usageRows !== null && root.usageWaiting.length > 0; text: "still asking: " + root.usageWaiting.join(", ");
+                   color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(10) }
+            Text { visible: root.usageRows !== null && root.usageRows.length === 0 && root.usageWaiting.length === 0; text: "nothing used in this period"; color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(11) }
             ScrollView {
                 Layout.fillWidth: true; Layout.fillHeight: true
                 visible: root.usageRows !== null && root.usageRows.length > 0
@@ -2019,8 +2050,17 @@ Item {
                                             Lnk { text: "cancel"; base: cRust; font.pixelSize: root.fs(9); onClicked: Qt.callLater(root.cancelQueued, qrow.modelData.id) }
                                         }
                                         Text { width: parent.width; wrapMode: Text.Wrap
+                                               visible: text !== ""
                                                text: qrow.modelData.kind === "voice" ? "🎤 voice note" : qrow.modelData.text
                                                color: Qt.rgba(0.84, 0.87, 0.89, 0.7); font.family: "monospace"; font.pixelSize: root.fs(12) }
+                                        Repeater {
+                                            model: qrow.modelData.files || []
+                                            delegate: Text {
+                                                required property var modelData
+                                                text: (modelData.sent ? "📎 ✓ " : "📎 ") + modelData.name
+                                                color: cSky; font.family: "monospace"; font.pixelSize: root.fs(10)
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -2339,7 +2379,7 @@ Item {
                             Text {
                                 id: chipText
                                 anchors.centerIn: parent
-                                text: "📎 " + chip.modelData.split("/").pop().replace(/^\d{8}-\d{6}-(\d+-)?/, "") + "  ×"
+                                text: "📎 " + root.attachedName(chip.modelData) + "  ×"
                                 color: cSky; font.family: "monospace"; font.pixelSize: root.fs(10)
                             }
                             MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
@@ -2418,7 +2458,7 @@ Item {
                             Keys.onPressed: function(ev) {
                                 if (!ev.matches(StandardKey.Paste) || !root.agentOpen) return
                                 var r = root.unwrap(root.callCore("agentPaste", [root.agentOpen.address, root.agentOpen.session]))
-                                if (r && r.job) { ev.accepted = true; root.pumpJobs() }
+                                if (r && r.file) { ev.accepted = true; root.agentAttached = root.agentAttached.concat([r.file]) }
                                 else if (r && r.error) { root.said = r.detail || r.error; root.saidBad = true }
                             }
                             Keys.onReturnPressed: function(ev) {

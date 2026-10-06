@@ -726,8 +726,10 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     val list = rememberLazyListState()
     val ctx = LocalContext.current
-    // Files sent to the agent's machine, named in the next message.
-    var attached by remember(o) { mutableStateOf<List<String>>(emptyList()) }
+    // Files to go with the next message: kept on the phone at once, and sent
+    // with the message through the outbox — so a machine that is not there
+    // holds up nothing, and loses nothing.
+    var attached by remember(o) { mutableStateOf<List<Attachment>>(emptyList()) }
     var uploading by remember { mutableStateOf("") }
     val pickFile = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.GetContent(),
@@ -737,11 +739,8 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit) {
         uploading = name
         scope.launch {
             withContext(Dispatchers.IO) {
-                runCatching {
-                    val bytes = ctx.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
-                    client.upload(o.session, name, bytes)
-                }
-            }.onSuccess { attached = attached + it }.onFailure { actionError = it.message ?: "could not send $name" }
+                runCatching { ctx.contentResolver.openInputStream(uri)!!.use { Outbox.keep(ctx, name, it) } }
+            }.onSuccess { attached = attached + it }.onFailure { actionError = it.message ?: "could not read $name" }
             uploading = ""
         }
     }
@@ -1228,13 +1227,13 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit) {
             Row(Modifier.padding(start = 14.dp, end = 14.dp, top = 6.dp).horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 for (a in attached) {
-                    Text("📎 ${a.substringAfterLast('/').substringAfter('-').substringAfter('-')}  ×",
+                    Text("📎 ${a.name}  ×",
                         style = MaterialTheme.typography.labelSmall, color = Palette.Sky,
                         modifier = Modifier.border(1.dp, Palette.Sky.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
-                            .clickable { attached = attached - a }.padding(horizontal = 10.dp, vertical = 6.dp))
+                            .clickable { attached = attached - a; java.io.File(a.file).delete() }.padding(horizontal = 10.dp, vertical = 6.dp))
                 }
                 if (uploading.isNotEmpty()) Row(verticalAlignment = Alignment.CenterVertically) {
-                    Pulse(Palette.Sky); Spacer(Modifier.width(6.dp)); Label("sending $uploading…")
+                    Pulse(Palette.Sky); Spacer(Modifier.width(6.dp)); Label("adding $uploading…")
                 }
             }
         }
@@ -1271,12 +1270,13 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit) {
                 Modifier.size(44.dp)
                     .background(if (canSend) Palette.Phosphor else Palette.Line, CircleShape)
                     .clickable(enabled = canSend) {
-                        val text = withAttachments(input.trim(), attached)
+                        val text = input.trim()
+                        val files = attached
                         input = ""
                         attached = emptyList()
                         actionError = ""
                         enqueue(Outgoing(Outbox.newId(), o.address, o.host, o.session, "text", text = text,
-                            created = System.currentTimeMillis()))
+                            created = System.currentTimeMillis(), attachments = files))
                     },
                 contentAlignment = Alignment.Center,
             ) { Text("↑", color = Palette.Void, style = MaterialTheme.typography.titleMedium) }
@@ -1448,8 +1448,11 @@ private fun QueuedRow(q: Outgoing, host: String, onCancel: () -> Unit) {
             Text("cancel", style = MaterialTheme.typography.labelSmall, color = Palette.Rust,
                 modifier = Modifier.clickable(onClick = onCancel).padding(start = 8.dp))
         }
-        Text(if (q.kind == "voice") "🎤 voice note" else q.text, style = MaterialTheme.typography.bodyMedium,
-            color = Palette.Bone.copy(alpha = 0.7f))
+        if (q.kind == "voice" || q.text.isNotEmpty())
+            Text(if (q.kind == "voice") "🎤 voice note" else q.text, style = MaterialTheme.typography.bodyMedium,
+                color = Palette.Bone.copy(alpha = 0.7f))
+        for (a in q.attachments) Text((if (a.sent.isEmpty()) "📎 " else "📎 ✓ ") + a.name,
+            style = MaterialTheme.typography.labelSmall, color = Palette.Sky, modifier = Modifier.padding(top = 4.dp))
     }
 }
 

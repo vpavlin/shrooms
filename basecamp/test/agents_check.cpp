@@ -7,6 +7,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <unistd.h>
 #include <thread>
 
 using namespace agents;
@@ -132,6 +134,27 @@ int main(int argc, char** argv)
         h.watch(addr, session, -5);
         long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
         CHECK(ms < 1000, "switching away took %ld ms", ms);
+    }
+
+    // A copy kept here far behind the session — it went on from the phone —
+    // is not caught up from, which replayed thousands of events into the
+    // view piece by piece (2026-10-06): it opens at the end instead.
+    {
+        std::ofstream(Hub::historyPath(addr, session), std::ios::trunc)
+            << "{\"saved\":1}\n{\"seq\":1,\"kind\":\"message\",\"data\":{\"text\":\"old\"}}\n"
+            << "{\"seq\":2,\"kind\":\"message\",\"data\":{\"text\":\"old\"}}\n";
+        hub.watch(addr, session, 300);
+        std::string r;
+        for (int i = 0; i < 100; i++) {
+            r = hub.events(0);
+            if (r.find("\"seq\":") != std::string::npos) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        long long first = 0;
+        size_t at = r.find("\"seq\":");
+        if (at != std::string::npos) first = std::atoll(r.c_str() + at + 6);
+        CHECK(r.find("\"kept\":0") != std::string::npos && first > 1000,
+              "a copy far behind was shown and caught up from: first %lld, %s", first, r.substr(0, 160).c_str());
     }
 
     hub.watch(addr, session, 0);
@@ -294,10 +317,11 @@ int main(int argc, char** argv)
     // none — never a silent nothing.
     {
         std::string perr;
-        long pid = hub.pasteImage(addr, session, perr);
-        CHECK(pid == 0 || (pid < 0 && perr.find("sudo apt install") != std::string::npos) || pid > 0,
-              "paste: %ld %s", pid, perr.c_str());
-        std::printf("     paste: %s\n", pid > 0 ? "an image went" : (pid == 0 ? "no image on the clipboard" : perr.c_str()));
+        std::string kept = hub.pasteImage(perr);
+        CHECK(!kept.empty() || perr.empty() || perr.find("sudo apt install") != std::string::npos,
+              "paste: %s %s", kept.c_str(), perr.c_str());
+        std::printf("     paste: %s\n", !kept.empty() ? "an image kept" : (perr.empty() ? "no image on the clipboard" : perr.c_str()));
+        if (!kept.empty()) ::unlink(kept.c_str());
     }
 
     // A voice note: two seconds from the real microphone, transcribed on the
@@ -365,10 +389,64 @@ int main(int argc, char** argv)
             CHECK(ok && ev.find("\"duplicate\":true") != std::string::npos, "sent again was not a duplicate: %s %s",
                   ev.c_str(), err.c_str());
         }
+        // A file attached with the machine unreachable waits in the outbox
+        // with its message, naming nothing yet; cancelled, it goes with it.
+        {
+            Hub h;
+            std::string src = data + "/notes.txt";
+            std::ofstream(src) << "attached text";
+            std::string e;
+            std::string kept = h.keepFile(src, e);
+            CHECK(!kept.empty() && kept.compare(0, h.keptDir().size(), h.keptDir()) == 0, "kept: %s %s", kept.c_str(), e.c_str());
+            std::string id = h.queueText("fd00::1", "nowhere", "", {kept});
+            std::string ob = h.outbox();
+            CHECK(ob.find("\"files\":[{\"name\":\"notes.txt\",\"sent\":false}]") != std::string::npos,
+                  "queued with its file: %s", ob.c_str());
+            CHECK(h.unqueue(id) && ::access(kept.c_str(), F_OK) != 0, "the kept file stays after a cancel");
+        }
+        // Reachable: the file is uploaded first, once, and the message names
+        // where the agent kept it.
+        {
+            Hub h;
+            std::string src = data + "/report.txt";
+            std::ofstream(src) << "the report";
+            std::string e;
+            std::string kept = h.keepFile(src, e);
+            h.queueText(addr, "outbox-check", "see the file", {kept});
+            for (int i = 0; i < 100 && h.outbox() != "[]"; i++) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            CHECK(h.outbox() == "[]", "not sent: %s", h.outbox().c_str());
+            CHECK(::access(kept.c_str(), F_OK) != 0, "the kept copy outlived its message");
+            request(addr, "GET", "/v1/sessions/outbox-check/search?q=Attached", "", 5, out, err);
+            // Search shows a snippet, its lines joined and its end cut.
+            CHECK(out.find("see the file Attached from Basecamp (on this machine): - /") != std::string::npos,
+                  "the message does not name the file: %s", out.substr(0, 600).c_str());
+        }
         request(addr, "DELETE", "/v1/sessions/outbox-check", "", 5, out, err);
         std::string rm = "rm -rf " + data;
         (void)!std::system(rm.c_str());
         unsetenv("XDG_DATA_HOME");
+    }
+
+    // Several machines asked at once: one that cannot be reached holds up
+    // neither the others nor the caller.
+    {
+        Hub h;
+        auto t0 = std::chrono::steady_clock::now();
+        h.gather({"fd00::1", addr}, "/v1/usage");
+        auto took = std::chrono::steady_clock::now() - t0;
+        CHECK(took < std::chrono::milliseconds(200), "gather blocked the caller");
+        std::string g;
+        for (int i = 0; i < 100; i++) {
+            g = h.gathered();
+            if (g.find("\"rows\":") != std::string::npos) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        size_t me = g.find("\"address\":\"" + addr + "\"");
+        CHECK(me != std::string::npos && g.find("\"done\":true", me) != std::string::npos &&
+              g.find("\"rows\":[", me) != std::string::npos, "the reachable one: %s", g.substr(0, 400).c_str());
+        CHECK(g.find("{\"address\":\"fd00::1\",\"done\":false") != std::string::npos ||
+              g.find("{\"address\":\"fd00::1\",\"done\":true,\"error\":\"\"") == std::string::npos,
+              "the unreachable one answered: %s", g.substr(0, 400).c_str());
     }
 
     std::printf(fails ? "\n%d FAILED\n" : "\nall passed\n", fails);

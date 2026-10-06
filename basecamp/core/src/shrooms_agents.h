@@ -151,12 +151,26 @@ public:
     void recordCancel();
 
     /**
-     * An image on the clipboard, sent like a file: Basecamp's QML can paste
-     * text only. Read with wl-paste (Wayland) or xclip (X11). Returns the
-     * job's id, 0 when the clipboard holds no image (the caller pastes its
-     * text as usual), or -1 with why in err.
+     * An image on the clipboard, attached like a file: Basecamp's QML can
+     * paste text only. Read with wl-paste (Wayland) or xclip (X11) into the
+     * outbox's folder. Returns where it is kept, "" when the clipboard holds
+     * no image (the caller pastes its text as usual), or "" with why in err.
      */
-    long pasteImage(const std::string& address, const std::string& session, std::string& err);
+    std::string pasteImage(std::string& err);
+
+    /**
+     * Asks several machines the same GET in the background, each on its own —
+     * so one that cannot be reached holds up none of the others, nor the
+     * window. Replaces any gathering still running; gathered() reports it.
+     */
+    long gather(const std::vector<std::string>& addresses, const std::string& path);
+
+    /**
+     * The latest gathering: {"id":N,"results":[{"address","done","error",
+     * "body"}]}, body being the machine's JSON as it gave it (null until
+     * done, or on error).
+     */
+    std::string gathered();
 
     /**
      * Background jobs, as {"recording":bool,"jobs":[{"id","kind","state",
@@ -191,7 +205,17 @@ public:
      * In order per session; kept on disk across restarts. Each carries an id
      * the agent takes once, so sending again is harmless.
      */
-    std::string queueText(const std::string& address, const std::string& session, const std::string& text);
+    std::string queueText(const std::string& address, const std::string& session, const std::string& text,
+                          const std::vector<std::string>& files = {});
+
+    /**
+     * Keeps a file picked or pasted for the next message, beside the outbox:
+     * attaching needs nothing from the agent's machine, which gets the file
+     * with the message (queueText). Returns where it is kept, or "" with err.
+     */
+    std::string keepFile(const std::string& localPath, std::string& err);
+    /** Where kept files are. */
+    std::string keptDir() { return outboxDir(); }
 
     /**
      * Stops the recording and queues it as a voice note: the agent keeps it,
@@ -206,11 +230,16 @@ public:
     bool unqueue(const std::string& id);
 
 private:
+    struct Attached {
+        std::string file, name, sent;   // sent: the path on the agent's machine, once it has it
+    };
     struct Outgoing {
         std::string id, address, session, kind, text, file;
         long long created = 0;
         std::string error;
+        std::vector<Attached> files;    // uploaded, in order, just before the message
     };
+    void sweepOutbox();  // with mu_ held
     void loadOutbox();   // with mu_ held
     void saveOutbox();   // with mu_ held
     void startSender();
@@ -235,6 +264,7 @@ private:
     long addJob(const std::string& kind, const std::string& name);
     void finishJob(long id, bool ok, const std::string& path, const std::string& text, const std::string& error);
     void follow(std::string address, std::string session, int tail, long long after, unsigned generation);
+    long long listedLastSeq(const std::string& address, const std::string& session); // with mu_ held
     void stopFollower();
 
     std::mutex mu_;
@@ -262,6 +292,13 @@ private:
     int speaker_ = -1;        // process group of the speech pipeline
     std::string speakEngine_;
     std::string recording_;
+
+    struct Gathered {
+        std::string address, body, error;
+        bool done = false;
+    };
+    long gatherId_ = 0;
+    std::vector<Gathered> gathered_;
 
     long searchId_ = 0;
     bool searchDone_ = true;

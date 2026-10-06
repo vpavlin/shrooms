@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -298,7 +299,12 @@ func (m *Manager) CreateWith(name, dir, harness string) (Info, error) {
 	if err != nil {
 		return Info{}, err
 	}
-	if st, err := os.Stat(abs); err != nil || !st.IsDir() {
+	// A directory that is not there yet is made — a new project started
+	// from the phone — but only once the rest of the request is known to
+	// be good, so a refused one leaves nothing behind.
+	st, err := os.Stat(abs)
+	missing := errors.Is(err, fs.ErrNotExist)
+	if !missing && (err != nil || !st.IsDir()) {
 		return Info{}, fmt.Errorf("%s is not a directory on this machine", abs)
 	}
 	m.mu.Lock()
@@ -309,6 +315,11 @@ func (m *Manager) CreateWith(name, dir, harness string) (Info, error) {
 	}
 	if _, ok := m.sessions[name]; ok {
 		return Info{}, fmt.Errorf("there is already a session called %q", name)
+	}
+	if missing {
+		if err := os.MkdirAll(abs, 0o755); err != nil {
+			return Info{}, fmt.Errorf("making %s: %w", abs, err)
+		}
 	}
 	s := m.newSession(name, abs, h)
 	m.sessions[name] = s

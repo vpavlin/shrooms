@@ -10,6 +10,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <dirent.h>
+#include <set>
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <poll.h>
@@ -394,6 +396,21 @@ void Hub::stopFollower()
     if (follower_.joinable()) follower_.join();
 }
 
+// A session's last_seq as its machine last listed it (find), 0 when not
+// known. With mu_ held.
+long long Hub::listedLastSeq(const std::string& address, const std::string& session)
+{
+    auto it = found_.find(address);
+    if (it == found_.end()) return 0;
+    const std::string& j = it->second;
+    size_t at = j.find("{\"name\":\"" + jsonEscape(session) + "\",\"dir\":");
+    if (at == std::string::npos) return 0;
+    size_t ls = j.find("\"last_seq\":", at);
+    size_t next = j.find("{\"name\":\"", at + 1);
+    if (ls == std::string::npos || (next != std::string::npos && ls > next)) return 0;
+    return std::atoll(j.c_str() + ls + 11);
+}
+
 void Hub::watch(const std::string& address, const std::string& session, int tail)
 {
     stopFollower();
@@ -428,6 +445,19 @@ void Hub::watch(const std::string& address, const std::string& session, int tail
         error_.clear();
         kept_ = 0;
         keptLast_ = 0;
+        // A copy far behind — the session went on elsewhere, from the phone,
+        // while nothing here watched it — is not caught up from: that is a
+        // replay of every event since, megabytes of tool output, and the
+        // conversation rebuilt under the reader piece by piece (2026-10-06).
+        // Opened at the end instead, as without a copy. Judged against the
+        // session's newest event as last listed, when it was.
+        if (kept > 0 && !keptEvents.empty() && tail > 0) {
+            long long listed = listedLastSeq(address, session); // mu_ is held
+            if (listed > 0 && listed - seqOf(keptEvents.back()) > tail) {
+                kept = 0;
+                keptEvents.clear();
+            }
+        }
         if (kept > 0 && !keptEvents.empty()) {
             keptLast_ = seqOf(keptEvents.back());
             events_ = std::move(keptEvents);
@@ -1185,13 +1215,17 @@ std::string slurp(const std::string& path)
 
 }  // namespace
 
-long Hub::pasteImage(const std::string& address, const std::string& session, std::string& err)
+namespace {
+std::string newId();
+}  // namespace
+
+std::string Hub::pasteImage(std::string& err)
 {
     char tmpl[] = "/tmp/shrooms-paste-XXXXXX";
     int fd = ::mkstemp(tmpl);
     if (fd < 0) {
         err = std::string("mkstemp: ") + std::strerror(errno);
-        return -1;
+        return "";
     }
     ::close(fd);
     std::string types = std::string(tmpl) + ".types";
@@ -1208,7 +1242,7 @@ long Hub::pasteImage(const std::string& address, const std::string& session, std
     if (rc == -1) {
         err = wayland ? "pasting images needs wl-paste: sudo apt install wl-clipboard"
                       : "pasting images needs xclip: sudo apt install xclip";
-        return -1;
+        return "";
     }
     std::string mime;
     for (const char* m : {"image/png", "image/jpeg", "image/webp", "image/gif"}) {
@@ -1217,7 +1251,7 @@ long Hub::pasteImage(const std::string& address, const std::string& session, std
             break;
         }
     }
-    if (mime.empty()) return 0;
+    if (mime.empty()) return "";
 
     std::vector<std::string> get = wayland ? std::vector<std::string>{"wl-paste", "--type", mime}
                                            : std::vector<std::string>{"xclip", "-selection", "clipboard", "-t", mime, "-o"};
@@ -1226,19 +1260,19 @@ long Hub::pasteImage(const std::string& address, const std::string& session, std
     if (runTo(get, file, 5) != 0) {
         ::unlink(file.c_str());
         err = "could not read the image from the clipboard";
-        return -1;
+        return "";
     }
-    long id = addJob("upload", "pasted." + ext);
-    std::thread([this, id, address, session, file, ext]() {
-        std::string body, out, e;
-        bool ok = readFile(file, body, e);
-        ::unlink(file.c_str());
-        if (ok) {
-            ok = request(address, "POST", "/v1/sessions/" + session + "/files?name=pasted." + ext, body, 120, out, e);
+    std::string kept = outboxDir() + "/" + newId() + "-pasted." + ext;
+    if (std::rename(file.c_str(), kept.c_str()) != 0) {
+        std::string data;
+        if (!readFile(file, data, err)) {
+            ::unlink(file.c_str());
+            return "";
         }
-        finishJob(id, ok, ok ? field(out, "path") : "", "", e);
-    }).detach();
-    return id;
+        std::ofstream(kept, std::ios::binary) << data;
+        ::unlink(file.c_str());
+    }
+    return kept;
 }
 
 long Hub::search(const std::string& address, const std::string& session, const std::string& query)
@@ -1281,6 +1315,48 @@ std::string Hub::searched()
            ",\"error\":\"" + jsonEscape(searchError_) + "\",\"found\":" + searchFound_ + "}";
 }
 
+long Hub::gather(const std::vector<std::string>& addresses, const std::string& path)
+{
+    long id;
+    {
+        std::lock_guard<std::mutex> g(mu_);
+        id = ++gatherId_;
+        gathered_.clear();
+        for (const auto& a : addresses) gathered_.push_back({a, "", "", false});
+    }
+    for (size_t i = 0; i < addresses.size(); i++) {
+        std::thread([this, id, i, address = addresses[i], path]() {
+            std::string out, err;
+            // Long: a machine's first count of its usage reads every log it has.
+            bool ok = request(address, "GET", path, "", 30, out, err);
+            size_t at = out.find_first_not_of(" \t\r\n");
+            if (ok && (at == std::string::npos || (out[at] != '{' && out[at] != '['))) {
+                ok = false;
+                err = "the agent answered something else";
+            }
+            std::lock_guard<std::mutex> g(mu_);
+            if (id != gatherId_ || i >= gathered_.size()) return; // replaced
+            gathered_[i].done = true;
+            if (ok) gathered_[i].body = out;
+            else gathered_[i].error = err.empty() ? "no answer" : err;
+        }).detach();
+    }
+    return id;
+}
+
+std::string Hub::gathered()
+{
+    std::lock_guard<std::mutex> g(mu_);
+    std::string out = "{\"id\":" + std::to_string(gatherId_) + ",\"results\":[";
+    for (size_t i = 0; i < gathered_.size(); i++) {
+        const auto& r = gathered_[i];
+        if (i) out += ",";
+        out += "{\"address\":\"" + jsonEscape(r.address) + "\",\"done\":" + (r.done ? "true" : "false") +
+               ",\"error\":\"" + jsonEscape(r.error) + "\",\"body\":" + (r.body.empty() ? "null" : r.body) + "}";
+    }
+    return out + "]}";
+}
+
 std::string Hub::jobs()
 {
     std::lock_guard<std::mutex> g(mu_);
@@ -1298,6 +1374,18 @@ std::string Hub::jobs()
 // --- the outbox ------------------------------------------------------------
 
 namespace {
+
+// A message with the files sent alongside it named at the end, by the path
+// on the agent's machine — the phone's withAttachments, in the same words
+// but for where they came from.
+std::string withAttachments(const std::string& text, const std::vector<std::string>& paths)
+{
+    if (paths.empty()) return text;
+    std::string out = text.empty() ? "" : text + "\n\n";
+    out += "Attached from Basecamp (on this machine):";
+    for (const auto& p : paths) out += "\n- " + p;
+    return out;
+}
 
 std::string pctDecode(const std::string& s)
 {
@@ -1389,6 +1477,20 @@ void Hub::loadOutbox()
         o.file = f[5];
         o.created = std::atoll(f[6].c_str());
         o.error = pctDecode(f[7]);
+        // Files: file|name|sent, each percent-encoded, separated by commas.
+        if (f.size() > 8 && !f[8].empty()) {
+            size_t start = 0;
+            for (;;) {
+                size_t comma = f[8].find(',', start);
+                std::string one = f[8].substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+                size_t p1 = one.find('|'), p2 = p1 == std::string::npos ? p1 : one.find('|', p1 + 1);
+                if (p2 != std::string::npos)
+                    o.files.push_back({pctDecode(one.substr(0, p1)), pctDecode(one.substr(p1 + 1, p2 - p1 - 1)),
+                                       pctDecode(one.substr(p2 + 1))});
+                if (comma == std::string::npos) break;
+                start = comma + 1;
+            }
+        }
         outbox_.push_back(o);
     }
 }
@@ -1399,13 +1501,35 @@ void Hub::saveOutbox()
     std::ofstream out(path + ".tmp", std::ios::trunc);
     for (const auto& o : outbox_) {
         out << o.id << '\t' << o.address << '\t' << o.session << '\t' << o.kind << '\t' << urlEncode(o.text)
-            << '\t' << o.file << '\t' << o.created << '\t' << urlEncode(o.error) << '\n';
+            << '\t' << o.file << '\t' << o.created << '\t' << urlEncode(o.error) << '\t';
+        for (size_t i = 0; i < o.files.size(); i++) {
+            if (i) out << ',';
+            out << urlEncode(o.files[i].file) << '|' << urlEncode(o.files[i].name) << '|' << urlEncode(o.files[i].sent);
+        }
+        out << '\n';
     }
     out.close();
     std::rename((path + ".tmp").c_str(), path.c_str());
 }
 
-std::string Hub::queueText(const std::string& address, const std::string& session, const std::string& text)
+std::string Hub::keepFile(const std::string& localPath, std::string& err)
+{
+    std::string data;
+    if (!readFile(localPath, data, err)) return "";
+    std::string kept = outboxDir() + "/" + newId() + "-" + baseName(localPath);
+    std::ofstream out(kept, std::ios::binary);
+    out << data;
+    out.close();
+    if (!out) {
+        err = "could not keep " + baseName(localPath);
+        ::unlink(kept.c_str());
+        return "";
+    }
+    return kept;
+}
+
+std::string Hub::queueText(const std::string& address, const std::string& session, const std::string& text,
+                           const std::vector<std::string>& files)
 {
     Outgoing o;
     o.id = newId();
@@ -1414,6 +1538,17 @@ std::string Hub::queueText(const std::string& address, const std::string& sessio
     o.kind = "text";
     o.text = text;
     o.created = nowMillis();
+    // Kept files are named <id>-<name>; the agent is told the name only.
+    for (const auto& f : files) {
+        std::string name = baseName(f);
+        if (name.size() > 2 && name[0] == 'b' && name[1] == '-') {
+            size_t dash = name.find('-', 2);
+            dash = dash == std::string::npos ? dash : name.find('-', dash + 1);
+            dash = dash == std::string::npos ? dash : name.find('-', dash + 1);
+            if (dash != std::string::npos) name = name.substr(dash + 1);
+        }
+        o.files.push_back({f, name, ""});
+    }
     {
         std::lock_guard<std::mutex> g(mu_);
         loadOutbox();
@@ -1478,7 +1613,13 @@ std::string Hub::outbox()
         out += "{\"id\":\"" + jsonEscape(o.id) + "\",\"address\":\"" + jsonEscape(o.address) +
                "\",\"session\":\"" + jsonEscape(o.session) + "\",\"kind\":\"" + o.kind +
                "\",\"text\":\"" + jsonEscape(o.text) + "\",\"created\":" + std::to_string(o.created) +
-               ",\"error\":\"" + jsonEscape(o.error) + "\"}";
+               ",\"error\":\"" + jsonEscape(o.error) + "\",\"files\":[";
+        for (size_t j = 0; j < o.files.size(); j++) {
+            if (j) out += ",";
+            out += "{\"name\":\"" + jsonEscape(o.files[j].name) + "\",\"sent\":" +
+                   (o.files[j].sent.empty() ? "false" : "true") + "}";
+        }
+        out += "]}";
     }
     return out + "]";
 }
@@ -1490,11 +1631,39 @@ bool Hub::unqueue(const std::string& id)
     for (auto it = outbox_.begin(); it != outbox_.end(); ++it) {
         if (it->id != id) continue;
         if (!it->file.empty()) ::unlink(it->file.c_str());
+        for (const auto& f : it->files) ::unlink(f.file.c_str());
         outbox_.erase(it);
         saveOutbox();
         return true;
     }
     return false;
+}
+
+// Files in the outbox's folder that nothing queued names — attached, then
+// the message never written — a day after they were kept.
+void Hub::sweepOutbox()
+{
+    static long long last = 0;
+    long long now = nowMillis();
+    if (now - last < 3600 * 1000LL) return;
+    last = now;
+    std::set<std::string> named;
+    for (const auto& o : outbox_) {
+        named.insert(o.file);
+        for (const auto& f : o.files) named.insert(f.file);
+    }
+    std::string dir = outboxDir();
+    DIR* d = ::opendir(dir.c_str());
+    if (!d) return;
+    while (dirent* e = ::readdir(d)) {
+        std::string name = e->d_name;
+        if (name.compare(0, 2, "b-") != 0) continue; // ours: outbox.tsv and the rest stay
+        std::string path = dir + "/" + name;
+        struct stat st {};
+        if (named.count(path) || ::stat(path.c_str(), &st) != 0) continue;
+        if (now / 1000 - st.st_mtime > 24 * 3600) ::unlink(path.c_str());
+    }
+    ::closedir(d);
 }
 
 void Hub::startSender()
@@ -1511,6 +1680,7 @@ void Hub::sendLoop()
         {
             std::lock_guard<std::mutex> g(mu_);
             loadOutbox();
+            sweepOutbox();
             std::map<std::string, bool> seen;
             for (const auto& o : outbox_) { // in the order queued
                 std::string key = o.address + "/" + o.session;
@@ -1530,15 +1700,46 @@ void Hub::sendLoop()
                              "/v1/sessions/" + o.session + "/voice?name=" + urlEncode(baseName(o.file)) + "&id=" + o.id,
                              body, 120, out, err);
             } else {
-                ok = request(o.address, "POST", "/v1/sessions/" + o.session + "/messages",
-                             "{\"text\":\"" + jsonEscape(o.text) + "\",\"id\":\"" + jsonEscape(o.id) + "\"}", 15, out,
-                             err);
+                // Its files first, each once: where the agent kept it is
+                // recorded as soon as it is known, so a failure later does
+                // not send it again.
+                ok = true;
+                std::vector<std::string> paths;
+                for (size_t i = 0; ok && i < o.files.size(); i++) {
+                    if (!o.files[i].sent.empty()) {
+                        paths.push_back(o.files[i].sent);
+                        continue;
+                    }
+                    std::string body;
+                    ok = readFile(o.files[i].file, body, err) &&
+                         request(o.address, "POST",
+                                 "/v1/sessions/" + o.session + "/files?name=" + urlEncode(o.files[i].name), body, 120,
+                                 out, err);
+                    std::string path = ok ? field(out, "path") : "";
+                    if (ok && path.empty()) {
+                        ok = false;
+                        err = "the agent kept " + o.files[i].name + " nowhere";
+                    }
+                    if (!ok) break;
+                    paths.push_back(path);
+                    std::lock_guard<std::mutex> g(mu_);
+                    for (auto& q : outbox_)
+                        if (q.id == o.id && i < q.files.size()) q.files[i].sent = path;
+                    saveOutbox();
+                }
+                if (ok) {
+                    ok = request(o.address, "POST", "/v1/sessions/" + o.session + "/messages",
+                                 "{\"text\":\"" + jsonEscape(withAttachments(o.text, paths)) + "\",\"id\":\"" +
+                                     jsonEscape(o.id) + "\"}",
+                                 15, out, err);
+                }
             }
             std::lock_guard<std::mutex> g(mu_);
             for (auto it = outbox_.begin(); it != outbox_.end(); ++it) {
                 if (it->id != o.id) continue;
                 if (ok) {
                     if (!it->file.empty()) ::unlink(it->file.c_str());
+                    for (const auto& f : it->files) ::unlink(f.file.c_str());
                     outbox_.erase(it);
                     sent = true;
                 } else {
