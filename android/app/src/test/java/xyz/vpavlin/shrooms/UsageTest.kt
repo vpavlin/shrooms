@@ -61,7 +61,7 @@ class UsageTest {
         assertEquals(listOf("vps"), accounts[1].machines)
         val now = java.time.OffsetDateTime.parse("2026-10-06T21:05:00+02:00").toInstant().toEpochMilli()
         assertTrue(UsageView.status(shared, now).startsWith("limit reached (5 hours) — back at "))
-        assertEquals("close to the limit (5 hours)", UsageView.status(laptop, now))
+        assertEquals("past 98% of 5 hours", UsageView.status(laptop, now))
         assertEquals("", UsageView.status(other, now))
         assertEquals("7 days", UsageView.windowLabel("seven_day"))
         assertEquals("1 min ago", UsageView.age(now - 60_000, now))

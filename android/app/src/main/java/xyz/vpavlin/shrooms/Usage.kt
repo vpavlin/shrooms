@@ -124,7 +124,9 @@ object UsageView {
         val which = if (l.window.isEmpty()) "" else " (" + windowLabel(l.window) + ")"
         return when (l.status) {
             "rejected" -> "limit reached$which" + (w?.let { " — back at " + resets(it.resetsAt, now) } ?: "")
-            "allowed_warning" -> "close to the limit$which"
+            // Claude Code warns at thresholds of its own (50% of the 7-day
+            // window, 90% of the 5-hour one): the share, not "close".
+            "allowed_warning" -> w?.let { "past ${(it.utilization * 100).toInt()}% of " + windowLabel(it.name) } ?: "warned$which"
             else -> ""
         }
     }

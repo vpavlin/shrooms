@@ -1227,7 +1227,9 @@ Item {
         var w = l.windows.filter(function(x) { return x.name === l.window })[0]
         var which = l.window ? " (" + planWindowLabel(l.window) + ")" : ""
         if (l.status === "rejected") return "limit reached" + which + (w ? " — back at " + planResets(w.resetsAt, now) : "")
-        if (l.status === "allowed_warning") return "close to the limit" + which
+        // Claude Code warns at thresholds of its own (50% of the 7-day window,
+        // 90% of the 5-hour one): the share, not "close".
+        if (l.status === "allowed_warning") return w ? "past " + Math.floor(w.utilization * 100) + "% of " + planWindowLabel(w.name) : "warned" + which
         return ""
     }
     function planAge(at, now) {

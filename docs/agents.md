@@ -279,8 +279,9 @@ the answer, a turn left waiting over two hours counted by its own duration.
 
 **Plan limits** (top of "usage", both apps): where each Claude subscription
 stands — the 5-hour and 7-day windows' share used and when each starts again,
-and what the newest request was told (allowed; close to the limit, past 90%;
-limit reached, and when it is back). Claude Code reports this after every turn
+and what the newest request was told (allowed; past a threshold Claude Code warns at —
+90% of the 5-hour window, 50% of the 7-day one — with the share; limit
+reached, and when it is back). Claude Code reports this after every turn
 (`rate_limit_event` in its stream, which the agent logs like everything else);
 `GET /v1/usage` returns the newest report among the machine's sessions as
 `limits` (`at`, `status`, `window`, `overage`, `windows.{five_hour,seven_day,…}
