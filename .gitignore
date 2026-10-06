@@ -79,6 +79,7 @@ data/
 # A checked-in copy only goes stale, which is the reason site/adr and
 # docker/build are ignored above.
 dist/
+dist-*/
 
 # The preview build's signing key (android/app/build.gradle.kts). Local only:
 # whoever holds it can ship an update to an app that drives your agents.

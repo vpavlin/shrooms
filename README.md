@@ -162,7 +162,7 @@ authoritative behind it.
 
 | | |
 |---|---|
-| Linux | x86-64. Android is built and in daily use; iOS is out of scope |
+| Linux | x86-64 or arm64 (the image, and the portable package below). Android is built and in daily use; iOS is out of scope |
 | glibc ≥ 2.38 | Ubuntu 24.04+ works, **Debian 12 does not** (2.36). Irrelevant if you deploy the container |
 | `/dev/net/tun` | **verify this on a cheap VPS** — OpenVZ/LXC hosts often disable it. Insist on KVM |
 | 1 UDP port | default 51820, **inbound**. At least one end of every pair needs it; a host firewall that drops it is the commonest reason two nodes see each other and never connect |
@@ -256,6 +256,18 @@ To run it in the foreground instead, skip the install and use
 `sudo ./bin/shrooms daemon -v`. `sudo make uninstall` reverses it, and
 [`make purge`](#8-removing-it-again) goes further and leaves the machine as it
 was before.
+
+**Neither a toolchain nor a container runtime there?** Build the portable
+package here and copy it over: a binary, its library and installers, for
+amd64 (`make dist`, into `dist/`) or arm64 (`make dist-arm64`, into
+`dist-arm64/`, cross-compiled). It needs glibc 2.38+ and `ip` (iproute2) on
+the target, and carries the agent too:
+
+```console
+$ make dist-arm64 && scp -r dist-arm64 tablet:shrooms-dist
+$ ssh tablet 'sudo ./shrooms-dist/install.sh'          # then join, as below
+$ ssh tablet 'sudo ./shrooms-dist/install-agent.sh'    # agents on the mesh, optional
+```
 
 **Otherwise, push from your machine** with `deploy.sh`, which builds a container
 image and ships it over ssh:

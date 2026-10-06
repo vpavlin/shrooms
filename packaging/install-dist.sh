@@ -31,6 +31,17 @@ bindir=${BINDIR:-/usr/local/bin}
 
 [ "$(id -u)" = 0 ] || { echo "run this with sudo"; exit 1; }
 [ -f "$here/bin/shrooms" ] || { echo "no bin/shrooms beside this script"; exit 1; }
+# The daemon configures its interface with ip(8): without it every mesh fails
+# to start, "exec: ip: executable file not found" (a bare Debian container,
+# 2026-10-06). Present on nearly every system, so checked rather than assumed.
+command -v ip >/dev/null 2>&1 || { echo "needs ip(8): sudo apt install iproute2 (or your system's iproute package)"; exit 1; }
+# A binary for another architecture fails below with a confusing message.
+case "$(uname -m)" in
+    x86_64|amd64) want="x86-64" ;; aarch64|arm64) want="aarch64" ;; *) want="" ;;
+esac
+if [ -n "$want" ] && command -v file >/dev/null 2>&1 && ! file -b "$here/bin/shrooms" | grep -q "$want"; then
+    echo "this package is for $(file -b "$here/bin/shrooms" | cut -d, -f2 | sed 's/^ //'), not $(uname -m)"; exit 1
+fi
 
 echo "==> installing to $root"
 install -d "$root/bin" "$root/lib"

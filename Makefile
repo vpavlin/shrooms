@@ -32,7 +32,7 @@ GO ?= go
 VERSION ?= $(shell git describe --tags --match 'v*' --always --dirty 2>/dev/null || echo dev)
 
 .PHONY: all deps deps-basecamp check-lib shrooms wakuspike s3topics m0demo \
-        s1 s3 probe relay relay-image m0 m1 m2 m2-edm m3 m3-remote dist image push-image agent-image agent-image-ctx push-agent-image deps-release install uninstall test-uninstall purge build-all vet-cgo vet-pcsc test test-unit e2e e2e-two-nodes e2e-keycard e2e-keycard-mesh android-deps android-core aar apk fdroid basecamp-check basecamp-lgx basecamp-agents-lgx site-adrs fmt clean
+        s1 s3 probe relay relay-image m0 m1 m2 m2-edm m3 m3-remote dist dist-arm64 image push-image agent-image agent-image-ctx push-agent-image deps-release install uninstall test-uninstall purge build-all vet-cgo vet-pcsc test test-unit e2e e2e-two-nodes e2e-keycard e2e-keycard-mesh android-deps android-core aar apk fdroid basecamp-check basecamp-lgx basecamp-agents-lgx site-adrs fmt clean
 
 all: shrooms
 
@@ -92,6 +92,11 @@ m0demo:
 ## Portable distribution, built entirely in containers.
 dist:
 	./scripts/build-portable.sh
+
+## The same for arm64 (a Debian/Ubuntu arm64 machine: a Pi, an arm tablet), into
+## dist-arm64/: cross-compiled, its library from the deps release.
+dist-arm64:
+	ARCH=arm64 ./scripts/build-portable.sh
 
 ## --- container image ---
 ##

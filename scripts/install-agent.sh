@@ -12,7 +12,9 @@
 # What it does, each step the one that was done by hand on the first machines:
 #   - takes shrooms-agent out of its image, ghcr.io/vpavlin/shrooms-agent (a
 #     binary per architecture and nothing else; no Go toolchain) into
-#     /usr/local/bin, with the docker or podman shrooms already uses;
+#     /usr/local/bin, with the docker or podman shrooms already uses — or,
+#     from the portable package (scripts/build-portable.sh) or --binary, the
+#     binary given, with no container runtime at all;
 #   - lets the user read the daemon's control socket, if they cannot already:
 #     an ACL, kept across reboots by /etc/tmpfiles.d/shrooms-agent-USER.conf —
 #     the daemon runs in a container, so its socket_group setting cannot name
@@ -41,16 +43,22 @@ MODEL_SHA256=8b205b8b39c6535e153de6fb11c51db46125d45c4f16ba496fe41a0fe71b885e
 SOCK=/run/shrooms/shrooms.sock
 
 USER_NAME=${SUDO_USER:-}
+BINARY=
+# In the portable package the agent sits beside this script.
+here=$(cd "$(dirname "$0")" && pwd)
+[ -x "$here/bin/shrooms-agent" ] && BINARY=$here/bin/shrooms-agent
 VOICE=0
 UNINSTALL=0
 
 usage() {
     cat <<EOF
-usage: sudo $0 [--user NAME] [--voice] [--image REF] [--uninstall]
+usage: sudo $0 [--user NAME] [--voice] [--image REF | --binary PATH] [--uninstall]
 
   --user NAME   whose agents to serve (default: the user running sudo)
   --voice       also build parakeet-cli and fetch its model, for voice notes
   --image REF   the image to take shrooms-agent from (default: $IMAGE)
+  --binary PATH install this shrooms-agent instead (default: bin/shrooms-agent
+                beside this script, as in the portable package, if there is one)
   --uninstall   remove the agent, its service, socket access and firewall rule
 EOF
     exit 1
@@ -61,6 +69,7 @@ while [ $# -gt 0 ]; do
         --user) USER_NAME=$2; shift 2 ;;
         --voice) VOICE=1; shift ;;
         --image) IMAGE=$2; shift 2 ;;
+        --binary) BINARY=$2; shift 2 ;;
         --uninstall) UNINSTALL=1; shift ;;
         -h|--help) usage ;;
         *) echo "unknown argument $1"; usage ;;
@@ -148,11 +157,17 @@ fi
 echo "==> checking this machine"
 [ -S "$SOCK" ] || { echo "no shrooms daemon here ($SOCK): install shrooms first (scripts/install.sh)"; exit 1; }
 [ -n "$(overlays)" ] || { echo "the shrooms daemon reports no mesh yet: join one first"; exit 1; }
-RUNTIME=$(command -v docker || command -v podman || true)
-[ -n "$RUNTIME" ] || { echo "neither docker nor podman: shrooms-agent comes out of an image"; exit 1; }
 echo "  for $USER_NAME, on $(overlays | tr '\n' ' ')"
 
 # --- the binary --------------------------------------------------------------
+if [ -n "$BINARY" ]; then
+    echo "==> installing shrooms-agent from $BINARY"
+    "$BINARY" -h >/dev/null 2>&1 || "$BINARY" --help >/dev/null 2>&1 || [ $? -le 2 ] ||
+        { echo "$BINARY does not run here (another architecture?)"; exit 1; }
+    install -m 0755 "$BINARY" /usr/local/bin/shrooms-agent
+else
+RUNTIME=$(command -v docker || command -v podman || true)
+[ -n "$RUNTIME" ] || { echo "neither docker nor podman, and no --binary: shrooms-agent comes out of an image"; exit 1; }
 echo "==> taking shrooms-agent from $IMAGE"
 # Pulled when it can be; an image only on this machine (a local build being
 # tried out) is used as it is.
@@ -165,6 +180,7 @@ tmp=$(mktemp)
     { rm -f "$tmp"; echo "$IMAGE has no /usr/bin/shrooms-agent"; exit 1; }
 install -m 0755 "$tmp" /usr/local/bin/shrooms-agent
 rm -f "$tmp"
+fi
 command -v restorecon >/dev/null && restorecon /usr/local/bin/shrooms-agent 2>/dev/null || true
 
 # --- the socket ----------------------------------------------------------------

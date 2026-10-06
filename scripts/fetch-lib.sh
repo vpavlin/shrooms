@@ -17,10 +17,12 @@ TAG=${DEPS_TAG:-deps-v1}
 # Which prebuilt to fetch. Both architectures are published as release assets, so
 # this is the only thing that differs between them — the amd64 image, the tests and
 # the end-to-end jobs all take this path, and arm64 does now too.
-case "$(uname -m)" in
+# ARCH=arm64 fetches the other one, for building an arm64 package on an amd64
+# machine (scripts/build-portable.sh).
+case "${ARCH:-$(uname -m)}" in
     x86_64|amd64)  ARCH=amd64 ;;
     aarch64|arm64) ARCH=arm64 ;;
-    *) echo "no prebuilt liblogosdelivery for $(uname -m); build it with docker/build-lib.Dockerfile" >&2; exit 1 ;;
+    *) echo "no prebuilt liblogosdelivery for ${ARCH:-$(uname -m)}; build it with docker/build-lib.Dockerfile" >&2; exit 1 ;;
 esac
 ASSET=liblogosdelivery-linux-$ARCH.tar.gz
 DEST=${LD_DIR:-docker/build/lib}
