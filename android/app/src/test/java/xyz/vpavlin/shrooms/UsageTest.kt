@@ -52,7 +52,8 @@ class UsageTest {
         val other = UsageView.parseLimits("vps", """{"limits":{"at":"2026-10-06T10:00:00Z","status":"allowed",
             "windows":{"five_hour":{"utilization":0.1,"resets_at":"2026-10-06T12:00:00Z"}}}}""")!!
         assertEquals(listOf("five_hour", "seven_day"), laptop.windows.map { it.name })
-        val accounts = UsageView.accounts(listOf(laptop, other, atlas))
+        val at = java.time.OffsetDateTime.parse("2026-10-06T21:05:00+02:00").toInstant().toEpochMilli()
+        val accounts = UsageView.accounts(listOf(laptop, other, atlas), at)
         assertEquals(2, accounts.size)
         val shared = accounts.first()
         assertEquals(listOf("atlas", "laptop"), shared.machines)
@@ -98,5 +99,22 @@ class UsageTest {
         assertEquals(listOf("pi5", "proteus"), keys[0].machines)
         assertEquals("5.40 DIEM left today · USD -0.03", UsageView.creditLine(keys[0]))
         assertEquals(emptyList<Credit>(), UsageView.parseCredits("old", """{"rows":[]}"""))
+    }
+
+    @Test fun aReadingWhoseWindowHasResetIsNotItsShare() {
+        val now = java.time.OffsetDateTime.parse("2026-10-07T17:00:00+02:00").toInstant().toEpochMilli()
+        val atlas = UsageView.parseLimits("atlas", """{"limits":{"at":"2026-10-07T13:00:00+02:00","status":"allowed_warning","window":"five_hour",
+            "windows":{"five_hour":{"utilization":0.8,"resets_at":"2026-10-07T15:00:00+02:00"},"seven_day":{"utilization":0.69,"resets_at":"2026-10-11T11:00:00+02:00"}}}}""")!!
+        val laptop = UsageView.parseLimits("laptop", """{"limits":{"at":"2026-10-07T16:59:00+02:00","status":"allowed",
+            "windows":{"five_hour":{"utilization":0.28,"resets_at":"2026-10-07T20:30:00+02:00"},"seven_day":{"utilization":0.72,"resets_at":"2026-10-11T11:00:00+02:00"}}}}""")!!
+        val accounts = UsageView.accounts(listOf(atlas, laptop), now)
+        assertEquals(1, accounts.size)
+        assertEquals(listOf("atlas", "laptop"), accounts[0].machines)
+        assertEquals(0.28, accounts[0].windows[0].utilization, 1e-9)
+        val alone = UsageView.accounts(listOf(atlas), now)[0]
+        assertTrue(alone.windows[0].renewed)
+        assertEquals(0.0, alone.windows[0].utilization, 1e-9)
+        assertEquals("", alone.status)
+        assertEquals(0, UsageView.glance(listOf(alone))!!.first)
     }
 }

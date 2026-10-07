@@ -1338,11 +1338,16 @@ Item {
     }
     // Once per account: machines whose windows reset at the same moments share
     // a subscription; the newest reading among them is shown.
-    function planAccounts(all) {
+    // By the 7-day window's reset where there is one (the phone's
+    // UsageView.accounts): an old reading of the same account still has it,
+    // while its 5-hour reset is long past.
+    function planAccounts(all, now) {
         var groups = {}, keys = []
         for (var i = 0; i < all.length; i++) {
             var l = all[i]
-            var key = l.windows.map(function(w) { return w.name + "@" + Math.floor(w.resetsAt / 60000) }).sort().join(",")
+            var week = l.windows.filter(function(w) { return w.name === "seven_day" })[0]
+            var key = week ? "seven_day@" + Math.floor(week.resetsAt / 60000)
+                : l.windows.map(function(w) { return w.name + "@" + Math.floor(w.resetsAt / 60000) }).sort().join(",")
             if (!(key in groups)) { groups[key] = []; keys.push(key) }
             groups[key].push(l)
         }
@@ -1352,9 +1357,19 @@ Item {
                 if (ls[j].at > newest.at) newest = ls[j]
                 for (var m = 0; m < ls[j].machines.length; m++) if (machines.indexOf(ls[j].machines[m]) < 0) machines.push(ls[j].machines[m])
             }
-            return Object.assign({}, newest, { machines: machines.sort() })
+            return planCurrent(Object.assign({}, newest, { machines: machines.sort() }), now)
         })
         return out.sort(function(a, b) { return b.at - a.at })
+    }
+    // A window whose reset has passed is renewed: its share was of a window
+    // that is over, and a status about it no longer holds.
+    function planCurrent(l, now) {
+        var t = now === undefined ? Date.now() : now
+        var ws = l.windows.map(function(w) {
+            return w.resetsAt > 0 && w.resetsAt <= t ? Object.assign({}, w, { utilization: 0, renewed: true }) : w
+        })
+        var over = ws.filter(function(w) { return w.name === l.window && w.renewed }).length > 0
+        return Object.assign({}, l, { windows: ws, status: over ? "" : l.status })
     }
     function planWindowLabel(n) {
         return n === "five_hour" ? "5 hours" : n === "seven_day" ? "7 days" : n === "seven_day_opus" ? "7 days, Opus"
@@ -1511,7 +1526,9 @@ Item {
                                 RowLayout {
                                     width: parent.width
                                     Text { text: root.planWindowLabel(pw.modelData.name); color: cBone; font.family: "monospace"; font.pixelSize: root.fs(11); Layout.fillWidth: true }
-                                    Text { text: Math.floor(pw.modelData.utilization * 100) + "% · resets " + root.planResets(pw.modelData.resetsAt); color: cBone; font.family: "monospace"; font.pixelSize: root.fs(11) }
+                                    Text { text: pw.modelData.renewed ? "started again " + root.planResets(pw.modelData.resetsAt) + " · no reading since"
+                                                 : Math.floor(pw.modelData.utilization * 100) + "% · resets " + root.planResets(pw.modelData.resetsAt)
+                                           color: cBone; font.family: "monospace"; font.pixelSize: root.fs(11) }
                                 }
                                 Rectangle {
                                     width: parent.width; height: root.sz(5); radius: height / 2; color: cLine

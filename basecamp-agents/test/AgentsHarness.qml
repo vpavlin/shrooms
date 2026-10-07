@@ -15,7 +15,7 @@ Item {
     readonly property var hosts: [{
         name: "laptop", mesh: "office", address: "fdb0:9afc:a5ef:388c:8264:7716:36fc:64eb",
         list: { limits: { at: "2026-10-06T21:40:00+02:00", status: "allowed", window: "five_hour",
-                          windows: { five_hour: { utilization: 0.62, resets_at: "2026-10-07T02:20:00+02:00" } } },
+                          windows: { five_hour: { utilization: 0.62, resets_at: "2099-10-07T02:20:00+02:00" } } },
                 sessions: [
             { name: "shrooms", dir: "/home/someone/logos-vpn", state: "waiting", pending: 1, running: true,
               last_seq: 9, last_time: "2026-10-03T14:27:31+02:00", auto_approve: false,
@@ -71,8 +71,8 @@ Item {
     property int gatheredAsked: 0
     property var usageBody: ({ machine: "laptop",
         limits: { at: "2026-10-06T21:04:00+02:00", status: "rejected", window: "five_hour",
-                  windows: { seven_day: { utilization: 0.49, resets_at: "2026-10-11T11:00:00+02:00" },
-                             five_hour: { utilization: 1, resets_at: "2026-10-06T21:20:00+02:00" } } },
+                  windows: { seven_day: { utilization: 0.49, resets_at: "2099-10-11T11:00:00+02:00" },
+                             five_hour: { utilization: 1, resets_at: "2099-10-06T21:20:00+02:00" } } },
         rows: [
         { day: "2026-10-05", session: "shrooms", by: "nothing.office", model: "claude-opus-5[1m]", turns: 3, input: 10, cache_read: 1000, cache_write: 200, output: 900, cost_usd: 1.5, busy_ms: 120000 },
         { day: "2026-10-05", session: "notes", by: "", model: "ollama/qwen3", turns: 5, input: 50, cache_read: 0, cache_write: 0, output: 2000, cost_usd: 0, busy_ms: 3600000 } ] })
@@ -466,7 +466,7 @@ Item {
             // reading first, worded as the phone words it.
             var p0 = view.usagePlans[0]
             var older = view.planLimits("desk", { at: "2026-10-06T18:21:00+02:00", status: "allowed_warning", window: "five_hour",
-                windows: { five_hour: { utilization: 0.98, resets_at: "2026-10-06T21:20:00+02:00" }, seven_day: { utilization: 0.49, resets_at: "2026-10-11T11:00:00+02:00" } } })
+                windows: { five_hour: { utilization: 0.98, resets_at: "2099-10-06T21:20:00+02:00" }, seven_day: { utilization: 0.49, resets_at: "2099-10-11T11:00:00+02:00" } } })
             var merged = view.planAccounts([older, p0])
             var now = Date.parse("2026-10-06T21:05:00+02:00")
             console.error("PLANS n=" + view.usagePlans.length + " windows=" + p0.windows.map(function(w) { return w.name }).join(",")
@@ -533,6 +533,14 @@ Item {
             var ck = view.creditKeys(view.usageCreditsOf("pi5", [{ provider: "venice", key: "1a2b3c4d", balances: { DIEM: 5.62, USD: -0.03, BUNDLED_CREDITS: 0 }, at: "2026-10-07T12:00:00Z", resets_at: "2026-10-08T00:00:00Z" }])
                 .concat(view.usageCreditsOf("proteus", [{ provider: "venice", key: "1a2b3c4d", balances: { DIEM: 5.4, USD: -0.03 }, at: "2026-10-07T12:05:00Z" }])))
             console.error("CREDITS n=" + ck.length + " machines=" + ck[0].machines.join("+") + " line=" + view.creditLine(ck[0]))
+            var now17 = Date.parse("2026-10-07T17:00:00+02:00")
+            var stale = { machines: ["atlas"], at: Date.parse("2026-10-07T13:00:00+02:00"), status: "allowed_warning", window: "five_hour", overage: false,
+                windows: [{ name: "five_hour", utilization: 0.8, resetsAt: Date.parse("2026-10-07T15:00:00+02:00") }, { name: "seven_day", utilization: 0.69, resetsAt: Date.parse("2026-10-11T11:00:00+02:00") }] }
+            var fresh = { machines: ["laptop"], at: Date.parse("2026-10-07T16:59:00+02:00"), status: "allowed", window: "", overage: false,
+                windows: [{ name: "five_hour", utilization: 0.28, resetsAt: Date.parse("2026-10-07T20:30:00+02:00") }, { name: "seven_day", utilization: 0.72, resetsAt: Date.parse("2026-10-11T11:00:00+02:00") }] }
+            var both = view.planAccounts([stale, fresh], now17), alone = view.planAccounts([stale], now17)[0]
+            console.error("RENEWED n=" + both.length + " machines=" + both[0].machines.join("+") + " share=" + both[0].windows[0].utilization
+                          + " alone=" + alone.windows[0].renewed + "," + alone.windows[0].utilization + ",[" + alone.status + "] glance=" + view.planGlance([alone]).percent)
             // Deleting the open session: asks what the phone asks, then goes.
             console.error("DELETETEXT=" + (view.deleteSessionText("working").indexOf("cut off") > 0)
                           + "," + (view.deleteSessionText("idle").indexOf("conversation itself is kept") > 0))

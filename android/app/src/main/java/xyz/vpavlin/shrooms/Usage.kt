@@ -48,7 +48,8 @@ data class UsageRow(
 )
 
 /** One window of a Claude subscription: the share used (0..1) and when it starts again. */
-data class PlanWindow(val name: String, val utilization: Double, val resetsAt: Long)
+/** One window; [renewed]: its reset has passed since the reading, so its share is no longer known — 0 until a turn says. */
+data class PlanWindow(val name: String, val utilization: Double, val resetsAt: Long, val renewed: Boolean = false)
 
 /**
  * Where a Claude subscription stands, as Claude Code last reported it on
@@ -142,13 +143,31 @@ object UsageView {
      * at the same moments share a subscription, so they are shown once, with
      * the newest reading among them.
      */
-    fun accounts(all: List<PlanLimits>): List<PlanLimits> =
-        all.groupBy { l -> l.windows.map { it.name to it.resetsAt / 60_000 }.sortedBy { it.first } }
+    fun accounts(all: List<PlanLimits>, now: Long = System.currentTimeMillis()): List<PlanLimits> =
+        // By the 7-day window's reset where there is one: an old reading of
+        // the same account still has it, while its 5-hour reset is long
+        // past — grouped by both, a machine idle for hours was an account
+        // of its own, with a share of a window gone since (2026-10-07).
+        all.groupBy { l ->
+            l.windows.firstOrNull { it.name == "seven_day" }?.let { listOf(it.name to it.resetsAt / 60_000) }
+                ?: l.windows.map { it.name to it.resetsAt / 60_000 }.sortedBy { it.first }
+        }
             .map { (_, ls) ->
                 val newest = ls.maxBy { it.at }
-                newest.copy(machines = ls.flatMap { it.machines }.distinct().sorted())
+                current(newest.copy(machines = ls.flatMap { it.machines }.distinct().sorted()), now)
             }
             .sortedByDescending { it.at }
+
+    /**
+     * The reading as it stands now: a window whose reset has passed is
+     * renewed — its share was of a window that is over — and a status about
+     * it no longer holds.
+     */
+    fun current(l: PlanLimits, now: Long = System.currentTimeMillis()): PlanLimits {
+        val ws = l.windows.map { if (it.resetsAt in 1..now) it.copy(utilization = 0.0, renewed = true) else it }
+        val over = ws.firstOrNull { it.name == l.window }?.renewed == true
+        return l.copy(windows = ws, status = if (over) "" else l.status)
+    }
 
     /**
      * How hard the subscription is being used, for the link that opens
@@ -375,7 +394,8 @@ private fun PlanSection(plans: List<PlanLimits>) {
                 Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(UsageView.windowLabel(w.name), style = MaterialTheme.typography.bodyMedium, color = Palette.Bone,
                         modifier = Modifier.weight(1f))
-                    Text("${(w.utilization * 100).toInt()}% · resets " + UsageView.resets(w.resetsAt),
+                    Text(if (w.renewed) "started again " + UsageView.resets(w.resetsAt) + " · no reading since"
+                         else "${(w.utilization * 100).toInt()}% · resets " + UsageView.resets(w.resetsAt),
                         style = MaterialTheme.typography.labelMedium, color = Palette.Bone)
                 }
                 Box(Modifier.fillMaxWidth().padding(top = 3.dp).height(6.dp).background(Palette.Line, RoundedCornerShape(3.dp))) {
