@@ -240,6 +240,12 @@ Item {
             view.askRestart()
             view.restartOpenSession()
             console.error("RESTARTED=" + top.lastPostPath + " SAID=" + view.said)
+            // A turn the harness started itself: labelled by its source.
+            var kept = view.agentEventsList
+            view.agentEventsList = [ev(90, "message", { text: "HEARTBEAT: pick one", outside: true }, "heartbeat")]
+            var hb = view.row(view.chatItems()[0])
+            console.error("OUTSIDE=" + hb.outside + "," + hb.by)
+            view.agentEventsList = kept
             console.error("STREAMING=[" + view.agentStreaming + "] WORKING=" + view.agentWorking
                           + " CONTEXT=" + view.contextLabel(view.agentInfo.context_used, view.agentInfo.context_window)
                           + " MODEL=" + view.shortModel(view.agentInfo.model))

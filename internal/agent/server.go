@@ -114,6 +114,8 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		Resume string `json:"resume"`
 		// Harness runs it: "claude" (the default), "pi", … (GET /v1/harnesses).
 		Harness string `json:"harness"`
+		// KeepRunning: never stopped as idle, and started again if it ends.
+		KeepRunning *bool `json:"keep_running"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		fail(w, http.StatusBadRequest, err)
@@ -122,16 +124,20 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 	var in Info
 	var err error
 	switch {
-	case req.Resume != "" && req.Harness != "" && req.Harness != "claude":
-		err = fmt.Errorf("continuing a conversation from elsewhere is only for Claude Code so far")
 	case req.Resume != "":
-		in, err = h.m.Adopt(req.Name, req.Dir, req.Resume)
+		in, err = h.m.AdoptWith(req.Name, req.Dir, req.Resume, req.Harness)
 	default:
 		in, err = h.m.CreateWith(req.Name, req.Dir, req.Harness)
 	}
 	if err == nil && req.AutoApprove != nil {
 		if s, ok := h.m.Get(in.Name); ok {
 			err = s.SetAutoApprove(*req.AutoApprove, h.caller(r))
+			in = s.Info()
+		}
+	}
+	if err == nil && req.KeepRunning != nil {
+		if s, ok := h.m.Get(in.Name); ok {
+			err = s.SetKeepRunning(*req.KeepRunning, h.caller(r))
 			in = s.Info()
 		}
 	}
@@ -161,6 +167,7 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		AutoApprove *bool `json:"auto_approve"`
 		Starred     *bool `json:"starred"`
+		KeepRunning *bool `json:"keep_running"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		fail(w, http.StatusBadRequest, err)
@@ -178,6 +185,13 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 			fail(w, http.StatusInternalServerError, err)
 			return
 		}
+	}
+	if req.KeepRunning != nil {
+		if err := s.SetKeepRunning(*req.KeepRunning, h.caller(r)); err != nil {
+			fail(w, http.StatusInternalServerError, err)
+			return
+		}
+		h.log.Info("keep running changed", "session", s.name, "on", *req.KeepRunning, "by", h.caller(r))
 	}
 	writeJSON(w, http.StatusOK, s.Info())
 }

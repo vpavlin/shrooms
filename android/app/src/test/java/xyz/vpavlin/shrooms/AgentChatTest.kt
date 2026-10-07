@@ -185,6 +185,15 @@ class AgentChatTest {
         assertEquals("restarted from nothing.home", (items.last() as ChatItem.Note).text)
     }
 
+    @Test fun aTurnTheHarnessStartedIsMarkedAsSuch() {
+        val items = AgentChat.items(listOf(
+            ev(1, "message", """{"text":"HEARTBEAT: pick one","outside":true}""", by = "heartbeat"),
+            ev(2, "message", """{"text":"hi"}""", by = "nothing.home")))
+        val you = items.filterIsInstance<ChatItem.You>()
+        assertTrue(you[0].outside); assertEquals("heartbeat", you[0].by)
+        assertFalse(you[1].outside)
+    }
+
     @Test fun toolResultsAreShownFolded() {
         val items = AgentChat.items(listOf(
             ev(7, "claude", """{"type":"user","message":{"role":"user","content":[

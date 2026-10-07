@@ -1542,7 +1542,8 @@ private fun ChatRow(item: ChatItem, onAnswer: (String, Boolean, Map<String, Stri
                     onRetryVoice: (String) -> Unit = {}, reading: Speech.Reading? = null, onRead: ((ChatItem.Said) -> Unit)? = null) {
     when (item) {
         is ChatItem.You -> Bubble(Palette.Phosphor.copy(alpha = 0.08f), Palette.Phosphor.copy(alpha = 0.35f)) {
-            Stamp(listOf(if (item.voice) "YOU 🎤" else "YOU", item.by, whenSaid(item.time)).filter { it.isNotEmpty() }.joinToString("  ·  "),
+            Stamp((if (item.outside) listOf(item.by.uppercase(), whenSaid(item.time))
+                   else listOf(if (item.voice) "YOU 🎤" else "YOU", item.by, whenSaid(item.time))).filter { it.isNotEmpty() }.joinToString("  ·  "),
                 Palette.Phosphor, copy = item.text)
             Text(spans(Markdown.links(item.text)), style = MaterialTheme.typography.bodyMedium)
         }

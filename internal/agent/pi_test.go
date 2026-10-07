@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -295,4 +296,113 @@ func TestARemovedSessionLeavesNoLog(t *testing.T) {
 			t.Fatalf("round %d: the log of a removed session is back", i)
 		}
 	}
+}
+
+// Turns pi starts itself — an extension's heartbeat, a chat bridge passing on
+// a message — are shown as messages from that source; the session's own, and
+// an extension's hidden ones, are not shown twice or at all.
+func TestTurnsFromInsidePiAreShown(t *testing.T) {
+	_, s := newPiSession(t)
+	s.Send("wake", "nothing.home")
+	waitFor(t, s, 0, func(e Event) bool { return e.Kind == "message" && e.By == "pi" })
+	var got []string
+	backlog, ch := s.Since(0)
+	s.Unsubscribe(ch)
+	for _, e := range backlog {
+		if e.Kind == "message" {
+			var d struct{ Text string }
+			json.Unmarshal(e.Data, &d)
+			got = append(got, e.By+": "+d.Text)
+		}
+	}
+	want := []string{"nothing.home: wake", "heartbeat: HEARTBEAT: pick one task", "pi: from telegram: hi Jimmy"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("messages %q, want %q", got, want)
+	}
+}
+
+// A session kept running is never stopped as idle, and comes back when its
+// process ends.
+func TestASessionKeptRunningComesBack(t *testing.T) {
+	defer func(d time.Duration) { keepAliveEvery = d }(keepAliveEvery)
+	keepAliveEvery = 50 * time.Millisecond
+	m := newTestManager(t, t.TempDir())
+	m.Register(Pi{}, fakePiBin(t))
+	if _, err := m.CreateWith("jimmy", t.TempDir(), "pi"); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := m.Get("jimmy")
+	if err := s.SetKeepRunning(true, "nothing.home"); err != nil {
+		t.Fatal(err)
+	}
+	if !s.Info().Running || !s.Info().KeepRunning {
+		t.Fatalf("not running: %+v", s.Info())
+	}
+	s.mu.Lock()
+	first := s.proc
+	s.mu.Unlock()
+	s.stopIfIdle(time.Now().Add(24*time.Hour), time.Minute)
+	time.Sleep(200 * time.Millisecond)
+	s.mu.Lock()
+	still := s.proc == first
+	s.mu.Unlock()
+	if !still {
+		t.Fatal("stopped as idle")
+	}
+	first.cmd.Process.Kill()
+	<-first.read
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		s.mu.Lock()
+		p := s.proc
+		s.mu.Unlock()
+		if p != nil && p != first {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("not started again")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	// Kept across a restart of the agent.
+	m2, err := NewManager(context.Background(), slog.New(slog.DiscardHandler), m.dir, "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s2, _ := m2.Get("jimmy"); !s2.Info().KeepRunning {
+		t.Fatal("keep running was not kept")
+	}
+}
+
+// A pi conversation kept in another directory's sessions — an agent started
+// by a script of its own, with --session-dir — is continued by its file, and
+// in the directory it ran in.
+func TestAPiConversationFromElsewhereIsContinued(t *testing.T) {
+	dir, work := t.TempDir(), t.TempDir()
+	t.Setenv("PI_CODING_AGENT_DIR", dir)
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", "")
+	t.Setenv("FAKE_PI_ELSEWHERE", "1")
+	os.MkdirAll(filepath.Join(dir, "sessions", "--home-somewhere-else--"), 0o700)
+	file := filepath.Join(dir, "sessions", "--home-somewhere-else--", "2026-09-11T19-44-08-789Z_01a091ff-b255.jsonl")
+	os.WriteFile(file, []byte(`{"type":"session","version":3,"id":"01a091ff-b255","timestamp":"2026-09-11T19:44:08.789Z","cwd":"`+work+`"}`+"\n"), 0o600)
+
+	if got := (Pi{}).Args(StartOptions{Resume: "01a091ff-b255"}); got[len(got)-1] != file {
+		t.Fatalf("args %q", got)
+	}
+	m := newTestManager(t, t.TempDir())
+	m.Register(Pi{}, fakePiBin(t))
+	in, err := m.AdoptWith("jimmy", "", "01a091ff-b255", "pi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if in.Dir != work || in.Harness != "pi" {
+		t.Fatalf("adopted as %+v", in)
+	}
+	s, _ := m.Get("jimmy")
+	s.Send("hello", "")
+	init := waitFor(t, s, 0, func(e Event) bool { return claudeType(e) == "system/init" })
+	if !strings.Contains(string(init.Data), `"session_id":"01a091ff-b255"`) {
+		t.Fatalf("not that conversation: %s", init.Data)
+	}
+	waitFor(t, s, 0, isResult)
 }

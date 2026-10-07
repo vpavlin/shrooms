@@ -30,6 +30,14 @@ func fakePi() {
 	for i, a := range os.Args {
 		if a == "--session" && i+1 < len(os.Args) {
 			id = os.Args[i+1]
+			// As pi: given an id, only a session of this directory is found
+			// (with FAKE_PI_ELSEWHERE, none is); given a file, its id is the
+			// end of its name.
+			if !strings.HasSuffix(id, ".jsonl") && os.Getenv("FAKE_PI_ELSEWHERE") == "1" {
+				fmt.Printf("No session found matching '%s'\n", id)
+				os.Exit(1)
+			}
+			id = strings.TrimSuffix(id[strings.LastIndex(id, "_")+1:], ".jsonl")
 		}
 	}
 	model := map[string]any{"id": "qwen3.5:0.8b", "provider": "local", "contextWindow": 128000}
@@ -113,6 +121,22 @@ func fakePi() {
 				say("echo: " + text)
 			}
 			emit(map[string]any{"type": "agent_end", "messages": []any{}})
+			if text == "wake" {
+				// Turns of its extensions' own: a heartbeat's directives, and
+				// what a chat bridge passed on as the user's.
+				emit(map[string]any{"type": "agent_start"})
+				emit(map[string]any{"type": "message_end", "message": map[string]any{"role": "custom",
+					"customType": "heartbeat", "display": true, "content": "HEARTBEAT: pick one task"}})
+				emit(map[string]any{"type": "message_end", "message": map[string]any{"role": "custom",
+					"customType": "messenger", "display": false, "content": "kept out of sight"}})
+				say("on it")
+				emit(map[string]any{"type": "agent_end", "messages": []any{}})
+				emit(map[string]any{"type": "agent_start"})
+				emit(map[string]any{"type": "message_end", "message": map[string]any{"role": "user",
+					"content": []any{map[string]any{"type": "text", "text": "from telegram: hi Jimmy"}}}})
+				say("hi")
+				emit(map[string]any{"type": "agent_end", "messages": []any{}})
+			}
 		}
 	}
 }

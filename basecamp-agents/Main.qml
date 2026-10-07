@@ -765,7 +765,9 @@ Item {
         for (i = 0; i < evs.length; i++) {
             e = evs[i]
             var d = e.data || {}
-            if (e.kind === "message") add(e, { kind: "you", text: d.text || "", by: e.by || "", voice: !!d.voice })
+            // A turn the agent's harness started itself (a heartbeat, a chat
+            // bridge) is labelled by where it came from, not as yours.
+            if (e.kind === "message") add(e, { kind: "you", text: d.text || "", by: e.by || "", voice: !!d.voice, outside: !!d.outside })
             else if (e.kind === "voice" && !sentIds[d.id] && lastVoice[d.id] === e.seq)
                 add(e, { kind: "voicenote", id: d.id, error: d.status === "failed", text: d.error || "" })
             else if (e.kind === "stopped") add(e, { kind: "note", text: "asleep; the next message wakes it" })
@@ -886,7 +888,7 @@ Item {
         return { key: it.key, seq: it.seq || 0, kind: it.kind, text: it.text || "", by: it.by || "", time: it.time || 0,
                  earlier: !!it.earlier, error: !!it.error, pid: it.id || "", tool: it.tool || "",
                  description: it.description || "", open: !!it.open, answer: it.answer || "", qjson: it.qjson || "",
-                 voice: !!it.voice, blob: JSON.stringify(it) }
+                 voice: !!it.voice, outside: !!it.outside, blob: JSON.stringify(it) }
     }
 
     readonly property bool agentWorking: {
@@ -2327,6 +2329,7 @@ Item {
                         required property bool open
                         required property string answer
                         required property bool voice
+                        required property bool outside
                         required property string qjson
                         width: chatList.width
                         height: crowCol.implicitHeight
@@ -2365,7 +2368,7 @@ Item {
                                     RowLayout {
                                         width: parent.width
                                         Text {
-                                            text: [crow.kind === "you" ? (crow.voice ? "YOU 🎤" : "YOU") : "", crow.by, root.clock(crow.time)].filter(function(x) { return x !== "" }).join("  ·  ")
+                                            text: [crow.kind === "you" ? (crow.outside ? crow.by.toUpperCase() : crow.voice ? "YOU 🎤" : "YOU") : "", crow.outside ? "" : crow.by, root.clock(crow.time)].filter(function(x) { return x !== "" }).join("  ·  ")
                                             color: crow.kind === "you" ? cPhosphor : cAsh
                                             font.family: "monospace"; font.pixelSize: root.fs(9); font.letterSpacing: 1
                                             Layout.fillWidth: true

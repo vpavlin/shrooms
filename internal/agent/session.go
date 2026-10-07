@@ -71,6 +71,10 @@ type Info struct {
 	// Starred sessions are listed first, above every machine's others. Kept
 	// here, not in an app, so a star set on the phone shows in Basecamp.
 	Starred bool `json:"starred,omitempty"`
+	// KeepRunning: the process is never stopped as idle, and is started
+	// again when it ends — an agent that works on its own, from its
+	// extensions (a heartbeat, a chat bridge), and not only when asked.
+	KeepRunning bool `json:"keep_running,omitempty"`
 	// Turns counts the turns that have ended: what the phone notifies on,
 	// once each. The event count is no use for that — a session sends
 	// progress, heartbeats and thinking while it waits on background work.
@@ -97,6 +101,7 @@ type Session struct {
 
 	autoApprove bool
 	starred     bool
+	keepRunning bool
 	turns       uint64
 	// ids are the device-made ids of messages and voice notes already taken,
 	// so a device that sends again — it did not hear the answer, the
@@ -166,6 +171,7 @@ type record struct {
 	ConvID      string `json:"claude_id,omitempty"`
 	AutoApprove bool   `json:"auto_approve,omitempty"`
 	Starred     bool   `json:"starred,omitempty"`
+	KeepRunning bool   `json:"keep_running,omitempty"`
 }
 
 // NewManager loads the sessions kept in stateDir.
@@ -202,11 +208,13 @@ func NewManager(ctx context.Context, log *slog.Logger, stateDir, claudeBin strin
 			s.convID = r.ConvID
 			s.autoApprove = r.AutoApprove
 			s.starred = r.Starred
+			s.keepRunning = r.KeepRunning
 			s.loadEvents()
 			m.sessions[r.Name] = s
 		}
 	}
 	go m.reap()
+	go m.keepAlive()
 	// The logs read once now, in the background: the session list carries
 	// the newest subscription reading (Limits), and after a restart that is
 	// in the logs until Claude Code reports again. Later reads take only
@@ -267,7 +275,8 @@ func (m *Manager) save() error {
 	recs := make([]record, 0, len(m.sessions))
 	for _, s := range m.sessions {
 		s.mu.Lock()
-		r := record{Name: s.name, Dir: s.dir, ConvID: s.convID, AutoApprove: s.autoApprove, Starred: s.starred}
+		r := record{Name: s.name, Dir: s.dir, ConvID: s.convID, AutoApprove: s.autoApprove, Starred: s.starred,
+			KeepRunning: s.keepRunning}
 		if s.harness.Name() != "claude" {
 			r.Harness = s.harness.Name()
 		}
@@ -405,6 +414,40 @@ func (m *Manager) reap() {
 	}
 }
 
+// keepAliveEvery is how often sessions kept running are checked for a process
+// that has ended: how soon one comes back, and how often one that cannot start
+// is tried again.
+var keepAliveEvery = 15 * time.Second
+
+// keepAlive starts the processes of sessions kept running that have none —
+// after the agent starts, or after one ended.
+func (m *Manager) keepAlive() {
+	t := time.NewTicker(keepAliveEvery)
+	defer t.Stop()
+	for {
+		select {
+		case <-m.ctx.Done():
+			return
+		case <-t.C:
+			m.mu.Lock()
+			ss := make([]*Session, 0, len(m.sessions))
+			for _, s := range m.sessions {
+				ss = append(ss, s)
+			}
+			m.mu.Unlock()
+			for _, s := range ss {
+				s.mu.Lock()
+				if s.keepRunning && s.proc == nil {
+					if err := s.ensureRunning(); err != nil {
+						m.log.Warn("could not start a session kept running", "session", s.name, "err", err)
+					}
+				}
+				s.mu.Unlock()
+			}
+		}
+	}
+}
+
 func (s *Session) eventsPath() string {
 	return filepath.Join(s.m.dir, "events", s.name+".jsonl")
 }
@@ -416,7 +459,8 @@ func (s *Session) Info() Info {
 	in := Info{Name: s.name, Dir: s.dir, State: s.state, Pending: len(s.pending),
 		Running: s.proc != nil, LastSeq: s.seq, AutoApprove: s.autoApprove,
 		ContextUsed: s.ctxUsed, ContextWindow: s.ctxWindow, Preview: s.preview, Model: s.model,
-		Harness: s.harness.Name(), Caps: s.harness.Caps(), Starred: s.starred, Turns: s.turns}
+		Harness: s.harness.Name(), Caps: s.harness.Caps(), Starred: s.starred, Turns: s.turns,
+		KeepRunning: s.keepRunning}
 	if n := len(s.events); n > 0 {
 		in.LastTime = s.events[n-1].Time
 	}
@@ -951,6 +995,19 @@ func (s *Session) read(p *proc) {
 			s.partial(raw)
 			continue
 		}
+		if head.Type == outsideTurn {
+			// A turn the harness started itself: an extension's heartbeat, a
+			// message that came in over its chat bridge. Recorded as a
+			// message from that source, so it reads like one sent here.
+			var o struct{ By, Text string }
+			json.Unmarshal(raw, &o)
+			s.mu.Lock()
+			s.state = Working
+			s.lastUsed = time.Now()
+			s.record("message", o.By, map[string]any{"text": o.Text, "outside": true})
+			s.mu.Unlock()
+			continue
+		}
 
 		s.mu.Lock()
 		s.observe(raw)
@@ -1067,6 +1124,25 @@ func (s *Session) SetAutoApprove(on bool, by string) error {
 	return s.m.save()
 }
 
+// SetKeepRunning makes the session's process run all the time, started now
+// and again whenever it ends, or lets it be stopped when idle as others are.
+func (s *Session) SetKeepRunning(on bool, by string) error {
+	s.mu.Lock()
+	s.keepRunning = on
+	s.record("setting", by, map[string]bool{"keep_running": on})
+	var err error
+	if on {
+		err = s.ensureRunning()
+	}
+	s.mu.Unlock()
+	s.m.mu.Lock()
+	defer s.m.mu.Unlock()
+	if serr := s.m.save(); err == nil {
+		err = serr
+	}
+	return err
+}
+
 // SetStarred stars or unstars the session, and keeps that.
 func (s *Session) SetStarred(on bool) error {
 	s.mu.Lock()
@@ -1082,7 +1158,7 @@ func (s *Session) SetStarred(on bool) error {
 func (s *Session) stopIfIdle(now time.Time, after time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.proc != nil && s.state == Idle && now.Sub(s.lastUsed) >= after {
+	if s.proc != nil && !s.keepRunning && s.state == Idle && now.Sub(s.lastUsed) >= after {
 		s.proc.close()
 	}
 }

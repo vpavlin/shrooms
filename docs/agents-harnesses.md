@@ -108,10 +108,16 @@ account, jimmy-crib say, can serve sessions to the whole mesh.
    real output (pi 0.72.1 on a local qwen3.5, 2026-10-03) is what the
    adapter and its fake were written against.
 2. **The harness** — `internal/agent/pi.go`, `type Pi`:
-   - `Args`: `--mode rpc`, `--session <id>` to resume, plus `Extra`
-     (`--pi-args`, e.g. `--provider ollama --model qwen3`).
-   - `Caps{}`: pi runs its tools without asking, so there is no auto-approve;
-     no takeover yet.
+   - `Args`: `--mode rpc`, `--session <file>` to resume, plus `Extra`
+     (`--pi-args`, e.g. `--provider ollama --model qwen3`). The file, found
+     from the id (`TranscriptPath`), not the id: given an id, pi looks only
+     among the sessions of the directory it runs in ("No session found
+     matching …", pi 1.0.0) — and a conversation started with
+     `--session-dir`, as Jimmy's on pi5 was, is kept elsewhere.
+   - `Caps{}`: pi runs its tools without asking, so there is no auto-approve.
+     A pi conversation from elsewhere can be continued through the API
+     (`POST /v1/sessions` with `harness: "pi"` and `resume`), in the
+     directory its file's header names; the apps do not list pi's yet.
    - `Transcripts`: pi keeps sessions as JSONL under
      `~/.pi/agent/sessions/<dir>/<time>_<id>.jsonl`
      (`PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR` respected); its
@@ -132,6 +138,14 @@ account, jimmy-crib say, can serve sessions to the whole mesh.
      matching `extension_ui_response` (or `cancelled`). So the question card
      in both apps answers pi's extensions too. Fire-and-forget methods
      (`notify`, `setStatus`, …) are dropped.
+   - a turn pi starts itself: `message_end` of a `user` message the codec
+     did not send (an extension's `sendUserMessage` — a chat bridge passing
+     on what someone wrote), or of a `custom` one with `display` not false
+     (an extension's `sendMessage` — a heartbeat's directives) →
+     `{"type":"outside_turn","by":…,"text":…}`, which the session records as
+     a `message` event from `by` (`"pi"`, or the `customType`) with
+     `"outside": true`. The apps label it by that source, not "YOU". The
+     codec's own prompts are told apart by their text, as sent.
 4. **Register it** in `cmd/shrooms-agent/main.go`: found on PATH (`--pi`,
    default `pi`; `""` leaves it out), `m.Register(agent.Pi{…}, bin)`.
 5. **A fake and tests** — `fakepi_test.go` is pi as observed, run by

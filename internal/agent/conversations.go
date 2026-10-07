@@ -263,19 +263,34 @@ func StopTerminal(pid int) error {
 // directory given, the conversation's own is used — resuming it elsewhere
 // would hand it a different working tree.
 func (m *Manager) Adopt(name, dir, conversation string) (Info, error) {
-	base, err := claudeDir()
-	if err != nil {
-		return Info{}, err
+	return m.AdoptWith(name, dir, conversation, "claude")
+}
+
+// AdoptWith is Adopt for a conversation of the named harness: Claude Code's,
+// or pi's — one running in a terminal of its own until now.
+func (m *Manager) AdoptWith(name, dir, conversation, harness string) (Info, error) {
+	if harness == "" {
+		harness = "claude"
 	}
 	if !validName.MatchString(conversation) {
 		return Info{}, fmt.Errorf("not a conversation id: %q", conversation)
 	}
-	matches, _ := filepath.Glob(filepath.Join(base, "projects", "*", conversation+".jsonl"))
-	if len(matches) == 0 {
+	m.mu.Lock()
+	h, ok := m.harnesses[harness]
+	m.mu.Unlock()
+	t, kept := h.(Transcripts)
+	if !ok || !kept {
+		return Info{}, fmt.Errorf("continuing a conversation is not something %s sessions can do", harness)
+	}
+	file, err := t.TranscriptPath(conversation)
+	if err != nil {
+		return Info{}, err
+	}
+	if file == "" {
 		return Info{}, fmt.Errorf("no conversation %s on this machine", conversation)
 	}
 	if dir == "" {
-		f, err := os.Open(matches[0])
+		f, err := os.Open(file)
 		if err != nil {
 			return Info{}, err
 		}
@@ -302,7 +317,7 @@ func (m *Manager) Adopt(name, dir, conversation string) (Info, error) {
 		}
 	}
 	m.mu.Unlock()
-	if _, err := m.Create(name, dir); err != nil {
+	if _, err := m.CreateWith(name, dir, harness); err != nil {
 		return Info{}, err
 	}
 	s, _ := m.Get(name)

@@ -34,7 +34,15 @@ func (Pi) Caps() Caps { return Caps{} }
 func (p Pi) Args(o StartOptions) []string {
 	args := append([]string{"--mode", "rpc"}, p.Extra...)
 	if o.Resume != "" {
-		args = append(args, "--session", o.Resume)
+		// By its file where there is one: given an id, pi looks only among
+		// the sessions of the directory it runs in, and says there is none
+		// for a conversation kept elsewhere — one started with
+		// --session-dir, as an agent run from a script of its own may be.
+		session := o.Resume
+		if f, _ := p.TranscriptPath(o.Resume); f != "" {
+			session = f
+		}
+		args = append(args, "--session", session)
 	}
 	return args
 }
@@ -61,6 +69,7 @@ type piCodec struct {
 	cost      float64  // the process's, summed over its assistant messages: Claude Code's meaning of total_cost_usd
 	turn      rawUsage // this turn's tokens, summed over its assistant messages
 	failed    bool     // the turn ended in an error or was aborted
+	sent      []string // prompts written and not yet seen back as pi's user messages
 	ui        map[string]piDialog
 }
 
@@ -71,6 +80,7 @@ func (c *piCodec) Start() []any {
 func (c *piCodec) Turn(text string) []any {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.sent = append(c.sent, text)
 	cmd := map[string]any{"type": "prompt", "message": text}
 	if c.streaming {
 		// Sent mid-turn it would be refused; queued, it is taken up when the
@@ -125,6 +135,9 @@ type piMessage struct {
 	ErrorMessage string `json:"errorMessage"`
 	ToolCallID   string `json:"toolCallId"`
 	IsError      bool   `json:"isError"`
+	// An extension's message (role "custom"): which, and whether pi shows it.
+	CustomType string `json:"customType"`
+	Display    *bool  `json:"display"`
 }
 
 type piBlock struct {
@@ -159,6 +172,18 @@ func (m piMessage) text() string {
 func out(v any) json.RawMessage {
 	b, _ := json.Marshal(v)
 	return b
+}
+
+// outsideTurn is a turn the harness started itself, decoded as
+// {"type": outsideTurn, "by": source, "text": …}; the session records it as a
+// message from by.
+const outsideTurn = "outside_turn"
+
+func outside(by, text string) []json.RawMessage {
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	return []json.RawMessage{out(map[string]any{"type": outsideTurn, "by": by, "text": text})}
 }
 
 func piText(text string) json.RawMessage {
@@ -280,6 +305,29 @@ func (c *piCodec) Decode(line json.RawMessage) []json.RawMessage {
 				"role": "assistant", "model": model, "content": content,
 				"usage": map[string]uint64{"input_tokens": m.Usage.Input, "output_tokens": m.Usage.Output,
 					"cache_read_input_tokens": m.Usage.CacheRead, "cache_creation_input_tokens": m.Usage.CacheWrite}}})}
+		case "user":
+			// One of ours is already in the log as the message it was sent
+			// as; any other came from inside pi — an extension's
+			// sendUserMessage, a chat bridge passing on what someone wrote.
+			t := e.Message.text()
+			for i, s := range c.sent {
+				if s == t {
+					c.sent = append(c.sent[:i], c.sent[i+1:]...)
+					return nil
+				}
+			}
+			return outside("pi", t)
+		case "custom":
+			// An extension's own message sent to the model — a heartbeat's
+			// directives — unless it keeps it out of sight.
+			if e.Message.Display != nil && !*e.Message.Display {
+				return nil
+			}
+			by := e.Message.CustomType
+			if by == "" {
+				by = "pi"
+			}
+			return outside(by, e.Message.text())
 		case "toolResult":
 			return []json.RawMessage{out(map[string]any{"type": "user", "message": map[string]any{"role": "user",
 				"content": []any{map[string]any{"type": "tool_result", "tool_use_id": e.Message.ToolCallID,

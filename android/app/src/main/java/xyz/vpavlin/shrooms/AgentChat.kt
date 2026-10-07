@@ -22,7 +22,7 @@ sealed class ChatItem {
 
     /** A turn somebody sent, and from which device; [voice] if it was said, not typed. */
     data class You(override val seq: Long, override val time: Long, val text: String, val by: String,
-                   val voice: Boolean = false) : ChatItem()
+                   val voice: Boolean = false, val outside: Boolean = false) : ChatItem()
 
     /**
      * A voice note on its way to being a turn: transcribing on the agent's
@@ -137,8 +137,10 @@ object AgentChat {
         val out = mutableListOf<ChatItem>()
         for (e in events) {
             when (e.kind) {
+                // outside: a turn the agent's harness started itself — a
+                // heartbeat, a chat bridge — labelled by its source, not as yours.
                 "message" -> out += ChatItem.You(e.seq, e.time, e.data.optString("text"), e.by,
-                    voice = e.data.optString("voice").isNotEmpty())
+                    voice = e.data.optString("voice").isNotEmpty(), outside = e.data.optBoolean("outside"))
                 "voice" -> {
                     val id = e.data.optString("id")
                     if (id !in sent && lastVoice[id] == e.seq) {
