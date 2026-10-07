@@ -436,6 +436,16 @@ int main(int argc, char** argv)
             CHECK(ob.find("written offline\\twith a tab") != std::string::npos, "lost across a restart: %s", ob.c_str());
             std::string id = ob.substr(ob.find("\"id\":\"") + 6);
             id = id.substr(0, id.find('"'));
+            // Renamed while it waits: the message, and the copy kept of the
+            // session, go to it under its new name.
+            std::ofstream(Hub::historyPath("fd00::1", "nowhere"), std::ios::trunc) << "{}";
+            h.renamed("fd00::1", "nowhere", "somewhere");
+            ob = h.outbox();
+            CHECK(ob.find("\"session\":\"somewhere\"") != std::string::npos && ob.find("nowhere") == std::string::npos,
+                  "a rename left the outbox: %s", ob.c_str());
+            CHECK(std::ifstream(Hub::historyPath("fd00::1", "somewhere")).good() &&
+                  !std::ifstream(Hub::historyPath("fd00::1", "nowhere")).good(), "the kept copy did not move");
+            Hub::forgetHistory("fd00::1", "somewhere");
             CHECK(h.unqueue(id) && h.outbox() == "[]", "cancel: %s", h.outbox().c_str());
         }
         // Delivered, to a session of its own on the agent (pi: no model call

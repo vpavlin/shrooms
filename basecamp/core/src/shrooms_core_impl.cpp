@@ -984,6 +984,14 @@ std::string ShroomsCoreImpl::agentPaste(const std::string&, const std::string&)
     return "{\"file\":" + jsonString(file) + "}";
 }
 
+std::string ShroomsCoreImpl::agentMoveKept(const std::string& address, const std::string& from, const std::string& to)
+{
+    if (!agents::isMeshAddress(address)) return errorJson("not a mesh address", address);
+    if (!safeSession(from) || !safeSession(to)) return errorJson("not a session name", from + " → " + to);
+    hub().renamed(address, from, to);
+    return "{\"ok\":true}";
+}
+
 std::string ShroomsCoreImpl::agentDelete(const std::string& address, const std::string& path)
 {
     if (!agents::safePath(path)) return errorJson("not an agent path", path);

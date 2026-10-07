@@ -27,7 +27,7 @@ func (s *Session) Upload(name string, body io.Reader) (string, error) {
 	if base == "" {
 		base = "file"
 	}
-	dir := filepath.Join(s.m.dir, "uploads", s.name)
+	dir := filepath.Join(s.m.dir, "uploads", s.Name())
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}

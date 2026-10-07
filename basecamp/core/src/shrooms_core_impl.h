@@ -463,4 +463,7 @@ public:
      * {"ok":true} or an object with an error field.
      */
     std::string agentDelete(const std::string& address, const std::string& path);
+    // A session was renamed (here or elsewhere): the copy kept of it and its
+    // queued messages move to the new name.
+    std::string agentMoveKept(const std::string& address, const std::string& from, const std::string& to);
 };

@@ -132,4 +132,10 @@ object History {
     fun forget(ctx: Context, host: String, session: String) {
         file(ctx, host, session).delete()
     }
+
+    /** The copy follows a session that was renamed. */
+    fun rename(ctx: Context, host: String, from: String, to: String) {
+        val f = file(ctx, host, from)
+        if (f.exists()) f.renameTo(file(ctx, host, to))
+    }
 }

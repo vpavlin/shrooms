@@ -15,7 +15,8 @@ const sampleStatus = `{
   ],
   "peers": [
     {"name": "nothing", "mesh": "home", "overlay": "fd7b:15fb:5ec1:b2bf:31ab:8ad3:c152:728a", "overlay_v4": "198.18.57.99"},
-    {"name": "vps", "mesh": "office", "overlay": "fdb0:9afc:a5ef:f167:7ad7:68b7:aca0:b9fa"}
+    {"name": "vps", "mesh": "office", "overlay": "fdb0:9afc:a5ef:f167:7ad7:68b7:aca0:b9fa"},
+    {"name": "laptop", "overlay": "fdb0:9afc:a5ef:388c::5"}
   ]
 }`
 
@@ -55,6 +56,7 @@ func TestCallersAreNamedByTheirAddress(t *testing.T) {
 		"fd7b:15fb:5ec1:b2bf:31ab:8ad3:c152:728a": "nothing.home",
 		"198.18.57.99": "nothing.home",
 		"fdb0:9afc:a5ef:f167:7ad7:68b7:aca0:b9fa": "vps.office",
+		"fdb0:9afc:a5ef:388c::5":                  "laptop",
 		"fdb0:9afc:a5ef::1":                       "",
 	} {
 		if got := p.who(netip.MustParseAddr(addr)); got != want {
@@ -69,7 +71,7 @@ func TestPeersAreListedForDiscovery(t *testing.T) {
 	var p peerNames
 	p.update(parse(t))
 	got := p.list()
-	if len(got) != 2 || got[0].Name != "nothing" || got[0].Mesh != "home" || got[1].Overlay != "fdb0:9afc:a5ef:f167:7ad7:68b7:aca0:b9fa" {
+	if len(got) != 3 || got[0].Name != "nothing" || got[0].Mesh != "home" || got[1].Overlay != "fdb0:9afc:a5ef:f167:7ad7:68b7:aca0:b9fa" {
 		t.Errorf("peers: %+v", got)
 	}
 }

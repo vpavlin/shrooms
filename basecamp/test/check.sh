@@ -282,5 +282,7 @@ expect "CONVEMPTY loaded=true n=0" "an agent with no conversations of its own st
 # the session is removed by its own path, then closed.
 expect "DELETETEXT=true,true" "the delete dialog does not say what is lost and what is kept"
 expect "DIALOG=true" "delete did not ask first"
-expect "DELETED=/v1/sessions/shrooms-2 OPEN=none" "deleting did not remove the open session"
+expect "RENAMEDIN=logos," "a rename in the stream is not followed only from the name open"
+expect 'RENAMED=/v1/sessions/shrooms-2/rename {"name":"logos"} MOVED=fdb0:9afc:a5ef:388c:8264:7716:36fc:64eb,shrooms-2,logos OPEN=logos' "renaming did not rename, move the copy, and reopen"
+expect "DELETED=/v1/sessions/logos OPEN=none" "deleting did not remove the open session"
 echo "agents panel OK${AGENTS_SHOT:+ (picture: $shot)}"

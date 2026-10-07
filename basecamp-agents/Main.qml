@@ -458,6 +458,8 @@ Item {
         root.agentEventsList = evs
         root.agentStreaming = streaming
         rebuildChat()
+        var movedTo = renamedIn(r.events, root.agentOpen.session)
+        if (movedTo !== "") { Qt.callLater(renamedTo, movedTo); return }
         // While the copy is what is shown: the session's numbers are below
         // the copy's oldest — deleted and made again since it was kept, its
         // numbering restarted. Opened again without it. Against the oldest:
@@ -772,6 +774,7 @@ Item {
                 add(e, { kind: "voicenote", id: d.id, error: d.status === "failed", text: d.error || "" })
             else if (e.kind === "stopped") add(e, { kind: "note", text: "asleep; the next message wakes it" })
             else if (e.kind === "restarted") add(e, { kind: "note", text: "restarted" + (e.by ? " from " + e.by : "") })
+            else if (e.kind === "renamed") add(e, { kind: "note", text: "renamed (was " + (d.from || "") + ")" + (e.by ? " from " + e.by : "") })
             else if (e.kind === "setting" && d.auto_approve !== undefined)
                 add(e, { kind: "note", text: (d.auto_approve ? "auto-approve on" : "auto-approve off") + (e.by ? " from " + e.by : "") })
             else if (e.kind === "claude") {
@@ -1161,6 +1164,42 @@ Item {
         root.said = "restarted session " + agentOpen.session
         root.saidBad = false
         return true
+    }
+    // Renamed — here, from the phone, or from another Basecamp: the copy kept
+    // here, the queued messages, what was read and auto-play move with it,
+    // and the session opens again under its new name.
+    function askRename() { renameField.text = agentOpen ? agentOpen.session : ""; renameDialog.open() }
+    function renameOpenSession(to) {
+        to = String(to || "").trim()
+        if (!agentOpen || to === "" || to === agentOpen.session) return false
+        var path = "/v1/sessions/" + agentOpen.session + "/rename"
+        if (agentCall("agentPost", [agentOpen.address, path, JSON.stringify({ name: to })]) === null) return false
+        root.said = "renamed session " + agentOpen.session + " to " + to
+        root.saidBad = false
+        renamedTo(to)
+        return true
+    }
+    function renamedTo(to) {
+        if (!agentOpen || !to || to === agentOpen.session) return
+        var o = agentOpen, from = o.session
+        agentCall("agentMoveKept", [o.address, from, to])
+        var rd = {}
+        for (var k in readTurns) rd[k === readKey(o, from) ? readKey(o, to) : k] = readTurns[k]
+        root.readTurns = rd
+        savePref("agent_read", JSON.stringify(rd))
+        var ap = {}
+        for (var a in autoPlay) ap[a === o.address + "/" + from ? o.address + "/" + to : a] = autoPlay[a]
+        root.autoPlay = ap
+        savePref("agent_autoplay", JSON.stringify(ap))
+        openSession(o, to, agentTailNow)
+    }
+    // The name a session open as session was given, if events say it was
+    // renamed; "" if not. An older rename, replayed, names an older name.
+    function renamedIn(events, session) {
+        var to = ""
+        for (var i = 0; i < events.length; i++)
+            if (events[i].kind === "renamed" && events[i].data && events[i].data.from === session) to = events[i].data.to || ""
+        return to
     }
     function askDelete() { deleteDialog.open() }
     function deleteDialogOpen() { return deleteDialog.visible }
@@ -1564,6 +1603,44 @@ Item {
                 Lnk { text: "CANCEL"; base: cBone; font.pixelSize: root.fs(12); onClicked: deleteDialog.close() }
                 Lnk { text: "DELETE"; base: cRust; font.pixelSize: root.fs(12)
                       onClicked: if (root.deleteOpenSession()) deleteDialog.close() }
+            }
+        }
+    }
+    Dialog {
+        id: renameDialog
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(root.sz(460), root.width - root.sz(40))
+        padding: root.sz(20)
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        Overlay.modal: Rectangle { color: Qt.rgba(0, 0, 0, 0.6) }
+        background: Rectangle { color: cPanel; radius: root.sz(12); border.color: cPhosphor }
+        header: Item {}
+        footer: Item {}
+        onOpened: renameField.forceActiveFocus()
+        contentItem: ColumnLayout {
+            spacing: root.sz(14)
+            Text {
+                Layout.fillWidth: true; wrapMode: Text.Wrap
+                text: root.agentOpen ? "Rename session \"" + root.agentOpen.session + "\" on " + root.agentOpen.name : ""
+                color: cBone; font.family: "monospace"; font.pixelSize: root.fs(14)
+            }
+            TextField {
+                id: renameField; Layout.fillWidth: true; color: cBone; font.family: "monospace"
+                background: Rectangle { color: cPanel; border.color: renameField.activeFocus ? cPhosphor : cLine; radius: 6 }
+                onAccepted: if (root.renameOpenSession(text)) renameDialog.close()
+            }
+            Text {
+                Layout.fillWidth: true; wrapMode: Text.Wrap
+                text: "Letters, digits, dot, dash and underscore. Its history and what it is doing go with it."
+                color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(11)
+            }
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                spacing: root.sz(20)
+                Lnk { text: "CANCEL"; base: cBone; font.pixelSize: root.fs(12); onClicked: renameDialog.close() }
+                Lnk { text: "RENAME"; base: cPhosphor; font.pixelSize: root.fs(12)
+                      onClicked: if (root.renameOpenSession(renameField.text)) renameDialog.close() }
             }
         }
     }
@@ -2061,7 +2138,8 @@ Item {
                     spacing: 4
                     RowLayout {
                         spacing: 8
-                        Text { text: root.agentOpen ? root.agentOpen.session : ""; color: cBone; font.family: "monospace"; font.pixelSize: root.fs(16) }
+                        // Clicked, it is renamed.
+                        Lnk { text: root.agentOpen ? root.agentOpen.session : ""; base: cBone; font.pixelSize: root.fs(16); onClicked: root.askRename() }
                         Pulse { visible: root.agentWorking; }
                         Item { Layout.fillWidth: true }
                         Lnk {

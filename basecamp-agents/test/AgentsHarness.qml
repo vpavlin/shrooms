@@ -50,6 +50,7 @@ Item {
     property string lastFind: ""
     property string lastPost: ""
     property string lastDelete: ""
+    property string lastMoveKept: ""
     property string lastWatch: ""
     property string lastSearch: ""
     property bool findNone: false
@@ -179,6 +180,7 @@ Item {
                 if (method === "agentPost") { top.lastPost = args[2]; top.lastPostPath = args[1]; return JSON.stringify({ ok: true }) }
                 if (method === "agentUpload") return JSON.stringify({ job: 1 })
                 if (method === "agentDelete") { top.lastDelete = args[1]; return JSON.stringify({ ok: true }) }
+                if (method === "agentMoveKept") { top.lastMoveKept = args.join(","); return JSON.stringify({ ok: true }) }
                 if (method === "agentRecord") return JSON.stringify(args[0] === "stop" ? { job: 2 } : { ok: true })
                 if (method === "agentJobs") return JSON.stringify({ recording: false, jobs: top.jobsNow })
                 return JSON.stringify({ error: "unknown " + method })
@@ -520,6 +522,13 @@ Item {
             console.error("CONVEMPTY loaded=" + view.conversationsLoaded + " n=" + view.conversations.length)
             top.noConversations = false
 
+            // Renamed: posted, and the session opens again under the new
+            // name, with the copy moved by the core; a rename elsewhere,
+            // seen in the stream, is followed the same way.
+            console.error("RENAMEDIN=" + view.renamedIn([ev(3, "renamed", { from: "a", to: "b" }), ev(9, "renamed", { from: "shrooms-2", to: "logos" })], "shrooms-2")
+                          + "," + view.renamedIn([ev(3, "renamed", { from: "a", to: "b" })], "shrooms"))
+            view.renameOpenSession("logos")
+            console.error("RENAMED=" + top.lastPostPath + " " + top.lastPost + " MOVED=" + top.lastMoveKept + " OPEN=" + view.agentOpen.session)
             // Deleting the open session: asks what the phone asks, then goes.
             console.error("DELETETEXT=" + (view.deleteSessionText("working").indexOf("cut off") > 0)
                           + "," + (view.deleteSessionText("idle").indexOf("conversation itself is kept") > 0))

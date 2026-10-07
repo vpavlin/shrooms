@@ -564,3 +564,67 @@ func TestASyntheticMessageIsNotTheModel(t *testing.T) {
 		t.Fatalf("model %q", s.model)
 	}
 }
+
+// A renamed session keeps its history, its process and its settings under the
+// new name — across a restart of the agent too — and its followers are told.
+func TestARenamedSessionKeepsEverything(t *testing.T) {
+	state := t.TempDir()
+	m := newTestManager(t, state)
+	m.Create("proj", t.TempDir())
+	m.Create("other", t.TempDir())
+	s, _ := m.Get("proj")
+	s.SetStarred(true)
+	s.Send("before", "")
+	waitFor(t, s, 0, func(e Event) bool { return claudeType(e) == "result/success" })
+	s.mu.Lock()
+	p := s.proc
+	s.mu.Unlock()
+
+	if _, err := m.Rename("proj", "other", "x"); err == nil {
+		t.Error("renamed onto another session")
+	}
+	if _, err := m.Rename("proj", "../evil", "x"); err == nil {
+		t.Error("renamed to a path")
+	}
+	in, err := m.Rename("proj", "renamed", "phone.home")
+	if err != nil || in.Name != "renamed" || !in.Starred {
+		t.Fatalf("rename: %+v %v", in, err)
+	}
+	if _, ok := m.Get("proj"); ok {
+		t.Error("still found by the old name")
+	}
+	r := waitFor(t, s, 0, func(e Event) bool { return e.Kind == "renamed" })
+	if r.By != "phone.home" || !strings.Contains(string(r.Data), `"from":"proj"`) {
+		t.Errorf("renamed event %+v", r)
+	}
+	s.Send("after", "")
+	waitFor(t, s, r.Seq, func(e Event) bool { return claudeType(e) == "result/success" })
+	s.mu.Lock()
+	same := s.proc == p
+	s.mu.Unlock()
+	if !same {
+		t.Error("the process was restarted")
+	}
+	if _, err := os.Stat(filepath.Join(state, "events", "proj.jsonl")); !os.IsNotExist(err) {
+		t.Error("the old log is still there")
+	}
+
+	m2 := newTestManager(t, state)
+	s2, ok := m2.Get("renamed")
+	if !ok {
+		t.Fatal("the new name was not kept")
+	}
+	var texts []string
+	backlog, ch := s2.Since(0)
+	s2.Unsubscribe(ch)
+	for _, e := range backlog {
+		if e.Kind == "message" {
+			var d struct{ Text string }
+			json.Unmarshal(e.Data, &d)
+			texts = append(texts, d.Text)
+		}
+	}
+	if strings.Join(texts, ",") != "before,after" || !s2.Info().Starred {
+		t.Fatalf("after a restart: %v %+v", texts, s2.Info())
+	}
+}

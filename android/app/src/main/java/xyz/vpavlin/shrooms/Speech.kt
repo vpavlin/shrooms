@@ -154,6 +154,20 @@ object Speech {
     private fun key(host: String, session: String) = "$host/$session"
     val autoChanged = MutableStateFlow(0L)
 
+    /** Auto-play, and what it has read, follow a session that was renamed. */
+    fun rename(ctx: Context, host: String, from: String, to: String) {
+        val p = prefs(ctx)
+        val e = p.edit()
+        for (k in listOf("auto:", "spoken:")) {
+            when (val v = p.all[k + key(host, from)]) {
+                is Boolean -> e.putBoolean(k + key(host, to), v)
+                is Long -> e.putLong(k + key(host, to), v)
+            }
+            e.remove(k + key(host, from))
+        }
+        e.apply()
+    }
+
     fun autoPlay(ctx: Context, host: String, session: String): Boolean =
         prefs(ctx).getBoolean("auto:" + key(host, session), false)
 

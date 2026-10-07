@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -83,9 +84,12 @@ type Info struct {
 
 // Session is one conversation in one directory.
 type Session struct {
-	name, dir string
-	m         *Manager
-	harness   Harness
+	// label is the session's name (Name), which a rename changes while
+	// others read it.
+	label   atomic.Pointer[string]
+	dir     string
+	m       *Manager
+	harness Harness
 
 	mu sync.Mutex
 	// convID is the harness's own id for the conversation, to resume it by:
@@ -214,7 +218,7 @@ func NewManager(ctx context.Context, log *slog.Logger, stateDir, claudeBin strin
 		}
 	}
 	go m.reap()
-	go m.keepAlive()
+	go m.keepAlive(keepAliveEvery)
 	// The logs read once now, in the background: the session list carries
 	// the newest subscription reading (Limits), and after a restart that is
 	// in the logs until Claude Code reports again. Later reads take only
@@ -266,8 +270,51 @@ func (m *Manager) Harnesses() []HarnessInfo {
 }
 
 func (m *Manager) newSession(name, dir string, h Harness) *Session {
-	return &Session{name: name, dir: dir, m: m, harness: h, subs: map[chan Event]struct{}{}, ids: map[string]bool{}, voices: map[string]voiceNote{},
+	s := &Session{dir: dir, m: m, harness: h, subs: map[chan Event]struct{}{}, ids: map[string]bool{}, voices: map[string]voiceNote{},
 		pending: map[string]json.RawMessage{}, state: Idle}
+	s.label.Store(&name)
+	return s
+}
+
+// Name is what the session is called now.
+func (s *Session) Name() string { return *s.label.Load() }
+
+// Rename gives a session another name. Its log moves with it; files sent to
+// it stay where they were kept, since its messages name them by path. The
+// process goes on undisturbed, and devices following it are told by a
+// "renamed" event.
+func (m *Manager) Rename(old, name, by string) (Info, error) {
+	if !validName.MatchString(name) {
+		return Info{}, fmt.Errorf("a session name is letters, digits, dot, dash and underscore: %q", name)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.sessions[old]
+	if !ok {
+		return Info{}, fmt.Errorf("no session called %q", old)
+	}
+	if name == old {
+		return s.Info(), nil
+	}
+	if _, taken := m.sessions[name]; taken {
+		return Info{}, fmt.Errorf("there is a session called %q already", name)
+	}
+	s.mu.Lock()
+	from := s.eventsPath()
+	to := filepath.Join(m.dir, "events", name+".jsonl")
+	if err := os.Rename(from, to); err != nil && !errors.Is(err, os.ErrNotExist) {
+		s.mu.Unlock()
+		return Info{}, err
+	}
+	s.label.Store(&name)
+	delete(m.sessions, old)
+	m.sessions[name] = s
+	s.record("renamed", by, map[string]string{"from": old, "to": name})
+	s.mu.Unlock()
+	if err := m.save(); err != nil {
+		return Info{}, err
+	}
+	return s.Info(), nil
 }
 
 // save writes the registry. Called with m.mu held.
@@ -275,7 +322,7 @@ func (m *Manager) save() error {
 	recs := make([]record, 0, len(m.sessions))
 	for _, s := range m.sessions {
 		s.mu.Lock()
-		r := record{Name: s.name, Dir: s.dir, ConvID: s.convID, AutoApprove: s.autoApprove, Starred: s.starred,
+		r := record{Name: s.Name(), Dir: s.dir, ConvID: s.convID, AutoApprove: s.autoApprove, Starred: s.starred,
 			KeepRunning: s.keepRunning}
 		if s.harness.Name() != "claude" {
 			r.Harness = s.harness.Name()
@@ -421,8 +468,8 @@ var keepAliveEvery = 15 * time.Second
 
 // keepAlive starts the processes of sessions kept running that have none —
 // after the agent starts, or after one ended.
-func (m *Manager) keepAlive() {
-	t := time.NewTicker(keepAliveEvery)
+func (m *Manager) keepAlive(every time.Duration) {
+	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
 		select {
@@ -439,7 +486,7 @@ func (m *Manager) keepAlive() {
 				s.mu.Lock()
 				if s.keepRunning && s.proc == nil {
 					if err := s.ensureRunning(); err != nil {
-						m.log.Warn("could not start a session kept running", "session", s.name, "err", err)
+						m.log.Warn("could not start a session kept running", "session", s.Name(), "err", err)
 					}
 				}
 				s.mu.Unlock()
@@ -449,14 +496,14 @@ func (m *Manager) keepAlive() {
 }
 
 func (s *Session) eventsPath() string {
-	return filepath.Join(s.m.dir, "events", s.name+".jsonl")
+	return filepath.Join(s.m.dir, "events", s.Name()+".jsonl")
 }
 
 // Info reports the session for the list.
 func (s *Session) Info() Info {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	in := Info{Name: s.name, Dir: s.dir, State: s.state, Pending: len(s.pending),
+	in := Info{Name: s.Name(), Dir: s.dir, State: s.state, Pending: len(s.pending),
 		Running: s.proc != nil, LastSeq: s.seq, AutoApprove: s.autoApprove,
 		ContextUsed: s.ctxUsed, ContextWindow: s.ctxWindow, Preview: s.preview, Model: s.model,
 		Harness: s.harness.Name(), Caps: s.harness.Caps(), Starred: s.starred, Turns: s.turns,
@@ -524,7 +571,7 @@ func (s *Session) record(kind, by string, data any) Event {
 		f.Write(append(b, '\n'))
 		f.Close()
 	} else {
-		s.m.log.Warn("could not keep an event", "session", s.name, "err", err)
+		s.m.log.Warn("could not keep an event", "session", s.Name(), "err", err)
 	}
 	s.broadcast(e)
 	return e
@@ -673,7 +720,7 @@ func (s *Session) ensureRunning() error {
 	bin := s.m.bins[s.harness.Name()]
 	s.m.mu.Unlock()
 	o := StartOptions{Resume: s.convID, AutoApprove: s.autoApprove && s.harness.Caps().Approve}
-	p, err := startProc(s.m.ctx, s.m.log.With("session", s.name), s.harness, bin, s.dir, o)
+	p, err := startProc(s.m.ctx, s.m.log.With("session", s.Name()), s.harness, bin, s.dir, o)
 	if err != nil {
 		return err
 	}
@@ -762,7 +809,7 @@ func (s *Session) drain() {
 		default:
 			// A message the device was told was taken: kept in the log with
 			// why it did not reach the model, so it is not silently lost.
-			s.m.log.Warn("queued message not sent", "session", s.name, "err", err)
+			s.m.log.Warn("queued message not sent", "session", s.Name(), "err", err)
 			s.record("message", t.by, map[string]string{"id": t.id, "text": t.text, "error": err.Error()})
 		}
 	}
@@ -856,7 +903,7 @@ func (s *Session) transcribe(path, by, id string, stt *Transcriber) {
 			t.failed = err
 		} else {
 			t.text, t.ready = text, true
-			s.m.log.Info("voice note transcribed", "session", s.name, "took", time.Since(start).Round(time.Millisecond),
+			s.m.log.Info("voice note transcribed", "session", s.Name(), "took", time.Since(start).Round(time.Millisecond),
 				"words", len(strings.Fields(text)), "by", by)
 		}
 		s.drain()
@@ -1053,7 +1100,7 @@ func (s *Session) read(p *proc) {
 		if autoAnswer != "" {
 			// Switched on after this process started, so it still asks.
 			if err := s.answer(autoAnswer, true, "", nil, "auto-approve"); err != nil {
-				s.m.log.Warn("could not auto-approve", "session", s.name, "err", err)
+				s.m.log.Warn("could not auto-approve", "session", s.Name(), "err", err)
 			}
 		}
 		s.mu.Unlock()
@@ -1113,7 +1160,7 @@ func (s *Session) SetAutoApprove(on bool, by string) error {
 				continue
 			}
 			if err := s.answer(id, true, "", nil, "auto-approve"); err != nil {
-				s.m.log.Warn("could not auto-approve", "session", s.name, "err", err)
+				s.m.log.Warn("could not auto-approve", "session", s.Name(), "err", err)
 			}
 		}
 	}

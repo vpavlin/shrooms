@@ -109,6 +109,11 @@ public:
     static std::string historyPath(const std::string& address, const std::string& session);
     /** Drops what is kept on disk of a session: it was deleted. */
     static void forgetHistory(const std::string& address, const std::string& session);
+    /**
+     * A session was renamed: its copy kept on disk, and what waits in the
+     * outbox for it, go under the new name.
+     */
+    void renamed(const std::string& address, const std::string& from, const std::string& to);
 
     /**
      * Sends a local file to a session's machine in the background (an agent

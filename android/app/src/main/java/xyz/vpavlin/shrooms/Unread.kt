@@ -46,6 +46,13 @@ object Unread {
         changed.value = changed.value + 1
     }
 
+    /** What was read follows a session that was renamed. */
+    fun rename(ctx: Context, host: String, from: String, to: String) {
+        val p = prefs(ctx)
+        val read = p.all[key(host, from)] as? Long ?: return
+        p.edit().remove(key(host, from)).putLong(key(host, to), read).apply()
+    }
+
     fun forget(ctx: Context, host: String, session: String) {
         prefs(ctx).edit().remove(key(host, session)).apply()
     }

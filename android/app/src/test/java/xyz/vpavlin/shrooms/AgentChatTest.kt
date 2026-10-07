@@ -194,6 +194,15 @@ class AgentChatTest {
         assertFalse(you[1].outside)
     }
 
+    @Test fun aRenameIsFollowedOnlyFromTheNameOpen() {
+        val evs = listOf(
+            ev(5, "renamed", """{"from":"first","to":"proj"}""", by = "nothing.home"),
+            ev(9, "renamed", """{"from":"proj","to":"jimmy"}""", by = "laptop"))
+        assertEquals("jimmy", AgentChat.renamedTo(evs, "proj"))
+        assertEquals("", AgentChat.renamedTo(evs, "jimmy"))
+        assertEquals("renamed (was proj) from laptop", (AgentChat.items(evs).last() as ChatItem.Note).text)
+    }
+
     @Test fun toolResultsAreShownFolded() {
         val items = AgentChat.items(listOf(
             ev(7, "claude", """{"type":"user","message":{"role":"user","content":[

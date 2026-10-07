@@ -260,9 +260,15 @@ func (p *peerNames) update(st status) {
 		}
 	}
 	for _, peer := range st.Peers {
+		// A daemon of one mesh from before peers carried theirs (pi5's,
+		// 0a282c1) leaves it out: the name alone, not "laptop.".
+		name := peer.Name
+		if peer.Mesh != "" {
+			name += "." + peer.Mesh
+		}
 		for _, s := range []string{peer.Overlay, peer.OverlayV4} {
 			if a, err := netip.ParseAddr(s); err == nil {
-				by[a] = peer.Name + "." + peer.Mesh
+				by[a] = name
 			}
 		}
 	}

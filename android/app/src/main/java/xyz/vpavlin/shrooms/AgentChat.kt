@@ -150,6 +150,7 @@ object AgentChat {
                 }
                 "stopped" -> out += ChatItem.Stopped(e.seq, e.time, e.data.optString("reason"))
                 "restarted" -> out += ChatItem.Note(e.seq, e.time, "restarted${by(e)}")
+                "renamed" -> out += ChatItem.Note(e.seq, e.time, "renamed (was ${e.data.optString("from")})${by(e)}")
                 "setting" -> if (e.data.has("auto_approve")) {
                     out += ChatItem.Note(e.seq, e.time,
                         (if (e.data.optBoolean("auto_approve")) "auto-approve on" else "auto-approve off") + by(e))
@@ -159,6 +160,13 @@ object AgentChat {
         }
         return out
     }
+
+    /**
+     * The name a session open as [session] was given, if [events] say it was
+     * renamed — "" if not. An older rename, replayed, names an older name.
+     */
+    fun renamedTo(events: List<AgentEvent>, session: String): String =
+        events.lastOrNull { it.kind == "renamed" && it.data.optString("from") == session }?.data?.optString("to") ?: ""
 
     private fun by(e: AgentEvent) = if (e.by.isNotEmpty()) " from ${e.by}" else ""
 

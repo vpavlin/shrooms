@@ -358,7 +358,7 @@ fun AgentsScreen(peers: List<Peer>, onClose: () -> Unit, initial: OpenSession? =
         val o = open
         if (o != null) {
             BackHandler { open = null }
-            SessionScreen(o, onBack = { open = null; refresh++ })
+            SessionScreen(o, onBack = { open = null; refresh++ }, onRenamed = { n -> open = o.copy(session = n) })
             return@Box
         }
         BackHandler { if (creatingOn != null) creatingOn = null else onClose() }
@@ -706,9 +706,10 @@ private fun Field(label: String, value: String, onChange: (String) -> Unit) {
 // --- a conversation ---------------------------------------------------------
 
 @Composable
-private fun SessionScreen(o: OpenSession, onBack: () -> Unit) {
+private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String) -> Unit = {}) {
     var askDelete by remember { mutableStateOf(false) }
     var askRestart by remember { mutableStateOf(false) }
+    var renaming by remember { mutableStateOf<String?>(null) }
     // How many of the last events are loaded: 0 is everything, once asked for;
     // more, to reach a search result further back.
     var tail by remember(o) { mutableStateOf(SESSION_TAIL) }
@@ -734,6 +735,17 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     val list = rememberLazyListState()
     val ctx = LocalContext.current
+    // Renamed — here, from another device or from Basecamp: what this phone
+    // keeps under the name (copy, unread, auto-play, the outbox) moves with
+    // it, and the screen goes on under the new one.
+    fun renamedTo(to: String) {
+        if (to.isEmpty() || to == o.session) return
+        History.rename(ctx, o.host, o.session, to)
+        Unread.rename(ctx, o.host, o.session, to)
+        Speech.rename(ctx, o.host, o.session, to)
+        Outbox.rename(ctx, o.address, o.session, to)
+        onRenamed(to)
+    }
     // Files to go with the next message: kept on the phone at once, and sent
     // with the message through the outbox — so a machine that is not there
     // holds up nothing, and loses nothing.
@@ -915,6 +927,7 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit) {
                     while (true) batch += pending.poll() ?: break
                     var text = streaming
                     val kept = ArrayList<AgentEvent>()
+                    val movedTo = AgentChat.renamedTo(batch, o.session)
                     for (e in batch) {
                         if (e.kind == "partial") { text += e.data.optString("text"); continue }
                         // The whole message replaces what was streamed of it.
@@ -929,6 +942,10 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit) {
                         Speech.heard(ctx, o.host, o.session, kept)
                     }
                     connError = ""
+                    if (movedTo.isNotEmpty()) {
+                        if (!replaying) withContext(Dispatchers.IO) { History.save(ctx, o.host, o.session, events.toList(), earlier) }
+                        renamedTo(movedTo)
+                    }
                 }
                 delay(120)
             }
@@ -1022,6 +1039,36 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit) {
     }
     // For a process that stop does not reach — a request hanging on a dropped
     // connection. Only this session's; the others on the machine go on.
+    renaming?.let { draft ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { renaming = null },
+            containerColor = Palette.Panel,
+            title = { Text("Rename ${o.session}", color = Palette.Bone) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Field("name", draft) { renaming = it }
+                    Text("Letters, digits, dot, dash and underscore. Its history and what it is doing go with it.",
+                        style = MaterialTheme.typography.bodySmall, color = Palette.Ash)
+                }
+            },
+            confirmButton = {
+                Text("RENAME", style = MaterialTheme.typography.labelSmall, color = Palette.Phosphor,
+                    modifier = Modifier.clickable {
+                        val to = draft.trim()
+                        renaming = null
+                        scope.launch {
+                            withContext(Dispatchers.IO) { runCatching { client.rename(o.session, to) } }
+                                .onSuccess { renamedTo(to) }
+                                .onFailure { actionError = it.message ?: "could not rename it" }
+                        }
+                    }.padding(12.dp))
+            },
+            dismissButton = {
+                Text("CANCEL", style = MaterialTheme.typography.labelSmall, color = Palette.Ash,
+                    modifier = Modifier.clickable { renaming = null }.padding(12.dp))
+            },
+        )
+    }
     if (askRestart) {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { askRestart = false },
@@ -1070,8 +1117,10 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("‹", style = MaterialTheme.typography.titleMedium.copy(fontSize = 22.sp), color = Palette.Phosphor,
                     modifier = Modifier.clickable { onBack() }.padding(horizontal = 8.dp, vertical = 4.dp))
+                // Tapped, it is renamed.
                 Text(o.session, style = MaterialTheme.typography.titleMedium, color = Palette.Bone,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f).clickable { renaming = o.session })
                 when {
                     waiting -> { Pulse(Palette.Amber); Spacer(Modifier.width(6.dp)); Label("NEEDS YOU") }
                     working -> { Pulse(Palette.Phosphor); Spacer(Modifier.width(6.dp)); Label("WORKING") }

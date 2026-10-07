@@ -104,6 +104,13 @@ object Outbox {
         write(ctx, items.filterNot { it.id == id })
     }
 
+    /** What waits to go to a session that was renamed goes to it under its new name. */
+    @Synchronized fun rename(ctx: Context, address: String, from: String, to: String) {
+        val items = list(ctx)
+        if (items.any { it.address == address && it.session == from })
+            write(ctx, items.map { if (it.address == address && it.session == from) it.copy(session = to) else it })
+    }
+
     @Synchronized private fun update(ctx: Context, o: Outgoing) =
         write(ctx, list(ctx).map { if (it.id == o.id) o else it })
 

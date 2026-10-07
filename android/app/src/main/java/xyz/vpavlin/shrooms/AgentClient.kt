@@ -302,6 +302,11 @@ class AgentClient(private val address: String) {
         request("POST", "/v1/sessions/${enc(session)}/interrupt", null)
     }
 
+    /** Gives the session another name; its history and process go with it. */
+    fun rename(session: String, name: String) {
+        request("POST", "/v1/sessions/${enc(session)}/rename", JSONObject().put("name", name).toString())
+    }
+
     /** Ends the session's process, stuck or not, and starts it again on the same conversation. */
     fun restart(session: String) {
         request("POST", "/v1/sessions/${enc(session)}/restart", null)

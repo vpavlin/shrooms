@@ -573,6 +573,18 @@ void Hub::forgetHistory(const std::string& address, const std::string& session)
     std::remove(historyPath(address, session).c_str());
 }
 
+void Hub::renamed(const std::string& address, const std::string& from, const std::string& to)
+{
+    std::rename(historyPath(address, from).c_str(), historyPath(address, to).c_str());
+    std::lock_guard<std::mutex> g(mu_);
+    loadOutbox();
+    bool moved = false;
+    for (auto& o : outbox_) {
+        if (o.address == address && o.session == from) { o.session = to; moved = true; }
+    }
+    if (moved) saveOutbox();
+}
+
 std::string Hub::historyPath(const std::string& address, const std::string& session)
 {
     // FNV-1a: a file name for the pair, not a secret.

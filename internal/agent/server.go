@@ -59,6 +59,7 @@ func Handler(log *slog.Logger, m *Manager, who Who) http.Handler {
 	mux.HandleFunc("POST /v1/sessions/{name}/prompts/{id}", h.answer)
 	mux.HandleFunc("POST /v1/sessions/{name}/interrupt", h.interrupt)
 	mux.HandleFunc("POST /v1/sessions/{name}/restart", h.restart)
+	mux.HandleFunc("POST /v1/sessions/{name}/rename", h.rename)
 	return mux
 }
 
@@ -178,7 +179,7 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 			fail(w, http.StatusInternalServerError, err)
 			return
 		}
-		h.log.Info("auto-approve changed", "session", s.name, "on", *req.AutoApprove, "by", h.caller(r))
+		h.log.Info("auto-approve changed", "session", s.Name(), "on", *req.AutoApprove, "by", h.caller(r))
 	}
 	if req.Starred != nil {
 		if err := s.SetStarred(*req.Starred); err != nil {
@@ -191,7 +192,7 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 			fail(w, http.StatusInternalServerError, err)
 			return
 		}
-		h.log.Info("keep running changed", "session", s.name, "on", *req.KeepRunning, "by", h.caller(r))
+		h.log.Info("keep running changed", "session", s.Name(), "on", *req.KeepRunning, "by", h.caller(r))
 	}
 	writeJSON(w, http.StatusOK, s.Info())
 }
@@ -214,7 +215,7 @@ func (h *handler) upload(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, err)
 		return
 	}
-	h.log.Info("file received", "session", s.name, "path", path, "by", h.caller(r))
+	h.log.Info("file received", "session", s.Name(), "path", path, "by", h.caller(r))
 	writeJSON(w, http.StatusCreated, map[string]string{"path": path})
 }
 
@@ -241,7 +242,7 @@ func (h *handler) transcribe(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, err)
 		return
 	}
-	h.log.Info("voice note transcribed", "session", s.name, "took", time.Since(start).Round(time.Millisecond),
+	h.log.Info("voice note transcribed", "session", s.Name(), "took", time.Since(start).Round(time.Millisecond),
 		"words", len(strings.Fields(text)), "by", h.caller(r))
 	writeJSON(w, http.StatusOK, map[string]string{"path": path, "text": text})
 }
@@ -446,6 +447,27 @@ func (h *handler) interrupt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
+}
+
+func (h *handler) rename(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, err)
+		return
+	}
+	in, err := h.m.Rename(r.PathValue("name"), strings.TrimSpace(req.Name), h.caller(r))
+	if err != nil {
+		code := http.StatusConflict
+		if _, ok := h.m.Get(r.PathValue("name")); !ok {
+			code = http.StatusNotFound
+		}
+		fail(w, code, err)
+		return
+	}
+	h.log.Info("session renamed", "from", r.PathValue("name"), "to", in.Name, "by", h.caller(r))
+	writeJSON(w, http.StatusOK, in)
 }
 
 func (h *handler) restart(w http.ResponseWriter, r *http.Request) {

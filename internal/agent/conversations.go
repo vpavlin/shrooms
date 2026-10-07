@@ -81,7 +81,7 @@ func (m *Manager) Conversations(limit int) ([]Conversation, error) {
 		// Conversations listed here are Claude Code's; another harness's
 		// id could only collide by chance.
 		if s.convID != "" && s.harness.Name() == "claude" {
-			adopted[s.convID] = s.name
+			adopted[s.convID] = s.Name()
 		}
 		s.mu.Unlock()
 	}
@@ -313,7 +313,7 @@ func (m *Manager) AdoptWith(name, dir, conversation, harness string) (Info, erro
 		s.mu.Unlock()
 		if taken {
 			m.mu.Unlock()
-			return Info{}, fmt.Errorf("session %q already continues it", s.name)
+			return Info{}, fmt.Errorf("session %q already continues it", s.Name())
 		}
 	}
 	m.mu.Unlock()
