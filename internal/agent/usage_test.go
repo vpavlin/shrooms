@@ -125,7 +125,7 @@ func TestUsageReadsALog(t *testing.T) {
 	os.WriteFile(path, []byte(b.String()), 0o600)
 
 	sc := &usageScan{rows: map[usageKey]*UsageRow{}}
-	sc.read(path, "s", "pi")
+	sc.read(path, "s", "claude")
 	got := map[string]UsageRow{}
 	for _, r := range sc.rows {
 		got[r.Day+" "+r.By] = *r
@@ -133,7 +133,7 @@ func TestUsageReadsALog(t *testing.T) {
 	first := got["2026-10-04 phone.office"]
 	// The first result: its turn and tokens, none of the 400 it arrived with.
 	if first.Turns != 2 || first.Input != 220 || first.Output != 17 || !near(first.CostUSD, 0.05) || first.BusyMs != 3000 ||
-		first.Model != "ollama/qwen3" || first.Harness != "pi" {
+		first.Model != "ollama/qwen3" || first.Harness != "claude" {
 		t.Errorf("summed from its messages: %+v", first)
 	}
 	second := got["2026-10-05 laptop.home"]
@@ -151,12 +151,49 @@ func TestUsageReadsALog(t *testing.T) {
 	ev(day2.Add(6*time.Hour+time.Second), "claude", "", `{"type":"result","subtype":"success","total_cost_usd":400.45,"usage":{"output_tokens":5}}`)
 	f.WriteString(b.String())
 	f.Close()
-	sc.read(path, "s", "pi")
+	sc.read(path, "s", "claude")
 	if r := sc.rows[usageKey{"2026-10-05", "phone.office", "ollama/qwen3"}]; r == nil || r.Turns != 1 || r.Output != 5 {
 		t.Errorf("the appended turn: %+v", r)
 	}
 	if r := sc.rows[usageKey{"2026-10-04", "phone.office", "ollama/qwen3"}]; r.Turns != 2 {
 		t.Errorf("counted again: %+v", r)
+	}
+}
+
+// pi's running cost is its process's: every start counts from zero, so a
+// process that never reaches an earlier one's total is still counted — as
+// Jimmy's were not on pi5: deepseek to $0.079, then GLM to $0.046 after restarts.
+func TestUsageOfPiCountsEachProcessFromZero(t *testing.T) {
+	at := time.Date(2026, 10, 7, 12, 0, 0, 0, time.Local)
+	var b strings.Builder
+	seq := 0
+	ev := func(kind, by, data string) {
+		seq++
+		at = at.Add(time.Second)
+		line, _ := json.Marshal(map[string]any{"seq": seq, "time": at, "kind": kind, "by": by, "data": json.RawMessage(data)})
+		b.Write(line)
+		b.WriteByte('\n')
+	}
+	ev("claude", "", `{"type":"system","subtype":"init","model":"venice/deepseek","harness":"pi"}`)
+	ev("message", "laptop", `{"text":"one"}`)
+	ev("claude", "", `{"type":"result","subtype":"success","total_cost_usd":0.05}`)
+	ev("message", "laptop", `{"text":"two"}`)
+	ev("claude", "", `{"type":"result","subtype":"success","total_cost_usd":0.08}`)
+	ev("claude", "", `{"type":"system","subtype":"init","model":"venice/glm","harness":"pi"}`)
+	ev("message", "laptop", `{"text":"three"}`)
+	ev("claude", "", `{"type":"result","subtype":"success","total_cost_usd":0.02}`)
+	ev("message", "laptop", `{"text":"four"}`)
+	ev("claude", "", `{"type":"result","subtype":"success","total_cost_usd":0.045}`)
+	path := filepath.Join(t.TempDir(), "jimmy.jsonl")
+	os.WriteFile(path, []byte(b.String()), 0o600)
+
+	sc := &usageScan{rows: map[usageKey]*UsageRow{}}
+	sc.read(path, "jimmy", "pi")
+	day := at.Format("2006-01-02")
+	deep := sc.rows[usageKey{day, "laptop", "venice/deepseek"}]
+	glm := sc.rows[usageKey{day, "laptop", "venice/glm"}]
+	if deep == nil || !near(deep.CostUSD, 0.08) || glm == nil || !near(glm.CostUSD, 0.045) {
+		t.Fatalf("deepseek %+v, glm %+v", deep, glm)
 	}
 }
 

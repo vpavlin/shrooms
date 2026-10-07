@@ -267,6 +267,11 @@ func (sc *usageScan) event(e Event, session, harness string) {
 			if d.Subtype == "init" && d.Model != "" {
 				sc.model = d.Model
 			}
+			if d.Subtype == "init" && harness == "pi" {
+				// pi's total is the process's, from nothing: each start of
+				// one counts from zero, whatever an earlier one reached.
+				sc.peakCost, sc.costBase = 0, true
+			}
 		case "assistant":
 			// Summed only for a harness whose result does not carry the turn's
 			// tokens; Claude Code repeats a message's usage on each of its
@@ -287,10 +292,10 @@ func (sc *usageScan) event(e Event, session, harness string) {
 				// above the last: Claude Code's total dips on a resume and
 				// climbs back (419.25, 418.10, 414.93, … 433.50), and counting
 				// the climb counted every dip twice — $6,600 from logs whose
-				// totals rose by $131 (2026-10-05). The price: a counter that
-				// truly starts again (a new conversation, a pi process) counts
-				// nothing until it passes the old peak; for pi that is a local
-				// model's zero anyway.
+				// totals rose by $131 (2026-10-05). A pi process's counter
+				// truly starts again, so its init resets the peak (above):
+				// held to the old one, Jimmy's turns on Venice after restarts
+				// counted $0 under an earlier process's $0.079 (2026-10-07).
 				//
 				// The log's first result only sets the peak: a conversation
 				// taken over from a terminal arrives with its whole past cost
