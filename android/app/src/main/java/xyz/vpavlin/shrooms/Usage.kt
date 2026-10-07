@@ -72,8 +72,18 @@ object PlanLive {
     }
 }
 
-/** One machine's answer: its rows, and its subscription's limits if Claude Code ever reported them. */
-data class UsageAnswer(val rows: List<UsageRow>, val limits: PlanLimits?)
+/**
+ * One pay-as-you-go key's standing (Venice): what is left — DIEM, the daily
+ * allowance, and USD — and when the allowance refills; [key] is a
+ * fingerprint, so one key used by several machines is one entry.
+ */
+data class Credit(
+    val machines: List<String>, val provider: String, val key: String,
+    val balances: Map<String, Double>, val resetsAt: Long, val at: Long, val error: String,
+)
+
+/** One machine's answer: its rows, its subscription's limits if Claude Code ever reported them, and its keys' credits. */
+data class UsageAnswer(val rows: List<UsageRow>, val limits: PlanLimits?, val credits: List<Credit> = emptyList())
 
 /** One line of the dashboard: a device, machine or model, and its sums. */
 data class UsageLine(val name: String, val turns: Int, val output: Long, val input: Long, val costUsd: Double, val busyMs: Long)
@@ -81,7 +91,34 @@ data class UsageLine(val name: String, val turns: Int, val output: Long, val inp
 object UsageView {
     enum class Measure(val label: String) { OUTPUT("tokens out"), TURNS("turns"), COST("cost"), BUSY("busy") }
 
-    fun answer(machine: String, json: String) = UsageAnswer(parse(machine, json), parseLimits(machine, json))
+    fun answer(machine: String, json: String) = UsageAnswer(parse(machine, json), parseLimits(machine, json), parseCredits(machine, json))
+
+    /** The machine's keys' credits; none from an agent that has no pay-as-you-go key (or is older than credits). */
+    fun parseCredits(machine: String, json: String): List<Credit> {
+        val a = JSONObject(json).optJSONArray("credits") ?: return emptyList()
+        return (0 until a.length()).map { i ->
+            val o = a.getJSONObject(i)
+            val b = o.optJSONObject("balances")
+            Credit(listOf(machine), o.optString("provider"), o.optString("key"),
+                b?.keys()?.asSequence()?.associateWith { b.optDouble(it) }.orEmpty(),
+                epochMs(o.optString("resets_at")), epochMs(o.optString("at")), o.optString("error"))
+        }
+    }
+
+    /** One entry per key, the newest reading, with every machine that uses it. */
+    fun keys(all: List<Credit>): List<Credit> =
+        all.groupBy { it.provider + "/" + it.key }.map { (_, cs) ->
+            cs.maxBy { it.at }.copy(machines = cs.flatMap { it.machines }.distinct().sorted())
+        }.sortedBy { it.provider + it.key }
+
+    /** What is left: the daily allowance first, then dollars ("5.62 DIEM left today · USD −0.03"). */
+    fun creditLine(c: Credit): String {
+        if (c.error.isNotEmpty()) return c.error
+        val diem = c.balances["DIEM"]?.let { "%.2f DIEM left today".format(java.util.Locale.ENGLISH, it) }
+        val rest = c.balances.filterKeys { it != "DIEM" && (c.balances[it] ?: 0.0) != 0.0 }.toSortedMap()
+            .map { (k, v) -> "$k %.2f".format(java.util.Locale.ENGLISH, v) }
+        return (listOfNotNull(diem) + rest).joinToString(" · ").ifEmpty { "nothing left" }
+    }
 
     private fun epochMs(t: String): Long = runCatching { java.time.OffsetDateTime.parse(t).toInstant().toEpochMilli() }.getOrDefault(0L)
 
@@ -262,6 +299,7 @@ fun UsageScreen(hosts: List<AgentHost>, onBack: () -> Unit) {
     val missing = got.filterValues { it == null }.keys.toList()
     val rows = got.values.filterNotNull().flatMap { it.rows }.takeIf { it.isNotEmpty() || waiting.isEmpty() }
     val plans = UsageView.accounts(got.values.mapNotNull { it?.limits })
+    val credits = UsageView.keys(got.values.filterNotNull().flatMap { it.credits })
     Column(Modifier.fillMaxSize().background(Palette.Void).padding(horizontal = 16.dp, vertical = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("‹", color = Palette.Phosphor, style = MaterialTheme.typography.titleLarge,
@@ -281,6 +319,7 @@ fun UsageScreen(hosts: List<AgentHost>, onBack: () -> Unit) {
             // Where the subscription stands, whatever the period: how close to
             // its limits, and when they start again.
             if (plans.isNotEmpty()) PlanSection(plans)
+            if (credits.isNotEmpty()) CreditSection(credits)
             when {
                 r == null -> Text("asking the machines…", style = MaterialTheme.typography.bodySmall, color = Palette.Ash)
                 r.isEmpty() -> Text("nothing used in this period", style = MaterialTheme.typography.bodySmall, color = Palette.Ash)
@@ -294,6 +333,24 @@ fun UsageScreen(hosts: List<AgentHost>, onBack: () -> Unit) {
                 style = MaterialTheme.typography.labelSmall, color = Palette.Ash, modifier = Modifier.padding(top = 10.dp))
             if (missing.isNotEmpty()) Text("not reached: " + missing.joinToString(", "),
                 style = MaterialTheme.typography.labelSmall, color = Palette.Amber, modifier = Modifier.padding(top = 10.dp))
+        }
+    }
+}
+
+@Composable
+private fun CreditSection(credits: List<Credit>) {
+    Text("CREDITS", style = MaterialTheme.typography.labelSmall, color = Palette.Amber,
+        modifier = Modifier.padding(top = 8.dp, bottom = 6.dp))
+    for (c in credits) {
+        Column(Modifier.padding(vertical = 4.dp)) {
+            Text(c.provider.replaceFirstChar { it.uppercase() } + " key " + c.key + " · " + c.machines.joinToString(", ") +
+                " · as of " + UsageView.age(c.at), style = MaterialTheme.typography.labelSmall, color = Palette.Ash)
+            Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(UsageView.creditLine(c), style = MaterialTheme.typography.bodyMedium,
+                    color = if (c.error.isNotEmpty()) Palette.Amber else Palette.Bone, modifier = Modifier.weight(1f))
+                if (c.resetsAt > 0 && c.error.isEmpty()) Text("refills " + UsageView.resets(c.resetsAt),
+                    style = MaterialTheme.typography.labelMedium, color = Palette.Bone)
+            }
         }
     }
 }

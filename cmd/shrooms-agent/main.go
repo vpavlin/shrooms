@@ -120,6 +120,7 @@ func run() error {
 		if bin, err := exec.LookPath(*piBin); err == nil {
 			m.Register(agent.Pi{Extra: strings.Fields(*piArgs)}, bin)
 			log.Info("harness", "name", "pi", "bin", bin)
+			m.WatchCredits(ctx)
 			if m.Self != "" {
 				if err := (agent.Pi{}).EnsureMCP(m.Self); err != nil {
 					log.Warn("pi will not have the mesh's agents as tools", "err", err)

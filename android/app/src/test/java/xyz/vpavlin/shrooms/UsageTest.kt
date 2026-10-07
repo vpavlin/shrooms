@@ -87,4 +87,16 @@ class UsageTest {
         assertEquals(2, UsageView.level(0.8))
         assertEquals(0, UsageView.level(0.49))
     }
+
+    @Test fun aKeySharedByMachinesIsOneEntry() {
+        val pi5 = UsageView.parseCredits("pi5", """{"credits":[{"provider":"venice","key":"1a2b3c4d",
+            "balances":{"DIEM":5.62,"USD":-0.03,"BUNDLED_CREDITS":0},"resets_at":"2026-10-08T00:00:00Z","at":"2026-10-07T12:00:00Z"}]}""")
+        val proteus = UsageView.parseCredits("proteus", """{"credits":[{"provider":"venice","key":"1a2b3c4d",
+            "balances":{"DIEM":5.40,"USD":-0.03},"resets_at":"2026-10-08T00:00:00Z","at":"2026-10-07T12:05:00Z"}]}""")
+        val keys = UsageView.keys(pi5 + proteus)
+        assertEquals(1, keys.size)
+        assertEquals(listOf("pi5", "proteus"), keys[0].machines)
+        assertEquals("5.40 DIEM left today · USD -0.03", UsageView.creditLine(keys[0]))
+        assertEquals(emptyList<Credit>(), UsageView.parseCredits("old", """{"rows":[]}"""))
+    }
 }

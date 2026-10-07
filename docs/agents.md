@@ -328,6 +328,19 @@ not forget the last one). A reading is only as fresh as the last
 turn on that machine, which "as of" says; and it is Claude Code's own stream,
 not a documented API, so the fields are read defensively.
 
+**Credits** are the same for pay-as-you-go keys. An agent whose pi uses Venice
+(a provider in `~/.pi/agent/models.json` with an `api.venice.ai` base URL; its
+`apiKey` written out or `$VAR` from the agent's environment) asks Venice where
+each key stands every 5 minutes — `GET /api/v1/api_keys/rate_limits`, which an
+inference key may ask — and `GET /v1/usage` and `GET /v1/sessions` carry it as
+`credits`: `[{provider, key, balances: {DIEM, USD, …}, resets_at, at, error}]`.
+`key` is a fingerprint (the first 4 bytes of its SHA-256), never the key, so a
+key used by several machines is shown once with all of them: "Venice key
+1a2b3c4d · pi5, proteus, scribe — 5.62 DIEM left today · refills 02:00". DIEM is
+the daily allowance, refilled at `resets_at` (Venice's next epoch, midnight
+UTC). A key's own spending limit and its usage history need an admin key, which
+the agents do not have; what each turn cost is in the usage rows above.
+
 **Unread replies** show as a count on each session in both apps: the
 session's turns (one per reply, counted by the agent) less those there were
 when it was last open on that device with the app in front. Each device

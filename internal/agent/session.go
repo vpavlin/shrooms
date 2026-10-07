@@ -142,6 +142,11 @@ type Manager struct {
 	// a2a holds what A2A needs between requests: each sender's rate and the
 	// tasks cancelled (a2a.go).
 	a2a a2aLimiter
+	// credits are pay-as-you-go keys' standing (credits.go).
+	credits struct {
+		sync.Mutex
+		c []Credit
+	}
 	// live is the newest subscription reading as Claude Code reports it,
 	// kept as it happens so the session list can carry it (Limits).
 	live struct {

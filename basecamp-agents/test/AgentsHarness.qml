@@ -530,6 +530,9 @@ Item {
             view.renameOpenSession("logos")
             console.error("RENAMED=" + top.lastPostPath + " " + top.lastPost + " MOVED=" + top.lastMoveKept + " OPEN=" + view.agentOpen.session)
             console.error("MORE=" + view.moreTail(701, 1000) + "|" + view.moreLabel(700) + "|" + view.moreLabel(90))
+            var ck = view.creditKeys(view.usageCreditsOf("pi5", [{ provider: "venice", key: "1a2b3c4d", balances: { DIEM: 5.62, USD: -0.03, BUNDLED_CREDITS: 0 }, at: "2026-10-07T12:00:00Z", resets_at: "2026-10-08T00:00:00Z" }])
+                .concat(view.usageCreditsOf("proteus", [{ provider: "venice", key: "1a2b3c4d", balances: { DIEM: 5.4, USD: -0.03 }, at: "2026-10-07T12:05:00Z" }])))
+            console.error("CREDITS n=" + ck.length + " machines=" + ck[0].machines.join("+") + " line=" + view.creditLine(ck[0]))
             // Deleting the open session: asks what the phone asks, then goes.
             console.error("DELETETEXT=" + (view.deleteSessionText("working").indexOf("cut off") > 0)
                           + "," + (view.deleteSessionText("idle").indexOf("conversation itself is kept") > 0))

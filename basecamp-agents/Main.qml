@@ -1269,6 +1269,8 @@ Item {
     // Where each Claude subscription stands (the agent's "limits", Claude
     // Code's own reports): the phone's UsageView.parseLimits and accounts.
     property var usagePlans: []
+    // Pay-as-you-go keys (Venice), once each: what is left and when it refills.
+    property var usageCredits: []
     // Each machine's newest reading, from its session list (refreshAgents).
     property var liveLimits: ({})
     // The session quota at a glance — the phone's UsageView.glance: the
@@ -1288,6 +1290,44 @@ Item {
     }
     function planLevel(u) { return u >= 0.8 ? 2 : u >= 0.5 ? 1 : 0 }
     readonly property var usageGlance: planGlance(planAccounts(Object.keys(liveLimits).map(function(k) { return liveLimits[k] })))
+    // The phone's UsageView.parseCredits / keys / creditLine.
+    function usageCreditsOf(machine, cs) {
+        if (!Array.isArray(cs)) return []
+        return cs.map(function(c) {
+            return { machines: [machine], provider: c.provider || "", key: c.key || "", balances: c.balances || {},
+                     resetsAt: Date.parse(c.resets_at) || 0, at: Date.parse(c.at) || 0, error: c.error || "" }
+        })
+    }
+    function creditKeys(all) {
+        var groups = {}, keys = []
+        for (var i = 0; i < all.length; i++) {
+            var k = all[i].provider + "/" + all[i].key
+            if (!(k in groups)) { groups[k] = []; keys.push(k) }
+            groups[k].push(all[i])
+        }
+        keys.sort()
+        return keys.map(function(k) {
+            var cs = groups[k], newest = cs[0], ms = []
+            for (var j = 0; j < cs.length; j++) {
+                if (cs[j].at > newest.at) newest = cs[j]
+                for (var m = 0; m < cs[j].machines.length; m++) if (ms.indexOf(cs[j].machines[m]) < 0) ms.push(cs[j].machines[m])
+            }
+            ms.sort()
+            var out = {}
+            for (var f in newest) out[f] = newest[f]
+            out.machines = ms
+            return out
+        })
+    }
+    function creditLine(c) {
+        if (c.error) return c.error
+        var parts = []
+        if (c.balances.DIEM !== undefined) parts.push(Number(c.balances.DIEM).toFixed(2) + " DIEM left today")
+        Object.keys(c.balances).sort().forEach(function(k) {
+            if (k !== "DIEM" && Number(c.balances[k]) !== 0) parts.push(k + " " + Number(c.balances[k]).toFixed(2))
+        })
+        return parts.length ? parts.join(" · ") : "nothing left"
+    }
     function planLimits(machine, l) {
         if (!l || typeof l !== "object") return null
         var ws = [], order = { five_hour: 0, seven_day: 1 }
@@ -1357,7 +1397,7 @@ Item {
         if (usageWaiting.length === 0) return
         var g = unwrap(callCore("agentGathered", []))
         if (!g || !Array.isArray(g.results)) return
-        var rows = [], missing = [], waiting = [], limits = []
+        var rows = [], missing = [], waiting = [], limits = [], credits = []
         for (var i = 0; i < usageHosts.length; i++) {
             var h = usageHosts[i]
             var r = g.results.filter(function(x) { return x.address === h.address })[0]
@@ -1366,10 +1406,12 @@ Item {
             for (var j = 0; j < r.body.rows.length; j++) { var row = r.body.rows[j]; row.machine = h.name; rows.push(row) }
             var pl = planLimits(h.name, r.body.limits)
             if (pl) limits.push(pl)
+            credits = credits.concat(usageCreditsOf(h.name, r.body.credits))
         }
         root.usageWaiting = waiting
         root.usageMissing = missing
         root.usagePlans = planAccounts(limits)
+        root.usageCredits = creditKeys(credits)
         // Shown once something came, or everything did.
         if (rows.length > 0 || waiting.length === 0) root.usageRows = rows
     }
@@ -1478,6 +1520,31 @@ Item {
                                                 width: parent.width * Math.max(0, Math.min(1, pw.modelData.utilization)) }
                                 }
                             }
+                        }
+                    }
+                }
+            }
+            Column {
+                Layout.fillWidth: true
+                visible: root.usageCredits.length > 0
+                spacing: root.sz(4)
+                Text { text: "CREDITS"; color: cAmber; font.family: "monospace"; font.pixelSize: root.fs(10); font.letterSpacing: 1; topPadding: root.sz(6) }
+                Repeater {
+                    model: root.usageCredits
+                    Column {
+                        id: credit
+                        required property var modelData
+                        width: parent.width
+                        spacing: 2
+                        Text { text: credit.modelData.provider.charAt(0).toUpperCase() + credit.modelData.provider.slice(1) + " key " + credit.modelData.key
+                                     + " · " + credit.modelData.machines.join(", ") + " · as of " + root.planAge(credit.modelData.at)
+                               color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(9) }
+                        RowLayout {
+                            width: parent.width
+                            Text { text: root.creditLine(credit.modelData); color: credit.modelData.error ? cAmber : cBone
+                                   font.family: "monospace"; font.pixelSize: root.fs(11); Layout.fillWidth: true }
+                            Text { visible: credit.modelData.resetsAt > 0 && !credit.modelData.error
+                                   text: "refills " + root.planResets(credit.modelData.resetsAt); color: cBone; font.family: "monospace"; font.pixelSize: root.fs(11) }
                         }
                     }
                 }
