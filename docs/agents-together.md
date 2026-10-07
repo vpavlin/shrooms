@@ -94,9 +94,10 @@ limits below, scheduling (`at`), and the apps showing it all.
 
 **A task is a turn, which is not always one-to-one.** Claude Code folds a
 message sent mid-turn into the turn running; pi queues it as a turn of its
-own. So the first slice accepts a `SendMessage` only when the session is idle
-or the harness queues (pi), and answers "busy" (`TASK_STATE_REJECTED`)
-otherwise; the store of tasks, with their own queue, comes with scheduling.
+own. So the first slice accepts a `SendMessage` only when the session is idle —
+for pi too, whose queue would put the running turn's result where this
+task's belongs — and answers "busy" (`TASK_STATE_REJECTED`) otherwise; the
+store of tasks, with their own queue, comes with scheduling.
 
 **First slice (~2–3 days):** the cards; `SendMessage` (blocking or not, per
 `configuration.blocking`), `GetTask`, `CancelTask`, the SSE pair; the origin

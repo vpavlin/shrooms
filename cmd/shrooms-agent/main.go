@@ -39,6 +39,9 @@ func main() {
 }
 
 func run() error {
+	if len(os.Args) > 1 && os.Args[1] == "a2a" {
+		return a2aMain(os.Args[2:])
+	}
 	home, _ := os.UserHomeDir()
 	meshes := flag.String("meshes", "", "comma-separated meshes to serve on (default: every mesh this device is in)")
 	port := flag.Int("port", agent.Port, "port on each mesh address")

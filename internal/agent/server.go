@@ -60,6 +60,11 @@ func Handler(log *slog.Logger, m *Manager, who Who) http.Handler {
 	mux.HandleFunc("POST /v1/sessions/{name}/interrupt", h.interrupt)
 	mux.HandleFunc("POST /v1/sessions/{name}/restart", h.restart)
 	mux.HandleFunc("POST /v1/sessions/{name}/rename", h.rename)
+	// A2A (a2a.go): the machine's card, each session's, and JSON-RPC.
+	mux.HandleFunc("GET /.well-known/agent-card.json", h.machineCard)
+	mux.HandleFunc("GET /a2a/{name}/.well-known/agent-card.json", h.a2aCard)
+	mux.HandleFunc("POST /a2a/{name}", h.a2a)
+	mux.HandleFunc("POST /a2a", h.a2a)
 	return mux
 }
 

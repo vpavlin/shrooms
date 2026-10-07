@@ -139,6 +139,9 @@ type Manager struct {
 	// usage is what the session logs say the model did, read incrementally
 	// (Usage).
 	usage usageCache
+	// a2a holds what A2A needs between requests: each sender's rate and the
+	// tasks cancelled (a2a.go).
+	a2a a2aLimiter
 	// live is the newest subscription reading as Claude Code reports it,
 	// kept as it happens so the session list can carry it (Limits).
 	live struct {
@@ -719,7 +722,7 @@ func (s *Session) ensureRunning() error {
 	s.m.mu.Lock()
 	bin := s.m.bins[s.harness.Name()]
 	s.m.mu.Unlock()
-	o := StartOptions{Resume: s.convID, AutoApprove: s.autoApprove && s.harness.Caps().Approve}
+	o := StartOptions{Resume: s.convID, AutoApprove: s.autoApprove && s.harness.Caps().Approve, Session: s.Name()}
 	p, err := startProc(s.m.ctx, s.m.log.With("session", s.Name()), s.harness, bin, s.dir, o)
 	if err != nil {
 		return err

@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"os/exec"
 	"sync"
 )
@@ -47,6 +48,9 @@ type proc struct {
 func startProc(ctx context.Context, log *slog.Logger, h Harness, bin, dir string, o StartOptions) (*proc, error) {
 	cmd := exec.CommandContext(ctx, bin, h.Args(o)...)
 	cmd.Dir = dir
+	if o.Session != "" {
+		cmd.Env = append(os.Environ(), "SHROOMS_AGENT_SESSION="+o.Session)
+	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err

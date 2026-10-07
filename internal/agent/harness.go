@@ -35,6 +35,9 @@ type Harness interface {
 type StartOptions struct {
 	Resume      string // the conversation to continue; "" for a new one
 	AutoApprove bool   // only when Caps.Approve
+	// Session is the session's name, given to the process as
+	// SHROOMS_AGENT_SESSION: what `shrooms-agent a2a send` says it is from.
+	Session string
 }
 
 // Caps are what a harness does beyond the core every harness must do (a
