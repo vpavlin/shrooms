@@ -1,6 +1,8 @@
 # Shrooms Agents together: messages, schedules and where work came from
 
-**Status:** design for discussion, 2026-10-05. Nothing built. Builds on
+**Status:** design, 2026-10-05; un-parked 2026-10-07 with the wire format
+taken from A2A (below) — agents now talk to each other over the plain REST
+API in the meantime (Jimmy on pi5 with proteus and scribe). Builds on
 `docs/agents-calendar.md` (a scheduler; Scala through a hub) and the
 cross-agent idea (an MCP tool for one agent to message another).
 
@@ -58,6 +60,51 @@ calendar, **Agents**, mirrored both ways:
   home, and you see every agent's plans in one place. A colour per machine can
   come from a field.
 
+## On the wire: A2A
+
+Agents asking agents is what the Agent2Agent protocol (A2A, v1.0.0,
+a2a-protocol.org) standardises, and its pieces are ours under other names. So
+the task is built in A2A's shapes rather than ours, and any A2A client — an
+agent framework, another person's agent — can talk to a shrooms agent across
+the mesh.
+
+| A2A | shrooms-agent |
+|---|---|
+| Agent (one Agent Card) | a session: `machine/session` |
+| `GET /.well-known/agent-card.json` | each session's card (below); the machine's lists them |
+| `SendMessage` (JSON-RPC 2.0) | a turn, `POST …/messages` today; `messageId` is the message id that makes a resend safe |
+| Task | one turn: from its message to its `result` |
+| `TASK_STATE_WORKING` / `_INPUT_REQUIRED` / `_COMPLETED` / `_FAILED` / `_CANCELED` | working / waiting (a prompt) / the result / an error result / interrupted |
+| `contextId` | the session's conversation id |
+| `SendStreamingMessage`, `SubscribeToTask` (SSE) | the events stream, cut to the task |
+| `CancelTask` | interrupt |
+| the reply (`status.message`, artifacts) | the turn's text |
+| authentication (`securitySchemes`) | none needed: the mesh is the authentication — WireGuard says which device sent a request, as `by` already records |
+
+**Endpoints, per session** — `POST /a2a/{session}` for JSON-RPC
+(`SendMessage`, `SendStreamingMessage`, `GetTask`, `CancelTask`,
+`SubscribeToTask`) and `GET /a2a/{session}/.well-known/agent-card.json`; the
+machine's `GET /.well-known/agent-card.json` is a card whose skills are its
+sessions, each pointing at its own. One card per session because A2A's agent
+is one conversation with one owner; a machine is many.
+
+**What A2A does not cover, and stays ours:** the chain (`parent`: which task
+asked for this one — an A2A extension on the message's `metadata`), the
+limits below, scheduling (`at`), and the apps showing it all.
+
+**A task is a turn, which is not always one-to-one.** Claude Code folds a
+message sent mid-turn into the turn running; pi queues it as a turn of its
+own. So the first slice accepts a `SendMessage` only when the session is idle
+or the harness queues (pi), and answers "busy" (`TASK_STATE_REJECTED`)
+otherwise; the store of tasks, with their own queue, comes with scheduling.
+
+**First slice (~2–3 days):** the cards; `SendMessage` (blocking or not, per
+`configuration.blocking`), `GetTask`, `CancelTask`, the SSE pair; the origin
+shown in both apps ("from pi5/jimmy"); a hop count in `metadata` refused past
+3; a `shrooms-agent a2a send machine/session "…" [--wait]` command for agents
+that would rather run a command than speak JSON-RPC. Jimmy, proteus and scribe
+move to it from the REST recipe they use now.
+
 ## Where work came from
 
 Every turn an agent receives already records who sent it (the "from nothing",
@@ -98,12 +145,12 @@ than replacing it.
 
 ## Order of work
 
-1. **Tasks in the agent**, with `at: now` and later, between agents over the
-   mesh; the MCP tool; origin in turns and in the list; the limits above.
-   (Cross-agent messages and the scheduler at once — ~4–5 days.)
-2. **The Agents calendar in Scala**, through the hub; the recipients field and
+1. **A2A in the agent** — the first slice above.
+2. **Tasks with a time**, the scheduler and its store; the MCP tool; the
+   limits above. (~3 days)
+3. **The Agents calendar in Scala**, through the hub; the recipients field and
    RSVPs. (~4–5 days, mostly the hub and the mirror.)
-3. An activity view with the tree, only if chains of agents turn out to be
+4. An activity view with the tree, only if chains of agents turn out to be
    common.
 
 ## Open questions
