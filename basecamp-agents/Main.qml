@@ -1225,6 +1225,11 @@ Item {
             if (events[i].kind === "renamed" && events[i].data && events[i].data.from === session) to = events[i].data.to || ""
         return to
     }
+    // Where the session list is scrolled to; given y, scrolls it there.
+    function hostScroll(y) {
+        if (y !== undefined) hostList.contentItem.contentY = y
+        return hostList.contentItem.contentY
+    }
     function askDelete() { deleteDialog.open() }
     function deleteDialogOpen() { return deleteDialog.visible }
     function deleteOpenSession() {
@@ -1918,15 +1923,21 @@ Item {
                     color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(11)
                 }
 
-                ListView {
+                // A ScrollView over a Column, not a ListView: the hosts are a
+                // new array every round of finding, and a ListView given a
+                // new model rebuilds and goes back to the top — the list
+                // jumped up under the reader on every refresh (2026-10-07).
+                ScrollView {
                     id: hostList
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     clip: true
-                    spacing: root.sz(6)
-                    model: root.agentHosts
-                    header: Column {
-                        width: hostList.width
+                    contentWidth: availableWidth
+                    Column {
+                        width: hostList.availableWidth
+                        spacing: root.sz(6)
+                    Column {
+                        width: hostList.availableWidth
                         spacing: root.sz(6)
                         bottomPadding: root.starredSessions.length > 0 ? root.sz(10) : 0
                         Text {
@@ -1937,17 +1948,19 @@ Item {
                             model: root.starredSessions
                             delegate: SessionCard {
                                 required property var modelData
-                                width: hostList.width
+                                width: hostList.availableWidth
                                 host: modelData.host
                                 sess: modelData.sess
                                 showHost: true
                             }
                         }
                     }
+                    Repeater {
+                    model: root.agentHosts
                     delegate: Column {
                         id: hostCol
                         required property var modelData
-                        width: hostList.width
+                        width: hostList.availableWidth
                         spacing: root.sz(6)
                         readonly property bool up: root.hostReachable(hostCol.modelData)
                         RowLayout {
@@ -1982,6 +1995,8 @@ Item {
                                 sess: modelData
                             }
                         }
+                    }
+                    }
                     }
                 }
             }

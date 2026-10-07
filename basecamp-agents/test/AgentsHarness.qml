@@ -546,5 +546,22 @@ Item {
             })
         }
     }
+    // A refresh hands the session list a new array of hosts: where the
+    // reader had scrolled to stays (it went back to the top, 2026-10-07).
+    Timer {
+        interval: 2600; running: true
+        onTriggered: {
+            var many = []
+            for (var i = 0; i < 12; i++) many.push({ name: "m" + i, address: "fd00::" + (i + 1), mesh: "office", lastSeen: 1,
+                sessions: [{ name: "a" + i, state: "idle", turns: 0 }, { name: "b" + i, state: "idle", turns: 0 }] })
+            view.agentHosts = many
+            Qt.callLater(function() {
+                view.hostScroll(180)
+                view.agentHosts = many.slice()
+                scrollCheck.start()
+            })
+        }
+    }
+    Timer { id: scrollCheck; interval: 200; onTriggered: console.error("HOSTSCROLL=" + Math.round(view.hostScroll())) }
     function chatCount() { return view.chatModelCount() }
 }

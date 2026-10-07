@@ -284,6 +284,7 @@ expect "DELETETEXT=true,true" "the delete dialog does not say what is lost and w
 expect "DIALOG=true" "delete did not ask first"
 expect "RENAMEDIN=logos," "a rename in the stream is not followed only from the name open"
 expect 'RENAMED=/v1/sessions/shrooms-2/rename {"name":"logos"} MOVED=fdb0:9afc:a5ef:388c:8264:7716:36fc:64eb,shrooms-2,logos OPEN=logos' "renaming did not rename, move the copy, and reopen"
+expect "HOSTSCROLL=180" "the session list jumps on a refresh"
 expect "MORE=450|— 700 earlier events not loaded · load 150 more —|— 90 earlier events not loaded · load them —" "loading more is not a step at a time"
 expect "DELETED=/v1/sessions/logos OPEN=none" "deleting did not remove the open session"
 echo "agents panel OK${AGENTS_SHOT:+ (picture: $shot)}"
