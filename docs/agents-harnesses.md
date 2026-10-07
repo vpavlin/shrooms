@@ -126,8 +126,11 @@ account, jimmy-crib say, can serve sessions to the whole mesh.
 3. **The codec** — `piCodec`, the whole translation:
    - start: `get_state`; its answer becomes the `init` message (session id,
      `provider/model`, and the context window, kept for the turn's `result`);
-   - `prompt` for a turn — with `streamingBehavior: "followUp"` while a turn
-     runs, since pi refuses a bare one then; `abort` to interrupt;
+   - `prompt` for a turn, always with `streamingBehavior: "followUp"`: pi
+     refuses a bare one while it works — also between a failed attempt's
+     `agent_end` and its retry after a 429, when no turn seems to run — and
+     starts a follow-up at once when idle (pi 1.0.0, checked on pi5); `abort`
+     to interrupt;
    - `message_update` text deltas → `stream_event`; `message_end` of an
      assistant message → `assistant` (`toolCall` → `tool_use`, pi's
      `usage.input/cacheRead/cacheWrite` → Claude's names, `stopReason`

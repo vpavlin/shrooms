@@ -62,7 +62,6 @@ type piDialog struct {
 
 type piCodec struct {
 	mu        sync.Mutex
-	streaming bool     // between agent_start and agent_end: a turn must queue
 	sessionID string   // pi's session id, once get_state has answered
 	model     string   // provider/id
 	window    uint64   // the model's context window
@@ -81,13 +80,13 @@ func (c *piCodec) Turn(text string) []any {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.sent = append(c.sent, text)
-	cmd := map[string]any{"type": "prompt", "message": text}
-	if c.streaming {
-		// Sent mid-turn it would be refused; queued, it is taken up when the
-		// turn ends — what a message sent mid-turn does with Claude Code.
-		cmd["streamingBehavior"] = "followUp"
-	}
-	return []any{cmd}
+	// Always as a follow-up: sent while pi is working it would be refused,
+	// queued it is taken up when the turn ends — what a message sent mid-turn
+	// does with Claude Code — and an idle pi starts it at once (pi 1.0.0).
+	// Not only when a turn is known to run: pi retrying a 429 between
+	// agent_end and its next attempt refused one ("Agent is already
+	// processing", Jimmy, 2026-10-07).
+	return []any{map[string]any{"type": "prompt", "message": text, "streamingBehavior": "followUp"}}
 }
 
 func (c *piCodec) Interrupt() []any { return []any{map[string]string{"type": "abort"}} }
@@ -255,7 +254,7 @@ func (c *piCodec) Decode(line json.RawMessage) []json.RawMessage {
 				out(map[string]any{"type": "result", "subtype": "error_during_execution", "session_id": c.sessionID})}
 		}
 	case "agent_start":
-		c.streaming, c.failed = true, false
+		c.failed = false
 		c.turn = rawUsage{}
 	case "message_update":
 		if e.Delta.Type == "text_delta" && e.Delta.Delta != "" {
@@ -334,7 +333,6 @@ func (c *piCodec) Decode(line json.RawMessage) []json.RawMessage {
 					"content": e.Message.text(), "is_error": e.Message.IsError}}}})}
 		}
 	case "agent_end":
-		c.streaming = false
 		sub := "success"
 		if c.failed {
 			sub = "error_during_execution"

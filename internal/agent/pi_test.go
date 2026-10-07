@@ -406,3 +406,17 @@ func TestAPiConversationFromElsewhereIsContinued(t *testing.T) {
 	}
 	waitFor(t, s, 0, isResult)
 }
+
+// A message is always queued as a follow-up, so it is never refused: pi can
+// be working while no turn is known to run here — retrying a 429 after the
+// failed attempt's agent_end — and an idle pi starts a follow-up at once.
+func TestAPiMessageIsNeverRefusedAsBusy(t *testing.T) {
+	c := Pi{}.Codec()
+	c.Decode(json.RawMessage(`{"type":"agent_start"}`))
+	c.Decode(json.RawMessage(`{"type":"agent_end","messages":[]}`))
+	for _, cmd := range c.Turn("there should be api docs in the repo") {
+		if m := cmd.(map[string]any); m["streamingBehavior"] != "followUp" {
+			t.Fatalf("sent as %v", m)
+		}
+	}
+}
