@@ -508,3 +508,14 @@ func TestCreateMakesAMissingDirectory(t *testing.T) {
 		t.Fatalf("a file accepted as the directory: %v", err)
 	}
 }
+
+// Claude Code's own error messages name their model "<synthetic>"; the
+// session keeps the model that actually answered.
+func TestASyntheticMessageIsNotTheModel(t *testing.T) {
+	s := &Session{}
+	s.observe(json.RawMessage(`{"type":"assistant","message":{"model":"claude-opus-5-5","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":10}}}`))
+	s.observe(json.RawMessage(`{"type":"assistant","message":{"model":"<synthetic>","content":[{"type":"text","text":"API Error: Connection dropped (ECONNRESET)"}],"usage":{"input_tokens":0}}}`))
+	if s.model != "claude-opus-5-5" {
+		t.Fatalf("model %q", s.model)
+	}
+}

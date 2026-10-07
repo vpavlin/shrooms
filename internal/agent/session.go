@@ -536,7 +536,9 @@ func (s *Session) observe(raw json.RawMessage) {
 		if m.ParentTool != nil && *m.ParentTool != "" {
 			return
 		}
-		if m.Message.Model != "" {
+		// "<synthetic>" is Claude Code's name for messages it writes itself —
+		// "API Error: …" — not a model: the session list showed it as one.
+		if m.Message.Model != "" && m.Message.Model != "<synthetic>" {
 			s.model = m.Message.Model
 		}
 		if u := m.Message.Usage; u.Input+u.CacheRead+u.CacheCreate > 0 {
