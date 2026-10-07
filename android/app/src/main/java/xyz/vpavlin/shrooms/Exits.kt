@@ -6,6 +6,7 @@ import android.app.ApplicationExitInfo
 import android.content.Context
 import android.os.Build
 import java.io.File
+import mobile.Mobile
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -54,6 +55,20 @@ object Exits {
         ApplicationExitInfo.REASON_USER_REQUESTED -> "stopped by you (force stop, or an update)"
         ApplicationExitInfo.REASON_USER_STOPPED -> "stopped by you"
         else -> "unknown ($r)"
+    }
+
+    /**
+     * The whole report, with Android's own account of how the app ended
+     * placed after the core's "how it stopped" and panic — not at the end:
+     * the report is long, a share through a chat cuts it, and three reports
+     * in a row arrived without this section (2026-10-07).
+     */
+    fun report(dir: String, ctx: Context): String = insert(Mobile.diagnostics(dir), describe(ctx))
+
+    /** [exits] put before the core report's memory section, or at the end if it has none. */
+    fun insert(core: String, exits: String): String {
+        val at = core.indexOf("\n== memory ==")
+        return if (at < 0) core + exits else core.substring(0, at) + "\n" + exits.trimEnd('\n') + core.substring(at)
     }
 
     /** The report's section: Android's last exits of this app, and the last Kotlin crash. */

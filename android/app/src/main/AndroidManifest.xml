@@ -24,6 +24,13 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- So the mesh comes back after a reboot without opening the app. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- So the watchdog's restart comes back in seconds: an exact alarm may
+         start a foreground service from the background, where Android delays
+         or refuses a sticky restart (10 minutes away from the mesh,
+         2026-10-06). USE_EXACT_ALARM is granted at install on Android 13+;
+         SCHEDULE_EXACT_ALARM before that. -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" android:maxSdkVersion="32" />
 
     <!-- The shrooms app opens Shrooms Agents (docs/agents.md); Android 11+
          hides other apps unless they are named here. -->

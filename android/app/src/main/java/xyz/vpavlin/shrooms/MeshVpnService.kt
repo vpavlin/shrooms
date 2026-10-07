@@ -606,7 +606,12 @@ class MeshVpnService : VpnService() {
                         //
                         // Anything else — subscribed, connected, nothing
                         // arriving — is worth a cheaper try first.
-                        if (s.rendezvous.status == "Disconnected") {
+                        // Ending the process is under the same persisted floor
+                        // as the other two restarts: a node that is gone again
+                        // within half an hour gets the cheaper rebuild, not a
+                        // loop of new processes.
+                        if (s.rendezvous.status == "Disconnected" && libraryRestartAllowed()) {
+                            noteLibraryRestart()
                             hardRestart(s.rendezvous.problem)
                         } else {
                             Log.w(TAG, "rendezvous stalled: ${s.rendezvous.problem} — rebuilding")
@@ -702,6 +707,26 @@ class MeshVpnService : VpnService() {
         runCatching { mgr.notify(DUE_NOTIFICATION_ID, n) }
     }
 
+    /**
+     * Starts the service again [afterMs] from now, from an exact alarm — the
+     * one way a foreground service may start from the background on Android
+     * 12+ — falling back to an inexact one where exact alarms are not
+     * allowed.
+     */
+    private fun scheduleComeBack(afterMs: Long) {
+        val am = getSystemService(android.app.AlarmManager::class.java) ?: return
+        val pi = PendingIntent.getForegroundService(
+            this, 3, Intent(this, MeshVpnService::class.java).setAction(ACTION_CONNECT),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val at = android.os.SystemClock.elapsedRealtime() + afterMs
+        if (android.os.Build.VERSION.SDK_INT < 31 || am.canScheduleExactAlarms()) {
+            am.setExactAndAllowWhileIdle(android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP, at, pi)
+        } else {
+            am.setAndAllowWhileIdle(android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP, at, pi)
+        }
+    }
+
     private fun libraryRestartAllowed(): Boolean {
         val last = getSharedPreferences("watchdog", MODE_PRIVATE).getLong("library_restart_at", 0L)
         return System.currentTimeMillis() - last >= LIBRARY_RESTART_FLOOR
@@ -740,6 +765,10 @@ class MeshVpnService : VpnService() {
         // where it crashed (SIGSEGV in Mobile.stop, 2026-10-04) — a crash
         // Android then counts against restarting the app.
         runCatching { tunnel?.close() }
+        // And come back in seconds, not when Android gets round to the sticky
+        // restart: on 2026-10-06 that took 10½ minutes, the phone off the mesh
+        // throughout. The notification above stays for when even this fails.
+        runCatching { scheduleComeBack(3_000L) }
         android.os.Process.killProcess(android.os.Process.myPid())
     }
 

@@ -482,7 +482,7 @@ private fun JoinScreen(dir: String, onScan: ((String) -> Unit) -> Unit, onDone: 
                 style = MaterialTheme.typography.bodySmall,
                 color = Palette.Ash,
                 modifier = Modifier.clickable {
-                    val report = runCatching { Mobile.diagnostics(dir) + Exits.describe(diagCtx) }
+                    val report = runCatching { Exits.report(dir, diagCtx) }
                         .getOrElse { "could not read diagnostics: ${it.message}" }
                     diagCtx.startActivity(
                         Intent.createChooser(
@@ -499,7 +499,7 @@ private fun JoinScreen(dir: String, onScan: ((String) -> Unit) -> Unit, onDone: 
         }
         if (showDiag) {
             val report = remember(showDiag) {
-                runCatching { Mobile.diagnostics(dir) + Exits.describe(diagCtx) }
+                runCatching { Exits.report(dir, diagCtx) }
                     .getOrElse { "could not read diagnostics: ${it.message}" }
             }
             Spacer(Modifier.height(8.dp))
@@ -911,7 +911,7 @@ private fun MeshScreen(
             color = Palette.Ash,
             modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp)
                 .clickable {
-                    val report = runCatching { Mobile.diagnostics(ctx.filesDir.absolutePath) + Exits.describe(ctx) }
+                    val report = runCatching { Exits.report(ctx.filesDir.absolutePath, ctx) }
                         .getOrElse { "could not read diagnostics: ${it.message}" }
                     ctx.startActivity(
                         Intent.createChooser(
