@@ -145,17 +145,23 @@ func cmdStatus(args []string) error {
 		return nil
 	}
 
-	online := 0
+	// Online is the announce and up is the tunnel, the same words the ANNOUNCE
+	// and TUNNEL columns use. The header used to say "up" for the announce
+	// count, so it could read "0 up" above a row saying "up 4m".
+	online, up := 0, 0
 	for _, p := range st.Peers {
 		if p.Online {
 			online++
+		}
+		if p.Live {
+			up++
 		}
 	}
 
 	// tabwriter, not padding: the prefix and name are variable width, so
 	// hardcoded spaces line up for one mesh and not the next.
 	head := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(head, "network\t%s\tpeers %d (%d up)\n", st.Prefix, len(st.Peers), online)
+	fmt.Fprintf(head, "network\t%s\tpeers %d (%d online, %d up)\n", st.Prefix, len(st.Peers), online, up)
 	selfAddr := st.Overlay
 	if *asV4 && st.OverlayV4 != "" {
 		selfAddr = st.OverlayV4
@@ -334,6 +340,12 @@ func cmdStatus(args []string) error {
 		ann := "offline"
 		if p.Online {
 			ann = "online"
+		}
+		// With the age of the last announce, as TUNNEL shows the handshake's:
+		// "online" alone cannot tell a second ago from nearly three minutes,
+		// and "offline" cannot tell four minutes from a day.
+		if t, err := time.Parse(time.RFC3339, p.LastSeen); err == nil && !t.IsZero() {
+			ann += " " + shortDur(max(int64(time.Since(t).Seconds()), 0))
 		}
 		// "up" only while the session is actually usable. A handshake that has
 		// gone stale means the peer is gone — reporting that as up is worse

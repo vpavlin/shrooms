@@ -33,6 +33,11 @@ const (
 
 	// ProbeTimeout discards an unanswered probe.
 	ProbeTimeout = 10 * time.Second
+	// PathForget is how long a path may go unanswered before it is dropped
+	// from the record. Best ignores anything older than PathFresh already;
+	// this is for what lists paths — a phone's Wi-Fi paths were still shown
+	// hours after it had left for cellular.
+	PathForget = time.Hour
 
 	// SwitchMargin is how much better a challenger path must be before we move
 	// to it, when the one in use is still working.
@@ -161,6 +166,17 @@ func (p *Prober) isSelf(ap netip.AddrPort) bool {
 // predictable. This is also the punch — the outbound packet opens our NAT
 // mapping so the peer's own probe can get back in.
 func (p *Prober) Probe(peerID string, candidates []netip.AddrPort, now time.Time) {
+	// Paths this peer has not answered on for PathForget are forgotten here,
+	// on its next probe, so the record does not keep addresses from networks
+	// it left long ago.
+	p.mu.Lock()
+	for addr, path := range p.paths[peerID] {
+		if now.Sub(path.LastPong) >= PathForget {
+			delete(p.paths[peerID], addr)
+		}
+	}
+	p.mu.Unlock()
+
 	for _, addr := range candidates {
 		if !addr.IsValid() {
 			continue

@@ -2028,9 +2028,19 @@ func (m *Mesh) handle(ev waku.Event) {
 	}
 
 	if !m.guard.Accept(a) {
-		m.replays.reject(a.DevicePub, a.Seq, now)
-		m.log.Warn("rejected replayed or stale announce",
-			"peer", hex.EncodeToString(a.DevicePub)[:16], "seq", a.Seq)
+		// Debug for the odd stale one — Store replays a few on every
+		// reconnect — and one warning once a device has been refused for
+		// ReplayWarnAfter, which is the case that needs a person.
+		peer := hex.EncodeToString(a.DevicePub)[:16]
+		if m.replays.reject(a.DevicePub, a.Seq, now) {
+			mark, _ := m.guard.Seq(a.DevicePub)
+			m.log.Warn("every announce from a peer has been rejected as stale",
+				"peer", peer, "for", ReplayWarnAfter, "mark", mark, "seq", a.Seq,
+				"means", "its counter is behind the mark kept here",
+				"until", "the mark is forgotten with the peer (ForgetAfter) or its counter passes it")
+		} else {
+			m.log.Debug("rejected replayed or stale announce", "peer", peer, "seq", a.Seq)
+		}
 		return
 	}
 	m.replays.accept(a.DevicePub, now)

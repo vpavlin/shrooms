@@ -28,7 +28,22 @@ type replayStat struct {
 	lastRejected time.Time
 	accepted     int
 	lastAccepted time.Time
+
+	// The current run of rejections with no acceptance in between: how many,
+	// when it began, and whether it has been warned about.
+	streak      int
+	streakSince time.Time
+	warned      bool
 }
+
+// ReplayWarnAfter is how long a device's announces must all be rejected
+// before that is logged as a warning rather than debug.
+//
+// A burst of old announces replayed from Store on reconnect is over in
+// seconds and is nothing to warn about. A device refused for this long has a
+// counter behind the mark kept here, and stays invisible until the mark is
+// forgotten or its counter passes it.
+const ReplayWarnAfter = OfflineAfter
 
 func (r *replayStats) get(key string) *replayStat {
 	if r.devs == nil {
@@ -42,7 +57,9 @@ func (r *replayStats) get(key string) *replayStat {
 	return s
 }
 
-func (r *replayStats) reject(devicePub []byte, seq uint64, now time.Time) {
+// reject records a rejection and reports whether it is the one to warn about:
+// the first after the device's streak of rejections has lasted ReplayWarnAfter.
+func (r *replayStats) reject(devicePub []byte, seq uint64, now time.Time) (warn bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	s := r.get(hex.EncodeToString(devicePub))
@@ -51,6 +68,15 @@ func (r *replayStats) reject(devicePub []byte, seq uint64, now time.Time) {
 	if seq > s.maxRejected {
 		s.maxRejected = seq
 	}
+	if s.streak == 0 {
+		s.streakSince = now
+	}
+	s.streak++
+	if !s.warned && now.Sub(s.streakSince) >= ReplayWarnAfter {
+		s.warned = true
+		return true
+	}
+	return false
 }
 
 func (r *replayStats) accept(devicePub []byte, now time.Time) {
@@ -59,6 +85,7 @@ func (r *replayStats) accept(devicePub []byte, now time.Time) {
 	s := r.get(hex.EncodeToString(devicePub))
 	s.accepted++
 	s.lastAccepted = now
+	s.streak, s.warned = 0, false
 }
 
 // ReplayReport is one line per device this mesh has a mark for or has heard:

@@ -30,7 +30,7 @@ jobs:
             echo "not gofmt'd:"; echo "$unformatted"; exit 1
           fi
       - name: vet
-        run: CGO_CFLAGS= CGO_LDFLAGS= go vet ./internal/identity/... ./internal/topic/... ./internal/control/... ./internal/wg/... ./internal/disco/... ./internal/relay/...
+        run: CGO_CFLAGS= CGO_LDFLAGS= go vet $(./scripts/test-packages.sh pure)
       - name: test
         run: make test-unit
       - name: uninstaller, against a staged tree
