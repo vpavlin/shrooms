@@ -203,6 +203,12 @@ class AgentChatTest {
         assertEquals("renamed (was proj) from laptop", (AgentChat.items(evs).last() as ChatItem.Note).text)
     }
 
+    @Test fun earlierEventsLoadAStepAtATime() {
+        assertEquals(450, AgentChat.moreTail(701, 1000))
+        assertEquals("— 700 earlier events not loaded · load 150 more —", AgentChat.moreLabel(700))
+        assertEquals("— 90 earlier events not loaded · load them —", AgentChat.moreLabel(90))
+    }
+
     @Test fun toolResultsAreShownFolded() {
         val items = AgentChat.items(listOf(
             ev(7, "claude", """{"type":"user","message":{"role":"user","content":[

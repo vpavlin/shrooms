@@ -529,6 +529,7 @@ Item {
                           + "," + view.renamedIn([ev(3, "renamed", { from: "a", to: "b" })], "shrooms"))
             view.renameOpenSession("logos")
             console.error("RENAMED=" + top.lastPostPath + " " + top.lastPost + " MOVED=" + top.lastMoveKept + " OPEN=" + view.agentOpen.session)
+            console.error("MORE=" + view.moreTail(701, 1000) + "|" + view.moreLabel(700) + "|" + view.moreLabel(90))
             // Deleting the open session: asks what the phone asks, then goes.
             console.error("DELETETEXT=" + (view.deleteSessionText("working").indexOf("cut off") > 0)
                           + "," + (view.deleteSessionText("idle").indexOf("conversation itself is kept") > 0))

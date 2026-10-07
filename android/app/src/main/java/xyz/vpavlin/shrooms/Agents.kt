@@ -720,6 +720,8 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String
     var searchBusy by remember { mutableStateOf(false) }
     var reading by remember { mutableStateOf<Found?>(null) }
     var jumpTo by remember(o) { mutableStateOf(0L) }
+    // A jump back to where the reader was, after loading more: not lit.
+    var jumpQuiet by remember(o) { mutableStateOf(false) }
     var lit by remember(o) { mutableStateOf(0L) }
     val client = remember(o.address) { AgentClient(o.address) }
     val events = remember(o) { mutableStateListOf<AgentEvent>() }
@@ -1004,6 +1006,9 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String
         if (jumpTo == 0L) return@LaunchedEffect
         val at = AgentChat.listIndexOf(items, jumpTo) ?: return@LaunchedEffect
         list.scrollToItem(at)
+        val quiet = jumpQuiet
+        jumpQuiet = false
+        if (quiet) { jumpTo = 0; return@LaunchedEffect }
         lit = jumpTo
         jumpTo = 0
         delay(4000)
@@ -1268,9 +1273,16 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String
                 val firstSeq = events.firstOrNull()?.seq ?: 0
                 if (tail != 0 && firstSeq > 1) {
                     item(key = "earlier-events") {
-                        Text("— ${firstSeq - 1} earlier events not loaded · load them —",
+                        // A step at a time, back to where the reader was: the
+                        // whole of a long session took minutes over the mesh.
+                        Text(AgentChat.moreLabel(firstSeq - 1),
                             style = MaterialTheme.typography.labelSmall, color = Palette.Phosphor,
-                            modifier = Modifier.fillMaxWidth().clickable { tail = 0 }.padding(vertical = 12.dp))
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                val lastSeq = events.lastOrNull()?.seq ?: firstSeq
+                                tail = if (firstSeq - 1 <= AgentChat.MORE_EVENTS) 0 else AgentChat.moreTail(firstSeq, lastSeq)
+                                jumpQuiet = true
+                                jumpTo = firstSeq
+                            }.padding(vertical = 12.dp))
                     }
                 }
             }

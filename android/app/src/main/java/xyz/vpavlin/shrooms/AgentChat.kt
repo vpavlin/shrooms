@@ -96,6 +96,17 @@ object AgentChat {
     fun replayCaughtUp(lastSeq: Long?, target: Long, quietRounds: Int): Boolean =
         lastSeq != null && ((target > 0 && lastSeq >= target) || quietRounds >= 80)
 
+    /** Earlier events loaded at a time, scrolled up to and asked for. */
+    const val MORE_EVENTS = 150
+
+    /** The tail that shows [MORE_EVENTS] more than the events from [firstSeq] to [lastSeq]. */
+    fun moreTail(firstSeq: Long, lastSeq: Long): Int = (lastSeq - firstSeq + 1 + MORE_EVENTS).toInt()
+
+    /** What the row at the top offers: the next step, or the rest when that is all. */
+    fun moreLabel(notLoaded: Long): String =
+        if (notLoaded <= MORE_EVENTS) "— $notLoaded earlier events not loaded · load them —"
+        else "— $notLoaded earlier events not loaded · load $MORE_EVENTS more —"
+
     fun tailReaching(current: Int, lastSeq: Long, seq: Long): Int =
         if (current == 0) 0 else maxOf(current.toLong(), lastSeq - seq + 1 + 20).toInt()
 

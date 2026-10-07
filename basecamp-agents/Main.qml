@@ -835,8 +835,13 @@ Item {
                 // somebody asked for this message.
                 var at = i
                 root.chatStick = false
-                root.agentLit = root.jumpTo
                 root.jumpTo = 0
+                if (root.jumpQuiet) {
+                    root.jumpQuiet = false
+                    Qt.callLater(function() { chatList.positionViewAtIndex(at, ListView.End) })
+                    return
+                }
+                root.agentLit = chatModel.get(i).seq
                 Qt.callLater(function() { chatList.positionViewAtIndex(at, ListView.Center) })
                 litTimer.restart()
                 return
@@ -851,6 +856,9 @@ Item {
     property bool searchBusy: false
     property var searchFound: null
     property real jumpTo: 0
+    // A jump back to where the reader was, after loading more: not lit, and
+    // the event at the bottom of the view with what was loaded above it.
+    property bool jumpQuiet: false
     property real agentLit: 0
     property var reading: null
     function runSearch(q) {
@@ -870,6 +878,22 @@ Item {
         root.searchFound = r.found || []
     }
     // What tailReaching does on the phone (AgentChat.kt).
+    // Earlier events loaded at a time, scrolled up to and asked for: the whole
+    // of a long session took minutes over the mesh (the phone's AgentChat).
+    readonly property int moreEvents: 150
+    function moreTail(firstSeq, lastSeq) { return lastSeq - firstSeq + 1 + moreEvents }
+    function moreLabel(notLoaded) {
+        return "— " + notLoaded + " earlier events not loaded · " + (notLoaded <= moreEvents ? "load them" : "load " + moreEvents + " more") + " —"
+    }
+    function loadMore() {
+        var evs = agentEventsList
+        if (!agentOpen || evs.length === 0) return
+        var first = evs[0].seq, last = evs[evs.length - 1].seq
+        var h = { address: agentOpen.address, name: agentOpen.name, mesh: agentOpen.mesh }
+        openSession(h, agentOpen.session, first - 1 <= moreEvents ? 0 : moreTail(first, last))
+        root.jumpQuiet = true
+        root.jumpTo = first
+    }
     function tailReaching(current, lastSeq, seq) {
         return current === 0 ? 0 : Math.max(current, lastSeq - seq + 1 + 20)
     }
@@ -2308,12 +2332,9 @@ Item {
                         visible: root.agentTailNow !== 0 && firstSeq > 1
                         Lnk {
                             anchors.centerIn: parent
-                            text: "— " + (parent.firstSeq - 1) + " earlier events not loaded · load them —"
+                            text: root.moreLabel(parent.firstSeq - 1)
                             font.pixelSize: root.fs(10)
-                            onClicked: {
-                                var h = { address: root.agentOpen.address, name: root.agentOpen.name, mesh: root.agentOpen.mesh }
-                                Qt.callLater(root.openSession, h, root.agentOpen.session, 0)
-                            }
+                            onClicked: Qt.callLater(root.loadMore)
                         }
                     }
                     footer: Item {
