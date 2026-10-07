@@ -237,6 +237,51 @@ func TestInterruptEndsATurn(t *testing.T) {
 	waitFor(t, s, 0, func(e Event) bool { return claudeType(e) == "result/error_during_execution" })
 }
 
+// A process stuck in a turn — deaf to an interrupt, as one is on a dropped
+// connection — is restarted on its own, on the same conversation, and takes
+// the next message.
+func TestRestartEndsAStuckProcess(t *testing.T) {
+	m := newTestManager(t, t.TempDir())
+	m.Create("proj", t.TempDir())
+	m.Create("other", t.TempDir())
+	s, _ := m.Get("proj")
+	other, _ := m.Get("other")
+	other.Send("hello", "")
+	waitFor(t, other, 0, func(e Event) bool { return claudeType(e) == "result/success" })
+	s.Send("hang", "")
+	first := waitFor(t, s, 0, func(e Event) bool { return claudeType(e) == "system/init" })
+	time.Sleep(100 * time.Millisecond)
+
+	done := make(chan error, 1)
+	go func() { done <- s.Restart("phone.home") }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the restart waited on a process that does not end")
+	}
+	r := waitFor(t, s, first.Seq, func(e Event) bool { return e.Kind == "restarted" })
+	if r.By != "phone.home" {
+		t.Fatalf("restarted by %q", r.By)
+	}
+	again := waitFor(t, s, r.Seq, func(e Event) bool { return claudeType(e) == "system/init" })
+	var init struct {
+		SessionID string `json:"session_id"`
+		Resumed   bool   `json:"resumed"`
+	}
+	json.Unmarshal(again.Data, &init)
+	if !init.Resumed || init.SessionID != "fake-session-1" {
+		t.Fatalf("not the same conversation: %s", again.Data)
+	}
+	s.Send("after", "")
+	waitFor(t, s, r.Seq, func(e Event) bool { return claudeType(e) == "result/success" })
+	if !other.Info().Running {
+		t.Fatal("another session's process was ended too")
+	}
+}
+
 // Idle means idle: a process waiting on a prompt is not stopped however long
 // the owner takes, and one with nothing to do is.
 func TestOnlyAnIdleProcessIsStopped(t *testing.T) {

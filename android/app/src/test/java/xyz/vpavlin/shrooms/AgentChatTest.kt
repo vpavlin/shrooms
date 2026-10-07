@@ -177,6 +177,14 @@ class AgentChatTest {
         assertTrue(p.answer.contains("stopped"))
     }
 
+    @Test fun aRestartSaysWhoRestartedIt() {
+        val items = AgentChat.items(asked + listOf(
+            ev(5, "stopped", """{"reason":"signal: killed"}"""),
+            ev(6, "restarted", "{}", by = "nothing.home"),
+            ev(7, "claude", """{"type":"system","subtype":"init","session_id":"s1"}""")))
+        assertEquals("restarted from nothing.home", (items.last() as ChatItem.Note).text)
+    }
+
     @Test fun toolResultsAreShownFolded() {
         val items = AgentChat.items(listOf(
             ev(7, "claude", """{"type":"user","message":{"role":"user","content":[

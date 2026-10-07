@@ -708,6 +708,7 @@ private fun Field(label: String, value: String, onChange: (String) -> Unit) {
 @Composable
 private fun SessionScreen(o: OpenSession, onBack: () -> Unit) {
     var askDelete by remember { mutableStateOf(false) }
+    var askRestart by remember { mutableStateOf(false) }
     // How many of the last events are loaded: 0 is everything, once asked for;
     // more, to reach a search result further back.
     var tail by remember(o) { mutableStateOf(SESSION_TAIL) }
@@ -1019,6 +1020,33 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit) {
             i ?: AgentSession(o.session, "", "idle", 0, false, 0),
             onDismiss = { askDelete = false }, onDeleted = { askDelete = false; History.forget(ctx, o.host, o.session); Unread.forget(ctx, o.host, o.session); onBack() })
     }
+    // For a process that stop does not reach — a request hanging on a dropped
+    // connection. Only this session's; the others on the machine go on.
+    if (askRestart) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { askRestart = false },
+            containerColor = Palette.Panel,
+            title = { Text("Restart ${o.session}?", color = Palette.Bone) },
+            text = {
+                Text("Ends its process — what it is doing now is lost — and starts it again on the same conversation.",
+                    style = MaterialTheme.typography.bodySmall, color = Palette.Ash)
+            },
+            confirmButton = {
+                Text("RESTART", style = MaterialTheme.typography.labelSmall, color = Palette.Rust,
+                    modifier = Modifier.clickable {
+                        askRestart = false
+                        scope.launch {
+                            withContext(Dispatchers.IO) { runCatching { client.restart(o.session) } }
+                                .onFailure { actionError = it.message ?: "could not restart it" }
+                        }
+                    }.padding(12.dp))
+            },
+            dismissButton = {
+                Text("CANCEL", style = MaterialTheme.typography.labelSmall, color = Palette.Ash,
+                    modifier = Modifier.clickable { askRestart = false }.padding(12.dp))
+            },
+        )
+    }
     reading?.let { f ->
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { reading = null },
@@ -1076,6 +1104,7 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit) {
                 }
                 if (working) Link("■ stop", Palette.Rust) { stopTurn() }
                 Link(if (searching) "close search" else "search", Palette.Sky) { searching = !searching }
+                Link("restart", Palette.Ash) { askRestart = true }
                 Link("delete", Palette.Ash) { askDelete = true }
             }
             if (keptAt != 0L) {
@@ -1157,6 +1186,7 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit) {
                             Label(if (streaming.isEmpty()) "thinking…" else "writing…")
                             Spacer(Modifier.width(14.dp))
                             Link("■ stop", Palette.Rust) { stopTurn() }
+                            Link("↻ restart", Palette.Ash) { askRestart = true }
                         } else if (streaming.isEmpty()) Spacer(Modifier.height(4.dp))
                     }
                 }

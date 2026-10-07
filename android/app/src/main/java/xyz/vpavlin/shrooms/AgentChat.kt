@@ -147,6 +147,7 @@ object AgentChat {
                     }
                 }
                 "stopped" -> out += ChatItem.Stopped(e.seq, e.time, e.data.optString("reason"))
+                "restarted" -> out += ChatItem.Note(e.seq, e.time, "restarted${by(e)}")
                 "setting" -> if (e.data.has("auto_approve")) {
                     out += ChatItem.Note(e.seq, e.time,
                         (if (e.data.optBoolean("auto_approve")) "auto-approve on" else "auto-approve off") + by(e))

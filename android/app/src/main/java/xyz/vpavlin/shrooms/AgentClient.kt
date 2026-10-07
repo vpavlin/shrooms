@@ -302,6 +302,11 @@ class AgentClient(private val address: String) {
         request("POST", "/v1/sessions/${enc(session)}/interrupt", null)
     }
 
+    /** Ends the session's process, stuck or not, and starts it again on the same conversation. */
+    fun restart(session: String) {
+        request("POST", "/v1/sessions/${enc(session)}/restart", null)
+    }
+
     /**
      * Follows a session's events after [after], calling [onEvent] for each, until
      * the connection ends or [stop] says so. Returns the last seq seen, so the

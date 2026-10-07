@@ -907,6 +907,32 @@ func (s *Session) Interrupt(by string) error {
 	return s.proc.writeAll(s.proc.codec.Interrupt())
 }
 
+// Restart ends the session's process however it is — a turn stuck on a
+// dropped connection ignores both an interrupt and the end of its input — and
+// starts it again on the same conversation. The turn in progress is lost; the
+// conversation is not, and turns waiting behind it go on.
+func (s *Session) Restart(by string) error {
+	s.mu.Lock()
+	p := s.proc
+	s.mu.Unlock()
+	if p != nil {
+		p.close()
+		if p.cmd.Process != nil {
+			p.cmd.Process.Kill()
+		}
+		<-p.read
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.ensureRunning(); err != nil {
+		return err
+	}
+	s.record("restarted", by, map[string]string{})
+	s.lastUsed = time.Now()
+	s.drain()
+	return nil
+}
+
 // read follows the process's output until it ends.
 func (s *Session) read(p *proc) {
 	for raw := range p.out {

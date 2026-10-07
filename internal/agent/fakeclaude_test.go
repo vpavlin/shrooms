@@ -21,6 +21,8 @@ import (
 //	"ask <q>"  → an AskUserQuestion, asked even with skipped permissions,
 //	             replying with the answer it was given;
 //	"slow"     → a turn that only ends when interrupted;
+//	"hang"     → a turn that never ends, deaf to interrupts and EOF alike —
+//	             a request stuck on a dropped connection;
 //	anything   → an assistant text echoing it;
 //	each turn ending with a result. EOF on stdin ends the process.
 func TestMain(m *testing.M) {
@@ -201,6 +203,8 @@ func fakeClaude() {
 			}
 			text("the build passed")
 			result("success")
+		case content == "hang":
+			time.Sleep(time.Hour)
 		case content == "slow":
 			for {
 				c := next()

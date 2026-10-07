@@ -769,6 +769,7 @@ Item {
             else if (e.kind === "voice" && !sentIds[d.id] && lastVoice[d.id] === e.seq)
                 add(e, { kind: "voicenote", id: d.id, error: d.status === "failed", text: d.error || "" })
             else if (e.kind === "stopped") add(e, { kind: "note", text: "asleep; the next message wakes it" })
+            else if (e.kind === "restarted") add(e, { kind: "note", text: "restarted" + (e.by ? " from " + e.by : "") })
             else if (e.kind === "setting" && d.auto_approve !== undefined)
                 add(e, { kind: "note", text: (d.auto_approve ? "auto-approve on" : "auto-approve off") + (e.by ? " from " + e.by : "") })
             else if (e.kind === "claude") {
@@ -1148,6 +1149,16 @@ Item {
     function stopTurn() {
         if (!agentOpen) return
         agentCall("agentPost", [agentOpen.address, "/v1/sessions/" + agentOpen.session + "/interrupt", ""])
+    }
+    // For a process that stop does not reach — a request hanging on a dropped
+    // connection. Only this session's; the others on the machine go on.
+    function askRestart() { restartDialog.open() }
+    function restartOpenSession() {
+        if (!agentOpen) return false
+        if (agentCall("agentPost", [agentOpen.address, "/v1/sessions/" + agentOpen.session + "/restart", ""]) === null) return false
+        root.said = "restarted session " + agentOpen.session
+        root.saidBad = false
+        return true
     }
     function askDelete() { deleteDialog.open() }
     function deleteDialogOpen() { return deleteDialog.visible }
@@ -1551,6 +1562,38 @@ Item {
                 Lnk { text: "CANCEL"; base: cBone; font.pixelSize: root.fs(12); onClicked: deleteDialog.close() }
                 Lnk { text: "DELETE"; base: cRust; font.pixelSize: root.fs(12)
                       onClicked: if (root.deleteOpenSession()) deleteDialog.close() }
+            }
+        }
+    }
+    Dialog {
+        id: restartDialog
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(root.sz(460), root.width - root.sz(40))
+        padding: root.sz(20)
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        Overlay.modal: Rectangle { color: Qt.rgba(0, 0, 0, 0.6) }
+        background: Rectangle { color: cPanel; radius: root.sz(12); border.color: cRust }
+        header: Item {}
+        footer: Item {}
+        contentItem: ColumnLayout {
+            spacing: root.sz(14)
+            Text {
+                Layout.fillWidth: true; wrapMode: Text.Wrap
+                text: root.agentOpen ? "Restart session \"" + root.agentOpen.session + "\" on " + root.agentOpen.name + "?" : ""
+                color: cBone; font.family: "monospace"; font.pixelSize: root.fs(14)
+            }
+            Text {
+                Layout.fillWidth: true; wrapMode: Text.Wrap
+                text: "Ends its process — what it is doing now is lost — and starts it again on the same conversation."
+                color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(11)
+            }
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                spacing: root.sz(20)
+                Lnk { text: "CANCEL"; base: cBone; font.pixelSize: root.fs(12); onClicked: restartDialog.close() }
+                Lnk { text: "RESTART"; base: cRust; font.pixelSize: root.fs(12)
+                      onClicked: if (root.restartOpenSession()) restartDialog.close() }
             }
         }
     }
@@ -2032,6 +2075,7 @@ Item {
                         Lnk { readonly property bool on: root.autoPlayOn(root.agentOpen)
                               text: on ? "AUTO-PLAY" : "auto-play"; base: on ? cPhosphor : cAsh
                               onClicked: root.setAutoPlay(root.agentOpen, !on) }
+                        Lnk { text: "restart"; base: cAsh; onClicked: root.askRestart() }
                         Lnk { text: "delete"; base: cAsh; onClicked: root.askDelete() }
                         Lnk { visible: root.agentWorking; text: "■ stop"; base: cRust; onClicked: root.stopTurn() }
                     }
@@ -2263,6 +2307,7 @@ Item {
                                 Pulse {}
                                 Text { text: root.agentStreaming === "" ? "thinking…" : "writing…"; color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(10) }
                                 Lnk { text: "■ stop"; base: cRust; font.pixelSize: root.fs(10); onClicked: root.stopTurn() }
+                                Lnk { text: "↻ restart"; base: cAsh; font.pixelSize: root.fs(10); onClicked: root.askRestart() }
                             }
                         }
                     }

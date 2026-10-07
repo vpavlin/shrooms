@@ -58,6 +58,7 @@ func Handler(log *slog.Logger, m *Manager, who Who) http.Handler {
 	mux.HandleFunc("POST /v1/sessions/{name}/messages", h.message)
 	mux.HandleFunc("POST /v1/sessions/{name}/prompts/{id}", h.answer)
 	mux.HandleFunc("POST /v1/sessions/{name}/interrupt", h.interrupt)
+	mux.HandleFunc("POST /v1/sessions/{name}/restart", h.restart)
 	return mux
 }
 
@@ -431,6 +432,18 @@ func (h *handler) interrupt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
+}
+
+func (h *handler) restart(w http.ResponseWriter, r *http.Request) {
+	s, ok := h.session(w, r)
+	if !ok {
+		return
+	}
+	if err := s.Restart(h.caller(r)); err != nil {
+		fail(w, http.StatusConflict, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // events is the session's history after ?after=N, then everything that

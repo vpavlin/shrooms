@@ -253,6 +253,7 @@ expect "CARDCLICK found=true deferred=true" "a click on a session card runs its 
 expect "PLACEHOLDER first=[reaching laptop…] then=[no messages yet]" "an empty pane does not say it is loading, or that it is empty"
 expect "REMADE watch=fdb0:9afc:a5ef:388c:8264:7716:36fc:64eb shrooms -300 rows=0" "a copy of a session since made again is not dropped"
 expect "STOPPED=/v1/sessions/shrooms/interrupt" "stopping the reply does not interrupt the session"
+expect "RESTARTED=/v1/sessions/shrooms/restart SAID=restarted session shrooms" "restart does not restart the session"
 expect "FORMCLOSED=true" "opening a session leaves the new-session form in front of it"
 expect "HARNESS offered=claude,pi sent=pi auto=false label=[pi][]" "another harness is not offered, or a session of it not asked for"
 expect "STREAMING=[Pushing **now**…] WORKING=true" "the streamed reply is not shown as it grows"
