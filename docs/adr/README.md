@@ -50,3 +50,4 @@ number appears, its source is named.
 | [038](038-usage-is-counted-by-the-mesh-address.md) | Usage is counted by the mesh address | accepted; built — who asked, where it ran, which model |
 | [039](039-the-phone-tells-the-core-what-it-cannot-see.md) | On a phone, the app tells the core what it cannot see | accepted; built — its addresses, and when its node is deaf |
 | [040](040-voices-come-from-the-system.md) | Read-aloud uses the system's voice, set up rather than bundled | accepted; built |
+| [041](041-agents-talk-a2a-over-the-mesh.md) | Agents talk A2A, and the mesh is the authentication | accepted; built — every session an A2A agent, its tools in every session |

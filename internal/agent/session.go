@@ -154,6 +154,10 @@ type Manager struct {
 	harnesses map[string]Harness
 	bins      map[string]string
 
+	// Self is shrooms-agent's own binary, given to sessions as their MCP
+	// server (StartOptions.MCP); "" gives them none.
+	Self string
+
 	// IdleStop is how long a session's process may sit with nothing to do
 	// before it is stopped. The conversation is kept and resumed by id.
 	IdleStop time.Duration
@@ -722,7 +726,9 @@ func (s *Session) ensureRunning() error {
 	s.m.mu.Lock()
 	bin := s.m.bins[s.harness.Name()]
 	s.m.mu.Unlock()
-	o := StartOptions{Resume: s.convID, AutoApprove: s.autoApprove && s.harness.Caps().Approve, Session: s.Name()}
+	host, _ := os.Hostname()
+	o := StartOptions{Resume: s.convID, AutoApprove: s.autoApprove && s.harness.Caps().Approve, Session: s.Name(),
+		MCP: s.m.Self, Note: AgentNote(host, s.Name())}
 	p, err := startProc(s.m.ctx, s.m.log.With("session", s.Name()), s.harness, bin, s.dir, o)
 	if err != nil {
 		return err

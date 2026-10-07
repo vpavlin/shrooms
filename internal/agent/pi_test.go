@@ -420,3 +420,69 @@ func TestAPiMessageIsNeverRefusedAsBusy(t *testing.T) {
 		}
 	}
 }
+
+// Every session is told about the agents around it, and has them as tools:
+// Claude Code by its flags — looking around allowed, asking another agent
+// asking first — pi by its system prompt and its MCP file.
+func TestSessionsGetTheMeshsAgents(t *testing.T) {
+	o := StartOptions{Session: "shrooms", MCP: "/usr/local/bin/shrooms-agent", Note: AgentNote("laptop", "shrooms")}
+	args := Claude{}.Args(o)
+	flag := func(name string) string {
+		for i, a := range args {
+			if a == name && i+1 < len(args) {
+				return args[i+1]
+			}
+		}
+		return ""
+	}
+	var cfg struct {
+		McpServers map[string]struct {
+			Command string
+			Args    []string
+		}
+	}
+	json.Unmarshal([]byte(flag("--mcp-config")), &cfg)
+	if s := cfg.McpServers["shrooms"]; s.Command != "/usr/local/bin/shrooms-agent" || len(s.Args) != 1 || s.Args[0] != "mcp" {
+		t.Fatalf("mcp config %q", flag("--mcp-config"))
+	}
+	if a := flag("--allowedTools"); !strings.Contains(a, "mcp__shrooms__list_agents") || strings.Contains(a, "ask_agent") {
+		t.Errorf("allowed without asking: %q", a)
+	}
+	if n := flag("--append-system-prompt"); !strings.Contains(n, `session "shrooms" on the machine laptop`) || !strings.Contains(n, "ask_agent") {
+		t.Errorf("note %q", n)
+	}
+	if a := (Claude{}).Args(StartOptions{}); strings.Contains(strings.Join(a, " "), "mcp") {
+		t.Errorf("without MCP: %q", a)
+	}
+	pa := Pi{}.Args(o)
+	if pa[len(pa)-2] != "--append-system-prompt" || !strings.Contains(pa[len(pa)-1], "list_agents") {
+		t.Errorf("pi args %q", pa)
+	}
+
+	dir := t.TempDir()
+	t.Setenv("PI_CODING_AGENT_DIR", dir)
+	os.WriteFile(filepath.Join(dir, "mcp.json"), []byte(`{"mcpServers":{"filesystem":{"command":"npx","args":["fs"]}},"other":1}`), 0o600)
+	if err := (Pi{}).EnsureMCP("/usr/local/bin/shrooms-agent"); err != nil {
+		t.Fatal(err)
+	}
+	(Pi{}).EnsureMCP("/opt/shrooms-agent") // moved
+	var got struct {
+		McpServers map[string]struct {
+			Command string
+			Args    []string
+		}
+		Other int
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "mcp.json"))
+	json.Unmarshal(b, &got)
+	if got.McpServers["filesystem"].Command != "npx" || got.Other != 1 || got.McpServers["shrooms"].Command != "/opt/shrooms-agent" {
+		t.Fatalf("mcp.json %s", b)
+	}
+	// One of the person's own under that name is theirs.
+	os.WriteFile(filepath.Join(dir, "mcp.json"), []byte(`{"mcpServers":{"shrooms":{"command":"mine","args":["--x"]}}}`), 0o600)
+	(Pi{}).EnsureMCP("/opt/shrooms-agent")
+	b, _ = os.ReadFile(filepath.Join(dir, "mcp.json"))
+	if !strings.Contains(string(b), `"mine"`) {
+		t.Errorf("overwrote theirs: %s", b)
+	}
+}

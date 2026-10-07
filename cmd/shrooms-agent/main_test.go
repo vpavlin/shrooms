@@ -75,3 +75,19 @@ func TestPeersAreListedForDiscovery(t *testing.T) {
 		t.Errorf("peers: %+v", got)
 	}
 }
+
+// The machines agents are listed and asked by: this device by its mesh name,
+// and a peer on two meshes once.
+func TestMachinesAreEachListedOnce(t *testing.T) {
+	var st status
+	json.Unmarshal([]byte(`{"name":"laptop","meshes":[{"label":"home","overlay":"fd7b::1"},{"label":"office","overlay":"fdb0::1"}],
+		"peers":[{"name":"nothing","mesh":"home","overlay":"fd7b::2"},{"name":"nothing","mesh":"office","overlay":"fdb0::2"},
+		{"name":"vps","mesh":"office","overlay":"fdb0::3"}]}`), &st)
+	var got []string
+	for _, m := range st.machines() {
+		got = append(got, m.Name+"="+m.Addr.String())
+	}
+	if strings.Join(got, " ") != "laptop=fd7b::1 nothing=fd7b::2 vps=fdb0::3" {
+		t.Fatalf("machines %v", got)
+	}
+}

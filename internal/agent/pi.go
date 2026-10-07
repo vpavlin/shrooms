@@ -2,6 +2,8 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,7 +46,59 @@ func (p Pi) Args(o StartOptions) []string {
 		}
 		args = append(args, "--session", session)
 	}
+	if o.Note != "" {
+		args = append(args, "--append-system-prompt", o.Note)
+	}
 	return args
+}
+
+// EnsureMCP puts the shrooms MCP server — command, run as "command mcp" —
+// in pi's user-level MCP servers (~/.pi/agent/mcp.json), where pi reads them:
+// it takes none on its command line (pi 1.0.0). Added when missing, and
+// moved along when the binary moved; an entry of the person's own under that
+// name, or anything else in the file, is left as it is.
+func (Pi) EnsureMCP(command string) error {
+	dir := os.Getenv("PI_CODING_AGENT_DIR")
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return err
+		}
+		dir = filepath.Join(home, ".pi", "agent")
+	}
+	path := filepath.Join(dir, "mcp.json")
+	cfg := map[string]any{}
+	switch b, err := os.ReadFile(path); {
+	case errors.Is(err, os.ErrNotExist):
+	case err != nil:
+		return err
+	default:
+		if err := json.Unmarshal(b, &cfg); err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+	}
+	servers, _ := cfg["mcpServers"].(map[string]any)
+	if servers == nil {
+		servers = map[string]any{}
+	}
+	if old, ok := servers["shrooms"].(map[string]any); ok {
+		args, _ := json.Marshal(old["args"])
+		if string(args) != `["mcp"]` || old["command"] == command {
+			return nil // the person's own, or already right
+		}
+	}
+	servers["shrooms"] = map[string]any{"command": command, "args": []string{"mcp"},
+		"description": "The coding agents on this shrooms mesh: list them, ask one, follow a task."}
+	cfg["mcpServers"] = servers
+	b, _ := json.MarshalIndent(cfg, "", "  ")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, append(b, '\n'), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 func (Pi) Codec() Codec { return &piCodec{ui: map[string]piDialog{}} }

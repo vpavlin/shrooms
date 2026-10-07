@@ -42,6 +42,9 @@ func run() error {
 	if len(os.Args) > 1 && os.Args[1] == "a2a" {
 		return a2aMain(os.Args[2:])
 	}
+	if len(os.Args) > 1 && os.Args[1] == "mcp" {
+		return mcpMain(os.Args[2:])
+	}
 	home, _ := os.UserHomeDir()
 	meshes := flag.String("meshes", "", "comma-separated meshes to serve on (default: every mesh this device is in)")
 	port := flag.Int("port", agent.Port, "port on each mesh address")
@@ -55,6 +58,7 @@ func run() error {
 	sttThreads := flag.Int("stt-threads", 0, "threads for transcription (default: this machine's cores, up to 12)")
 	piBin := flag.String("pi", "pi", "pi (pi.dev), offered for new sessions when found; \"\" to leave it out")
 	piArgs := flag.String("pi-args", "", "extra arguments for every pi session, e.g. \"--provider ollama --model qwen3\"")
+	mcp := flag.Bool("mcp", true, "give every session the mesh's agents as MCP tools (shrooms-agent mcp) and tell it how to use them")
 	flag.Parse()
 
 	level := slog.LevelInfo
@@ -103,11 +107,24 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	if *mcp {
+		if self, err := os.Executable(); err == nil {
+			if real, err := filepath.EvalSymlinks(self); err == nil {
+				self = real
+			}
+			m.Self = self
+		}
+	}
 	// Other harnesses, when this machine has them (docs/agents-harnesses.md).
 	if *piBin != "" {
 		if bin, err := exec.LookPath(*piBin); err == nil {
 			m.Register(agent.Pi{Extra: strings.Fields(*piArgs)}, bin)
 			log.Info("harness", "name", "pi", "bin", bin)
+			if m.Self != "" {
+				if err := (agent.Pi{}).EnsureMCP(m.Self); err != nil {
+					log.Warn("pi will not have the mesh's agents as tools", "err", err)
+				}
+			}
 		}
 	}
 	if _, err := os.Stat(*sttModel); err != nil {
@@ -173,6 +190,8 @@ func run() error {
 
 // status is the part of the daemon's /status this needs.
 type status struct {
+	// Name is this device's name on the mesh ("laptop"), not its hostname.
+	Name   string `json:"name"`
 	Meshes []struct {
 		Label   string `json:"label"`
 		Overlay string `json:"overlay"`

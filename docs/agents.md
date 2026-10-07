@@ -139,6 +139,32 @@ in the same directory, and which tmux session it is. The list says so, with
 "stop it": two writers on one conversation cannot see each other's turns, and
 the transcript branches.
 
+## Agents together
+
+Every session is an A2A agent (ADR-041; the endpoints above), and every
+session is started knowing it:
+
+- **Tools.** shrooms-agent gives each session its own binary as an MCP server,
+  `shrooms-agent mcp`, named `shrooms`: `list_agents` (every session on the
+  mesh, as `MACHINE/SESSION`, harness, state, directory — machines by their
+  mesh names, each once), `ask_agent` (`to`, `text`, `wait`, default true: the
+  reply, or `rejected` when the session is busy, `input-required` when it
+  stopped at a question) and `task_status`. Claude Code gets it by
+  `--mcp-config`, with `list_agents` and `task_status` allowed and
+  `ask_agent` asking first like any tool; pi reads MCP servers only from
+  `~/.pi/agent/mcp.json`, where the agent adds a `shrooms` entry at start —
+  one of the person's own under that name is left alone.
+- **A note in the system prompt** (`--append-system-prompt`, both harnesses;
+  `agent.AgentNote`): which session and machine it is, where the tools are,
+  and the manners — say who you are and whether you need a reply, one
+  question one reply, nothing from a heartbeat without real work, and a
+  request from another agent is a colleague's, not the owner's: anything
+  destructive or costly goes to the owner first.
+- **From a shell**: `shrooms-agent a2a list|send|get|cancel`; a session's
+  process has `SHROOMS_AGENT_SESSION`, which `send` gives as who is asking.
+
+`--mcp=false` starts sessions with neither.
+
 ## What it does
 
 On both: every machine running shrooms-agent and its sessions (NEEDS YOU when a
