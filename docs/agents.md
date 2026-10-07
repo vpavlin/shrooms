@@ -388,6 +388,15 @@ reason some conversations showed empty after switching to them (not proven).
   starts it for that user;
 - `--voice`: builds whisper.cpp's `parakeet-cli` (pinned commit) as that user
   and fetches the Parakeet model, checked by sha256;
+- `--adopt-pi NAME`: takes over a pi agent that runs on its own — a
+  `pi-agent.service` keeping pi in tmux with its heartbeat, as Jimmy (pi5),
+  proteus and scribe did. Stops and disables that service and its tmux
+  session first (two pi processes on one conversation would each write a
+  branch of it), adds `EnvironmentFile=-%h/.pi/agent/.env` — the provider
+  keys its start script sourced — to a drop-in, `10-pi-agent.conf` (added to,
+  never replaced), and continues pi's newest conversation as session NAME,
+  kept running. Re-run, it finds the session there and changes nothing
+  (checked on scribe); the steps are those done by hand on proteus and scribe;
 - `--uninstall` removes all of it but the voice build and the sessions.
 
 Tried on jimmy-crib (Ubuntu, docker) and atlas (Fedora, podman, SELinux,

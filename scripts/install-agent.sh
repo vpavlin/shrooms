@@ -24,7 +24,11 @@
 #   - installs the user service and starts it for that user, with lingering on
 #     so it runs while they are logged out;
 #   - with --voice, builds whisper.cpp's parakeet-cli as that user and fetches
-#     the Parakeet model, checked by its sha256.
+#     the Parakeet model, checked by its sha256;
+#   - with --adopt-pi NAME, takes over a pi agent that runs on its own (a
+#     pi-agent.service keeping pi in tmux, as Jimmy, proteus and scribe did):
+#     stops that, gives the agent pi's ~/.pi/agent/.env (its provider keys),
+#     and continues pi's newest conversation as session NAME, kept running.
 #
 # The agent runs as the user, never as root: a session can do what that user
 # can. Claude Code and pi are that user's own — logged in, set up and paid for
@@ -49,13 +53,16 @@ here=$(cd "$(dirname "$0")" && pwd)
 [ -x "$here/bin/shrooms-agent" ] && BINARY=$here/bin/shrooms-agent
 VOICE=0
 UNINSTALL=0
+ADOPT=
 
 usage() {
     cat <<EOF
-usage: sudo $0 [--user NAME] [--voice] [--image REF | --binary PATH] [--uninstall]
+usage: sudo $0 [--user NAME] [--voice] [--adopt-pi NAME] [--image REF | --binary PATH] [--uninstall]
 
   --user NAME   whose agents to serve (default: the user running sudo)
   --voice       also build parakeet-cli and fetch its model, for voice notes
+  --adopt-pi NAME  take over a pi agent kept running on its own (pi-agent.service,
+                pi in tmux): its newest conversation becomes session NAME, kept running
   --image REF   the image to take shrooms-agent from (default: $IMAGE)
   --binary PATH install this shrooms-agent instead (default: bin/shrooms-agent
                 beside this script, as in the portable package, if there is one)
@@ -68,6 +75,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --user) USER_NAME=$2; shift 2 ;;
         --voice) VOICE=1; shift ;;
+        --adopt-pi) ADOPT=$2; shift 2 ;;
         --image) IMAGE=$2; shift 2 ;;
         --binary) BINARY=$2; shift 2 ;;
         --uninstall) UNINSTALL=1; shift ;;
@@ -255,6 +263,33 @@ if [ -f "$HOME_DIR/.config/systemd/user/shrooms-agent.service" ]; then
     echo "        remove it to use this one"
 fi
 
+# --- a pi agent of its own --------------------------------------------------------
+# Stopped before the agent starts again: two pi processes on one conversation
+# would each write their own branch of it.
+if [ -n "$ADOPT" ]; then
+    echo "==> taking over the pi agent as session $ADOPT"
+    as_user bash -lc 'command -v pi' >/dev/null 2>&1 || { echo "  no pi for $USER_NAME"; exit 1; }
+    if user_systemctl cat pi-agent.service >/dev/null 2>&1; then
+        user_systemctl disable --now pi-agent.service >/dev/null 2>&1 || true
+        echo "  pi-agent.service stopped and disabled"
+    fi
+    as_user tmux kill-session -t pi-agent 2>/dev/null || true
+    dropin=$HOME_DIR/.config/systemd/user/shrooms-agent.service.d
+    as_user mkdir -p "$dropin"
+    # Added to, not replaced: one written by hand may hold more (a heartbeat's
+    # settings).
+    if ! grep -qs 'EnvironmentFile=-%h/.pi/agent/.env' "$dropin/10-pi-agent.conf"; then
+        [ -f "$dropin/10-pi-agent.conf" ] || printf '[Service]\n' | as_user tee "$dropin/10-pi-agent.conf" >/dev/null
+        as_user tee -a "$dropin/10-pi-agent.conf" >/dev/null <<'CONF'
+# The pi agent taken over by install-agent.sh --adopt-pi: its provider keys,
+# which its own start script sourced. Without them pi has no model.
+EnvironmentFile=-%h/.pi/agent/.env
+CONF
+    fi
+    user_systemctl daemon-reload
+    user_systemctl restart shrooms-agent
+fi
+
 # --- voice notes ---------------------------------------------------------------
 if [ $VOICE -eq 1 ]; then
     echo "==> voice notes: parakeet-cli and its model"
@@ -308,5 +343,19 @@ if journalctl _UID="$UID_N" _SYSTEMD_USER_UNIT=shrooms-agent.service --since "-2
     echo "  voice notes on"
 else
     echo "  voice notes off (--voice to build them here)"
+fi
+if [ -n "$ADOPT" ]; then
+    conv=$(as_user bash -c 'ls -t "$HOME"/.pi/agent/sessions/*/*.jsonl 2>/dev/null | head -1')
+    id=$(basename "${conv:-x}" .jsonl); id=${id#*_}
+    if [ -z "$conv" ]; then
+        echo "  no pi conversation found: session $ADOPT not made"
+    elif curl -s -m 5 "http://[$a]:$PORT/v1/sessions" | grep -q "\"name\": *\"$ADOPT\""; then
+        echo "  session $ADOPT is there already"
+    else
+        code=$(curl -s -m 30 -o /dev/null -w '%{http_code}' -X POST "http://[$a]:$PORT/v1/sessions" -H 'Content-Type: application/json' \
+            -d "{\"name\":\"$ADOPT\",\"harness\":\"pi\",\"resume\":\"$id\",\"keep_running\":true}")
+        [ "$code" = 201 ] && echo "  session $ADOPT continues $(basename "$conv"), kept running" ||
+            echo "  could not make session $ADOPT ($code)"
+    fi
 fi
 echo "done: the Shrooms Agents app and Basecamp module find it on the mesh."
