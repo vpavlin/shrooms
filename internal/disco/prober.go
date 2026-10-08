@@ -113,7 +113,8 @@ type Prober struct {
 	// Kept as a candidate rather than a path: it goes through the ordinary
 	// probe and pong like any other, so nothing is used before it is confirmed
 	// working in both directions.
-	heard map[string]netip.AddrPort
+	heard   map[string]netip.AddrPort
+	heardAt map[string]time.Time // when each was last heard from
 
 	// selfAddrs are this machine's own addresses, so a candidate that is
 	// really us can be recognised. Set by SetSelfAddrs as interfaces change.
@@ -210,7 +211,12 @@ func (p *Prober) HandlePing(m *Message, from netip.AddrPort) {
 		if p.heard == nil {
 			p.heard = make(map[string]netip.AddrPort)
 		}
-		p.heard[hex.EncodeToString(m.SenderPub[:])] = from
+		if p.heardAt == nil {
+			p.heardAt = make(map[string]time.Time)
+		}
+		id := hex.EncodeToString(m.SenderPub[:])
+		p.heard[id] = from
+		p.heardAt[id] = time.Now()
 		p.mu.Unlock()
 	}
 
@@ -230,6 +236,15 @@ func (p *Prober) Heard(peerID string) (netip.AddrPort, bool) {
 	defer p.mu.Unlock()
 	a, ok := p.heard[peerID]
 	return a, ok
+}
+
+// HeardSince reports a probe from a peer at or after t: it is out there
+// looking for us, whatever the bus says.
+func (p *Prober) HeardSince(peerID string, t time.Time) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	at, ok := p.heardAt[peerID]
+	return ok && !at.Before(t)
 }
 
 // HandlePong records a working path and our reflexive address.

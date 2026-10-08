@@ -102,6 +102,12 @@ func (m *Mesh) carry(p PeerInfo, st wg.PeerStat, haveStats bool, now time.Time) 
 	if haveStats && st.Live(now) {
 		return true
 	}
+	// It answers our probes: there, whatever the bus says. Without this a
+	// peer probed back after a move or a restart was dropped again before its
+	// handshake made the tunnel live.
+	if m.answers(p, now) {
+		return true
+	}
 	return m.provisional(p.ID(), now)
 }
 

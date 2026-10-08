@@ -52,3 +52,4 @@ number appears, its source is named.
 | [040](040-voices-come-from-the-system.md) | Read-aloud uses the system's voice, set up rather than bundled | accepted; built |
 | [041](041-agents-talk-a2a-over-the-mesh.md) | Agents talk A2A, and the mesh is the authentication | accepted; built — every session an A2A agent, its tools in every session; "a task is a turn" amended by 042 |
 | [042](042-a-task-is-open-until-the-worker-finishes-it.md) | A task is open until the worker finishes it | accepted; built — supervised by a watchdog, queued, acknowledged |
+| [043](043-peers-are-probed-on-evidence-not-only-announces.md) | Peers are probed on evidence, not only on announces | accepted; built — remembered, answering, after a move, or probing us; roaming without the bus |

@@ -365,11 +365,37 @@ func (m *Mesh) discoveredRelay(now time.Time) relayChoice {
 // again. A relay answering our probes is the better evidence: it is the very
 // path the traffic takes.
 func (m *Mesh) relayAnswers(p PeerInfo, now time.Time) bool {
-	if !p.Relay {
+	return p.Relay && m.answers(p, now)
+}
+
+// answers reports a fresh probed path to a peer: it answers our probes, which
+// is evidence it is there whatever the bus says.
+func (m *Mesh) answers(p PeerInfo, now time.Time) bool {
+	if m.prober == nil {
 		return false
 	}
 	_, ok := m.prober.Best(p.ID(), now)
 	return ok
+}
+
+// worthProbing: a peer is probed when there is reason to think it is there —
+// an announce, or a path that answers — or reason to look: it was remembered
+// from the last run and this process has just started, or this device has
+// just moved network.
+//
+// Only the first used to count (and, since 9f522db, a relay that answers).
+// Every other way back to a peer went through an announce, so a phone whose
+// delivery node had stopped bringing them reached the VPS and none of the
+// machines on the office LAN it had just joined, until the app was killed
+// (2026-10-08). The data plane must not need the bus (DESIGN §2).
+//
+// And the other side of it: a peer that has just probed us is looking for us
+// — a phone that moved and lost its bus — so it is probed back, which is what
+// gives it a path here and keeps it in the data plane (carry), so its
+// handshake is not refused.
+func (m *Mesh) worthProbing(p PeerInfo, now time.Time) bool {
+	return p.Online(now) || m.answers(p, now) || m.provisional(p.ID(), now) || m.justMoved(now) ||
+		m.prober.HeardSince(p.ID(), now.Add(-MoveWindow))
 }
 
 // RelayHold is how long a discovered member relay keeps being used after its
@@ -626,7 +652,7 @@ func (m *Mesh) probeAll(now time.Time) {
 	m.prober.SetSelfAddrs(localAddrs())
 
 	for _, p := range m.roster.Peers() {
-		if !p.Online(now) && !m.relayAnswers(p, now) {
+		if !m.worthProbing(p, now) {
 			continue
 		}
 		if !m.prober.NeedsProbe(p.ID(), now) {

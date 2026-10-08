@@ -157,6 +157,8 @@ type Mesh struct {
 	// refreshHosts touches the filesystem, neither of which belongs on the
 	// datapath.
 	resync chan struct{}
+	// movedAt is the last network change (NetworkChanged), under mu.
+	movedAt time.Time
 
 	// health tracks the rendezvous plane, which fails independently of the
 	// data plane and otherwise gives no visible signal at all.
@@ -470,8 +472,32 @@ func (m *Mesh) SetListenPort(p uint16) {
 // without waiting for the next tick. On Android the app calls this after
 // ProvideLocalAddrs; the desktop daemon notices a move on its own.
 func (m *Mesh) NetworkChanged() {
+	m.networkChangedAt(time.Now())
 	m.prober.ForgetReflexive()
 	m.requestAnnounce()
+	// The endpoints chosen on the old network, rewritten as soon as the
+	// probes below find the new ones.
+	m.requestResync()
+}
+
+// networkChangedAt notes a move: for MoveWindow after it, every known peer is
+// probed, whether or not its announces are arriving (probeAll).
+func (m *Mesh) networkChangedAt(now time.Time) {
+	m.mu.Lock()
+	m.movedAt = now
+	m.mu.Unlock()
+}
+
+// MoveWindow is how long after a network change every known peer is probed.
+// The same budget as a remembered peer's (ProvisionalWindow): as long as
+// WireGuard keeps trying a handshake.
+const MoveWindow = ProvisionalWindow
+
+// justMoved reports a network change within MoveWindow.
+func (m *Mesh) justMoved(now time.Time) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return !m.movedAt.IsZero() && now.Sub(m.movedAt) < MoveWindow
 }
 
 // requestResync asks the main loop to reconfigure the data plane.
