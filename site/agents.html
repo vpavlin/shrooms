@@ -30,6 +30,14 @@
     <a href="https://github.com/vpavlin/shrooms">github</a>
 </nav>
 
+<nav class="tabs" aria-label="Shrooms Agents">
+    <a href="agents.html" class="here">overview</a>
+    <a href="agents-using.html">using it</a>
+    <a href="agents-setup.html">setting up</a>
+    <a href="agents-together.html">agents together</a>
+    <a href="agents-cages.html">cages</a>
+    <a href="agents-reference.html">reference</a>
+</nav>
 <header class="hero">
     <img src="agents-logo.svg" alt="" width="72" height="72">
     <h1>Shrooms Agents</h1>
@@ -62,7 +70,7 @@
 <span class="cmd">sudo bash install-agent.sh --voice</span></code></pre>
 <p>
     It runs the agent as you — never as root — and opens it to the mesh only;
-    <code>--voice</code> adds voice notes (<a href="#setup">what it does</a>).
+    <code>--voice</code> adds voice notes (<a href="agents-setup.html">the whole setup</a>).
 </p>
 <p>
     On the phone, Shrooms Agents is an Android app beside shrooms — open it
@@ -72,75 +80,47 @@
     <code>make basecamp-agents-lgx</code>.
 </p>
 
-<h2 id="more" class="more">In more detail</h2>
-
-<ul>
-    <li><a href="#what">What it does</a></li>
-    <li><a href="#harnesses">Claude Code, pi, and the next one</a></li>
-    <li><a href="#access">The access control is the mesh</a></li>
-    <li><a href="#setup">What the installer does</a></li>
-    <li><a href="#limits">What it does not do</a></li>
-</ul>
-
-<h2 id="what">1. What it does</h2>
+<h2 id="what">What is in it</h2>
 
 <p>
     Each machine runs <code>shrooms-agent</code>, which keeps that machine's
-    sessions: a name, a directory, and the coding agent working in it. The
-    phone app and the Basecamp module find every agent on your mesh and list
-    their sessions together — the ones you star first, whatever machine they
-    are on.
+    sessions: a name, a directory, and the coding agent working in it —
+    <a href="https://claude.com/claude-code">Claude Code</a>, or
+    <a href="https://pi.dev">pi</a> on any model, one on your own hardware
+    included. The phone app and the Basecamp module find every agent on your
+    mesh and show all their sessions together.
 </p>
 
 <ul>
-    <li><strong>A conversation</strong>, streamed as it is written, in
-    markdown, with each tool it uses folded to one line and its output folded
-    below. It opens at the end, and search finds anything said in it — on the
-    agent's machine, so it covers what the app has not loaded and what was
-    said in a terminal before.</li>
-    <li><strong>Permission prompts</strong> with the command in full and allow
-    or deny — or auto-approve per session, the desktop's
-    <code>--dangerously-skip-permissions</code>. <strong>Questions</strong>
-    the agent asks come as a card with the options to pick, or room for your
-    own words.</li>
-    <li><strong>Files and voice notes.</strong> A photo or a log goes to the
-    agent's machine and is named in your next message. A voice note is
-    recorded on your device and transcribed on the agent's machine, by
-    <a href="https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3">Parakeet</a>
-    through whisper.cpp — Czech and English and twenty-odd other languages,
-    without saying which, and no audio reaches a speech service.</li>
-    <li><strong>Taking over a terminal's conversation</strong>: a Claude Code
-    session started in a terminal (or tmux) can be continued from the phone,
-    in the same conversation.</li>
-    <li><strong>Notifications</strong> on the phone when a session needs you or
-    has replied, and context use, model and cost on every session.</li>
+    <li><strong>Every session, at a glance.</strong> A list by machine, the
+    ones you star first — or, in Basecamp, a board: a card per session with
+    its last lines, and a dashed line from an agent to another that is working
+    on something it asked for. <a href="agents-using.html#the-board">The board</a></li>
+    <li><strong>A conversation</strong> streamed as it is written, permission
+    prompts to allow or deny (or auto-approve per session), questions to
+    answer, files and voice notes, search, read-aloud — and code in a reply
+    copies itself when you tap it. <a href="agents-using.html">Using it</a></li>
+    <li><strong>Will it last?</strong> What your sessions used, by machine,
+    model and who asked; where your plan's limits stand; and whether, at the
+    pace of the last hours, they last until they reset. Pay-as-you-go credits
+    (Venice) beside them. <a href="agents-using.html#usage">Usage</a></li>
+    <li><strong>Agents working together.</strong> Every session is an
+    <a href="https://a2a-protocol.org">A2A</a> agent: one can ask another, on any
+    of your machines, to do something — a task that stays open until the
+    worker says it is done, with reminders if it goes quiet and the owner told
+    if it stalls. <a href="agents-together.html">Agents together</a></li>
+    <li><strong>Cages.</strong> A session can run in a rootless container of
+    its own: root inside to install what it needs, your user outside, nothing
+    of your home but its project. Auto-approve without handing over the
+    machine. <a href="agents-cages.html">Cages</a></li>
+    <li><strong>Your own machines, set up by you.</strong> One script per
+    machine; Claude Code or pi logged in as in a terminal; voice notes
+    transcribed on the machine, never by a speech service.
+    <a href="agents-setup.html">Setting up</a> ·
+    <a href="agents-reference.html">the API, the CLI and the files</a></li>
 </ul>
 
-<h2 id="harnesses">2. Claude Code, pi, and the next one</h2>
-
-<p>
-    The coding agent itself is pluggable. Two are built in:
-</p>
-
-<ul>
-    <li><strong>Claude Code</strong>, driven the way its own SDK drives it.
-    Everything above works with it.</li>
-    <li><strong><a href="https://pi.dev">pi</a></strong>, in its RPC mode, on
-    whatever model pi is set up with — a model on your own hardware included,
-    which is the point: a machine with no Claude account can serve sessions
-    to the whole mesh. pi runs its tools without asking, so there is nothing
-    to approve; its extensions' dialogs arrive as questions.</li>
-</ul>
-
-<p>
-    Adding another is one translator: a file that starts the program and turns
-    what it says into the events the apps already show, so neither app
-    changes. <a href="https://github.com/vpavlin/shrooms/blob/master/docs/agents-harnesses.md">The guide</a>
-    walks through pi as the worked example, with the exact events a new one
-    must produce. OpenCode and Codex are next; they are not built yet.
-</p>
-
-<h2 id="access">3. The access control is the mesh</h2>
+<h2 id="access">The access control is the mesh</h2>
 
 <p>
     <code>shrooms-agent</code> listens only on the machine's mesh addresses —
@@ -164,35 +144,13 @@
     privileged part, and the part that runs code on request stays out of it.
 </p>
 
-<h2 id="setup">4. What the installer does</h2>
-
 <p>
-    <code>install-agent.sh</code> is run with sudo by the person whose agents
-    it serves (<code>--user NAME</code> otherwise), on a machine where shrooms
-    is running:
+    What the installer does, Claude Code and pi on a headless machine, voice
+    notes, and what to check when something does not connect:
+    <a href="agents-setup.html">setting up</a>.
 </p>
 
-<ul>
-    <li>it copies <code>shrooms-agent</code> out of its own small image,
-    <code>ghcr.io/vpavlin/shrooms-agent</code> — one static binary, for amd64
-    and arm64 — with the docker or podman shrooms already uses;</li>
-    <li>it lets you read the shrooms control socket, by a file ACL that
-    survives reboots, if you cannot already;</li>
-    <li>it opens port 7387 to this machine's own mesh addresses only, when
-    firewalld or ufw is running;</li>
-    <li>it installs the agent as your user service and keeps it running while
-    you are logged out;</li>
-    <li>with <code>--voice</code> it builds whisper.cpp's
-    <code>parakeet-cli</code> and fetches the model, checked by its hash.</li>
-</ul>
-
-<p>
-    It installs neither Claude Code nor pi: those are yours, logged in and set
-    up as in a terminal, and the agent serves whichever it finds.
-    <code>--uninstall</code> removes all of it but your sessions.
-</p>
-
-<h2 id="limits">5. What it does not do</h2>
+<h2 id="limits">What it does not do</h2>
 
 <ul>
     <li><strong>It cannot log a machine's agent in.</strong> Claude Code is

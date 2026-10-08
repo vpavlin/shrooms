@@ -239,6 +239,21 @@ nav a:hover { color: var(--bone); border-bottom-color: var(--line); }
 nav a.here { color: var(--bone); border-bottom-color: var(--phosphor); }
 nav .spacer { flex: 1 1 auto; }
 
+/* The agents pages' own tabs, under the masthead: the same links, quieter,
+   and not sticky — the masthead already is, and two bars following the
+   reader down the page is one too many. */
+nav.tabs {
+    position: static;
+    backdrop-filter: none;
+    background: none;
+    margin: 6px 0 0;
+    padding: 8px 0;
+    gap: 6px 16px;
+    font-size: 12px;
+    border-bottom: 1px solid var(--line);
+    border-radius: 0;
+}
+
 /* --- type -------------------------------------------------------------- */
 
 h1, h2, h3 { line-height: 1.25; }

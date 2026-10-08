@@ -1,5 +1,9 @@
 # Shrooms Agents together: messages, schedules and where work came from
 
+> The design and its history. What is built, and how to use it, is in
+> [Agents together](agents/together.md); the task extension is specified in
+> [a2a-tasks.md](a2a-tasks.md).
+
 **Status:** design, 2026-10-05; un-parked 2026-10-07 with the wire format
 taken from A2A (below) — agents now talk to each other over the plain REST
 API in the meantime (Jimmy on pi5 with proteus and scribe). Builds on

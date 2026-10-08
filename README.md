@@ -812,9 +812,16 @@ What grows out of the mesh: talk to the coding-agent sessions on your own
 machines — Claude Code, or [pi](https://pi.dev) on any model including a
 local one — from a phone or from Basecamp, and approve what they want to do —
 streamed replies, permission prompts, files, voice notes transcribed on the
-agent's machine, and conversations taken over from a terminal. Nothing leaves
-the mesh: `shrooms-agent` listens only on each machine's mesh addresses, so
-being on the mesh is the access control.
+agent's machine, and conversations taken over from a terminal. Basecamp also
+shows every session as a card on a board. Usage, plan limits and a forecast of
+whether they last until they reset. Every session is an A2A agent, so agents
+ask each other for work as tasks that stay open until done
+([ADR-041](docs/adr/041-agents-talk-a2a-over-the-mesh.md),
+[042](docs/adr/042-a-task-is-open-until-the-worker-finishes-it.md)), and a
+session can run in a rootless container of its own
+([ADR-037](docs/adr/037-agents-in-cages.md)). Nothing leaves the mesh:
+`shrooms-agent` listens only on each machine's mesh addresses, so being on the
+mesh is the access control.
 
 A separate app and Basecamp module beside shrooms, not part of it
 ([ADR-036](docs/adr/036-agents-grow-out-of-the-mesh.md)); the agent is a
@@ -831,8 +838,12 @@ socket, opens it to the mesh only, and starts it as a user service;
 installs it with shrooms.
 
 Android: `AGENTS=1 scripts/build-apk.sh`. Basecamp: `make basecamp-agents-lgx`.
-How it works and the API: [docs/agents.md](docs/agents.md). Adding another
-coding agent: [docs/agents-harnesses.md](docs/agents-harnesses.md).
+
+The guides, also on [the website](https://shrooms.vpavlin.xyz/agents.html):
+[using it](docs/agents/using.md), [setting up](docs/agents/setup.md),
+[agents together](docs/agents/together.md), [cages](docs/agents/cages.md);
+the API, the CLI and the files on disk: [docs/agents.md](docs/agents.md).
+Adding another coding agent: [docs/agents-harnesses.md](docs/agents-harnesses.md).
 
 ## Membership without a shared secret
 
@@ -1547,7 +1558,8 @@ short version:
 | [PROTOTYPE.md](PROTOTYPE.md) | build plan, milestones, what each proved |
 | [SECURITY.md](SECURITY.md) | what is protected, what leaks, what is deferred |
 | [docs/adr/](docs/adr/) | why each significant decision was made (36 records) |
-| [docs/agents.md](docs/agents.md) | Shrooms Agents: Claude Code and pi sessions on your machines, over the mesh |
+| [docs/agents/](docs/agents/) | Shrooms Agents guides: [using it](docs/agents/using.md), [setting up](docs/agents/setup.md), [agents together](docs/agents/together.md), [cages](docs/agents/cages.md) |
+| [docs/agents.md](docs/agents.md) | Shrooms Agents reference: the HTTP and A2A API, events, the CLI, the files on disk |
 | [docs/agents-harnesses.md](docs/agents-harnesses.md) | Adding a coding agent to Shrooms Agents, by the example of pi; logging a machine in |
 | [docs/stale-tether-nat.md](docs/stale-tether-nat.md) | why an Edge node's WireGuard port moves on every network change |
 | [docs/a-mesh-on-a-card.md](docs/a-mesh-on-a-card.md) | putting a mesh's admin key on a Keycard, and admitting a phone to it |

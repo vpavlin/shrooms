@@ -69,7 +69,11 @@ def rewrite_link(target):
     resolved = posixpath.normpath(posixpath.join(SRC_REL, path))
     base = posixpath.basename(resolved)
 
-    if posixpath.dirname(resolved) == ADR_DIR and ADR_FILE.match(base):
+    if resolved in RENDERED:
+        # Prose we also render into site/: its page, from wherever this one
+        # is (site/ or site/adr/).
+        out = ("" if ADR_HREF else "../") + RENDERED[resolved]
+    elif posixpath.dirname(resolved) == ADR_DIR and ADR_FILE.match(base):
         # A record we also render. ADR_HREF is "" for a page in site/adr/ and
         # "adr/" for one in site/, so a link from either lands on the rendered
         # page rather than being sent to GitHub.
@@ -485,13 +489,13 @@ PAGE = """<!doctype html>
     <a href="{up}install.html">install</a>
     <a href="{up}guides.html">guides</a>
     <a href="{up}keycard.html">keycard</a>
-    <a href="{up}agents.html">agents</a>
-    <a href="{up}dev.html" class="here">dev notes</a>
+    <a href="{up}agents.html"{here_agents}>agents</a>
+    <a href="{up}dev.html"{here_dev}>dev notes</a>
     <span class="spacer"></span>
     <a href="https://github.com/vpavlin/shrooms">github</a>
 </nav>
 
-<header class="hero">
+{tabs}<header class="hero">
 <h1>{heading}</h1>
 {lead}<div class="cta">
 {cta}
@@ -518,13 +522,37 @@ PAGE = """<!doctype html>
 """
 
 
-def page(title, heading, description, lead, cta, body, up="../"):
+# The agents pages: one subject grown into several, as tabs under the site's
+# own navigation. site/agents.html (hand-written, the overview) carries the
+# same strip; agents_tabs() is what both are checked against.
+AGENTS_TABS = [
+    ("agents.html", "overview"),
+    ("agents-using.html", "using it"),
+    ("agents-setup.html", "setting up"),
+    ("agents-together.html", "agents together"),
+    ("agents-cages.html", "cages"),
+    ("agents-reference.html", "reference"),
+]
+
+
+def agents_tabs(current):
+    links = []
+    for href, label in AGENTS_TABS:
+        cls = ' class="here"' if href == current else ""
+        links.append('    <a href="%s"%s>%s</a>' % (href, cls, label))
+    return '<nav class="tabs" aria-label="Shrooms Agents">\n%s\n</nav>\n' % "\n".join(links)
+
+
+def page(title, heading, description, lead, cta, body, up="../", section="dev", tabs=""):
     # up is how far the page sits below site/: "../" for a record in site/adr/,
     # "" for prose rendered straight into site/. The template was written for
     # the first case and hardcoded it, which sent a page in site/ looking for
     # its stylesheet above the site root.
     return PAGE.format(
         up=up,
+        here_agents=' class="here"' if section == "agents" else "",
+        here_dev=' class="here"' if section == "dev" else "",
+        tabs=tabs,
         title=html.escape(title, quote=True),
         description=html.escape(description, quote=True),
         heading=heading,
@@ -586,10 +614,28 @@ PAGES = [
         "cta": ['<a href="index.html">← home</a>',
                 '<a href="adr/index.html">every decision</a>'],
     },
+] + [
+    {
+        "src": ROOT / "docs" / src,
+        "out": out,
+        "section": "agents",
+        "cta": ['<a href="agents.html">← Shrooms Agents</a>',
+                '<a href="https://github.com/vpavlin/shrooms/blob/master/docs/%s">the markdown</a>' % src],
+    }
+    for src, out in [
+        ("agents/using.md", "agents-using.html"),
+        ("agents/setup.md", "agents-setup.html"),
+        ("agents/together.md", "agents-together.html"),
+        ("agents/cages.md", "agents-cages.html"),
+        ("agents.md", "agents-reference.html"),
+    ]
 ]
 
+# docs/-relative path -> its page in site/, for rewrite_link.
+RENDERED = {"docs/" + str(spec["src"].relative_to(ROOT / "docs")): spec["out"] for spec in PAGES}
 
-def render_page(path, cta):
+
+def render_page(path, cta, section="dev", out=""):
     title, status, lines, description = read(path)
     seen = {}
     lead = ""
@@ -603,6 +649,8 @@ def render_page(path, cta):
         cta=cta,
         body=blocks(lines, seen),
         up="",
+        section=section,
+        tabs=agents_tabs(out) if section == "agents" else "",
     )
 
 
@@ -614,9 +662,10 @@ def render_extra_pages():
         src = spec["src"]
         if not src.is_file():
             sys.exit("no %s" % src)
-        # These live one directory up from the records, and reach them by name.
-        SRC_REL, ADR_HREF = "docs", "adr/"
-        text = render_page(src, spec["cta"])
+        # These live one directory up from the records, and reach them by name;
+        # a page from a subdirectory of docs/ resolves its links from there.
+        SRC_REL, ADR_HREF = str(src.parent.relative_to(ROOT)), "adr/"
+        text = render_page(src, spec["cta"], spec.get("section", "dev"), spec["out"])
         target = ROOT / "site" / spec["out"]
         if target.exists() and target.read_text(encoding="utf-8") == text:
             print("  unchanged  site/%s" % spec["out"])
