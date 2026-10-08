@@ -72,6 +72,10 @@ type Info struct {
 	// Starred sessions are listed first, above every machine's others. Kept
 	// here, not in an app, so a star set on the phone shows in Basecamp.
 	Starred bool `json:"starred,omitempty"`
+	// TasksOpen and TasksStalled count the A2A tasks the session has, and of
+	// them those it stopped making progress on (tasks.go).
+	TasksOpen    int `json:"tasks_open,omitempty"`
+	TasksStalled int `json:"tasks_stalled,omitempty"`
 	// KeepRunning: the process is never stopped as idle, and is started
 	// again when it ends — an agent that works on its own, from its
 	// extensions (a heartbeat, a chat bridge), and not only when asked.
@@ -142,6 +146,10 @@ type Manager struct {
 	// a2a holds what A2A needs between requests: each sender's rate and the
 	// tasks cancelled (a2a.go).
 	a2a a2aLimiter
+	// tasks are the work asked of this machine's sessions (tasks.go), and
+	// nudges how often each session was reminded of them (supervise.go).
+	tasks  *taskStore
+	nudges nudgeRate
 	// credits are pay-as-you-go keys' standing (credits.go).
 	credits struct {
 		sync.Mutex
@@ -229,8 +237,12 @@ func NewManager(ctx context.Context, log *slog.Logger, stateDir, claudeBin strin
 			m.sessions[r.Name] = s
 		}
 	}
+	if m.tasks, err = openTaskStore(stateDir); err != nil {
+		return nil, err
+	}
 	go m.reap()
 	go m.keepAlive(keepAliveEvery)
+	go m.supervise(superviseEvery)
 	// The logs read once now, in the background: the session list carries
 	// the newest subscription reading (Limits), and after a restart that is
 	// in the logs until Claude Code reports again. Later reads take only
@@ -321,6 +333,7 @@ func (m *Manager) Rename(old, name, by string) (Info, error) {
 	s.label.Store(&name)
 	delete(m.sessions, old)
 	m.sessions[name] = s
+	m.renameTasks(old, name)
 	s.record("renamed", by, map[string]string{"from": old, "to": name})
 	s.mu.Unlock()
 	if err := m.save(); err != nil {
@@ -425,9 +438,22 @@ func (m *Manager) List() []Info {
 		ss = append(ss, s)
 	}
 	m.mu.Unlock()
+	open, stalled := map[string]int{}, map[string]int{}
+	if m.tasks != nil {
+		for _, t := range m.tasks.list("") {
+			if t.open() {
+				open[t.Session]++
+				if t.Stalled {
+					stalled[t.Session]++
+				}
+			}
+		}
+	}
 	out := make([]Info, 0, len(ss))
 	for _, s := range ss {
-		out = append(out, s.Info())
+		in := s.Info()
+		in.TasksOpen, in.TasksStalled = open[in.Name], stalled[in.Name]
+		out = append(out, in)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out

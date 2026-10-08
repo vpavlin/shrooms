@@ -28,11 +28,13 @@ var mcpTools = []map[string]any{
 	{
 		"name": "ask_agent",
 		"description": "Send a message to another agent session (MACHINE/SESSION, from list_agents) and, by default, wait for its reply — " +
-			"up to 10 minutes. It is one turn of theirs: a session that is busy answers \"rejected\" (ask again later), one that " +
-			"stops at a question answers \"input-required\". With wait false it returns a task id for task_status.",
+			"up to 10 minutes. It becomes a task, which stays open until the other agent finishes it (done) or needs something " +
+			"(input-required: answer with ask_agent and task set); a busy session queues it. With wait false it returns a task id " +
+			"for task_status. When you have what you needed, close it with task_ack.",
 		"inputSchema": map[string]any{"type": "object", "required": []string{"to", "text"}, "properties": map[string]any{
 			"to":   map[string]any{"type": "string", "description": "MACHINE/SESSION, e.g. proteus/proteus"},
 			"text": map[string]any{"type": "string", "description": "The message: say who you are, what you want, and whether you need a reply."},
+			"task": map[string]any{"type": "string", "description": "Only to answer a task that needs input: MACHINE/SESSION:MESSAGE-ID."},
 			"wait": map[string]any{"type": "boolean", "description": "Wait for the reply (default true)."},
 		}},
 	},
@@ -41,6 +43,24 @@ var mcpTools = []map[string]any{
 		"description": "Where a task from ask_agent stands — working, completed, failed, input-required, canceled — and its reply so far.",
 		"inputSchema": map[string]any{"type": "object", "required": []string{"task"}, "properties": map[string]any{
 			"task": map[string]any{"type": "string", "description": "MACHINE/SESSION:MESSAGE-ID, as ask_agent returned it (machine, slash, task id)"},
+		}},
+	},
+	{
+		"name": "task_update",
+		"description": "Finish a task another agent gave you (a message beginning \"[shrooms task ID …]\"): state \"done\" with a summary " +
+			"of the result, \"blocked\" with what you need from the asker, or \"failed\" with why. Until you do, the task stays open " +
+			"and you are reminded if you go quiet.",
+		"inputSchema": map[string]any{"type": "object", "required": []string{"task", "state", "summary"}, "properties": map[string]any{
+			"task":    map[string]any{"type": "string", "description": "The task id from the message: SESSION:MESSAGE-ID"},
+			"state":   map[string]any{"type": "string", "enum": []string{"done", "blocked", "failed"}},
+			"summary": map[string]any{"type": "string", "description": "The result, what you need, or why it failed — what the asker reads."},
+		}},
+	},
+	{
+		"name":        "task_ack",
+		"description": "Close a task you gave another agent, once you have what you needed from it: MACHINE/SESSION:MESSAGE-ID.",
+		"inputSchema": map[string]any{"type": "object", "required": []string{"task"}, "properties": map[string]any{
+			"task": map[string]any{"type": "string"},
 		}},
 	},
 }
@@ -97,16 +117,11 @@ func serveMCP(in io.Reader, out io.Writer, c a2aClient) error {
 			reply(req.ID, map[string]any{"tools": mcpTools}, 0, "")
 		case "tools/call":
 			var p struct {
-				Name      string `json:"name"`
-				Arguments struct {
-					To   string `json:"to"`
-					Text string `json:"text"`
-					Wait *bool  `json:"wait"`
-					Task string `json:"task"`
-				} `json:"arguments"`
+				Name      string  `json:"name"`
+				Arguments mcpArgs `json:"arguments"`
 			}
 			json.Unmarshal(req.Params, &p)
-			text, err := c.call(p.Name, p.Arguments.To, p.Arguments.Text, p.Arguments.Task, p.Arguments.Wait == nil || *p.Arguments.Wait)
+			text, err := c.call(p.Name, p.Arguments)
 			if err != nil {
 				text = err.Error()
 			}
@@ -118,29 +133,60 @@ func serveMCP(in io.Reader, out io.Writer, c a2aClient) error {
 	return sc.Err()
 }
 
-func (c a2aClient) call(tool, to, text, task string, wait bool) (string, error) {
+type mcpArgs struct {
+	To      string `json:"to"`
+	Text    string `json:"text"`
+	Wait    *bool  `json:"wait"`
+	Task    string `json:"task"`
+	State   string `json:"state"`
+	Summary string `json:"summary"`
+}
+
+func (c a2aClient) call(tool string, a mcpArgs) (string, error) {
+	wait := a.Wait == nil || *a.Wait
 	switch tool {
 	case "list_agents":
 		return c.list()
 	case "ask_agent":
-		if to == "" || text == "" {
+		if a.To == "" && a.Task != "" {
+			a.To, _, _ = strings.Cut(a.Task, ":")
+		}
+		if a.To == "" || a.Text == "" {
 			return "", fmt.Errorf("ask_agent needs to and text")
 		}
-		t, err := c.send(to, text, wait)
+		var t cliTask
+		var err error
+		if a.Task != "" {
+			t, err = c.answer(a.Task, a.Text, wait)
+		} else {
+			t, err = c.send(a.To, a.Text, wait)
+		}
 		if err != nil {
 			return "", err
 		}
-		// The task id as task_status takes it: the machine before it.
-		name, _, _ := strings.Cut(to, "/")
+		name, _, _ := strings.Cut(a.To, "/")
 		t.ID = name + "/" + t.ID
 		return t.String(), nil
-	case "task_status":
-		t, err := c.task(task, false)
+	case "task_status", "task_ack":
+		method := "GetTask"
+		if tool == "task_ack" {
+			method = "AckTask"
+		}
+		t, err := c.task(a.Task, method)
 		if err != nil {
 			return "", err
 		}
-		name, _, _ := strings.Cut(task, "/")
+		name, _, _ := strings.Cut(a.Task, "/")
 		t.ID = name + "/" + t.ID
+		return t.String(), nil
+	case "task_update":
+		if a.Task == "" || a.State == "" {
+			return "", fmt.Errorf("task_update needs task and state")
+		}
+		t, err := c.update(a.Task, a.State, a.Summary)
+		if err != nil {
+			return "", err
+		}
 		return t.String(), nil
 	}
 	return "", fmt.Errorf("no tool %q", tool)

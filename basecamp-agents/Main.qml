@@ -774,6 +774,7 @@ Item {
                 add(e, { kind: "voicenote", id: d.id, error: d.status === "failed", text: d.error || "" })
             else if (e.kind === "stopped") add(e, { kind: "note", text: "asleep; the next message wakes it" })
             else if (e.kind === "restarted") add(e, { kind: "note", text: "restarted" + (e.by ? " from " + e.by : "") })
+            else if (e.kind === "task") add(e, { kind: "note", text: taskNote(d.id || "", d.state || "", d.summary || "") })
             else if (e.kind === "renamed") add(e, { kind: "note", text: "renamed (was " + (d.from || "") + ")" + (e.by ? " from " + e.by : "") })
             else if (e.kind === "setting" && d.auto_approve !== undefined)
                 add(e, { kind: "note", text: (d.auto_approve ? "auto-approve on" : "auto-approve off") + (e.by ? " from " + e.by : "") })
@@ -1230,6 +1231,11 @@ Item {
         if (y !== undefined) hostList.contentItem.contentY = y
         return hostList.contentItem.contentY
     }
+    // A2A tasks from other agents (the phone's AgentChat.taskNote and the
+    // session list's lines).
+    function taskNote(id, state, summary) { return "task " + id + " " + String(state).replace(/_/g, " ") + (summary ? " — " + summary : "") }
+    function tasksLabel(n) { return n > 0 ? (n === 1 ? "1 task" : n + " tasks") : "" }
+    function stalledLabel(n) { return "⚠ " + (n === 1 ? "a task stalled" : n + " tasks stalled") + " — no progress after the reminders" }
     function askDelete() { deleteDialog.open() }
     function deleteDialogOpen() { return deleteDialog.visible }
     function deleteOpenSession() {
@@ -1902,12 +1908,20 @@ Item {
                 color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(10)
                 wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight
             }
+            // Tasks from other agents: a stalled one is the owner's to look at.
+            Text {
+                visible: (srow.sess.tasks_stalled || 0) > 0
+                width: parent.width
+                text: root.stalledLabel(srow.sess.tasks_stalled || 0)
+                color: cAmber; font.family: "monospace"; font.pixelSize: root.fs(9); elide: Text.ElideRight
+            }
             Text {
                 width: parent.width
                 text: [root.clock(root.epoch(srow.sess.last_time)),
                        root.contextLabel(srow.sess.context_used, srow.sess.context_window),
                        root.harnessLabel(srow.sess.harness), root.shortModel(srow.sess.model),
-                       srow.sess.auto_approve && !(srow.sess.caps && !srow.sess.caps.approve) ? "auto-approve" : ""].filter(function(x) { return x !== "" }).join("  ·  ")
+                       srow.sess.auto_approve && !(srow.sess.caps && !srow.sess.caps.approve) ? "auto-approve" : "",
+                       root.tasksLabel(srow.sess.tasks_open || 0)].filter(function(x) { return x !== "" }).join("  ·  ")
                 color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(9); elide: Text.ElideRight
             }
         }

@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -31,6 +32,9 @@ const a2aUsage = `usage:
   shrooms-agent a2a send [--wait] MACHINE/SESSION TEXT   ask a session; --wait prints its reply
   shrooms-agent a2a get  MACHINE/TASK-ID                 where a task stands, and its reply
   shrooms-agent a2a cancel MACHINE/TASK-ID               interrupt it
+  shrooms-agent a2a ack MACHINE/TASK-ID                  you have seen its result: it is closed for you
+  shrooms-agent a2a update TASK-ID done|blocked|failed SUMMARY
+                                                         (a worker) finish a task given to this session
 
 MACHINE is a peer's name as "shrooms status" shows it, or its overlay address.
 A task id is what send printed: SESSION:MESSAGE-ID.`
@@ -114,8 +118,14 @@ func a2aMain(args []string) error {
 		return nil
 	case args[0] == "send" && len(rest) >= 2:
 		t, err = c.send(rest[0], strings.Join(rest[1:], " "), *wait)
-	case (args[0] == "get" || args[0] == "cancel") && len(rest) == 1:
-		t, err = c.task(rest[0], args[0] == "cancel")
+	case args[0] == "get" && len(rest) == 1:
+		t, err = c.task(rest[0], "GetTask")
+	case args[0] == "cancel" && len(rest) == 1:
+		t, err = c.task(rest[0], "CancelTask")
+	case args[0] == "ack" && len(rest) == 1:
+		t, err = c.task(rest[0], "AckTask")
+	case args[0] == "update" && len(rest) >= 2:
+		t, err = c.update(rest[0], rest[1], strings.Join(rest[2:], " "))
 	default:
 		return errors.New(a2aUsage)
 	}
@@ -130,8 +140,9 @@ func a2aMain(args []string) error {
 }
 
 type cliTask struct {
-	ID     string `json:"id"`
-	Status struct {
+	ID       string         `json:"id"`
+	Metadata map[string]any `json:"metadata"`
+	Status   struct {
 		State   string `json:"state"`
 		Message *struct {
 			Parts []struct {
@@ -150,6 +161,23 @@ func (t cliTask) State() string {
 func (t cliTask) String() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "task %s: %s\n", t.ID, strings.ReplaceAll(t.State(), "_", "-"))
+	// The supervision (shrooms extension): what a quiet task is doing.
+	var notes []string
+	if q, _ := t.Metadata["shrooms/queued"].(bool); q {
+		notes = append(notes, "queued: the session is busy and starts it when free")
+	}
+	if n, _ := t.Metadata["shrooms/nudges"].(float64); n > 0 {
+		notes = append(notes, fmt.Sprintf("reminded %d times for going quiet", int(n)))
+	}
+	if s, _ := t.Metadata["shrooms/stalled"].(bool); s {
+		notes = append(notes, "stalled: no progress after the reminders; its owner is told")
+	}
+	if a, _ := t.Metadata["shrooms/acknowledged"].(bool); a {
+		notes = append(notes, "acknowledged")
+	}
+	for _, n := range notes {
+		fmt.Fprintf(&b, "(%s)\n", n)
+	}
 	if t.Status.Message != nil {
 		for _, p := range t.Status.Message.Parts {
 			if p.Text != "" {
@@ -162,6 +190,21 @@ func (t cliTask) String() string {
 
 // send asks MACHINE/SESSION; with wait, the answer is the turn's end.
 func (c a2aClient) send(to, text string, wait bool) (cliTask, error) {
+	return c.message(to, "", text, wait)
+}
+
+// answer is more on a task already open — what it said it needs:
+// MACHINE/SESSION:MESSAGE-ID.
+func (c a2aClient) answer(ref, text string, wait bool) (cliTask, error) {
+	name, id, ok := strings.Cut(ref, "/")
+	session, _, _ := strings.Cut(id, ":")
+	if !ok || !strings.Contains(id, ":") {
+		return cliTask{}, fmt.Errorf("%q: want MACHINE/SESSION:MESSAGE-ID", ref)
+	}
+	return c.message(name+"/"+session, id, text, wait)
+}
+
+func (c a2aClient) message(to, taskID, text string, wait bool) (cliTask, error) {
 	name, session, ok := strings.Cut(to, "/")
 	if !ok || session == "" {
 		return cliTask{}, fmt.Errorf("%q: want MACHINE/SESSION", to)
@@ -172,19 +215,24 @@ func (c a2aClient) send(to, text string, wait bool) (cliTask, error) {
 	}
 	meta := map[string]any{}
 	if me := os.Getenv("SHROOMS_AGENT_SESSION"); me != "" {
+		// This machine by its mesh name, as the other side lists it.
 		host, _ := os.Hostname()
+		if ms, err := c.peers(); err == nil && len(ms) > 0 {
+			host = ms[0].Name
+		}
 		meta["shrooms/from"] = host + "/" + me
 	}
-	params := map[string]any{
-		"message": map[string]any{"messageId": newMessageID(), "role": "ROLE_USER",
-			"parts": []any{map[string]any{"text": text}}, "metadata": meta},
-		"configuration": map[string]any{"blocking": wait},
+	msg := map[string]any{"messageId": newMessageID(), "role": "ROLE_USER",
+		"parts": []any{map[string]any{"text": text}}, "metadata": meta}
+	if taskID != "" {
+		msg["taskId"] = taskID
 	}
+	params := map[string]any{"message": msg, "configuration": map[string]any{"blocking": wait}}
 	return c.rpc(addr, "/a2a/"+session, "SendMessage", params, wait)
 }
 
-// task is where MACHINE/SESSION:MESSAGE-ID stands, or cancels it.
-func (c a2aClient) task(ref string, cancel bool) (cliTask, error) {
+// task calls method (GetTask, CancelTask, AckTask) on MACHINE/SESSION:MESSAGE-ID.
+func (c a2aClient) task(ref, method string) (cliTask, error) {
 	name, id, ok := strings.Cut(ref, "/")
 	if !ok || !strings.Contains(id, ":") {
 		return cliTask{}, fmt.Errorf("%q: want MACHINE/SESSION:MESSAGE-ID", ref)
@@ -193,11 +241,29 @@ func (c a2aClient) task(ref string, cancel bool) (cliTask, error) {
 	if err != nil {
 		return cliTask{}, err
 	}
-	method := "GetTask"
-	if cancel {
-		method = "CancelTask"
-	}
 	return c.rpc(addr, "/a2a", method, map[string]any{"id": id}, false)
+}
+
+// update is a worker's word on a task given to its session on this machine:
+// done, blocked (and what it needs) or failed.
+func (c a2aClient) update(id, state, summary string) (cliTask, error) {
+	ms, err := c.peers()
+	if err != nil || len(ms) == 0 {
+		return cliTask{}, fmt.Errorf("this machine's agent: %v", err)
+	}
+	body, _ := json.Marshal(map[string]string{"state": state, "summary": summary, "session": os.Getenv("SHROOMS_AGENT_SESSION")})
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Post(c.base(ms[0].Addr)+"/v1/tasks/"+url.PathEscape(id),
+		"application/json", bytes.NewReader(body))
+	if err != nil {
+		return cliTask{}, err
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode != http.StatusOK {
+		return cliTask{}, fmt.Errorf("task_update: %s: %.300s", resp.Status, b)
+	}
+	var t cliTask
+	return t, json.Unmarshal(b, &t)
 }
 
 // list is every agent session on the mesh, one line each, from each

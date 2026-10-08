@@ -43,6 +43,9 @@ data class AgentSession(
     val starred: Boolean = false,
     /** Turns that have ended, as the agent counts them; -1 from an agent too old to. */
     val turns: Long = -1,
+    /** A2A tasks it has open, and of them those that stalled after the reminders. */
+    val tasksOpen: Int = 0,
+    val tasksStalled: Int = 0,
 )
 
 /** A coding agent a machine can run sessions of (GET /v1/harnesses). */
@@ -121,6 +124,8 @@ class AgentClient(private val address: String) {
                 approves = s.optJSONObject("caps")?.optBoolean("approve") ?: true,
                 starred = s.optBoolean("starred"),
                 turns = s.optLong("turns", -1),
+                tasksOpen = s.optInt("tasks_open"),
+                tasksStalled = s.optInt("tasks_stalled"),
             )
         }
     }

@@ -1,6 +1,7 @@
 # 041. Agents talk A2A, and the mesh is the authentication
 
-**Status:** accepted, built 2026-10-07 — design and what is still to come in
+**Status:** accepted, built 2026-10-07; "a task is one turn" and "one turn at
+a time … rejects" amended by [ADR-042](042-a-task-is-open-until-the-worker-finishes-it.md) — design and what is still to come in
 [docs/agents-together.md](../agents-together.md); the API in
 [docs/agents.md](../agents.md)
 

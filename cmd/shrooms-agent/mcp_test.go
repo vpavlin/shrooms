@@ -16,7 +16,16 @@ import (
 // lists a session and answers A2A as shrooms-agent does.
 func TestMCPServesTheMeshsAgents(t *testing.T) {
 	var asked map[string]any
+	var updated map[string]string
+	var updatedPath string
+	var methods []string
 	agentSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/v1/tasks/") {
+			updatedPath = r.URL.Path
+			json.NewDecoder(r.Body).Decode(&updated)
+			io.WriteString(w, `{"id":"proteus:m1","status":{"state":"TASK_STATE_COMPLETED","message":{"parts":[{"text":"probe written"}]}}}`)
+			return
+		}
 		switch r.URL.Path {
 		case "/v1/sessions":
 			io.WriteString(w, `{"sessions":[{"name":"proteus","state":"idle","harness":"pi","dir":"/home/vpavlin"}]}`)
@@ -26,6 +35,7 @@ func TestMCPServesTheMeshsAgents(t *testing.T) {
 				Params map[string]any
 			}
 			json.NewDecoder(r.Body).Decode(&req)
+			methods = append(methods, req.Method)
 			if req.Method == "SendMessage" {
 				asked = req.Params
 			}
@@ -50,6 +60,9 @@ func TestMCPServesTheMeshsAgents(t *testing.T) {
 		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"ask_agent","arguments":{"to":"proteus/proteus","text":"what is 6*7?"}}}`,
 		`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"task_status","arguments":{"task":"proteus/proteus:m1"}}}`,
 		`{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"ask_agent","arguments":{"to":"nobody"}}}`,
+		`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"task_update","arguments":{"task":"proteus:m1","state":"done","summary":"probe written"}}}`,
+		`{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"task_ack","arguments":{"task":"proteus/proteus:m1"}}}`,
+		`{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"ask_agent","arguments":{"task":"proteus/proteus:m1","text":"use master"}}}`,
 	}, "\n") + "\n"
 	pr, pw := io.Pipe()
 	go func() { serveMCP(strings.NewReader(in), pw, c); pw.Close() }()
@@ -63,7 +76,7 @@ func TestMCPServesTheMeshsAgents(t *testing.T) {
 		json.Unmarshal(sc.Bytes(), &r)
 		got[r.ID] = r.Result
 	}
-	if len(got) != 6 {
+	if len(got) != 9 {
 		t.Fatalf("answers: %d (a notification answered?)", len(got))
 	}
 	var init struct {
@@ -76,7 +89,7 @@ func TestMCPServesTheMeshsAgents(t *testing.T) {
 	}
 	var list struct{ Tools []struct{ Name string } }
 	json.Unmarshal(got[2], &list)
-	if len(list.Tools) != 3 || list.Tools[1].Name != "ask_agent" {
+	if len(list.Tools) != 5 || list.Tools[1].Name != "ask_agent" || list.Tools[3].Name != "task_update" {
 		t.Errorf("tools: %s", got[2])
 	}
 	text := func(id float64) (string, bool) {
@@ -103,5 +116,17 @@ func TestMCPServesTheMeshsAgents(t *testing.T) {
 	}
 	if s, e := text(6); !e || !strings.Contains(s, "needs to and text") {
 		t.Errorf("a bad call: %q %v", s, e)
+	}
+	// The worker's word goes to its own machine's agent, saying which session it is.
+	if s, e := text(7); e || !strings.Contains(s, "completed") || updatedPath != "/v1/tasks/proteus:m1" ||
+		updated["state"] != "done" || updated["session"] != "jimmy" {
+		t.Errorf("task_update: %q %v %s %v", s, e, updatedPath, updated)
+	}
+	if strings.Join(methods, ",") != "SendMessage,GetTask,AckTask,SendMessage" {
+		t.Errorf("methods %v", methods)
+	}
+	// An answer to a task names it.
+	if m, _ := asked["message"].(map[string]any); m["taskId"] != "proteus:m1" {
+		t.Errorf("an answer without its task: %v", asked)
 	}
 }

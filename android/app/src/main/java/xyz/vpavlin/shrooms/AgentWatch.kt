@@ -39,7 +39,7 @@ object AgentWatch {
     @Volatile var visible: String? = null
 
     /** What a session looked like at the last poll. */
-    data class Seen(val state: String, val lastSeq: Long, val turns: Long = -1)
+    data class Seen(val state: String, val lastSeq: Long, val turns: Long = -1, val stalled: Int = 0)
 
     /**
      * What to say about a change, if anything. Pure, so the rules are tested
@@ -62,6 +62,8 @@ object AgentWatch {
     fun change(before: Seen?, now: AgentSession): String? = when {
         before == null -> null
         now.state == "waiting" && before.state != "waiting" -> "needs you — something is waiting for approval"
+        // A task another agent gave it made no progress after its reminders.
+        now.tasksStalled > before.stalled -> "a task stalled — no progress after the reminders"
         now.turns >= 0 && before.turns >= 0 ->
             if (now.turns > before.turns) now.preview.ifEmpty { "finished" } else null
         now.state == "idle" && now.lastSeq > before.lastSeq && before.state != "idle" ->
@@ -124,7 +126,7 @@ class AgentWatcher(private val ctx: Context) {
                 for (s in sessions) {
                     val key = "${h.address}/${s.name}"
                     val said = AgentWatch.change(seen[key], s)
-                    seen[key] = AgentWatch.Seen(s.state, s.lastSeq, s.turns)
+                    seen[key] = AgentWatch.Seen(s.state, s.lastSeq, s.turns, s.tasksStalled)
                     if (said != null && AgentWatch.visible != key) notify(h, s, said)
                     if (AgentWatch.visible == key) Unread.seen(ctx, h.name, s.name, s.turns)
                     // Kept up to date for offline; the one on screen keeps itself.

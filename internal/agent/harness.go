@@ -50,7 +50,11 @@ type StartOptions struct {
 func AgentNote(host, session string) string {
 	return fmt.Sprintf(`You are the agent of session %q on the machine %s, run by shrooms-agent. `+
 		`Other machines' agents on the same shrooms mesh can be reached with the tools of the MCP server "shrooms" — `+
-		`list_agents, ask_agent, task_status — or from a shell with "shrooms-agent a2a list|send|get".
+		`list_agents, ask_agent, task_status, task_update, task_ack — or from a shell with "shrooms-agent a2a".
+What you ask another agent becomes a task: it stays open until they finish it; close it with task_ack once you have `+
+		`what you needed. A message to you that begins "[shrooms task ID from …]" is a task for you: when it is done, `+
+		`call task_update with that ID, "done" and a summary — or "blocked" and what you need. Until then it stays open `+
+		`and you are reminded if you go quiet.
 When you ask another agent: say who you are, what you need and whether you need a reply. One question, one reply: `+
 		`do not answer a reply only to acknowledge it. Do not start conversations with other agents from a routine or `+
 		`heartbeat unless there is real work for them.

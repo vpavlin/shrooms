@@ -82,140 +82,14 @@ type a2aTask struct {
 	Metadata  map[string]any `json:"metadata,omitempty"`
 }
 
-// taskFrom works out the task begun by the message with id from a session's
-// events, which must start at that message: the turn's text, and where it
-// stands — waiting on a prompt, ended by its result or by the process going.
-func taskFrom(events []Event, id, contextID string, canceled bool) a2aTask {
-	t := a2aTask{ID: id, ContextID: contextID, Status: a2aStatus{State: taskSubmitted}}
-	var said []string
-	open := map[string]bool{}
-	at := time.Time{}
-	for i, e := range events {
-		at = e.Time
-		if i == 0 {
-			continue // the message itself
-		}
-		switch e.Kind {
-		case "claude":
-			var d struct {
-				Type      string `json:"type"`
-				Subtype   string `json:"subtype"`
-				RequestID string `json:"request_id"`
-				Message   struct {
-					Content []struct {
-						Type string `json:"type"`
-						Text string `json:"text"`
-					} `json:"content"`
-				} `json:"message"`
-			}
-			json.Unmarshal(e.Data, &d)
-			switch d.Type {
-			case "assistant":
-				for _, c := range d.Message.Content {
-					if c.Type == "text" && strings.TrimSpace(c.Text) != "" {
-						said = append(said, strings.TrimSpace(c.Text))
-					}
-				}
-				t.Status.State = taskWorking
-			case "control_request":
-				open[d.RequestID] = true
-			case "result":
-				switch {
-				case d.Subtype == "success":
-					t.Status.State = taskCompleted
-				case canceled:
-					t.Status.State = taskCanceled
-				default:
-					t.Status.State = taskFailed
-				}
-				return t.finish(said, at)
-			default:
-				if t.Status.State == taskSubmitted {
-					t.Status.State = taskWorking
-				}
-			}
-		case "answer":
-			var d struct {
-				Prompt string `json:"prompt"`
-			}
-			json.Unmarshal(e.Data, &d)
-			delete(open, d.Prompt)
-		case "stopped":
-			// The process went before the turn ended: restarted, crashed.
-			t.Status.State = taskFailed
-			if canceled {
-				t.Status.State = taskCanceled
-			}
-			said = append(said, "(the session's process ended before the turn did)")
-			return t.finish(said, at)
-		}
-	}
-	if len(open) > 0 {
-		t.Status.State = taskInputRequired
-	} else if canceled {
-		t.Status.State = taskCanceled
-	}
-	return t.finish(said, at)
-}
-
-func (t a2aTask) finish(said []string, at time.Time) a2aTask {
-	if !at.IsZero() {
-		t.Status.Timestamp = at.UTC().Format(time.RFC3339Nano)
-	}
-	if len(said) > 0 {
-		text := strings.Join(said, "\n\n")
-		t.Status.Message = &a2aMessage{MessageID: t.ID + "-reply", ContextID: t.ContextID, TaskID: t.ID,
-			Role: "ROLE_AGENT", Parts: []a2aPart{{Text: text}}}
-		if t.Status.State == taskCompleted {
-			t.Artifacts = []a2aArtifact{{ArtifactID: t.ID + "-reply", Name: "reply", Parts: []a2aPart{{Text: text}}}}
-		}
-	}
-	return t
-}
-
-// turnOf returns the session's events from the message with id on, or false
-// when it has none: those in memory, else the log on disk.
-func (s *Session) turnOf(id string) ([]Event, bool) {
-	s.mu.Lock()
-	for i, e := range s.events {
-		if e.Kind == "message" && messageID(e) == id {
-			out := append([]Event(nil), s.events[i:]...)
-			s.mu.Unlock()
-			return out, true
-		}
-	}
-	var first uint64 = ^uint64(0)
-	if len(s.events) > 0 {
-		first = s.events[0].Seq
-	}
-	s.mu.Unlock()
-	older := s.fromDisk(0, first)
-	for i, e := range older {
-		if e.Kind == "message" && messageID(e) == id {
-			return older[i:], true
-		}
-	}
-	return nil, false
-}
-
-func messageID(e Event) string {
-	var d struct {
-		ID string `json:"id"`
-	}
-	json.Unmarshal(e.Data, &d)
-	return d.ID
-}
-
 // a2aLimit bounds what one device may ask one session over A2A in an hour:
 // two agents answering each other cannot keep each other busy for long.
 const a2aLimit = 30
 
-// a2aLimiter counts A2A messages per session and sender over the last hour,
-// and remembers the tasks cancelled through A2A.
+// a2aLimiter counts A2A messages per session and sender over the last hour.
 type a2aLimiter struct {
-	mu       sync.Mutex
-	sent     map[string][]time.Time
-	canceled map[string]bool
+	mu   sync.Mutex
+	sent map[string][]time.Time
 }
 
 func (l *a2aLimiter) allow(key string, now time.Time) bool {
@@ -236,21 +110,6 @@ func (l *a2aLimiter) allow(key string, now time.Time) bool {
 	}
 	l.sent[key] = append(kept, now)
 	return true
-}
-
-func (l *a2aLimiter) cancel(id string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.canceled == nil {
-		l.canceled = map[string]bool{}
-	}
-	l.canceled[id] = true
-}
-
-func (l *a2aLimiter) wasCanceled(id string) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.canceled[id]
 }
 
 // --- HTTP -------------------------------------------------------------------
@@ -289,7 +148,7 @@ func (h *handler) sessionCard(r *http.Request, in Info) map[string]any {
 		"version":     "1",
 		"supportedInterfaces": []map[string]any{{"url": h.cardBase(r) + in.Name,
 			"protocolBinding": "JSONRPC", "protocolVersion": "1.0"}},
-		"capabilities":       map[string]any{"streaming": true, "pushNotifications": false},
+		"capabilities":       a2aCapabilities(),
 		"defaultInputModes":  []string{"text/plain"},
 		"defaultOutputModes": []string{"text/plain"},
 		"skills": []map[string]any{{"id": in.Name, "name": in.Name, "description": desc,
@@ -323,7 +182,7 @@ func (h *handler) machineCard(w http.ResponseWriter, r *http.Request) {
 		"version":     "1",
 		"supportedInterfaces": []map[string]any{{"url": "http://" + r.Host + "/a2a",
 			"protocolBinding": "JSONRPC", "protocolVersion": "1.0"}},
-		"capabilities":       map[string]any{"streaming": true, "pushNotifications": false},
+		"capabilities":       a2aCapabilities(),
 		"defaultInputModes":  []string{"text/plain"},
 		"defaultOutputModes": []string{"text/plain"},
 		"skills":             skills,
@@ -338,8 +197,69 @@ func (h *handler) a2aCard(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, h.sessionCard(r, s.Info()))
 }
 
+// taskExtension names the shrooms extension to A2A's tasks: they last until
+// the worker finishes them, are supervised, and are acknowledged by the asker
+// (docs/a2a-tasks.md). Its fields are in each task's metadata under
+// "shrooms/"; AckTask and ListTasks are its methods.
+const taskExtension = "https://github.com/vpavlin/shrooms/blob/master/docs/a2a-tasks.md"
+
+func a2aCapabilities() map[string]any {
+	return map[string]any{"streaming": true, "pushNotifications": false,
+		"extensions": []map[string]any{{"uri": taskExtension, "required": false,
+			"description": "A task stays open until the worker finishes it (or it is cancelled or expires); " +
+				"a quiet worker is reminded, a stuck one marked stalled; the asker acknowledges the result (AckTask)."}}}
+}
+
+// view is a task as A2A shows it, with the session's own state folded in: a
+// permission prompt waiting is input-required, and the reply is the worker's
+// summary or, while it works, the last thing it said.
+func (h *handler) view(t Task) a2aTask {
+	s, ok := h.m.Get(t.Session)
+	ctx := t.Session
+	state := t.State
+	text := t.Summary
+	last := ""
+	if ok {
+		s.mu.Lock()
+		if s.convID != "" {
+			ctx = s.convID
+		}
+		prompts := len(s.pending)
+		s.mu.Unlock()
+		if !t.Started.IsZero() {
+			last = s.lastWords(t.Started)
+		}
+		if state == taskWorking && prompts > 0 {
+			state = taskInputRequired
+			text = "waiting for a permission prompt to be answered on the session's machine"
+		}
+	}
+	if text == "" {
+		text = last
+	}
+	out := a2aTask{ID: t.ID, ContextID: ctx, Status: a2aStatus{State: state, Timestamp: t.Updated.UTC().Format(time.RFC3339Nano)},
+		Metadata: map[string]any{
+			"shrooms/session": t.Session, "shrooms/from": t.From,
+			"shrooms/acknowledged": t.Acked, "shrooms/nudges": t.Nudges, "shrooms/stalled": t.Stalled,
+			"shrooms/queued": t.State == taskSubmitted, "shrooms/expired": t.Expired,
+			"shrooms/last_worker_line": trim(last, 600),
+		}}
+	if !t.LastNudge.IsZero() {
+		out.Metadata["shrooms/last_nudge"] = t.LastNudge.UTC().Format(time.RFC3339)
+	}
+	if text != "" {
+		out.Status.Message = &a2aMessage{MessageID: t.MessageID + "-status", ContextID: ctx, TaskID: t.ID,
+			Role: "ROLE_AGENT", Parts: []a2aPart{{Text: text}}}
+		if state == taskCompleted {
+			out.Artifacts = []a2aArtifact{{ArtifactID: t.MessageID + "-result", Name: "result", Parts: []a2aPart{{Text: text}}}}
+		}
+	}
+	return out
+}
+
 // a2a serves JSON-RPC for a session: POST /a2a/{name}, or POST /a2a with the
-// session in the message's metadata ("shrooms/session").
+// session named by the task id ("session:messageId") or by the message's
+// metadata ("shrooms/session").
 func (h *handler) a2a(w http.ResponseWriter, r *http.Request) {
 	var req rpcRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
@@ -356,79 +276,74 @@ func (h *handler) a2a(w http.ResponseWriter, r *http.Request) {
 		Configuration struct {
 			Blocking bool `json:"blocking"`
 		} `json:"configuration"`
+		ReferenceTaskIDs []string `json:"referenceTaskIds"`
 	}
 	json.Unmarshal(req.Params, &p)
 	name := r.PathValue("name")
 	if name == "" && p.Message != nil {
 		name, _ = p.Message.Metadata["shrooms/session"].(string)
+		if name == "" && p.Message.TaskID != "" {
+			name, _, _ = strings.Cut(p.Message.TaskID, ":")
+		}
 	}
 	if name == "" {
-		// A task id names its session too: "<session>:<message id>".
-		if i := strings.Index(p.ID, ":"); i > 0 {
-			name = p.ID[:i]
-		}
+		name, _, _ = strings.Cut(p.ID, ":")
 	}
 	s, ok := h.m.Get(name)
 	if !ok {
 		rpcReply(w, req.ID, nil, &rpcError{rpcInvalidParams, fmt.Sprintf("no session called %q", name)})
 		return
 	}
+	full := func(id string) string {
+		if strings.Contains(id, ":") {
+			return id
+		}
+		return s.Name() + ":" + id
+	}
 	switch req.Method {
 	case "SendMessage", "SendStreamingMessage":
 		h.a2aSend(w, r, req, s, p.Message, p.Configuration.Blocking || req.Method == "SendStreamingMessage")
-	case "GetTask", "SubscribeToTask", "CancelTask":
-		id := strings.TrimPrefix(p.ID, s.Name()+":")
-		evs, found := s.turnOf(id)
-		if !found {
+	case "ListTasks":
+		var out []a2aTask
+		for _, t := range h.m.Tasks(s.Name()) {
+			out = append(out, h.view(t))
+		}
+		rpcReply(w, req.ID, map[string]any{"tasks": out}, nil)
+	case "GetTask", "SubscribeToTask", "CancelTask", "AckTask":
+		id := full(p.ID)
+		t, found := h.m.tasks.get(id)
+		if !found || t.Session != s.Name() {
 			rpcReply(w, req.ID, nil, &rpcError{a2aTaskNotFound, "no task " + p.ID})
 			return
 		}
-		t := h.task(s, id, evs)
 		switch req.Method {
 		case "GetTask":
-			rpcReply(w, req.ID, map[string]any{"task": t}, nil)
+			rpcReply(w, req.ID, map[string]any{"task": h.view(t)}, nil)
 		case "SubscribeToTask":
-			h.a2aStream(w, r, req.ID, s, id)
+			h.a2aStream(w, r, req.ID, id)
 		case "CancelTask":
-			if terminal(t.Status.State) {
-				rpcReply(w, req.ID, nil, &rpcError{a2aNotCancelable, "task already " + t.Status.State})
-				return
-			}
-			h.m.a2a.cancel(s.Name() + ":" + id)
-			if err := s.Interrupt(h.caller(r)); err != nil {
+			t, err := h.m.Cancel(id, h.caller(r))
+			if err != nil {
 				rpcReply(w, req.ID, nil, &rpcError{a2aNotCancelable, err.Error()})
 				return
 			}
-			t.Status.State = taskCanceled
-			rpcReply(w, req.ID, map[string]any{"task": t}, nil)
+			rpcReply(w, req.ID, map[string]any{"task": h.view(t)}, nil)
+		case "AckTask":
+			t, err := h.m.Ack(id)
+			if err != nil {
+				rpcReply(w, req.ID, nil, &rpcError{a2aTaskNotFound, err.Error()})
+				return
+			}
+			rpcReply(w, req.ID, map[string]any{"task": h.view(t)}, nil)
 		}
 	default:
 		rpcReply(w, req.ID, nil, &rpcError{rpcNoMethod, "not supported here: " + req.Method})
 	}
 }
 
-// task is the task as it stands, under its full id ("<session>:<message id>"),
-// so that the id alone finds it again through POST /a2a.
-func (h *handler) task(s *Session, id string, evs []Event) a2aTask {
-	s.mu.Lock()
-	ctx := s.convID
-	s.mu.Unlock()
-	if ctx == "" {
-		ctx = s.Name()
-	}
-	t := taskFrom(evs, id, ctx, h.m.a2a.wasCanceled(s.Name()+":"+id))
-	t.ID = s.Name() + ":" + id
-	t.Metadata = map[string]any{"shrooms/session": s.Name()}
-	return t
-}
-
 func (h *handler) a2aSend(w http.ResponseWriter, r *http.Request, req rpcRequest, s *Session, m *a2aMessage, wait bool) {
 	if m == nil || m.MessageID == "" {
 		rpcReply(w, req.ID, nil, &rpcError{rpcInvalidParams, "a message with a messageId is needed"})
-		return
-	}
-	if m.TaskID != "" {
-		rpcReply(w, req.ID, nil, &rpcError{a2aUnsupported, "continuing a task is not supported yet: send a new message"})
 		return
 	}
 	var text []string
@@ -446,71 +361,76 @@ func (h *handler) a2aSend(w http.ResponseWriter, r *http.Request, req rpcRequest
 		// Who on that machine: its claim, beside what the mesh says.
 		by = by + " (" + from + ")"
 	}
-	id := m.MessageID
-	if _, seen := s.turnOf(id); !seen {
-		if !h.m.a2a.allow(s.Name()+"|"+h.caller(r), time.Now()) {
+	var params struct {
+		ReferenceTaskIDs []string `json:"referenceTaskIds"`
+	}
+	json.Unmarshal(req.Params, &params)
+	var t Task
+	var err error
+	if m.TaskID != "" {
+		// More on a task already open: the answer to "blocked", say.
+		id := m.TaskID
+		if !strings.Contains(id, ":") {
+			id = s.Name() + ":" + id
+		}
+		if _, ok := h.m.tasks.get(id); !ok {
+			rpcReply(w, req.ID, nil, &rpcError{a2aTaskNotFound, "no task " + m.TaskID})
+			return
+		}
+		t, err = h.m.FollowUp(s, id, strings.Join(text, "\n\n"))
+	} else {
+		if _, seen := h.m.tasks.get(s.Name() + ":" + m.MessageID); !seen &&
+			!h.m.a2a.allow(s.Name()+"|"+h.caller(r), time.Now()) {
 			rpcReply(w, req.ID, nil, &rpcError{a2aTooMany, fmt.Sprintf("more than %d messages to this session from you in an hour", a2aLimit)})
 			return
 		}
-		// A task is a turn: one sent while another runs would be folded into
-		// it (Claude Code) or queued behind it, and its result would be
-		// taken for another's. Busy says so; ask again.
-		if st := s.Info().State; st != Idle {
-			t := a2aTask{ID: s.Name() + ":" + id, ContextID: s.Name(), Status: a2aStatus{State: taskRejected,
-				Message: &a2aMessage{MessageID: id + "-busy", Role: "ROLE_AGENT",
-					Parts: []a2aPart{{Text: "busy (" + string(st) + "): ask again when it is idle"}}},
-				Timestamp: time.Now().UTC().Format(time.RFC3339Nano)}}
-			rpcReply(w, req.ID, map[string]any{"task": t}, nil)
-			return
-		}
-		if _, err := s.SendID(strings.Join(text, "\n\n"), by, id); err != nil {
-			rpcReply(w, req.ID, nil, &rpcError{rpcInvalidParams, err.Error()})
-			return
-		}
+		t, err = h.m.Submit(s, m.MessageID, by, strings.Join(text, "\n\n"), params.ReferenceTaskIDs)
 	}
-	if req.Method == "SendStreamingMessage" {
-		h.a2aStream(w, r, req.ID, s, id)
+	if err != nil {
+		rpcReply(w, req.ID, nil, &rpcError{rpcInvalidParams, err.Error()})
 		return
 	}
-	t := h.awaitTask(r, s, id, wait)
-	rpcReply(w, req.ID, map[string]any{"task": t}, nil)
+	if req.Method == "SendStreamingMessage" {
+		h.a2aStream(w, r, req.ID, t.ID)
+		return
+	}
+	rpcReply(w, req.ID, map[string]any{"task": h.awaitTask(r, t.ID, wait)}, nil)
 }
 
 // a2aWait bounds how long a blocking SendMessage holds the request: a long
-// turn is followed with GetTask or SubscribeToTask instead.
+// task is followed with GetTask or SubscribeToTask instead.
 var a2aWait = 10 * time.Minute
 
-// awaitTask returns the task now, or, when wait, once it ends or needs input.
-func (h *handler) awaitTask(r *http.Request, s *Session, id string, wait bool) a2aTask {
-	_, ch := s.Since(^uint64(0) >> 1)
-	defer s.Unsubscribe(ch)
-	timeout := time.After(a2aWait)
+// settled is a state a waiting asker hears about: finished, or needing it.
+func settled(state string) bool { return terminal(state) || state == taskInputRequired }
+
+// awaitTask is the task now, or, when wait, once it is settled (or a2aWait).
+func (h *handler) awaitTask(r *http.Request, id string, wait bool) a2aTask {
+	deadline := time.After(a2aWait)
 	for {
-		evs, _ := s.turnOf(id)
-		t := h.task(s, id, evs)
-		if !wait || terminal(t.Status.State) || t.Status.State == taskInputRequired {
-			return t
+		t, _ := h.m.tasks.get(id)
+		v := h.view(t)
+		if !wait || settled(v.Status.State) {
+			return v
 		}
 		select {
-		case <-ch:
-		case <-timeout:
-			return t
+		case <-time.After(500 * time.Millisecond):
+		case <-deadline:
+			return v
 		case <-r.Context().Done():
-			return t
+			return v
 		}
 	}
 }
 
 // a2aStream sends the task, then each change of its status, as server-sent
-// events of JSON-RPC responses, and ends with the one that is final.
-func (h *handler) a2aStream(w http.ResponseWriter, r *http.Request, rid json.RawMessage, s *Session, id string) {
+// events of JSON-RPC responses, ending with the one that is final.
+func (h *handler) a2aStream(w http.ResponseWriter, r *http.Request, rid json.RawMessage, id string) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		rpcReply(w, rid, nil, &rpcError{a2aUnsupported, "streaming unsupported"})
 		return
 	}
-	_, ch := s.Since(^uint64(0) >> 1)
-	defer s.Unsubscribe(ch)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
@@ -519,32 +439,68 @@ func (h *handler) a2aStream(w http.ResponseWriter, r *http.Request, rid json.Raw
 		fmt.Fprintf(w, "data: %s\n\n", b)
 		flusher.Flush()
 	}
-	evs, _ := s.turnOf(id)
-	t := h.task(s, id, evs)
-	send(map[string]any{"task": t})
-	last := t.Status.State
-	textLen := 0
-	if t.Status.Message != nil {
-		textLen = len(t.Status.Message.Parts[0].Text)
-	}
+	t, _ := h.m.tasks.get(id)
+	v := h.view(t)
+	send(map[string]any{"task": v})
+	last, text := v.Status.State, statusText(v)
 	for !terminal(last) {
 		select {
 		case <-r.Context().Done():
 			return
-		case <-ch:
-		case <-time.After(20 * time.Second):
+		case <-time.After(500 * time.Millisecond):
 		}
-		evs, _ := s.turnOf(id)
-		t = h.task(s, id, evs)
-		n := 0
-		if t.Status.Message != nil {
-			n = len(t.Status.Message.Parts[0].Text)
-		}
-		if t.Status.State == last && n == textLen {
+		t, _ := h.m.tasks.get(id)
+		v = h.view(t)
+		if v.Status.State == last && statusText(v) == text {
 			continue
 		}
-		last, textLen = t.Status.State, n
-		send(map[string]any{"statusUpdate": map[string]any{"taskId": t.ID, "contextId": t.ContextID,
-			"status": t.Status, "final": terminal(t.Status.State)}})
+		last, text = v.Status.State, statusText(v)
+		send(map[string]any{"statusUpdate": map[string]any{"taskId": v.ID, "contextId": v.ContextID,
+			"status": v.Status, "final": terminal(v.Status.State)}})
 	}
+}
+
+func statusText(v a2aTask) string {
+	if v.Status.Message == nil || len(v.Status.Message.Parts) == 0 {
+		return ""
+	}
+	return v.Status.Message.Parts[0].Text
+}
+
+// taskUpdate is the worker's word on a task (POST /v1/tasks/{id}): from this
+// machine only — its own sessions, through the shrooms MCP tool — never from
+// another device, which could otherwise close work it was not given.
+func (h *handler) taskUpdate(w http.ResponseWriter, r *http.Request) {
+	if h.caller(r) != "" {
+		fail(w, http.StatusForbidden, fmt.Errorf("only this machine's sessions update their tasks"))
+		return
+	}
+	var req struct{ State, Summary, Session string }
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, err)
+		return
+	}
+	id := r.PathValue("id")
+	if t, ok := h.m.tasks.get(id); !ok {
+		fail(w, http.StatusNotFound, fmt.Errorf("no task %s", id))
+		return
+	} else if req.Session != "" && req.Session != t.Session {
+		fail(w, http.StatusForbidden, fmt.Errorf("task %s is session %s's, not %s's", id, t.Session, req.Session))
+		return
+	}
+	t, err := h.m.Update(id, req.State, req.Summary)
+	if err != nil {
+		fail(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, h.view(t))
+}
+
+// tasksList is GET /v1/tasks[?session=]: the tasks, as the apps show them.
+func (h *handler) tasksList(w http.ResponseWriter, r *http.Request) {
+	var out []a2aTask
+	for _, t := range h.m.Tasks(r.URL.Query().Get("session")) {
+		out = append(out, h.view(t))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tasks": out})
 }

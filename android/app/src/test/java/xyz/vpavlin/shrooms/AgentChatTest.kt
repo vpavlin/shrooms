@@ -209,6 +209,18 @@ class AgentChatTest {
         assertEquals("— 90 earlier events not loaded · load them —", AgentChat.moreLabel(90))
     }
 
+    @Test fun aTasksEndIsANote() {
+        val items = AgentChat.items(listOf(ev(3, "task", """{"id":"proj:m1","state":"stalled","summary":"no progress after 5 reminders"}""")))
+        assertEquals("task proj:m1 stalled — no progress after 5 reminders", (items.last() as ChatItem.Note).text)
+    }
+
+    @Test fun aStalledTaskIsTold() {
+        val s = AgentSession("proteus", "/", "idle", 0, true, 10, turns = 3, tasksOpen = 1, tasksStalled = 1)
+        assertEquals("a task stalled — no progress after the reminders",
+            AgentWatch.change(AgentWatch.Seen("idle", 10, 3, 0), s))
+        assertEquals(null, AgentWatch.change(AgentWatch.Seen("idle", 10, 3, 1), s))
+    }
+
     @Test fun toolResultsAreShownFolded() {
         val items = AgentChat.items(listOf(
             ev(7, "claude", """{"type":"user","message":{"role":"user","content":[

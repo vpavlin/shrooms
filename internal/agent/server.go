@@ -65,6 +65,9 @@ func Handler(log *slog.Logger, m *Manager, who Who) http.Handler {
 	mux.HandleFunc("GET /a2a/{name}/.well-known/agent-card.json", h.a2aCard)
 	mux.HandleFunc("POST /a2a/{name}", h.a2a)
 	mux.HandleFunc("POST /a2a", h.a2a)
+	// Tasks (tasks.go): the apps' list, and the worker's word on one.
+	mux.HandleFunc("GET /v1/tasks", h.tasksList)
+	mux.HandleFunc("POST /v1/tasks/{id}", h.taskUpdate)
 	return mux
 }
 
@@ -451,6 +454,9 @@ func (h *handler) interrupt(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusConflict, err)
 		return
 	}
+	// The owner stopped it: its tasks are not to be pushed on behind their
+	// back, until someone writes to the session again.
+	h.m.pauseTasks(s.Name())
 	w.WriteHeader(http.StatusAccepted)
 }
 

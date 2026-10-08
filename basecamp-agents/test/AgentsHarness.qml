@@ -233,6 +233,7 @@ Item {
     Timer {
         interval: 3500; running: true
         onTriggered: {
+            console.error("HOSTSCROLL=" + top.hostScrollSeen)
             var kinds = []
             for (var i = 0; i < chatCount(); i++) kinds.push(view.chatModelAt(i).kind)
             console.error("ROWS=" + kinds.join(","))
@@ -541,6 +542,7 @@ Item {
             var both = view.planAccounts([stale, fresh], now17), alone = view.planAccounts([stale], now17)[0]
             console.error("RENEWED n=" + both.length + " machines=" + both[0].machines.join("+") + " share=" + both[0].windows[0].utilization
                           + " alone=" + alone.windows[0].renewed + "," + alone.windows[0].utilization + ",[" + alone.status + "] glance=" + view.planGlance([alone]).percent)
+            console.error("TASKS note=" + view.taskNote("proj:m1", "stalled", "no progress after 5 reminders") + " | " + view.tasksLabel(2) + " | " + view.stalledLabel(1))
             // Deleting the open session: asks what the phone asks, then goes.
             console.error("DELETETEXT=" + (view.deleteSessionText("working").indexOf("cut off") > 0)
                           + "," + (view.deleteSessionText("idle").indexOf("conversation itself is kept") > 0))
@@ -569,10 +571,12 @@ Item {
             Qt.callLater(function() {
                 view.hostScroll(180)
                 view.agentHosts = many.slice()
-                scrollCheck.start()
+                // Read two passes later, once the list has been rebuilt —
+                // before the view's own poll can replace the hosts.
+                Qt.callLater(function() { Qt.callLater(function() { top.hostScrollSeen = Math.round(view.hostScroll()) }) })
             })
         }
     }
-    Timer { id: scrollCheck; interval: 200; onTriggered: console.error("HOSTSCROLL=" + Math.round(view.hostScroll())) }
+    property int hostScrollSeen: -1
     function chatCount() { return view.chatModelCount() }
 }

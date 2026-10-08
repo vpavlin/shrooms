@@ -539,8 +539,12 @@ private fun SessionRow(s: AgentSession, where: String = "", reachable: Boolean =
             Text(s.preview, style = MaterialTheme.typography.bodySmall, color = Palette.Ash,
                 maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
+        // Tasks from other agents: a stalled one is the owner's to look at.
+        if (s.tasksStalled > 0) Text("⚠ " + (if (s.tasksStalled == 1) "a task stalled" else "${s.tasksStalled} tasks stalled") +
+            " — no progress after the reminders", style = MaterialTheme.typography.labelSmall, color = Palette.Amber)
         val meta = listOf(whenSaid(s.lastTime), contextLabel(s.contextUsed, s.contextWindow),
-            harnessLabel(s.harness), shortModel(s.model), if (s.autoApprove && s.approves) "auto-approve" else "")
+            harnessLabel(s.harness), shortModel(s.model), if (s.autoApprove && s.approves) "auto-approve" else "",
+            if (s.tasksOpen > 0) (if (s.tasksOpen == 1) "1 task" else "${s.tasksOpen} tasks") else "")
             .filter { it.isNotEmpty() }
         Text((meta + s.dir.replace(Regex("^/home/[^/]+"), "~")).joinToString("  ·  "),
             style = MaterialTheme.typography.labelSmall, color = Palette.Ash,
