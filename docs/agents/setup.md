@@ -364,8 +364,18 @@ anything else root owns.
 
 ## The apps
 
-The apps are not in a public store yet. You build them from a checkout of
-the repository.
+Both are published, with updates, in public repositories of their own:
+
+- **Android:** in F-Droid, Settings → Repositories → add
+  `https://apps.vpavlin.xyz/fdroid/repo`, then install **Shrooms** (the mesh)
+  and **Shrooms Agents**. Open Shrooms Agents from the "agents" link in the
+  shrooms app the first time, so it gets the peers.
+- **Basecamp:** Package Manager → Repositories → add
+  `https://apps.vpavlin.xyz/basecamp/logos-repo.json`, then install
+  `shrooms_core`, `shrooms` and `shrooms_agents`. Then let your user read the
+  shrooms socket on the desktop (step 3 under "Basecamp" below).
+
+The rest of this section is for building them yourself, from a checkout.
 
 ### Android
 

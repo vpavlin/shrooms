@@ -423,6 +423,62 @@ jobs:
           echo "pushed ${{ steps.tags.outputs.list }}"
           echo "redeploy with: docker pull ${{ steps.img.outputs.name }}:latest"
 
+  # shrooms-agent's own image, which scripts/install-agent.sh copies the agent
+  # out of. It was pushed by hand (make push-agent-image), and was four days
+  # and three features stale when the guides first told strangers to install
+  # from it (2026-10-08) — the relay's story above, again. After the tests,
+  # unlike the relay: a newcomer's first agent should be one that passed them.
+  agent-image:
+    name: publish agent image
+    runs-on: ubuntu-latest
+    needs: [test]
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Build the agent for amd64 and arm64
+        run: make agent-image-ctx
+
+      - name: Set up buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tags
+        id: tags
+        run: |
+          owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')
+          IMG=ghcr.io/$owner/shrooms-agent
+          t="$IMG:${{ github.sha }}"
+          case "${{ github.ref }}" in
+            refs/heads/master|refs/heads/main) t="$t,$IMG:latest" ;;
+          esac
+          case "${{ github.ref }}" in
+            refs/tags/v*) t="$t,$IMG:${GITHUB_REF_NAME}" ;;
+          esac
+          echo "list=$t" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/build/agent
+          file: docker/agent.Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.list }}
+          provenance: false
+
   # The Basecamp monitoring module: a QML view, packaged as an LGX.
   #
   # Separate from the Go jobs because it shares nothing with them — no cgo, no

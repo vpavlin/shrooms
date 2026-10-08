@@ -173,6 +173,52 @@ providers with attested hardware, if and when Akash offers them.
 Console's API or `provider-services`, paid in AKT (Console Air); a budget per
 deployment, and nothing remote started without your yes.
 
+## Telling other agents a request comes from a cage (proposed, 2026-10-08)
+
+The owner's idea: when a caged session asks another agent for something, the
+receiver should know, and be able to decide — caged agents work with caged
+agents, say, while a session on the laptop takes nothing from one.
+
+**Why it cannot simply be a field the sender sets.** Today a task names its
+asker by the mesh's word for the *device* and the session's own *claim*
+(`shrooms/from`, "laptop (laptop/review)"). The device is proven; the session
+is not. A caged agent reaches the mesh through the machine's own sockets, so
+to everyone it *is* the machine — and it can talk to any agent directly
+(curl, not the shrooms tools) with any claim it likes, including the name of
+a session that is not caged. A "caged: true" it sets, it can leave out. The
+same reach is the cage's one open hole: it can ask this machine's own agent
+to start a session outside the cage (docs/agents/cages.md).
+
+**What would make it true, and close that hole too:**
+
+1. **Cages do not reach agents directly.** The agent port (7387) is closed
+   inside each cage's network namespace, from outside it — the cage's root
+   has no `NET_ADMIN` to reopen it. Everything else (internet, mesh
+   services) is unchanged.
+2. **A socket of its own instead.** Each caged session gets a unix socket,
+   mounted in, to *its own* agent, which knows which session is on the other
+   end. Through it: `list_agents`, `ask_agent`, `task_status`,
+   `task_update` for its own tasks, `task_ack` — what the shrooms tools need
+   — and nothing that creates, deletes or reconfigures sessions.
+3. **The agent forwards, and vouches.** An outgoing request from a cage is
+   sent by its agent, with `shrooms/caged: true` and the session's name as
+   the agent knows it, not as the session claims it. Requests the agent
+   sends for a session outside a cage carry `shrooms/caged: false`.
+4. **The receiver decides.** A per-session setting, in the apps beside
+   auto-approve: *accept tasks from caged agents* (on by default for caged
+   sessions, off for the others?). Refused with a reason the asker reads
+   (`TASK_STATE_REJECTED`, "this session takes no tasks from caged agents").
+   The board can draw a caged asker's link in the cage's violet.
+
+What it costs: the tools inside a cage talk to a socket instead of the
+network (a small change to `shrooms-agent mcp`, which already knows its
+session), and an older agent on another machine cannot vouch — its requests
+read as "not known to be uncaged", which a strict receiver treats like a
+cage.
+
+Open: the default for sessions outside cages; whether a cage may reach other
+machines' agents at all, or only through its own.
+
 ## Agents starting agents
 
 **What there is already (2026-10-08):** a session can make another with the
