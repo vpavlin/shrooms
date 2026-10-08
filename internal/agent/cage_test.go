@@ -290,6 +290,24 @@ func TestARealCage(t *testing.T) {
 	t.Logf("preview: %q", s.Info().Preview)
 }
 
+// moveWhenIdle moves a session once its turn has ended — the reply's text
+// arrives before the turn's end, and a slow machine (CI, 2026-10-08) takes a
+// while to report it — asking until the move is no longer refused as busy.
+func moveWhenIdle(t *testing.T, m *Manager, name string, cage *Cage) Info {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		in, err := m.SetCage(name, cage, "phone")
+		if err == nil {
+			return in
+		}
+		if !strings.Contains(err.Error(), "idle") || time.Now().After(deadline) {
+			t.Fatal(err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 func TestASessionMovesIntoACageAndOut(t *testing.T) {
 	podman, log := fakePodman(t, false)
 	state := t.TempDir()
@@ -318,21 +336,7 @@ func TestASessionMovesIntoACageAndOut(t *testing.T) {
 		t.Fatalf("a working session is moved into a cage: %v", err)
 	}
 	s.Interrupt("phone")
-	// Once the interrupted turn has ended, which a slow machine takes a
-	// while to report (CI, 2026-10-08): asked until it is idle.
-	deadline := time.Now().Add(10 * time.Second)
-	var in Info
-	var err error
-	for {
-		in, err = m.SetCage("review", &Cage{Image: DesktopImage, GitHub: true}, "phone")
-		if err == nil || !strings.Contains(err.Error(), "idle") || time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
+	in := moveWhenIdle(t, m, "review", &Cage{Image: DesktopImage, GitHub: true})
 	if in.Cage == nil || in.Cage.Image != DesktopImage || !in.Cage.GitHub || in.Running {
 		t.Fatalf("the session is not in the desktop cage, stopped until the next message: %+v", in)
 	}
@@ -357,10 +361,8 @@ func TestASessionMovesIntoACageAndOut(t *testing.T) {
 	name := regexp.MustCompile(`--name (\S+)`).FindStringSubmatch(cs[create])[1]
 
 	// Out again: the cage is deleted, and the session runs on the machine.
-	if _, err := m.SetCage("review", nil, "phone"); err != nil {
-		t.Fatal(err)
-	}
-	deadline = time.Now().Add(5 * time.Second)
+	moveWhenIdle(t, m, "review", nil)
+	deadline := time.Now().Add(5 * time.Second)
 	for indexOf(calls(t, log), `^rm -f -t 3 `+name+`$`) < 0 && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
 	}
