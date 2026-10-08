@@ -134,6 +134,17 @@ case "$ks" in /*) ;; *) ks="$FD/$ks" ;; esac
 rm -rf "$STAGE"
 REMOTE
 
+# SIGN_ONLY=1: stop here, with the signed APK left in SIGN_OUT on the host
+# for someone else to publish — jimmy-crib/publisher, which checks and
+# publishes but never signs (since 2026-10-08). The key never leaves the host
+# either way.
+if [ "${SIGN_ONLY:-0}" = 1 ]; then
+    OUT=${SIGN_OUT:-'~/publisher-inbox/laptop-shrooms'}
+    ssh "$HOST" "eval mkdir -p $OUT && eval mv /tmp/shrooms-$VERSION_CODE.apk $OUT/$APP_ID'_'$VERSION_CODE.apk && eval ls -l $OUT/$APP_ID'_'$VERSION_CODE.apk"
+    echo "==> signed $APP_ID versionCode $VERSION_CODE ($VERSION_NAME), left in $OUT on $HOST"
+    exit 0
+fi
+
 echo "==> metadata"
 # F-Droid cannot extract an adaptive (XML) icon from an APK, which is why the
 # first publish logged "Cannot fetch icon". The fastlane layout is the
