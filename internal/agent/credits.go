@@ -23,8 +23,12 @@ import (
 
 // Credit is one key's standing with its provider.
 type Credit struct {
-	Provider string             `json:"provider"` // "venice"
-	Key      string             `json:"key"`      // a fingerprint of the key, never the key
+	Provider string `json:"provider"` // "venice"
+	// Names are the providers using the key, as pi's settings name them,
+	// which is how a session's model names them ("venice/glm-…"): which
+	// sessions the key serves.
+	Names    []string           `json:"names,omitempty"`
+	Key      string             `json:"key"` // a fingerprint of the key, never the key
 	Balances map[string]float64 `json:"balances,omitempty"`
 	ResetsAt time.Time          `json:"resets_at,omitempty"` // when the daily allowance (DIEM) refills
 	At       time.Time          `json:"at"`
@@ -38,6 +42,7 @@ type Credit struct {
 // creditKey is a key to ask about, where pi's settings name it.
 type creditKey struct {
 	provider, base, key string
+	names               []string // the providers' names in pi's settings
 }
 
 func fingerprint(key string) string {
@@ -68,8 +73,14 @@ func piCreditKeys() []creditKey {
 		return nil
 	}
 	var out []creditKey
-	seen := map[string]bool{}
-	for _, p := range cfg.Providers {
+	seen := map[string]int{}
+	names := make([]string, 0, len(cfg.Providers))
+	for name := range cfg.Providers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		p := cfg.Providers[name]
 		if !strings.Contains(p.BaseURL, "api.venice.ai") {
 			continue
 		}
@@ -77,18 +88,24 @@ func piCreditKeys() []creditKey {
 		if strings.HasPrefix(key, "$") {
 			key = os.Getenv(strings.Trim(strings.TrimPrefix(key, "$"), "{}"))
 		}
-		if key == "" || seen[key] {
+		if key == "" {
 			continue
 		}
-		seen[key] = true
-		out = append(out, creditKey{"venice", strings.TrimRight(p.BaseURL, "/"), key})
+		// One reading per key, however many providers share it, with every
+		// name that uses it.
+		if i, ok := seen[key]; ok {
+			out[i].names = append(out[i].names, name)
+			continue
+		}
+		seen[key] = len(out)
+		out = append(out, creditKey{"venice", strings.TrimRight(p.BaseURL, "/"), key, []string{name}})
 	}
 	return out
 }
 
 // veniceCredit asks Venice where a key stands.
 func veniceCredit(ctx context.Context, k creditKey) Credit {
-	c := Credit{Provider: k.provider, Key: fingerprint(k.key), At: time.Now()}
+	c := Credit{Provider: k.provider, Names: k.names, Key: fingerprint(k.key), At: time.Now()}
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, k.base+"/api_keys/rate_limits", nil)
 	req.Header.Set("Authorization", "Bearer "+k.key)
 	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)

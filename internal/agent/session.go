@@ -83,6 +83,10 @@ type Info struct {
 	// again when it ends — an agent that works on its own, from its
 	// extensions (a heartbeat, a chat bridge), and not only when asked.
 	KeepRunning bool `json:"keep_running,omitempty"`
+	// Limited is set while the session cannot work for want of quota — the
+	// subscription's limit reached, its key's allowance spent — and says
+	// until when (limited.go).
+	Limited *Limited `json:"limited,omitempty"`
 	// Cage is set for a session that runs in a container of its own, with
 	// the image it is made from (cage.go).
 	Cage *CageInfo `json:"cage,omitempty"`
@@ -481,10 +485,12 @@ func (m *Manager) List() []Info {
 			}
 		}
 	}
+	plan, credits, now := m.limitsNow(), m.Credits(), time.Now()
 	out := make([]Info, 0, len(ss))
 	for _, s := range ss {
 		in := s.Info()
 		in.TasksOpen, in.TasksStalled = open[in.Name], stalled[in.Name]
+		in.Limited = limitedFor(in.Harness, in.Model, plan, credits, now)
 		out = append(out, in)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })

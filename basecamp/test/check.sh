@@ -254,6 +254,7 @@ expect "PLACEHOLDER first=[reaching laptop…] then=[no messages yet]" "an empty
 expect "REMADE watch=fdb0:9afc:a5ef:388c:8264:7716:36fc:64eb shrooms -300 rows=0" "a copy of a session since made again is not dropped"
 expect "STOPPED=/v1/sessions/shrooms/interrupt" "stopping the reply does not interrupt the session"
 expect "COPYCODE links=2 first=ssh-keygen -t ed25519 copied=true said=copied 2 lines" "code in a reply does not copy itself when clicked"
+expect "QUOTATAG shown=1 label=QUOTA · back T,,QUOTA" "a session out of quota is not set apart in the session list"
 expect "CAGETAG shown=1 words=desktop, GitHub login" "a caged session is not marked in the session list"
 expect 'CAGED open=true offer=true moved=/v1/sessions/shrooms/cage {"cage":{"image":"localhost/shrooms-workbench:desktop","github":true}} out={"cage":null}' "a session is not moved into a cage with its options, or out of it"
 expect "RESTARTED=/v1/sessions/shrooms/restart SAID=restarted session shrooms" "restart does not restart the session"

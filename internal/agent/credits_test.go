@@ -34,16 +34,18 @@ func TestCreditsOfVeniceKeys(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "models.json"), []byte(`{"providers":{
 		"venice":{"baseUrl":"`+venice.URL+`/api/v1","apiKey":"$VENICE_INFERENCE_KEY"},
 		"venice2":{"baseUrl":"https://api.venice.ai/x","apiKey":"from-env"},
+		"venice3":{"baseUrl":"https://api.venice.ai/x","apiKey":"$VENICE_INFERENCE_KEY"},
 		"local":{"baseUrl":"http://localhost:11434/v1","apiKey":"ollama"}}}`), 0o600)
 	keys := piCreditKeys()
-	if len(keys) != 1 || keys[0].key != "from-env" {
+	// One key, asked about once, serving both providers that use it.
+	if len(keys) != 1 || keys[0].key != "from-env" || strings.Join(keys[0].names, ",") != "venice2,venice3" {
 		t.Fatalf("keys %+v", keys)
 	}
-	c := veniceCredit(context.Background(), creditKey{"venice", venice.URL + "/api/v1", "from-env"})
+	c := veniceCredit(context.Background(), creditKey{"venice", venice.URL + "/api/v1", "from-env", []string{"venice2"}})
 	if c.Error != "" || c.Balances["DIEM"] != 5.62 || c.ResetsAt.Hour() != 0 || c.Key != fingerprint("from-env") || strings.Contains(c.Key, "from-env") {
 		t.Fatalf("credit %+v", c)
 	}
-	if bad := veniceCredit(context.Background(), creditKey{"venice", venice.URL + "/api/v1", "bad"}); !strings.Contains(bad.Error, "401") {
+	if bad := veniceCredit(context.Background(), creditKey{"venice", venice.URL + "/api/v1", "bad", nil}); !strings.Contains(bad.Error, "401") {
 		t.Errorf("a refused key: %+v", bad)
 	}
 	if asked[0] != "Bearer from-env" {

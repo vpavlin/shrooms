@@ -23,6 +23,7 @@ Item {
               preview: "The view loads and the existing checks pass." },
             { name: "notes", dir: "/home/someone/notes", state: "idle", pending: 0, running: false,
               cage: { image: "localhost/shrooms-workbench:desktop", github: true },
+              limited: { reason: "limit reached (5 hours)", until: "2099-10-07T02:20:00+02:00" },
               last_seq: 3, last_time: "2026-10-02T09:00:00+02:00", auto_approve: true,
               context_used: 22703, context_window: 200000, model: "claude-haiku-4-5-20251001", preview: "" } ] } }]
 
@@ -251,6 +252,7 @@ Item {
             console.error("STOPPED=" + top.lastPostPath)
             view.askRestart()
             view.restartOpenSession()
+            console.error("QUOTATAG shown=" + top.countVisible(view, "quotaTag") + " label=" + view.quotaLabel({ reason: "x", until: "2099-10-07T02:20:00+02:00" }).replace(/back .*/, "back T") + "," + view.quotaLabel(null) + "," + view.quotaLabel({ reason: "x" }))
             console.error("CAGETAG shown=" + top.countVisible(view, "cageTag") + " words=" + view.cageWords({ image: "localhost/shrooms-workbench:desktop", github: true }))
             console.error("RESTARTED=" + top.lastPostPath + " SAID=" + view.said)
             var ch = view.mdHtml("Run `ssh-keygen -t ed25519` in ~/x:\n```\nmake test\ngo vet ./...\n```")

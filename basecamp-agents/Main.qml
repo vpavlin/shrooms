@@ -1167,6 +1167,13 @@ Item {
         if (!st.ready) return what + ". The image is built with the first one (a few minutes)."
         return what + "."
     }
+    // A session that cannot work for want of quota (the agent's `limited`):
+    // when it comes back, or why.
+    function quotaLabel(lim) {
+        if (!lim) return ""
+        var until = lim.until ? epoch(lim.until) : 0
+        return "QUOTA" + (until ? " · back " + clock(until) : "")
+    }
     function cageLabel(sess) { return sess && sess.cage ? "caged" : "" }
     // What a cage is given, chosen in "+ session" and in the cage dialog:
     // its image ("" for the machine's), nix, the GitHub login.
@@ -2289,7 +2296,8 @@ Item {
         required property var sess
         property bool showHost: false
         readonly property bool up: root.hostReachable(srow.host)
-        opacity: up ? 1 : 0.5
+        // Dimmed too while it cannot work for want of quota (QuotaTag).
+        opacity: !up ? 0.5 : (sess.limited ? 0.6 : 1)
 
         readonly property bool isOpen: root.agentOpen !== null && root.agentOpen.address === srow.host.address && root.agentOpen.session === srow.sess.name
         height: sCol.implicitHeight + root.sz(16)
@@ -2306,6 +2314,7 @@ Item {
                 width: parent.width
                 Text { text: srow.sess.name; color: cBone; font.family: "monospace"; font.pixelSize: root.fs(12); elide: Text.ElideRight; Layout.fillWidth: !srow.showHost }
                 CageTag { sess: srow.sess }
+                QuotaTag { sess: srow.sess }
                 Rectangle {
                     readonly property int n: root.unreadOf(srow.host, srow.sess)
                     visible: n > 0
@@ -2434,7 +2443,8 @@ Item {
         readonly property var sess: card.sess
         readonly property bool up: root.hostReachable(bcard.host)
         readonly property int tailLines: 6
-        opacity: up ? 1 : 0.5
+        // Dimmed too while it cannot work for want of quota (QuotaTag).
+        opacity: !up ? 0.5 : (sess.limited ? 0.6 : 1)
         height: bCol.implicitHeight + root.sz(16)
         radius: root.sz(8)
         color: cPanel
@@ -2450,6 +2460,7 @@ Item {
                 spacing: 6
                 Text { text: (bcard.sess.starred ? "🍄 " : "") + bcard.sess.name; color: cBone; font.family: "monospace"; font.pixelSize: root.fs(13); elide: Text.ElideRight; Layout.maximumWidth: bcard.width * 0.5 }
                 CageTag { sess: bcard.sess }
+                QuotaTag { sess: bcard.sess }
                 Rectangle {
                     readonly property int n: root.unreadOf(bcard.host, bcard.sess)
                     visible: n > 0
@@ -2628,6 +2639,22 @@ Item {
         ToolTip.visible: ctagMouse.containsMouse && visible
         ToolTip.text: sess && sess.cage ? "in a cage: " + root.cageWords(sess.cage) : ""
         MouseArea { id: ctagMouse; anchors.fill: parent; hoverEnabled: true; acceptedButtons: Qt.NoButton }
+    }
+
+    // Out of quota, by the name: when it comes back; why, on hover.
+    component QuotaTag: Text {
+        id: qtag
+        required property var sess
+        objectName: "quotaTag"
+        visible: !!(sess && sess.limited)
+        text: root.quotaLabel(sess ? sess.limited : null)
+        color: cAmber
+        font.family: "monospace"; font.pixelSize: root.fs(9); font.letterSpacing: 1; font.bold: true
+        leftPadding: root.sz(5); rightPadding: root.sz(5); topPadding: root.sz(1); bottomPadding: root.sz(1)
+        Rectangle { anchors.fill: parent; z: -1; radius: root.sz(4); color: "transparent"; border.color: cAmber; border.width: 1 }
+        ToolTip.visible: qtagMouse.containsMouse && visible
+        ToolTip.text: sess && sess.limited ? sess.limited.reason : ""
+        MouseArea { id: qtagMouse; anchors.fill: parent; hoverEnabled: true; acceptedButtons: Qt.NoButton }
     }
 
     component Pulse: Rectangle {

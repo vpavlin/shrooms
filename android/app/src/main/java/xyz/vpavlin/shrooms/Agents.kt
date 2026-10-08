@@ -542,7 +542,8 @@ private fun SessionRow(s: AgentSession, where: String = "", reachable: Boolean =
             .clip(RoundedCornerShape(12.dp))
             .background(Palette.Panel.copy(alpha = 0.85f), RoundedCornerShape(12.dp))
             .border(1.dp, if (reachable && s.state == "waiting") Palette.Amber else Palette.Line, RoundedCornerShape(12.dp))
-            .alpha(if (reachable) 1f else 0.5f),
+            // Dimmed while it cannot work for want of quota, too.
+            .alpha(if (!reachable) 0.5f else if (s.limited != null) 0.6f else 1f),
     ) {
     Column(
         Modifier.weight(1f)
@@ -559,6 +560,12 @@ private fun SessionRow(s: AgentSession, where: String = "", reachable: Boolean =
                 Text("CAGED", style = MaterialTheme.typography.labelSmall, color = Palette.Violet, maxLines = 1,
                     modifier = Modifier.border(1.dp, Palette.Violet, RoundedCornerShape(4.dp)).padding(horizontal = 5.dp, vertical = 1.dp))
             }
+            // Out of quota: when it comes back.
+            s.limited?.let { lim ->
+                Spacer(Modifier.width(8.dp))
+                Text(lim.label(), style = MaterialTheme.typography.labelSmall, color = Palette.Amber, maxLines = 1,
+                    modifier = Modifier.border(1.dp, Palette.Amber, RoundedCornerShape(4.dp)).padding(horizontal = 5.dp, vertical = 1.dp))
+            }
             if (unread > 0) {
                 Spacer(Modifier.width(8.dp))
                 Text(if (unread > 99) "99+" else unread.toString(), style = MaterialTheme.typography.labelSmall,
@@ -573,6 +580,8 @@ private fun SessionRow(s: AgentSession, where: String = "", reachable: Boolean =
             if (reachable && s.state != "idle") { Pulse(colour); Spacer(Modifier.width(6.dp)) }
             Text(badge, style = MaterialTheme.typography.labelSmall, color = colour)
         }
+        // Why, on the phone, where there is no hover to say it.
+        s.limited?.let { Text(it.reason, style = MaterialTheme.typography.labelSmall, color = Palette.Amber, maxLines = 1) }
         if (s.preview.isNotEmpty()) {
             Text(s.preview, style = MaterialTheme.typography.bodySmall, color = Palette.Ash,
                 maxLines = 2, overflow = TextOverflow.Ellipsis)

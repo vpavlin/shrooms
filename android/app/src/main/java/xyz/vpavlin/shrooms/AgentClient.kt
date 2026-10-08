@@ -48,7 +48,28 @@ data class AgentSession(
     val tasksStalled: Int = 0,
     /** The container it runs in (docs/agents-in-cages.md); null when it is not caged. */
     val cage: SessionCage? = null,
+    /** Why it cannot work now for want of quota, and until when (epoch millis, 0 unknown); null when it can. */
+    val limited: Limited? = null,
 )
+
+/** A session out of quota: the plan's limit reached, or its key's allowance spent (the agent's `limited`). */
+data class Limited(val reason: String, val until: Long = 0) {
+    /** The tag by its name, as in Basecamp: "QUOTA · back 14:20". */
+    fun label(now: Long = System.currentTimeMillis()): String =
+        "QUOTA" + if (until > 0) " · back " + quotaClock(until, now) else ""
+
+    companion object {
+        fun parse(o: JSONObject?): Limited? = o?.let { Limited(it.optString("reason"), AgentClient.parseTime(it.optString("until"))) }
+    }
+}
+
+/** HH:mm today, "d.M. HH:mm" another day. */
+fun quotaClock(ms: Long, now: Long): String {
+    val z = java.time.ZoneId.systemDefault()
+    val t = java.time.Instant.ofEpochMilli(ms).atZone(z)
+    val hm = "%02d:%02d".format(t.hour, t.minute)
+    return if (t.toLocalDate() == java.time.Instant.ofEpochMilli(now).atZone(z).toLocalDate()) hm else "${t.dayOfMonth}.${t.monthValue}. $hm"
+}
 
 /** A cage: its image, and whether it has the machine's nix and the owner's GitHub login. */
 data class SessionCage(val image: String, val nix: Boolean = false, val github: Boolean = false) {
@@ -152,6 +173,7 @@ class AgentClient(private val address: String) {
                 tasksOpen = s.optInt("tasks_open"),
                 tasksStalled = s.optInt("tasks_stalled"),
                 cage = SessionCage.parse(s.optJSONObject("cage")),
+                limited = Limited.parse(s.optJSONObject("limited")),
             )
         }
     }

@@ -206,6 +206,26 @@ func (m *Manager) Limits() *Limits {
 	return forecast(l, readings, time.Now())
 }
 
+// limitsNow is the newest subscription reading without waiting: the live one,
+// and the logged one only if the usage scan is not running. For the session
+// list (Limited), which Usage itself calls while holding the scan's lock —
+// waiting for it there was a deadlock.
+func (m *Manager) limitsNow() *Limits {
+	m.live.Lock()
+	l := m.live.l
+	m.live.Unlock()
+	if !m.usage.mu.TryLock() {
+		return l
+	}
+	for _, sc := range m.usage.scans {
+		if sc.limits != nil && (l == nil || sc.limits.At.After(l.At)) {
+			l = sc.limits
+		}
+	}
+	m.usage.mu.Unlock()
+	return l
+}
+
 // UsageLimits is the newest subscription reading across this machine's
 // sessions, from what Usage last read; nil when Claude Code never reported one.
 func (m *Manager) UsageLimits() *Limits {
