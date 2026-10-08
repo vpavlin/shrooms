@@ -287,6 +287,8 @@ expect 'RENAMED=/v1/sessions/shrooms-2/rename {"name":"logos"} MOVED=fdb0:9afc:a
 expect "CREDITS n=1 machines=pi5+proteus line=5.40 DIEM left today · USD -0.03" "a shared key is not one credits entry"
 expect "RENEWED n=1 machines=atlas+laptop share=0.28 alone=true,0,[] glance=0" "a reading whose window reset still shows its share"
 expect "TASKS note=task proj:m1 stalled — no progress after 5 reminders | 2 tasks | ⚠ a task stalled — no progress after the reminders" "tasks are not shown"
+expect "FORECAST at this pace: runs out 13:40 — before it resets | at this pace: about 80% at the reset — it lasts | at this pace: about 3.0 DIEM left at the refill" "the forecast is not shown"
+expect "MDHTML 111111111111111111" "Markdown is not drawn as the phone draws it"
 expect "HOSTSCROLL=180" "the session list jumps on a refresh"
 expect "MORE=450|— 700 earlier events not loaded · load 150 more —|— 90 earlier events not loaded · load them —" "loading more is not a step at a time"
 expect "DELETED=/v1/sessions/logos OPEN=none" "deleting did not remove the open session"

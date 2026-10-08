@@ -117,4 +117,20 @@ class UsageTest {
         assertEquals("", alone.status)
         assertEquals(0, UsageView.glance(listOf(alone))!!.first)
     }
+
+    @Test fun aForecastSaysWhetherItLasts() {
+        val now = java.time.OffsetDateTime.parse("2026-10-08T12:00:00+02:00").toInstant().toEpochMilli()
+        val l = UsageView.parseLimits("laptop", """{"limits":{"at":"2026-10-08T12:00:00+02:00","status":"allowed",
+            "windows":{"five_hour":{"utilization":0.5,"resets_at":"2026-10-08T14:00:00+02:00","projected":1.1,"runs_out_at":"2026-10-08T13:40:00+02:00","pace":"recent"},
+                       "seven_day":{"utilization":0.6,"resets_at":"2026-10-11T11:00:00+02:00","projected":0.8,"pace":"recent"}}}}""")!!
+        // In this machine's zone, as the app shows it (the build runs in UTC).
+        assertEquals("at this pace: runs out " + UsageView.resets(l.windows[0].runsOutAt, now) + " — before it resets",
+            UsageView.windowForecast(l.windows[0], now))
+        assertTrue(l.windows[0].runsOutAt == java.time.OffsetDateTime.parse("2026-10-08T13:40:00+02:00").toInstant().toEpochMilli())
+        assertEquals("at this pace: about 80% at the reset — it lasts", UsageView.windowForecast(l.windows[1], now))
+        val c = UsageView.parseCredits("pi5", """{"credits":[{"provider":"venice","key":"e31a16d5","balances":{"DIEM":4},
+            "resets_at":"2026-10-09T00:00:00Z","at":"2026-10-08T10:00:00Z","left_at_refill":3.04}]}""")[0]
+        assertEquals("at this pace: about 3.0 DIEM left at the refill", UsageView.creditForecast(c, now))
+        assertEquals("", UsageView.creditForecast(c.copy(leftAtRefill = -1.0), now))
+    }
 }

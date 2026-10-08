@@ -342,6 +342,18 @@ the daily allowance, refilled at `resets_at` (Venice's next epoch, midnight
 UTC). A key's own spending limit and its usage history need an admin key, which
 the agents do not have; what each turn cost is in the usage rows above.
 
+**Forecasts** (`forecast.go`): whether a limit lasts until it renews, at the
+pace it is being used. Each plan window carries `projected` (its share at the
+reset), `runs_out_at` (when it would reach all of it, if before) and `pace`:
+`recent` — from the readings of the last hour of a 5-hour window, the last day
+of a 7-day one, measured up to now so idle hours count — or `window`, the
+average since the window began when there is too little history; readings of
+an earlier window of the same name are not its history. A Venice key carries
+`runs_out_at` (before the refill) or `left_at_refill`, from the balances of the
+last two hours of the same day. The apps say it under each bar: "at this pace:
+runs out Sat 14:00 — before it resets" in red, or "at this pace: about 70% at
+the reset — it lasts".
+
 **Unread replies** show as a count on each session in both apps: the
 session's turns (one per reply, counted by the agent) less those there were
 when it was last open on that device with the app in front. Each device

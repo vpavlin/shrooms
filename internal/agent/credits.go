@@ -29,6 +29,10 @@ type Credit struct {
 	ResetsAt time.Time          `json:"resets_at,omitempty"` // when the daily allowance (DIEM) refills
 	At       time.Time          `json:"at"`
 	Error    string             `json:"error,omitempty"`
+	// At the pace of the last two hours (forecast.go): when DIEM runs out,
+	// if before the refill, and how much is left at the refill.
+	RunsOutAt    *time.Time `json:"runs_out_at,omitempty"`
+	LeftAtRefill *float64   `json:"left_at_refill,omitempty"`
 }
 
 // creditKey is a key to ask about, where pi's settings name it.
@@ -127,6 +131,19 @@ func (m *Manager) WatchCredits(ctx context.Context) {
 			}
 			sort.Slice(got, func(i, j int) bool { return got[i].Key < got[j].Key })
 			m.credits.Lock()
+			if m.credits.points == nil {
+				m.credits.points = map[string][]creditPoint{}
+			}
+			for i, c := range got {
+				if d, ok := c.Balances["DIEM"]; ok && c.Error == "" {
+					ps := append(m.credits.points[c.Key], creditPoint{at: c.At, diem: d, resetsAt: c.ResetsAt})
+					for len(ps) > 0 && c.At.Sub(ps[0].at) > 26*time.Hour {
+						ps = ps[1:]
+					}
+					m.credits.points[c.Key] = ps
+				}
+				got[i] = projectCredit(c, m.credits.points[c.Key], c.At)
+			}
 			m.credits.c = got
 			m.credits.Unlock()
 			select {

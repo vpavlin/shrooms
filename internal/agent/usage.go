@@ -51,10 +51,18 @@ type Limits struct {
 	Windows map[string]LimitWindow `json:"windows"` // five_hour, seven_day, …
 }
 
-// LimitWindow is one window: the share of it used (0 to 1) and when it resets.
+// LimitWindow is one window: the share of it used (0 to 1) and when it resets
+// — and, at the pace it is being used, where that ends (forecast.go).
 type LimitWindow struct {
 	Utilization float64   `json:"utilization"`
 	ResetsAt    time.Time `json:"resets_at"`
+	// Projected is the share expected at the reset; RunsOutAt when it would
+	// reach all of it, if before the reset. Pace says from what: "recent"
+	// (the last hour of a 5-hour window, the last day of a 7-day one) or
+	// "window" (the average since it started, without enough history).
+	Projected float64    `json:"projected,omitempty"`
+	RunsOutAt *time.Time `json:"runs_out_at,omitempty"`
+	Pace      string     `json:"pace,omitempty"`
 }
 
 type rawLimits struct {
@@ -91,6 +99,9 @@ type usageScan struct {
 	offset int64
 	rows   map[usageKey]*UsageRow
 	limits *Limits // the newest the log holds
+	// readings are the log's limit reports of the last 8 days, oldest first:
+	// the pace each window is being used at (forecast.go).
+	readings []*Limits
 	turnState
 }
 
@@ -166,6 +177,7 @@ func (m *Manager) noteLimits(at time.Time, raw []byte) {
 		return
 	}
 	m.live.Lock()
+	m.live.readings = keepReadings(append(m.live.readings, l), at)
 	if m.live.l == nil || !l.At.Before(m.live.l.At) {
 		m.live.l = l
 	}
@@ -178,11 +190,20 @@ func (m *Manager) noteLimits(at time.Time, raw []byte) {
 func (m *Manager) Limits() *Limits {
 	m.live.Lock()
 	l := m.live.l
+	readings := append([]*Limits(nil), m.live.readings...)
 	m.live.Unlock()
 	if logged := m.UsageLimits(); logged != nil && (l == nil || logged.At.After(l.At)) {
-		return logged
+		l = logged
 	}
-	return l
+	if l == nil {
+		return nil
+	}
+	m.usage.mu.Lock()
+	for _, sc := range m.usage.scans {
+		readings = append(readings, sc.readings...)
+	}
+	m.usage.mu.Unlock()
+	return forecast(l, readings, time.Now())
 }
 
 // UsageLimits is the newest subscription reading across this machine's
@@ -261,6 +282,7 @@ func (sc *usageScan) event(e Event, session, harness string) {
 			if d.RateLimitInfo != nil {
 				if l := d.RateLimitInfo.limits(e.Time); l != nil {
 					sc.limits = l
+					sc.readings = keepReadings(append(sc.readings, l), e.Time)
 				}
 			}
 		case "system":

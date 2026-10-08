@@ -49,7 +49,9 @@ data class UsageRow(
 
 /** One window of a Claude subscription: the share used (0..1) and when it starts again. */
 /** One window; [renewed]: its reset has passed since the reading, so its share is no longer known — 0 until a turn says. */
-data class PlanWindow(val name: String, val utilization: Double, val resetsAt: Long, val renewed: Boolean = false)
+data class PlanWindow(val name: String, val utilization: Double, val resetsAt: Long, val renewed: Boolean = false,
+                      /** At the pace it is used (the agent's forecast): the share at the reset, and when it runs out, if before; 0 if not said. */
+                      val projected: Double = 0.0, val runsOutAt: Long = 0)
 
 /**
  * Where a Claude subscription stands, as Claude Code last reported it on
@@ -81,6 +83,8 @@ object PlanLive {
 data class Credit(
     val machines: List<String>, val provider: String, val key: String,
     val balances: Map<String, Double>, val resetsAt: Long, val at: Long, val error: String,
+    /** At the pace of the last two hours: when DIEM runs out (0: not before the refill), and what is left at it (-1: not said). */
+    val runsOutAt: Long = 0, val leftAtRefill: Double = -1.0,
 )
 
 /** One machine's answer: its rows, its subscription's limits if Claude Code ever reported them, and its keys' credits. */
@@ -102,7 +106,8 @@ object UsageView {
             val b = o.optJSONObject("balances")
             Credit(listOf(machine), o.optString("provider"), o.optString("key"),
                 b?.keys()?.asSequence()?.associateWith { b.optDouble(it) }.orEmpty(),
-                epochMs(o.optString("resets_at")), epochMs(o.optString("at")), o.optString("error"))
+                epochMs(o.optString("resets_at")), epochMs(o.optString("at")), o.optString("error"),
+                runsOutAt = epochMs(o.optString("runs_out_at")), leftAtRefill = o.optDouble("left_at_refill", -1.0))
         }
     }
 
@@ -129,7 +134,8 @@ object UsageView {
         val ws = o.optJSONObject("windows")
         val windows = ws?.keys()?.asSequence()?.map { k ->
             val w = ws.getJSONObject(k)
-            PlanWindow(k, w.optDouble("utilization", 0.0), epochMs(w.optString("resets_at")))
+            PlanWindow(k, w.optDouble("utilization", 0.0), epochMs(w.optString("resets_at")),
+                projected = w.optDouble("projected", 0.0), runsOutAt = epochMs(w.optString("runs_out_at")))
         }?.sortedBy { windowOrder(it.name) }?.toList().orEmpty()
         if (windows.isEmpty() && o.optString("status").isEmpty()) return null
         return PlanLimits(listOf(machine), epochMs(o.optString("at")), o.optString("status"), o.optString("window"),
@@ -163,8 +169,23 @@ object UsageView {
      * renewed — its share was of a window that is over — and a status about
      * it no longer holds.
      */
+    /** Where a window is heading at its pace: "" when the agent did not say (or it has renewed). */
+    fun windowForecast(w: PlanWindow, now: Long = System.currentTimeMillis()): String = when {
+        w.renewed || w.projected <= 0.0 -> ""
+        w.runsOutAt > 0 -> "at this pace: runs out " + resets(w.runsOutAt, now) + " — before it resets"
+        else -> "at this pace: about ${(w.projected * 100).toInt()}% at the reset — it lasts"
+    }
+
+    /** The same for a key's daily allowance. */
+    fun creditForecast(c: Credit, now: Long = System.currentTimeMillis()): String = when {
+        c.error.isNotEmpty() -> ""
+        c.runsOutAt > 0 -> "at this pace: runs out " + resets(c.runsOutAt, now) + " — before the refill"
+        c.leftAtRefill >= 0 -> "at this pace: about %.1f DIEM left at the refill".format(java.util.Locale.ENGLISH, c.leftAtRefill)
+        else -> ""
+    }
+
     fun current(l: PlanLimits, now: Long = System.currentTimeMillis()): PlanLimits {
-        val ws = l.windows.map { if (it.resetsAt in 1..now) it.copy(utilization = 0.0, renewed = true) else it }
+        val ws = l.windows.map { if (it.resetsAt in 1..now) it.copy(utilization = 0.0, renewed = true, projected = 0.0, runsOutAt = 0) else it }
         val over = ws.firstOrNull { it.name == l.window }?.renewed == true
         return l.copy(windows = ws, status = if (over) "" else l.status)
     }
@@ -370,6 +391,10 @@ private fun CreditSection(credits: List<Credit>) {
                 if (c.resetsAt > 0 && c.error.isEmpty()) Text("refills " + UsageView.resets(c.resetsAt),
                     style = MaterialTheme.typography.labelMedium, color = Palette.Bone)
             }
+            UsageView.creditForecast(c).takeIf { it.isNotEmpty() }?.let {
+                Text(it, style = MaterialTheme.typography.labelSmall,
+                    color = if (c.runsOutAt > 0) Palette.Rust else Palette.Ash, modifier = Modifier.padding(top = 2.dp))
+            }
         }
     }
 }
@@ -401,6 +426,10 @@ private fun PlanSection(plans: List<PlanLimits>) {
                 Box(Modifier.fillMaxWidth().padding(top = 3.dp).height(6.dp).background(Palette.Line, RoundedCornerShape(3.dp))) {
                     Box(Modifier.fillMaxWidth(w.utilization.toFloat().coerceIn(0f, 1f)).height(6.dp)
                         .background(colour, RoundedCornerShape(3.dp)))
+                }
+                UsageView.windowForecast(w).takeIf { it.isNotEmpty() }?.let {
+                    Text(it, style = MaterialTheme.typography.labelSmall,
+                        color = if (w.runsOutAt > 0) Palette.Rust else Palette.Ash, modifier = Modifier.padding(top = 2.dp))
                 }
             }
         }

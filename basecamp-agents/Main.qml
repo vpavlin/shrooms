@@ -82,6 +82,129 @@ Item {
     // Markdown with its bare URLs made autolinks (<url>), leaving code — fenced
     // or inline — and URLs already in a link alone. Qt's markdown does not
     // link a bare URL by itself.
+    // Markdown as the phone draws it (Markdown.kt, MarkdownText): Qt's own
+    // MarkdownText has no styles, so inline code — paths, mostly — was the
+    // colour of the text around it. Ported, not reinvented: the same blocks
+    // and inline rules, drawn as rich text in the phone's colours (2026-10-08).
+    function mdEsc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;") }
+    function mdLetter(ch) { return ch !== null && /[0-9A-Za-zÀ-ɏ]/.test(ch) }
+    function mdItalicMark(s, i, open) {
+        var before = i > 0 ? s.charAt(i - 1) : null, after = i + 1 < s.length ? s.charAt(i + 1) : null
+        if (!open) return after !== null && !/\s/.test(after) && (before === null || !mdLetter(before))
+        return before !== null && !/\s/.test(before) && (after === null || !mdLetter(after))
+    }
+    function mdLinks(s, bold, italic) {
+        var out = [], at = 0, m
+        // A literal, not the bareUrl property: QML turns a regex property
+        // into a Qt regular expression, with no .source to build one from.
+        var re = /https?:\/\/[^\s<>()\[\]`"']+[^\s<>()\[\]`"'.,;:!?*_~]/g
+        while ((m = re.exec(s)) !== null) {
+            if (m.index > at) out.push({ text: s.substring(at, m.index), bold: bold, italic: italic })
+            out.push({ text: m[0], link: m[0], bold: bold, italic: italic })
+            at = m.index + m[0].length
+        }
+        if (at < s.length) out.push({ text: s.substring(at), bold: bold, italic: italic })
+        return out
+    }
+    function mdInline(s) {
+        var styled = [], buf = "", bold = false, italic = false, i = 0
+        function emit() { if (buf !== "") { styled.push({ text: buf, bold: bold, italic: italic }); buf = "" } }
+        while (i < s.length) {
+            var c = s.charAt(i)
+            if (c === "\\" && i + 1 < s.length) { buf += s.charAt(i + 1); i += 2 }
+            else if (c === "`") {
+                var end = s.indexOf("`", i + 1)
+                if (end < 0) { buf += c; i++ } else { emit(); styled.push({ text: s.substring(i + 1, end), code: true }); i = end + 1 }
+            } else if ((c === "*" || c === "_") && i + 1 < s.length && s.charAt(i + 1) === c) { emit(); bold = !bold; i += 2 }
+            else if ((c === "*" || c === "_") && mdItalicMark(s, i, italic)) { emit(); italic = !italic; i++ }
+            else if (c === "[") {
+                var close = s.indexOf("](", i), e = close > 0 ? s.indexOf(")", close) : -1
+                if (close < 0 || e < 0) { buf += c; i++ }
+                else { emit(); styled.push({ text: s.substring(i + 1, close), bold: bold, italic: italic, link: s.substring(close + 2, e) }); i = e + 1 }
+            } else { buf += c; i++ }
+        }
+        emit()
+        var out = []
+        for (var k = 0; k < styled.length; k++) {
+            var sp = styled[k]
+            if (sp.code || sp.link) out.push(sp)
+            else out = out.concat(mdLinks(sp.text, sp.bold, sp.italic))
+        }
+        return out
+    }
+    function mdSpans(spans, base) {
+        var h = ""
+        for (var i = 0; i < spans.length; i++) {
+            var sp = spans[i], t = mdEsc(sp.text)
+            if (sp.code) { h += "<span style=\"color:" + cChartreuse + "; background-color:" + cVoid + ";\">" + t + "</span>"; continue }
+            if (sp.italic) t = "<i>" + t + "</i>"
+            if (sp.bold) t = "<b style=\"color:#ffffff;\">" + t + "</b>"
+            if (sp.link) t = "<a href=\"" + mdEsc(sp.link) + "\" style=\"color:" + cSky + ";\">" + t + "</a>"
+            else if (base) t = "<span style=\"color:" + base + ";\">" + t + "</span>"
+            h += t
+        }
+        return h
+    }
+    function mdCells(row) { return row.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(function(c) { return mdInline(c.trim()) }) }
+    function mdHtml(src) {
+        var lines = String(src || "").replace(/\r\n/g, "\n").split("\n"), out = [], para = []
+        var fence = /^\s*(```|~~~)\s*([\w+-]*)\s*$/, heading = /^(#{1,6})\s+(.*?)\s*#*\s*$/
+        var bullet = /^(\s*)[-*+]\s+(.*)$/, numbered = /^(\s*)(\d{1,3})[.)]\s+(.*)$/
+        var rule = /^\s*([-*_])(\s*\1){2,}\s*$/, tableSep = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/
+        var P = "<p style=\"margin-top:0px; margin-bottom:6px;\">"
+        var lastItem = -1
+        function flush() { if (para.length) { out.push(P + mdSpans(mdInline(para.join(" ").trim())) + "</p>"); para = []; lastItem = -1 } }
+        function item(indent, marker, text) {
+            out.push("<p style=\"margin-top:0px; margin-bottom:2px; margin-left:" + (indent * 16) + "px;\"><span style=\"color:" + cPhosphor + ";\">" +
+                     mdEsc(marker) + "</span>&nbsp;" + mdSpans(mdInline(text)) + "</p>")
+            lastItem = out.length - 1
+        }
+        var i = 0
+        while (i < lines.length) {
+            var line = lines[i], f = line.match(fence)
+            if (f) {
+                flush()
+                var close = f[1], body = []
+                i++
+                while (i < lines.length && lines[i].trim() !== close) { body.push(lines[i]); i++ }
+                while (body.length && body[body.length - 1].trim() === "") body.pop() // a reply still streaming
+                out.push("<table width=\"100%\" cellspacing=\"0\" cellpadding=\"8\" style=\"background-color:" + cVoid + "; border:1px solid " + cLine +
+                         "; margin-bottom:6px;\"><tr><td><pre style=\"color:" + cChartreuse + "; margin:0px;\">" + mdEsc(body.join("\n")) + "</pre></td></tr></table>")
+                i++
+                continue
+            }
+            if (line.trim() === "") { flush(); i++; continue }
+            if (line.indexOf("|") >= 0 && i + 1 < lines.length && tableSep.test(lines[i + 1])) {
+                flush()
+                var rows = [mdCells(line)]
+                i += 2
+                while (i < lines.length && lines[i].indexOf("|") >= 0 && lines[i].trim() !== "") { rows.push(mdCells(lines[i])); i++ }
+                var t = "<table cellspacing=\"0\" cellpadding=\"4\" border=\"1\" style=\"border-color:" + cLine + "; border-style:solid; margin-bottom:6px;\">"
+                for (var r = 0; r < rows.length; r++) {
+                    t += "<tr>"
+                    for (var c = 0; c < rows[r].length; c++) t += "<td>" + mdSpans(rows[r][c], r === 0 ? cPhosphor : "") + "</td>"
+                    t += "</tr>"
+                }
+                out.push(t + "</table>")
+                continue
+            }
+            var h = line.match(heading), b = line.match(bullet), n = line.match(numbered)
+            if (h) { flush(); out.push("<p style=\"margin-top:6px; margin-bottom:4px; font-weight:bold;\">" + mdSpans(mdInline(h[2]), cPhosphor) + "</p>") }
+            else if (rule.test(line)) { flush(); out.push("<hr/>") }
+            else if (b) { flush(); item(Math.floor(b[1].length / 2), "•", b[2]) }
+            else if (n) { flush(); item(Math.floor(n[1].length / 2), n[2] + ".", n[3]) }
+            else if (/^\s*>/.test(line)) {
+                flush()
+                out.push(P + "<span style=\"color:" + cViolet + ";\">▍</span>&nbsp;" + mdSpans(mdInline(line.replace(/^\s*>/, "").trim()), cAsh) + "</p>")
+            } else if (/^  /.test(line) && lastItem === out.length - 1 && lastItem >= 0 && para.length === 0) {
+                // A continuation of the list item above it.
+                out[lastItem] = out[lastItem].replace(/<\/p>$/, " " + mdSpans(mdInline(line.trim())) + "</p>")
+            } else para.push(line.trim())
+            i++
+        }
+        flush()
+        return out.join("")
+    }
     function linkMarkdown(md) {
         var lines = String(md || "").split("\n"), fenced = false
         for (var i = 0; i < lines.length; i++) {
@@ -1301,7 +1424,8 @@ Item {
         if (!Array.isArray(cs)) return []
         return cs.map(function(c) {
             return { machines: [machine], provider: c.provider || "", key: c.key || "", balances: c.balances || {},
-                     resetsAt: Date.parse(c.resets_at) || 0, at: Date.parse(c.at) || 0, error: c.error || "" }
+                     resetsAt: Date.parse(c.resets_at) || 0, at: Date.parse(c.at) || 0, error: c.error || "",
+                     runsOutAt: Date.parse(c.runs_out_at) || 0, leftAtRefill: c.left_at_refill === undefined ? -1 : Number(c.left_at_refill) }
         })
     }
     function creditKeys(all) {
@@ -1325,6 +1449,19 @@ Item {
             return out
         })
     }
+    // Where a limit is heading at its pace — the agent's forecast; the phone's
+    // UsageView.windowForecast / creditForecast.
+    function windowForecast(w, now) {
+        if (w.renewed || !(w.projected > 0)) return ""
+        if (w.runsOutAt > 0) return "at this pace: runs out " + planResets(w.runsOutAt, now) + " — before it resets"
+        return "at this pace: about " + Math.floor(w.projected * 100) + "% at the reset — it lasts"
+    }
+    function creditForecast(c, now) {
+        if (c.error) return ""
+        if (c.runsOutAt > 0) return "at this pace: runs out " + planResets(c.runsOutAt, now) + " — before the refill"
+        if (c.leftAtRefill >= 0) return "at this pace: about " + c.leftAtRefill.toFixed(1) + " DIEM left at the refill"
+        return ""
+    }
     function creditLine(c) {
         if (c.error) return c.error
         var parts = []
@@ -1337,7 +1474,8 @@ Item {
     function planLimits(machine, l) {
         if (!l || typeof l !== "object") return null
         var ws = [], order = { five_hour: 0, seven_day: 1 }
-        for (var k in (l.windows || {})) ws.push({ name: k, utilization: Number(l.windows[k].utilization) || 0, resetsAt: Date.parse(l.windows[k].resets_at) || 0 })
+        for (var k in (l.windows || {})) ws.push({ name: k, utilization: Number(l.windows[k].utilization) || 0, resetsAt: Date.parse(l.windows[k].resets_at) || 0,
+                                                   projected: Number(l.windows[k].projected) || 0, runsOutAt: Date.parse(l.windows[k].runs_out_at) || 0 })
         ws.sort(function(a, b) { return (a.name in order ? order[a.name] : 2) - (b.name in order ? order[b.name] : 2) })
         if (ws.length === 0 && !l.status) return null
         return { machines: [machine], at: Date.parse(l.at) || 0, status: l.status || "", window: l.window || "", overage: !!l.overage, windows: ws }
@@ -1372,7 +1510,7 @@ Item {
     function planCurrent(l, now) {
         var t = now === undefined ? Date.now() : now
         var ws = l.windows.map(function(w) {
-            return w.resetsAt > 0 && w.resetsAt <= t ? Object.assign({}, w, { utilization: 0, renewed: true }) : w
+            return w.resetsAt > 0 && w.resetsAt <= t ? Object.assign({}, w, { utilization: 0, renewed: true, projected: 0, runsOutAt: 0 }) : w
         })
         var over = ws.filter(function(w) { return w.name === l.window && w.renewed }).length > 0
         return Object.assign({}, l, { windows: ws, status: over ? "" : l.status })
@@ -1542,6 +1680,8 @@ Item {
                                                 color: root.planLevel(pw.modelData.utilization) === 2 ? cRust : root.planLevel(pw.modelData.utilization) === 1 ? cAmber : cPhosphor
                                                 width: parent.width * Math.max(0, Math.min(1, pw.modelData.utilization)) }
                                 }
+                                Text { visible: text !== ""; text: root.windowForecast(pw.modelData)
+                                       color: pw.modelData.runsOutAt > 0 ? cRust : cAsh; font.family: "monospace"; font.pixelSize: root.fs(9) }
                             }
                         }
                     }
@@ -1569,6 +1709,8 @@ Item {
                             Text { visible: credit.modelData.resetsAt > 0 && !credit.modelData.error
                                    text: "refills " + root.planResets(credit.modelData.resetsAt); color: cBone; font.family: "monospace"; font.pixelSize: root.fs(11) }
                         }
+                        Text { visible: text !== ""; text: root.creditForecast(credit.modelData)
+                               color: credit.modelData.runsOutAt > 0 ? cRust : cAsh; font.family: "monospace"; font.pixelSize: root.fs(9) }
                     }
                 }
             }
@@ -1826,8 +1968,8 @@ Item {
                 TextEdit {
                     width: readingDialog.availableWidth
                     readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap
-                    textFormat: root.reading && root.reading.role !== "user" ? TextEdit.MarkdownText : TextEdit.RichText
-                    text: !root.reading ? "" : root.reading.role !== "user" ? root.linkMarkdown(root.reading.text) : root.linkPlain(root.reading.text)
+                    textFormat: TextEdit.RichText
+                    text: !root.reading ? "" : root.reading.role !== "user" ? root.mdHtml(root.reading.text) : root.linkPlain(root.reading.text)
                     onLinkActivated: function(link) { root.openUrl(link) }
                     LinkCursor {}
                     color: cBone; font.family: "monospace"; font.pixelSize: root.fs(12)
@@ -2505,8 +2647,8 @@ Item {
                                     id: streamText
                                     x: root.sz(10); y: root.sz(10); width: parent.width - root.sz(20)
                                     readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap
-                                    textFormat: TextEdit.MarkdownText
-                                    text: root.linkMarkdown(root.agentStreaming) + " ▍"
+                                    textFormat: TextEdit.RichText
+                                    text: root.mdHtml(root.agentStreaming) + "<span style=\"color:" + cPhosphor + ";\">▍</span>"
                                     onLinkActivated: function(link) { root.openUrl(link) }
                                     LinkCursor {}
                                     color: cBone; font.family: "monospace"; font.pixelSize: root.fs(12)
@@ -2594,8 +2736,8 @@ Item {
                                         readonly property bool readingThis: crow.kind === "said" && root.speakingKey !== "" && root.speakingKey === root.speakKey(crow.seq)
                                         width: parent.width
                                         readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap
-                                        textFormat: readingThis ? TextEdit.RichText : (crow.kind === "said" ? TextEdit.MarkdownText : TextEdit.RichText)
-                                        text: readingThis ? root.aloudHtml() : (crow.kind === "said" ? root.linkMarkdown(crow.text) : root.linkPlain(crow.text))
+                                        textFormat: TextEdit.RichText
+                                        text: readingThis ? root.aloudHtml() : (crow.kind === "said" ? root.mdHtml(crow.text) : root.linkPlain(crow.text))
                                         color: cBone; selectionColor: Qt.rgba(0.21, 0.94, 0.63, 0.35)
                                         font.family: "monospace"; font.pixelSize: root.fs(12)
                                         onLinkActivated: function(link) { root.openUrl(link) }

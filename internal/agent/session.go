@@ -153,13 +153,15 @@ type Manager struct {
 	// credits are pay-as-you-go keys' standing (credits.go).
 	credits struct {
 		sync.Mutex
-		c []Credit
+		c      []Credit
+		points map[string][]creditPoint // each key's balances today, for the pace
 	}
 	// live is the newest subscription reading as Claude Code reports it,
 	// kept as it happens so the session list can carry it (Limits).
 	live struct {
 		sync.Mutex
-		l *Limits
+		l        *Limits
+		readings []*Limits // reported since start, for the pace (forecast.go)
 	}
 
 	// harnesses this machine can run sessions of, by name, and the program

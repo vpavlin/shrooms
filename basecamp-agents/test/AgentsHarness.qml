@@ -543,6 +543,36 @@ Item {
             console.error("RENEWED n=" + both.length + " machines=" + both[0].machines.join("+") + " share=" + both[0].windows[0].utilization
                           + " alone=" + alone.windows[0].renewed + "," + alone.windows[0].utilization + ",[" + alone.status + "] glance=" + view.planGlance([alone]).percent)
             console.error("TASKS note=" + view.taskNote("proj:m1", "stalled", "no progress after 5 reminders") + " | " + view.tasksLabel(2) + " | " + view.stalledLabel(1))
+            var fnow = Date.parse("2026-10-08T12:00:00+02:00")
+            var fp = view.planLimits("laptop", { at: "2026-10-08T12:00:00+02:00", status: "allowed", windows: {
+                five_hour: { utilization: 0.5, resets_at: "2099-10-08T14:00:00+02:00", projected: 1.1, runs_out_at: "2026-10-08T13:40:00+02:00" },
+                seven_day: { utilization: 0.6, resets_at: "2099-10-11T11:00:00+02:00", projected: 0.8 } } })
+            var fc = view.usageCreditsOf("pi5", [{ provider: "venice", key: "e31a16d5", balances: { DIEM: 4 }, at: "2026-10-08T10:00:00Z", resets_at: "2099-10-09T00:00:00Z", left_at_refill: 3.04 }])[0]
+            console.error("FORECAST " + view.windowForecast(fp.windows[0], fnow) + " | " + view.windowForecast(fp.windows[1], fnow) + " | " + view.creditForecast(fc, fnow))
+            // Markdown as the phone draws it (MarkdownTest's cases).
+            var reply = "## Done\n\nThe fix is **pushed** as `02befc2`.\n\n- first\n- second\n  continued\n1. one\n> a quote\n\n```\nsudo make install\n```\n---"
+            var mh = view.mdHtml(reply)
+            var mi = view.mdInline("a **bold** and *it* `code` [link](http://x)")
+            var plain = ["moveEphemeralPorts in local_build.conf", "2*3*4", "~/.config/systemd/user"].every(function(t) {
+                var sp = view.mdInline(t); return sp.map(function(x) { return x.text }).join("") === t && sp.every(function(x) { return !x.bold && !x.italic }) })
+            var u = "https://github.com/vpavlin/shrooms/blob/master/docs/adr/037-agents-in-cages.md"
+            var boldLink = view.mdInline("See **" + u + "** now").filter(function(x) { return x.link })[0]
+            var dot = view.mdInline("Same link: http://vps.office.mesh:8099/shrooms-preview.apk. Done").filter(function(x) { return x.link })[0]
+            var checks = [
+                mh.indexOf("color:" + view.cPhosphor.toString().toLowerCase()) >= 0 || mh.indexOf("#35f0a0") >= 0,   // heading in green
+                /02befc2<\/span>/.test(mh) && mh.toLowerCase().indexOf("#c8e64a") >= 0,                              // inline code in chartreuse
+                mh.indexOf("second continued") >= 0, mh.indexOf("1.</span>") >= 0, mh.indexOf("▍") >= 0,
+                /<pre[^>]*>sudo make install<\/pre>/.test(mh), mh.indexOf("<hr/>") >= 0,
+                mi.some(function(x) { return x.bold && x.text === "bold" }), mi.some(function(x) { return x.italic && x.text === "it" }),
+                mi.some(function(x) { return x.code && x.text === "code" }), mi.some(function(x) { return x.link === "http://x" && x.text === "link" }),
+                plain, boldLink && boldLink.link === u && boldLink.bold,
+                dot && dot.link === "http://vps.office.mesh:8099/shrooms-preview.apk",
+                view.mdInline("`curl http://x`").every(function(x) { return !x.link }),
+                /<pre[^>]*>make test<\/pre>/.test(view.mdHtml("Look:\n```\nmake test\n")),                              // an unclosed fence
+                (view.mdHtml("| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |").match(/<tr>/g) || []).length === 3,
+                view.mdHtml("<b>x</b> & y").indexOf("&lt;b&gt;x&lt;/b&gt; &amp; y") >= 0                             // text, not HTML
+            ]
+            console.error("MDHTML " + checks.map(function(c) { return c ? "1" : "0" }).join(""))
             // Deleting the open session: asks what the phone asks, then goes.
             console.error("DELETETEXT=" + (view.deleteSessionText("working").indexOf("cut off") > 0)
                           + "," + (view.deleteSessionText("idle").indexOf("conversation itself is kept") > 0))

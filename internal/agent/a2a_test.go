@@ -233,7 +233,9 @@ func TestA2ABlockedAndAnswered(t *testing.T) {
 // stalled. Never while it works; never more than its hourly cap; not after
 // its owner stopped it, until someone writes to it again.
 func TestTheWatchdogRemindsAQuietWorker(t *testing.T) {
-	defer func(a map[string]time.Duration, l []time.Duration, n int) { nudgeAfter, nudgeLadder, nudgesPerHour = a, l, n }(nudgeAfter, nudgeLadder, nudgesPerHour)
+	defer func(a map[string]time.Duration, l []time.Duration, n int) {
+		nudgeAfter, nudgeLadder, nudgesPerHour = a, l, n
+	}(nudgeAfter, nudgeLadder, nudgesPerHour)
 	nudgeAfter = map[string]time.Duration{"claude": time.Minute}
 	nudgeLadder = []time.Duration{time.Minute, time.Minute}
 	nudgesPerHour = 10
