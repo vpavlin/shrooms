@@ -39,6 +39,11 @@ android {
                 keyAlias = "shrooms-agents"
                 keyPassword = storePassword
                 storeType = "pkcs12"
+                // v1 (JAR) beside v2: no Android this app runs on needs it
+                // (minSdk 26), but the publisher's check verifies against
+                // minSdk 19 and refuses an APK without it (2026-10-08).
+                enableV1Signing = true
+                enableV2Signing = true
             }
         }
     }
