@@ -1372,6 +1372,20 @@ Item {
         root.boardMode = on
         savePref("agent_layout", on ? "board" : "list")
     }
+    // Esc goes back to the board from a session opened from it — but not
+    // while Esc has something nearer to close: a dialog, or the search.
+    function escToBoard() {
+        if (!boardMode || agentOpen === null || searchOpen) return false
+        if (dialogs().some(function(d) { return d.visible })) return false
+        showBoard()
+        return true
+    }
+    Shortcut {
+        sequence: "Esc"
+        context: Qt.WindowShortcut
+        enabled: root.boardMode && root.agentOpen !== null && !root.searchOpen
+        onActivated: Qt.callLater(root.escToBoard)
+    }
     // The board, with no session open in front of it.
     function showBoard() {
         root.agentCreating = false
@@ -1494,6 +1508,8 @@ Item {
     readonly property var boardCardList: boardCards(agentHosts)
     readonly property var boardEdgeList: boardEdges(agentHosts)
     function askDelete() { deleteDialog.open() }
+    function dialogs() { return [usageDialog, voiceDialog, deleteDialog, renameDialog, restartDialog, readingDialog] }
+    function closeDialogs() { dialogs().forEach(function(d) { d.close() }) }
     function deleteDialogOpen() { return deleteDialog.visible }
     function deleteOpenSession() {
         if (!agentOpen) return false

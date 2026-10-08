@@ -610,6 +610,7 @@ Item {
             { name: "review", state: "working", running: true, turns: 0, tail: ["Reviewing the diff."] } ] },
           // A machine named a little otherwise in the claim.
           tasks: { tasks: [ task("review:m5", "review", "pi5 (pi5.home/jimmy)", "TASK_STATE_WORKING") ] } } ]
+    Timer { id: escTimer; interval: 600; property var report: null; onTriggered: report() }
     Timer {
         id: boardTimer
         interval: 400
@@ -617,7 +618,7 @@ Item {
         onTriggered: {
             // A session an earlier check left opening (a deferred call): the
             // board is what shows with none open.
-            if (!settled) { settled = true; view.agentOpen = null; view.agentCreating = false; restart(); return }
+            if (!settled) { settled = true; view.agentOpen = null; view.agentCreating = false; view.closeDialogs(); restart(); return }
             var links = top.findByName(view, "boardLinks")
             console.error("BOARD cards=" + view.boardCardList.map(function(c) { return c.key }).join(",")
                           + " edges=" + view.boardEdgeList.map(function(e) { return e.from + ">" + e.to + ":" + e.state }).join(",")
@@ -633,11 +634,19 @@ Item {
                     var back = top.findByName(view, "backToBoard")
                     var opened = view.agentOpen ? view.agentOpen.session : "none"
                     var shown = back.visible && !top.findByName(view, "boardFlow").visible && top.findByName(view, "agentList").visible
-                    back.clicked()
-                    Qt.callLater(function() {
-                        console.error("BOARDOPEN open=" + opened + " withlist=" + shown + " back=" + (view.agentOpen === null) + "," + top.findByName(view, "boardFlow").visible + "," + !top.findByName(view, "agentList").visible)
-                        Qt.quit()
-                    })
+                    // Esc goes back to the board, but not while a dialog has it.
+                    view.askDelete()
+                    var escHeld = !view.escToBoard() && view.agentOpen !== null
+                    view.closeDialogs()
+                    // Once the dialog has finished closing.
+                    escTimer.report = function() {
+                        var escBack = view.escToBoard()
+                        Qt.callLater(function() {
+                            console.error("BOARDOPEN open=" + opened + " withlist=" + shown + " esc=" + escHeld + "," + escBack + " back=" + (view.agentOpen === null) + "," + top.findByName(view, "boardFlow").visible + "," + !top.findByName(view, "agentList").visible + "," + back.visible)
+                            Qt.quit()
+                        })
+                    }
+                    escTimer.start()
                 })
             })
         }
