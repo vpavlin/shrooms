@@ -1,6 +1,7 @@
 package mesh
 
 import (
+	"log/slog"
 	"net/netip"
 	"testing"
 	"time"
@@ -285,5 +286,50 @@ func TestRelayRefreshIsInsideTheTTL(t *testing.T) {
 	if RelayRefresh <= disco.ProbeInterval {
 		t.Errorf("RelayRefresh (%s) is no better than the probe tick (%s) it replaced",
 			RelayRefresh, disco.ProbeInterval)
+	}
+}
+
+// A relay whose announces stop reaching us but which still answers our probes
+// stays the relay, and keeps being probed: announces lost on the way (a
+// phone, 2026-10-08) are not a relay gone. One that stops answering too is
+// dropped.
+func TestARelayThatAnswersIsKeptWithoutItsAnnounces(t *testing.T) {
+	nk, _ := identity.NewNetworkKey()
+	self, _ := identity.New()
+	key := disco.DeriveKey(nk)
+	t0 := time.Now()
+	var sent [][]byte
+	pr := disco.NewProber(key, self.DevicePriv, func(pkt []byte, _ netip.AddrPort) error {
+		sent = append(sent, pkt)
+		return nil
+	})
+	m := &Mesh{nk: nk, roster: NewRoster(nk, self.DevicePub), prober: pr, discoKey: key, relayKey: relay.DeriveKey(nk),
+		log: slog.New(slog.DiscardHandler)}
+	rl, _ := identity.New()
+	a := newAnnounce(t, rl, "vps", []string{"203.0.113.9:51820"}, 1)
+	a.Relay = true
+	rp, _ := m.roster.Apply(a, t0) // its last announce
+	addr := netip.MustParseAddrPort("203.0.113.9:51820")
+
+	// It answered a probe just before announces would call it offline...
+	t1 := t0.Add(OfflineAfter - 5*time.Second)
+	confirmPath(t, pr, key, &sent, rl, rp.ID(), addr, t1)
+	// ...and now, its announce three minutes old, the path still fresh:
+	t2 := t1.Add(disco.PathRefresh + time.Second)
+	if rp.Online(t2) {
+		t.Fatal("the test needs the relay offline by its announces")
+	}
+	sent = nil
+	m.probeAll(t2)
+	if len(sent) == 0 {
+		t.Error("a relay that answers was not probed once its announces stopped")
+	}
+	if got := m.selectRelay(t2); !got.ok || got.addr != addr {
+		t.Errorf("a relay that answers was dropped: %+v", got)
+	}
+	// Answering no more: gone, once RelayHold has ridden out what might have
+	// been one missed pong.
+	if got := m.selectRelay(t2.Add(disco.PathFresh + RelayHold + time.Second)); got.ok {
+		t.Errorf("a relay that stopped answering is still selected: %+v", got)
 	}
 }

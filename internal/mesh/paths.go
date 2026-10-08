@@ -332,7 +332,9 @@ func (m *Mesh) discoveredRelay(now time.Time) relayChoice {
 	}
 	var best relayChoice
 	for _, p := range m.roster.Peers() {
-		if !p.Relay || !p.Online(now) {
+		// A relay is judged by whether it answers, not only by its announces:
+		// see relayAnswers. A fresh probed path (below) is required either way.
+		if !p.Relay {
 			continue
 		}
 		// Only ever use a probed address. An unverified candidate would
@@ -349,6 +351,25 @@ func (m *Mesh) discoveredRelay(now time.Time) relayChoice {
 	}
 	m.noteDiscovered(best, now)
 	return best
+}
+
+// relayAnswers reports a relay whose probed path is fresh: it answers us,
+// whether or not its announces still reach us. Such a relay keeps being
+// probed, and so stays usable, until it stops answering.
+//
+// Announces alone decided it before, and a phone that stopped receiving the
+// relay's announces — every other peer's arrived; the VPS's, none in a whole
+// run (2026-10-08) — called it offline three minutes after start, stopped
+// probing it, let the path go stale and dropped the relay it was tunnelling
+// through: "no relay available", then the watchdog's restart, again and
+// again. A relay answering our probes is the better evidence: it is the very
+// path the traffic takes.
+func (m *Mesh) relayAnswers(p PeerInfo, now time.Time) bool {
+	if !p.Relay {
+		return false
+	}
+	_, ok := m.prober.Best(p.ID(), now)
+	return ok
 }
 
 // RelayHold is how long a discovered member relay keeps being used after its
@@ -605,7 +626,7 @@ func (m *Mesh) probeAll(now time.Time) {
 	m.prober.SetSelfAddrs(localAddrs())
 
 	for _, p := range m.roster.Peers() {
-		if !p.Online(now) {
+		if !p.Online(now) && !m.relayAnswers(p, now) {
 			continue
 		}
 		if !m.prober.NeedsProbe(p.ID(), now) {
