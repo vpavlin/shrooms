@@ -553,6 +553,12 @@ private fun SessionRow(s: AgentSession, where: String = "", reachable: Boolean =
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(s.name, style = MaterialTheme.typography.titleMedium, color = Palette.Bone,
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+            // In a cage: a tag in the cage's violet, its details in the line below.
+            if (s.cage != null) {
+                Spacer(Modifier.width(8.dp))
+                Text("CAGED", style = MaterialTheme.typography.labelSmall, color = Palette.Violet, maxLines = 1,
+                    modifier = Modifier.border(1.dp, Palette.Violet, RoundedCornerShape(4.dp)).padding(horizontal = 5.dp, vertical = 1.dp))
+            }
             if (unread > 0) {
                 Spacer(Modifier.width(8.dp))
                 Text(if (unread > 99) "99+" else unread.toString(), style = MaterialTheme.typography.labelSmall,
@@ -575,7 +581,7 @@ private fun SessionRow(s: AgentSession, where: String = "", reachable: Boolean =
         if (s.tasksStalled > 0) Text("⚠ " + (if (s.tasksStalled == 1) "a task stalled" else "${s.tasksStalled} tasks stalled") +
             " — no progress after the reminders", style = MaterialTheme.typography.labelSmall, color = Palette.Amber)
         val meta = listOf(whenSaid(s.lastTime), contextLabel(s.contextUsed, s.contextWindow),
-            harnessLabel(s.harness), if (s.cage != null) "caged" else "", shortModel(s.model), if (s.autoApprove && s.approves) "auto-approve" else "",
+            harnessLabel(s.harness), s.cage?.let { cageWords(it) } ?: "", shortModel(s.model), if (s.autoApprove && s.approves) "auto-approve" else "",
             if (s.tasksOpen > 0) (if (s.tasksOpen == 1) "1 task" else "${s.tasksOpen} tasks") else "")
             .filter { it.isNotEmpty() }
         Text((meta + s.dir.replace(Regex("^/home/[^/]+"), "~")).joinToString("  ·  "),
@@ -1927,15 +1933,21 @@ private fun QuestionCard(p: ChatItem.Prompt, onAnswer: (String, Boolean, Map<Str
 // --- markdown ---------------------------------------------------------------
 
 @Composable
-private fun CodeBox(text: String) = androidx.compose.foundation.text.selection.SelectionContainer {
+private fun CodeBox(text: String, onCopy: ((String) -> Unit)? = null) = androidx.compose.foundation.text.selection.SelectionContainer {
     Box(Modifier.fillMaxWidth().background(Palette.Void, RoundedCornerShape(8.dp))
         .border(1.dp, Palette.Line, RoundedCornerShape(8.dp))
+        // A tap copies the block, as Telegram does; a long press still selects.
+        .then(if (onCopy != null) Modifier.clickable { onCopy(text) } else Modifier)
         .horizontalScroll(rememberScrollState()).padding(10.dp)) {
         Text(text, style = MaterialTheme.typography.bodySmall, color = Palette.Chartreuse, softWrap = false)
     }
 }
 
-private fun spans(s: List<Markdown.Span>, base: Color = Palette.Bone): AnnotatedString = buildAnnotatedString {
+/**
+ * The spans as styled text. With [onCopy], inline code is a link that copies
+ * it — a path, a key, a command — instead of having to be selected.
+ */
+internal fun spans(s: List<Markdown.Span>, base: Color = Palette.Bone, onCopy: ((String) -> Unit)? = null): AnnotatedString = buildAnnotatedString {
     for (sp in s) {
         val style = SpanStyle(
             color = when {
@@ -1949,11 +1961,29 @@ private fun spans(s: List<Markdown.Span>, base: Color = Palette.Bone): Annotated
             background = if (sp.code) Palette.Void else Color.Unspecified,
             textDecoration = if (sp.link != null) TextDecoration.Underline else null,
         )
-        if (sp.link != null && isWebLink(sp.link)) {
+        if (sp.code && onCopy != null) {
+            withLink(androidx.compose.ui.text.LinkAnnotation.Clickable("copy",
+                androidx.compose.ui.text.TextLinkStyles(style)) { onCopy(sp.text) }) { append(sp.text) }
+        } else if (sp.link != null && isWebLink(sp.link)) {
             withLink(androidx.compose.ui.text.LinkAnnotation.Url(sp.link,
                 androidx.compose.ui.text.TextLinkStyles(style))) { append(sp.text) }
         } else {
             withStyle(style) { append(sp.text) }
+        }
+    }
+}
+
+/** Copies text to the clipboard, saying so where Android does not (before 13). */
+@Composable
+private fun rememberCopy(): (String) -> Unit {
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    return remember(clipboard, ctx) {
+        { t: String ->
+            clipboard.setText(AnnotatedString(t))
+            if (android.os.Build.VERSION.SDK_INT < 33) {
+                android.widget.Toast.makeText(ctx, "copied", android.widget.Toast.LENGTH_SHORT).show()
+            }
         }
     }
 }
@@ -1965,28 +1995,29 @@ private fun isWebLink(u: String) = u.startsWith("http://") || u.startsWith("http
 @Composable
 fun MarkdownText(src: String) {
     val blocks = remember(src) { Markdown.parse(src) }
+    val copy = rememberCopy()
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         for (b in blocks) when (b) {
-            is Markdown.Block.Heading -> Text(spans(b.text, Palette.Phosphor),
+            is Markdown.Block.Heading -> Text(spans(b.text, Palette.Phosphor, copy),
                 style = MaterialTheme.typography.titleMedium.copy(fontSize = if (b.level <= 2) 15.sp else 13.sp),
                 modifier = Modifier.padding(top = 4.dp))
-            is Markdown.Block.Para -> Text(spans(b.text), style = MaterialTheme.typography.bodyMedium)
+            is Markdown.Block.Para -> Text(spans(b.text, onCopy = copy), style = MaterialTheme.typography.bodyMedium)
             is Markdown.Block.Item -> Row(Modifier.padding(start = (b.indent * 14).dp)) {
                 Text(b.marker + " ", style = MaterialTheme.typography.bodyMedium, color = Palette.Phosphor)
-                Text(spans(b.text), style = MaterialTheme.typography.bodyMedium)
+                Text(spans(b.text, onCopy = copy), style = MaterialTheme.typography.bodyMedium)
             }
             is Markdown.Block.Quote -> Row {
                 Box(Modifier.width(2.dp).height(18.dp).background(Palette.Violet))
                 Spacer(Modifier.width(8.dp))
-                Text(spans(b.text, Palette.Ash), style = MaterialTheme.typography.bodyMedium)
+                Text(spans(b.text, Palette.Ash, copy), style = MaterialTheme.typography.bodyMedium)
             }
-            is Markdown.Block.Code -> CodeBox(b.text)
+            is Markdown.Block.Code -> CodeBox(b.text, copy)
             is Markdown.Block.Table -> Column(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
                 .border(1.dp, Palette.Line, RoundedCornerShape(8.dp)).padding(8.dp)) {
                 b.rows.forEachIndexed { r, row ->
                     Row {
                         row.forEach { cell ->
-                            Text(spans(cell, if (r == 0) Palette.Phosphor else Palette.Bone),
+                            Text(spans(cell, if (r == 0) Palette.Phosphor else Palette.Bone, copy),
                                 style = MaterialTheme.typography.bodySmall,
                                 modifier = Modifier.width(140.dp).padding(end = 10.dp, bottom = 4.dp))
                         }

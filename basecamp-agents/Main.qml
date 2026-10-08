@@ -67,6 +67,20 @@ Item {
     property bool saidBad: false
 
     TextEdit { id: clipboard; visible: false; width: 0; height: 0 }
+    // Code in a reply copies itself when clicked: a link to "copy:" and the
+    // text, which activateLink hands to the clipboard instead of opening.
+    function copyHref(text) { return "copy:" + encodeURIComponent(String(text)) }
+    function activateLink(link) {
+        link = String(link || "")
+        if (link.indexOf("copy:") === 0) {
+            var t = decodeURIComponent(link.substring(5))
+            copyText(t)
+            root.said = "copied " + (t.indexOf("\n") >= 0 ? t.split("\n").length + " lines" : (t.length > 60 ? t.substring(0, 57) + "…" : t))
+            return true
+        }
+        openUrl(link)
+        return false
+    }
     function copyText(s) {
         if (!s) return
         clipboard.text = String(s)
@@ -136,7 +150,8 @@ Item {
         var h = ""
         for (var i = 0; i < spans.length; i++) {
             var sp = spans[i], t = mdEsc(sp.text)
-            if (sp.code) { h += "<span style=\"color:" + cChartreuse + "; background-color:" + cVoid + ";\">" + t + "</span>"; continue }
+            // Code is a link that copies it (activateLink), as Telegram does.
+            if (sp.code) { h += "<a href=\"" + copyHref(sp.text) + "\" style=\"text-decoration:none;\"><span style=\"color:" + cChartreuse + "; background-color:" + cVoid + ";\">" + t + "</span></a>"; continue }
             if (sp.italic) t = "<i>" + t + "</i>"
             if (sp.bold) t = "<b style=\"color:#ffffff;\">" + t + "</b>"
             if (sp.link) t = "<a href=\"" + mdEsc(sp.link) + "\" style=\"color:" + cSky + ";\">" + t + "</a>"
@@ -169,7 +184,8 @@ Item {
                 while (i < lines.length && lines[i].trim() !== close) { body.push(lines[i]); i++ }
                 while (body.length && body[body.length - 1].trim() === "") body.pop() // a reply still streaming
                 out.push("<table width=\"100%\" cellspacing=\"0\" cellpadding=\"8\" style=\"background-color:" + cVoid + "; border:1px solid " + cLine +
-                         "; margin-bottom:6px;\"><tr><td><pre style=\"color:" + cChartreuse + "; margin:0px;\">" + mdEsc(body.join("\n")) + "</pre></td></tr></table>")
+                         "; margin-bottom:6px;\"><tr><td><pre style=\"color:" + cChartreuse + "; margin:0px;\"><a href=\"" + copyHref(body.join("\n")) +
+                         "\" style=\"text-decoration:none;\"><span style=\"color:" + cChartreuse + ";\">" + mdEsc(body.join("\n")) + "</span></a></pre></td></tr></table>")
                 i++
                 continue
             }
@@ -2233,7 +2249,7 @@ Item {
                     readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap
                     textFormat: TextEdit.RichText
                     text: !root.reading ? "" : root.reading.role !== "user" ? root.mdHtml(root.reading.text) : root.linkPlain(root.reading.text)
-                    onLinkActivated: function(link) { root.openUrl(link) }
+                    onLinkActivated: function(link) { root.activateLink(link) }
                     LinkCursor {}
                     color: cBone; font.family: "monospace"; font.pixelSize: root.fs(12)
                 }
@@ -2289,6 +2305,7 @@ Item {
             RowLayout {
                 width: parent.width
                 Text { text: srow.sess.name; color: cBone; font.family: "monospace"; font.pixelSize: root.fs(12); elide: Text.ElideRight; Layout.fillWidth: !srow.showHost }
+                CageTag { sess: srow.sess }
                 Rectangle {
                     readonly property int n: root.unreadOf(srow.host, srow.sess)
                     visible: n > 0
@@ -2324,7 +2341,7 @@ Item {
                 width: parent.width
                 text: [root.clock(root.epoch(srow.sess.last_time)),
                        root.contextLabel(srow.sess.context_used, srow.sess.context_window),
-                       root.harnessLabel(srow.sess.harness), root.cageLabel(srow.sess), root.shortModel(srow.sess.model),
+                       root.harnessLabel(srow.sess.harness), srow.sess.cage ? root.cageWords(srow.sess.cage) : "", root.shortModel(srow.sess.model),
                        srow.sess.auto_approve && !(srow.sess.caps && !srow.sess.caps.approve) ? "auto-approve" : "",
                        root.tasksLabel(srow.sess.tasks_open || 0)].filter(function(x) { return x !== "" }).join("  ·  ")
                 color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(9); elide: Text.ElideRight
@@ -2432,6 +2449,7 @@ Item {
                 width: parent.width
                 spacing: 6
                 Text { text: (bcard.sess.starred ? "🍄 " : "") + bcard.sess.name; color: cBone; font.family: "monospace"; font.pixelSize: root.fs(13); elide: Text.ElideRight; Layout.maximumWidth: bcard.width * 0.5 }
+                CageTag { sess: bcard.sess }
                 Rectangle {
                     readonly property int n: root.unreadOf(bcard.host, bcard.sess)
                     visible: n > 0
@@ -2478,7 +2496,7 @@ Item {
                 width: parent.width
                 text: [root.clock(root.epoch(bcard.sess.last_time)),
                        root.contextLabel(bcard.sess.context_used, bcard.sess.context_window),
-                       root.harnessLabel(bcard.sess.harness), root.cageLabel(bcard.sess), root.shortModel(bcard.sess.model),
+                       root.harnessLabel(bcard.sess.harness), bcard.sess.cage ? root.cageWords(bcard.sess.cage) : "", root.shortModel(bcard.sess.model),
                        root.tasksLabel(bcard.sess.tasks_open || 0)].filter(function(x) { return x !== "" }).join("  ·  ")
                 color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(9); elide: Text.ElideRight
             }
@@ -2593,6 +2611,23 @@ Item {
                 }
             }
         }
+    }
+
+    // A session in a cage, by its name: a tag in the cage's violet, its
+    // details (image, nix, GitHub login) on hover and in the line below.
+    component CageTag: Text {
+        id: ctag
+        required property var sess
+        objectName: "cageTag"
+        visible: !!(sess && sess.cage)
+        text: "CAGED"
+        color: cViolet
+        font.family: "monospace"; font.pixelSize: root.fs(9); font.letterSpacing: 1; font.bold: true
+        leftPadding: root.sz(5); rightPadding: root.sz(5); topPadding: root.sz(1); bottomPadding: root.sz(1)
+        Rectangle { anchors.fill: parent; z: -1; radius: root.sz(4); color: "transparent"; border.color: cViolet; border.width: 1 }
+        ToolTip.visible: ctagMouse.containsMouse && visible
+        ToolTip.text: sess && sess.cage ? "in a cage: " + root.cageWords(sess.cage) : ""
+        MouseArea { id: ctagMouse; anchors.fill: parent; hoverEnabled: true; acceptedButtons: Qt.NoButton }
     }
 
     component Pulse: Rectangle {
@@ -3177,7 +3212,7 @@ Item {
                                     readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap
                                     textFormat: TextEdit.RichText
                                     text: root.mdHtml(root.agentStreaming) + "<span style=\"color:" + cPhosphor + ";\">▍</span>"
-                                    onLinkActivated: function(link) { root.openUrl(link) }
+                                    onLinkActivated: function(link) { root.activateLink(link) }
                                     LinkCursor {}
                                     color: cBone; font.family: "monospace"; font.pixelSize: root.fs(12)
                                 }
@@ -3268,7 +3303,7 @@ Item {
                                         text: readingThis ? root.aloudHtml() : (crow.kind === "said" ? root.mdHtml(crow.text) : root.linkPlain(crow.text))
                                         color: cBone; selectionColor: Qt.rgba(0.21, 0.94, 0.63, 0.35)
                                         font.family: "monospace"; font.pixelSize: root.fs(12)
-                                        onLinkActivated: function(link) { root.openUrl(link) }
+                                        onLinkActivated: function(link) { root.activateLink(link) }
                                         LinkCursor {}
                                     }
                                 }

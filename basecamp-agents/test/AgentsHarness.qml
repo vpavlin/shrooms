@@ -22,6 +22,7 @@ Item {
               context_used: 678705, context_window: 1000000, model: "claude-opus-5[1m]",
               preview: "The view loads and the existing checks pass." },
             { name: "notes", dir: "/home/someone/notes", state: "idle", pending: 0, running: false,
+              cage: { image: "localhost/shrooms-workbench:desktop", github: true },
               last_seq: 3, last_time: "2026-10-02T09:00:00+02:00", auto_approve: true,
               context_used: 22703, context_window: 200000, model: "claude-haiku-4-5-20251001", preview: "" } ] } }]
 
@@ -77,6 +78,11 @@ Item {
         { day: "2026-10-05", session: "shrooms", by: "nothing.office", model: "claude-opus-5[1m]", turns: 3, input: 10, cache_read: 1000, cache_write: 200, output: 900, cost_usd: 1.5, busy_ms: 120000 },
         { day: "2026-10-05", session: "notes", by: "", model: "ollama/qwen3", turns: 5, input: 50, cache_read: 0, cache_write: 0, output: 2000, cost_usd: 0, busy_ms: 3600000 } ] })
     property var voiceNow: ({ installed: false, busy: false, step: "", error: "", engine: "spd-say", voice: "en_US-lessac-medium" })
+    function countVisible(item, name) {
+        var n = (item.objectName === name && item.visible) ? 1 : 0
+        for (var i = 0; i < item.children.length; i++) n += countVisible(item.children[i], name)
+        return n
+    }
     function findByName(item, name) {
         if (item.objectName === name) return item
         for (var i = 0; i < item.children.length; i++) {
@@ -245,7 +251,13 @@ Item {
             console.error("STOPPED=" + top.lastPostPath)
             view.askRestart()
             view.restartOpenSession()
+            console.error("CAGETAG shown=" + top.countVisible(view, "cageTag") + " words=" + view.cageWords({ image: "localhost/shrooms-workbench:desktop", github: true }))
             console.error("RESTARTED=" + top.lastPostPath + " SAID=" + view.said)
+            var ch = view.mdHtml("Run `ssh-keygen -t ed25519` in ~/x:\n```\nmake test\ngo vet ./...\n```")
+            var hrefs = ch.match(/href="copy:[^"]*"/g) || []
+            var copied = view.activateLink(hrefs.length ? hrefs[1].slice(6, -1) : "")
+            console.error("COPYCODE links=" + hrefs.length + " first=" + (hrefs.length ? decodeURIComponent(hrefs[0].slice(11, -1)) : "") + " copied=" + copied + " said=" + view.said
+                          + " url=" + view.activateLink("copy:") )
             // Into a cage from the open session: the machine's offer asked
             // for, the dialog opened, the session moved with its options.
             view.askCage()
@@ -590,13 +602,13 @@ Item {
                 mh.indexOf("color:" + view.cPhosphor.toString().toLowerCase()) >= 0 || mh.indexOf("#35f0a0") >= 0,   // heading in green
                 /02befc2<\/span>/.test(mh) && mh.toLowerCase().indexOf("#c8e64a") >= 0,                              // inline code in chartreuse
                 mh.indexOf("second continued") >= 0, mh.indexOf("1.</span>") >= 0, mh.indexOf("▍") >= 0,
-                /<pre[^>]*>sudo make install<\/pre>/.test(mh), mh.indexOf("<hr/>") >= 0,
+                /<pre[^>]*><a href="copy:[^"]*"[^>]*><span[^>]*>sudo make install<\/span><\/a><\/pre>/.test(mh), mh.indexOf("<hr/>") >= 0,
                 mi.some(function(x) { return x.bold && x.text === "bold" }), mi.some(function(x) { return x.italic && x.text === "it" }),
                 mi.some(function(x) { return x.code && x.text === "code" }), mi.some(function(x) { return x.link === "http://x" && x.text === "link" }),
                 plain, boldLink && boldLink.link === u && boldLink.bold,
                 dot && dot.link === "http://vps.office.mesh:8099/shrooms-preview.apk",
                 view.mdInline("`curl http://x`").every(function(x) { return !x.link }),
-                /<pre[^>]*>make test<\/pre>/.test(view.mdHtml("Look:\n```\nmake test\n")),                              // an unclosed fence
+                /<pre[^>]*><a href="copy:make%20test"[^>]*><span[^>]*>make test<\/span><\/a><\/pre>/.test(view.mdHtml("Look:\n```\nmake test\n")),                              // an unclosed fence
                 (view.mdHtml("| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |").match(/<tr>/g) || []).length === 3,
                 view.mdHtml("<b>x</b> & y").indexOf("&lt;b&gt;x&lt;/b&gt; &amp; y") >= 0                             // text, not HTML
             ]
