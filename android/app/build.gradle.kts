@@ -28,7 +28,7 @@ android {
 
     // Shrooms Agents' own key (docs/agents.md). Never in the repository:
     // whoever holds it can ship an update to an app that drives your agents.
-    // The build is handed it by scripts/build-agents-apk.sh, read-only, from
+    // The build is handed it by AGENTS=1 scripts/build-apk.sh, read-only, from
     // ~/apk-signing/shrooms-agents; without it the agents build is unsigned.
     val agentsKey = System.getenv("AGENTS_KEYSTORE")?.let { file(it) }?.takeIf { it.exists() }
     signingConfigs {
@@ -59,7 +59,7 @@ android {
         // Agents screens and never touches the VPN, which stays with the
         // shrooms app. Separate because the two change at different speeds
         // and carry different permissions (docs/agents.md).
-        // Build: scripts/build-agents-apk.sh
+        // Build: AGENTS=1 scripts/build-apk.sh
         create("agents") {
             initWith(getByName("release"))
             applicationIdSuffix = ".agents"
