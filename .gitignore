@@ -91,3 +91,6 @@ dist-*/
 # whoever holds it can ship an update to an app that drives your agents.
 android/preview.keystore
 result-agents
+
+# Python bytecode, written whenever a script runs.
+__pycache__/
