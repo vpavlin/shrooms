@@ -486,7 +486,7 @@ func (m *Manager) cageEnv(s *Session) (string, error) {
 		"SHROOMS_AGENT_SESSION": s.Name(),
 		// The shrooms tools reach agents through this (ADR-044).
 		"SHROOMS_AGENT_PROXY": CageProxyDir + "/proxy.sock",
-		"PATH":                  cagePath(home, s.cage.Nix),
+		"PATH":                cagePath(home, s.cage.Nix),
 	}
 	if s.cage.Nix {
 		if _, err := os.Stat(nixDaemonSocket); err == nil {
