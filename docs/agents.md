@@ -138,7 +138,7 @@ On each machine's overlay addresses, port 7387. Bodies are JSON; an error is
 | `POST /v1/sessions` | `{name, dir, harness?, auto_approve?, keep_running?, cage?}` | 201, the new session's Info. Claude Code unless `harness` names another (`GET /v1/harnesses`). `dir` (`~` is the agent user's home) is made if it does not exist, once the request is otherwise accepted, and refused if it is a file. `cage: {}` runs it in a container of its own; `{"image": …, "nix": true, "github": true}` for another image, the machine's nix, the owner's gh login |
 | `POST /v1/sessions` | `{name, resume, dir?, harness?, cage?}` | 201: continue an existing conversation — Claude Code's, or with `harness: "pi"` pi's — by its id, in the directory it ran in (read from its transcript when `dir` is not given). Refused for one whose directory is not on this machine: a `~/.claude` copied from another machine brings its transcripts along, and those cannot be continued here, nor is their directory made |
 | `DELETE /v1/sessions/{name}` | | 204: stop and forget it (its event log goes too) |
-| `PATCH /v1/sessions/{name}`, `POST /v1/sessions/{name}/settings` | `{auto_approve?, starred?, keep_running?}` | 200, Info. POST is for clients that cannot send PATCH (Android's HttpURLConnection). A star is kept on the agent, so every device lists starred sessions first, above each machine's others. `keep_running`: for an agent that works on its own (a heartbeat, a chat bridge in its extensions), Jimmy on pi5 being the first. Auto-approve and keep-running changes are recorded as `setting` events |
+| `PATCH /v1/sessions/{name}`, `POST /v1/sessions/{name}/settings` | `{auto_approve?, starred?, keep_running?, accept_caged?}` | 200, Info. 403 to a request carrying `X-Shrooms-Caged`. `accept_caged`: whether the session takes tasks from caged agents (ADR-044; default yes for a caged session, no otherwise). POST is for clients that cannot send PATCH (Android's HttpURLConnection). A star is kept on the agent, so every device lists starred sessions first, above each machine's others. `keep_running`: for an agent that works on its own (a heartbeat, a chat bridge in its extensions), Jimmy on pi5 being the first. Auto-approve and keep-running changes are recorded as `setting` events |
 | `POST /v1/sessions/{name}/rename` | `{name}` | 200, Info; 409 if the name is taken or not valid, 404 if there is no such session. The event log moves with it; files sent to it stay where they were kept, since its messages name them by path; its process goes on undisturbed. Recorded as a `renamed` event, on which every app following it moves what it keeps under the name (the copy, unread, auto-play, the outbox) |
 | `POST /v1/sessions/{name}/restart` | | 204: end the session's process at once — killed, since a request hanging on a dropped connection (`API Error: Connection dropped (ECONNRESET)`) answers neither an interrupt nor the end of its input — and start it again on the same conversation. The turn in progress is lost; turns queued behind it go on. Only this session's process: the others on the machine, which a restart of shrooms-agent would end too, are untouched. A `restarted` event |
 | `POST /v1/sessions/{name}/cage` | `{"cage": {image?, nix?, github?}}` or `{"cage": null}` | 200, Info; 409 unless the session is idle with no prompt waiting, or when the machine has no podman. Moves a session into a cage, changes its cage, or takes it out. Its process is stopped and the conversation resumes where it now runs with the next message; a cage changed or left is deleted, with what was installed in it. A `caged` event |
@@ -199,7 +199,7 @@ The JSON-RPC methods:
 
 | Method | Params | Result and notes |
 |---|---|---|
-| `SendMessage` | `{message: {messageId, role, parts, metadata?, taskId?}, configuration?: {blocking}, referenceTaskIds?}` | `{task}`. Text parts only. The task id is `SESSION:MESSAGE-ID`; the same messageId again is the same task. A busy session queues it. `blocking` waits up to 10 minutes, until the task is finished or needs input. A message with `taskId` adds to an open task — the answer to "blocked". The message reaches the session as from the device the mesh names, with the sender's claim from `metadata["shrooms/from"]` after it ("pi5.default (pi5/jimmy)"). More than 30 new tasks to one session from one device in an hour are refused (-32050) |
+| `SendMessage` | `{message: {messageId, role, parts, metadata?, taskId?}, configuration?: {blocking}, referenceTaskIds?}` | `{task}`. Text parts only. The task id is `SESSION:MESSAGE-ID`; the same messageId again is the same task. A busy session queues it. `blocking` waits up to 10 minutes, until the task is finished or needs input. A message with `taskId` adds to an open task — the answer to "blocked". The message reaches the session as from the device the mesh names, with the sender's claim from `metadata["shrooms/from"]` after it ("pi5.default (pi5/jimmy)"). More than 30 new tasks to one session from one device in an hour are refused (-32050). From a cage (the `X-Shrooms-Caged` header, which only a cage's own agent sets — ADR-044) the claim is its agent's ("laptop (laptop/review, in a cage)"), and a session that takes no tasks from caged agents refuses it (-32051) |
 | `SendStreamingMessage` | as SendMessage | Server-sent events of JSON-RPC responses: `{task}` first, then `{statusUpdate: {taskId, contextId, status, final}}` on each change, ending with the final one |
 | `GetTask` | `{id}` | `{task}` |
 | `SubscribeToTask` | `{id}` | as SendStreamingMessage |
@@ -210,7 +210,8 @@ The JSON-RPC methods:
 `id` is `SESSION:MESSAGE-ID`, or the message id alone at `/a2a/{name}`.
 Errors: -32700 not JSON, -32600 not JSON-RPC 2.0, -32601 no such method,
 -32602 bad params or no such session, -32001 no such task, -32002 not
-cancelable, -32004 streaming unsupported, -32050 over the rate.
+cancelable, -32004 streaming unsupported, -32050 over the rate, -32051 refused
+from a cage.
 
 A Task is `{id, contextId, status: {state, message?, timestamp}, artifacts?,
 metadata}`. `state` is A2A's (`TASK_STATE_SUBMITTED` while queued, `WORKING`,
@@ -277,7 +278,7 @@ data?}`; `by` is the device that caused it, as the mesh names it.
 | `answer` | `{prompt, allow, message, answers?}` | a permission prompt or question answered |
 | `stopped` | `{reason}` | the process ended (`finished`, or why); its waiting prompts are dropped |
 | `partial` | `{text}` | reply text as it is written. Live only — never kept or numbered (its `seq` is the last real event's) — since the whole message follows as a `claude` event |
-| `setting` | `{auto_approve}` or `{keep_running}` | a setting changed |
+| `setting` | `{auto_approve}`, `{keep_running}` or `{accept_caged}` | a setting changed |
 | `restarted` | `{}` | the process was restarted on request |
 | `renamed` | `{from, to}` | the session was renamed |
 | `caged` | `{caged, image?, nix?, github?}` | moved into a cage, its cage changed, or taken out |

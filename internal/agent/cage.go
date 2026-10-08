@@ -84,6 +84,8 @@ type Cages struct {
 	Pids   int
 	// Socket is the shrooms daemon's, which the shrooms MCP server reads.
 	Socket string
+	// Nft is the nft program closing the agent port in cages; "" finds it.
+	Nft string
 
 	mu       sync.Mutex
 	building bool
@@ -231,6 +233,7 @@ func newContainerName(session string) string {
 type mount struct {
 	path string
 	ro   bool
+	at   string // where in the cage, when not at the same path
 }
 
 // cageRun is what one start of a caged session's process needs.
@@ -266,6 +269,11 @@ func (m *Manager) cageMounts(s *Session, harness string) []mount {
 	if s.cage.Nix {
 		ms = append(ms, nixMounts(home)...)
 	}
+	// Its own agent's socket, as a directory: one made again after the agent
+	// restarts is the one the cage sees.
+	pd := m.proxyDir(s.cage.Container)
+	os.MkdirAll(pd, 0o700)
+	ms = append(ms, mount{path: pd, at: CageProxyDir})
 	if s.cage.GitHub {
 		ms = append(ms, mount{path: filepath.Join(home, ".config", "gh"), ro: true})
 	}
@@ -373,7 +381,13 @@ func (m *Manager) binOf(harness string) string {
 // createArgs makes a session's container.
 func (c *Cages) createArgs(name, session, image string, ms []mount) []string {
 	args := []string{"create", "--name", name, "--label", "xyz.vpavlin.shrooms.session=" + session,
-		"--network", cageNetwork, "--security-opt", "label=disable"}
+		// A cage made with its own agent's socket (ADR-044); one without is
+		// made again.
+		"--label", proxyLabel + "=1",
+		"--network", cageNetwork, "--security-opt", "label=disable",
+		// Not in podman's defaults either; said so, since the rule that
+		// closes the agent port depends on it.
+		"--cap-drop", "NET_ADMIN"}
 	if c.Memory != "" {
 		args = append(args, "--memory", c.Memory)
 	}
@@ -384,7 +398,11 @@ func (c *Cages) createArgs(name, session, image string, ms []mount) []string {
 		args = append(args, "--pids-limit", fmt.Sprint(c.Pids))
 	}
 	for _, x := range ms {
-		v := x.path + ":" + x.path
+		at := x.path
+		if x.at != "" {
+			at = x.at
+		}
+		v := x.path + ":" + at
 		if x.ro {
 			v += ":ro"
 		}
@@ -404,6 +422,15 @@ func (m *Manager) prepareCage(s *Session, bin string) (*cageRun, error) {
 	ctx, cancel := context.WithTimeout(m.ctx, 2*time.Minute)
 	defer cancel()
 	name := s.cage.Container
+	if _, err := c.run(ctx, "container", "exists", name); err == nil {
+		// Made before cages had their own agent's socket: made again, and
+		// what was installed in it goes (ADR-044).
+		if out, _ := c.run(ctx, "inspect", "--format", "{{index .Config.Labels \""+proxyLabel+"\"}}", name); strings.TrimSpace(out) != "1" {
+			c.run(ctx, "rm", "-f", "-t", "3", name)
+			s.record("caged", "shrooms", map[string]any{"caged": true, "image": image, "nix": s.cage.Nix, "github": s.cage.GitHub,
+				"remade": "made again, to reach agents only through its own; what was installed in it is gone"})
+		}
+	}
 	if _, err := c.run(ctx, "container", "exists", name); err != nil {
 		if !c.imageExists(image) {
 			c.Prepare(image, m.log.Info)
@@ -419,7 +446,15 @@ func (m *Manager) prepareCage(s *Session, bin string) (*cageRun, error) {
 			return nil, err
 		}
 	}
+	if err := m.startCageProxy(s, name); err != nil {
+		return nil, fmt.Errorf("the cage's socket to its agent: %w", err)
+	}
 	if _, err := c.run(ctx, "start", name); err != nil {
+		return nil, err
+	}
+	if err := c.closeAgentPort(ctx, name); err != nil {
+		// Not run with the port open: it would reach agents as this machine.
+		c.run(ctx, "stop", "-t", "3", name)
 		return nil, err
 	}
 	env, err := m.cageEnv(s)
@@ -449,6 +484,8 @@ func (m *Manager) cageEnv(s *Session) (string, error) {
 		// except in a sandbox, which a cage is.
 		"IS_SANDBOX":            "1",
 		"SHROOMS_AGENT_SESSION": s.Name(),
+		// The shrooms tools reach agents through this (ADR-044).
+		"SHROOMS_AGENT_PROXY": CageProxyDir + "/proxy.sock",
 		"PATH":                  cagePath(home, s.cage.Nix),
 	}
 	if s.cage.Nix {
@@ -593,6 +630,7 @@ func (m *Manager) SetCage(name string, cage *Cage, by string) (Info, error) {
 	err := m.save()
 	m.mu.Unlock()
 	if old != nil && m.Cages != nil {
+		m.stopCageProxy(old.Container)
 		go m.Cages.remove(old.Container, m.dir)
 	}
 	if cage != nil {

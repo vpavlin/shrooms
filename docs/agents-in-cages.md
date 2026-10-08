@@ -173,7 +173,7 @@ providers with attested hardware, if and when Akash offers them.
 Console's API or `provider-services`, paid in AKT (Console Air); a budget per
 deployment, and nothing remote started without your yes.
 
-## Telling other agents a request comes from a cage (proposed, 2026-10-08)
+## Telling other agents a request comes from a cage (decided and built 2026-10-08: the first option below, ADR-044)
 
 The owner's idea: when a caged session asks another agent for something, the
 receiver should know, and be able to decide — caged agents work with caged

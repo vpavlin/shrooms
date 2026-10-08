@@ -269,6 +269,9 @@ Item {
             var moved = top.lastPostPath + " " + top.lastPost
             view.cageOpenSession(false)
             console.error("CAGED open=" + cageOpen + " offer=" + (view.cageStatus !== null) + " moved=" + moved + " out=" + top.lastPost)
+            view.setAcceptCaged(true)
+            var accepted = top.lastPostPath + " " + top.lastPost
+            console.error("ACCEPTCAGED " + accepted + " said=" + view.said)
             view.closeDialogs()
             // A turn the harness started itself: labelled by its source.
             var kept = view.agentEventsList

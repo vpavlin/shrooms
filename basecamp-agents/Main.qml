@@ -1216,6 +1216,15 @@ Item {
         root.cageOpts = c ? { image: c.image, nix: !!c.nix, github: !!c.github } : { image: "", nix: false, github: false }
         cageDialog.open()
     }
+    // Whether the open session takes tasks from caged agents.
+    function setAcceptCaged(on) {
+        if (!agentOpen) return false
+        if (agentCall("agentPost", [agentOpen.address, "/v1/sessions/" + agentOpen.session + "/settings", JSON.stringify({ accept_caged: on })]) === null) return false
+        root.said = on ? "session " + agentOpen.session + " takes tasks from caged agents" : "session " + agentOpen.session + " takes no tasks from caged agents"
+        root.saidBad = false
+        Qt.callLater(refreshAgents)
+        return true
+    }
     function cageOpenSession(caged) {
         if (!agentOpen) return false
         var body = JSON.stringify({ cage: caged ? cageBody(cageOpts) : null })
@@ -3023,6 +3032,11 @@ Item {
                               onClicked: root.setAutoPlay(root.agentOpen, !on) }
                         Lnk { objectName: "cageLink"; text: root.agentInfo && root.agentInfo.cage ? "caged" : "cage"
                               base: root.agentInfo && root.agentInfo.cage ? cPhosphor : cAsh; onClicked: Qt.callLater(root.askCage) }
+                        // Whether it takes tasks from caged agents (ADR-044):
+                        // lit when it does.
+                        Lnk { readonly property bool on: !!(root.agentInfo && root.agentInfo.accept_caged)
+                              objectName: "acceptCagedLink"; text: on ? "CAGED TASKS" : "caged tasks"; base: on ? cViolet : cAsh
+                              onClicked: Qt.callLater(root.setAcceptCaged, !on) }
                         Lnk { text: "restart"; base: cAsh; onClicked: root.askRestart() }
                         Lnk { text: "delete"; base: cAsh; onClicked: root.askDelete() }
                         Lnk { visible: root.agentWorking; text: "■ stop"; base: cRust; onClicked: root.stopTurn() }

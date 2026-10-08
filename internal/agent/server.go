@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -190,10 +191,24 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 		AutoApprove *bool `json:"auto_approve"`
 		Starred     *bool `json:"starred"`
 		KeepRunning *bool `json:"keep_running"`
+		AcceptCaged *bool `json:"accept_caged"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		fail(w, http.StatusBadRequest, err)
 		return
+	}
+	// Not from a cage (ADR-044): a caged agent does not choose who it
+	// takes work from on the owner's behalf. Its proxy forwards none of
+	// this, and the header says so for anyone who asks the way around.
+	if r.Header.Get(cagedHeader) != "" {
+		fail(w, http.StatusForbidden, errors.New("a caged agent cannot change a session's settings"))
+		return
+	}
+	if req.AcceptCaged != nil {
+		if err := s.SetAcceptCaged(*req.AcceptCaged, h.caller(r)); err != nil {
+			fail(w, http.StatusInternalServerError, err)
+			return
+		}
 	}
 	if req.AutoApprove != nil {
 		if err := s.SetAutoApprove(*req.AutoApprove, h.caller(r)); err != nil {

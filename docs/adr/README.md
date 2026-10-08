@@ -53,3 +53,4 @@ number appears, its source is named.
 | [041](041-agents-talk-a2a-over-the-mesh.md) | Agents talk A2A, and the mesh is the authentication | accepted; built — every session an A2A agent, its tools in every session; "a task is a turn" amended by 042 |
 | [042](042-a-task-is-open-until-the-worker-finishes-it.md) | A task is open until the worker finishes it | accepted; built — supervised by a watchdog, queued, acknowledged |
 | [043](043-peers-are-probed-on-evidence-not-only-announces.md) | Peers are probed on evidence, not only on announces | accepted; built — remembered, answering, after a move, or probing us; roaming without the bus |
+| [044](044-cages-reach-agents-through-their-own.md) | Cages reach agents only through their own, which says so | accepted; built — agent port closed in cages, a socket to their own agent, receivers choose (accept_caged) |

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -87,6 +88,8 @@ type Info struct {
 	// subscription's limit reached, its key's allowance spent — and says
 	// until when (limited.go).
 	Limited *Limited `json:"limited,omitempty"`
+	// AcceptCaged: it takes tasks from caged agents (ADR-044).
+	AcceptCaged bool `json:"accept_caged"`
 	// Cage is set for a session that runs in a container of its own, with
 	// the image it is made from (cage.go).
 	Cage *CageInfo `json:"cage,omitempty"`
@@ -121,8 +124,12 @@ type Session struct {
 	starred     bool
 	keepRunning bool
 	// cage: the session runs in a container of its own (cage.go); nil not.
-	cage  *Cage
-	turns uint64
+	cage *Cage
+	// acceptCaged: whether it takes tasks from caged agents; nil for the
+	// default, which is yes for a caged session and no for one outside
+	// (ADR-044).
+	acceptCaged *bool
+	turns       uint64
 	// ids are the device-made ids of messages and voice notes already taken,
 	// so a device that sends again — it did not hear the answer, the
 	// network went — does not send twice. The last maxIDs, loaded from the
@@ -190,8 +197,13 @@ type Manager struct {
 	IdleStop time.Duration
 
 	// Cages makes containers for caged sessions (cage.go); nil when this
-	// machine has no podman.
-	Cages *Cages
+	// machine has no podman. proxies are their sockets to this agent
+	// (cageproxy.go), and Machines the mesh's machines they reach through
+	// them, this one first.
+	Cages    *Cages
+	proxies  cageProxies
+	Machines func() ([]Machine, error)
+	agentAt  func(netip.Addr) string // tests: where an agent is
 
 	// STT transcribes voice notes; nil when this machine has no model.
 	STT *Transcriber
@@ -215,6 +227,7 @@ type record struct {
 	Starred     bool   `json:"starred,omitempty"`
 	KeepRunning bool   `json:"keep_running,omitempty"`
 	Cage        *Cage  `json:"cage,omitempty"`
+	AcceptCaged *bool  `json:"accept_caged,omitempty"`
 }
 
 // NewManager loads the sessions kept in stateDir.
@@ -253,6 +266,7 @@ func NewManager(ctx context.Context, log *slog.Logger, stateDir, claudeBin strin
 			s.starred = r.Starred
 			s.keepRunning = r.KeepRunning
 			s.cage = r.Cage
+			s.acceptCaged = r.AcceptCaged
 			s.loadEvents()
 			m.sessions[r.Name] = s
 		}
@@ -368,7 +382,7 @@ func (m *Manager) save() error {
 	for _, s := range m.sessions {
 		s.mu.Lock()
 		r := record{Name: s.Name(), Dir: s.dir, ConvID: s.convID, AutoApprove: s.autoApprove, Starred: s.starred,
-			KeepRunning: s.keepRunning, Cage: s.cage}
+			KeepRunning: s.keepRunning, Cage: s.cage, AcceptCaged: s.acceptCaged}
 		if s.harness.Name() != "claude" {
 			r.Harness = s.harness.Name()
 		}
@@ -513,6 +527,7 @@ func (m *Manager) Remove(name string) error {
 	s.stop()
 	os.Remove(s.eventsPath())
 	if s.cage != nil && m.Cages != nil {
+		m.stopCageProxy(s.cage.Container)
 		m.Cages.remove(s.cage.Container, m.dir)
 	}
 	return err
@@ -586,7 +601,7 @@ func (s *Session) Info() Info {
 		Running: s.proc != nil, LastSeq: s.seq, AutoApprove: s.autoApprove,
 		ContextUsed: s.ctxUsed, ContextWindow: s.ctxWindow, Preview: s.preview, Model: s.model,
 		Harness: s.harness.Name(), Caps: s.harness.Caps(), Starred: s.starred, Turns: s.turns,
-		KeepRunning: s.keepRunning}
+		KeepRunning: s.keepRunning, AcceptCaged: s.acceptsCaged()}
 	if s.cage != nil {
 		in.Cage = &CageInfo{Image: s.cage.Image, Nix: s.cage.Nix, GitHub: s.cage.GitHub}
 		if in.Cage.Image == "" && s.m.Cages != nil {
@@ -1285,6 +1300,33 @@ func (s *Session) SetKeepRunning(on bool, by string) error {
 }
 
 // SetStarred stars or unstars the session, and keeps that.
+// acceptsCaged: whether it takes tasks from caged agents — as set, or by
+// default when it is caged itself. Called with s.mu held.
+func (s *Session) acceptsCaged() bool {
+	if s.acceptCaged != nil {
+		return *s.acceptCaged
+	}
+	return s.cage != nil
+}
+
+// AcceptsCaged is acceptsCaged, for a caller without the lock.
+func (s *Session) AcceptsCaged() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.acceptsCaged()
+}
+
+// SetAcceptCaged sets whether the session takes tasks from caged agents.
+func (s *Session) SetAcceptCaged(on bool, by string) error {
+	s.mu.Lock()
+	s.acceptCaged = &on
+	s.record("setting", by, map[string]bool{"accept_caged": on})
+	s.mu.Unlock()
+	s.m.mu.Lock()
+	defer s.m.mu.Unlock()
+	return s.m.save()
+}
+
 func (s *Session) SetStarred(on bool) error {
 	s.mu.Lock()
 	s.starred = on

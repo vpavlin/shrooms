@@ -2,7 +2,9 @@ package agent
 
 import (
 	"log/slog"
+	"net/netip"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -30,7 +32,13 @@ case "$1" in
 image) ` + imageExists + ` ;;
 container) [ -f "$D/c-$3" ]; exit $? ;;
 create) while [ "$1" != "--name" ]; do shift; done; touch "$D/c-$2" ;;
-rm) rm -f "$D/c-$4" ;;
+rm) eval last=\${$#}; rm -f "$D/c-$last" "$D/c-$last.old" ;;
+inspect)
+  case "$3" in
+  *Pid*) echo 4242 ;;
+  *proxy*) [ -f "$D/c-$4.old" ] || echo 1 ;;
+  esac ;;
+unshare) cat > /dev/null ;;
 build) cat > $D/Containerfile ;;
 exec)
   shift
@@ -74,7 +82,7 @@ func TestACagedSessionRunsInItsOwnContainer(t *testing.T) {
 	podman, log := fakePodman(t, false)
 	state := t.TempDir()
 	m := newTestManager(t, state)
-	m.Cages = &Cages{Podman: podman, Image: "localhost/bench:1", Memory: "4g", CPUs: "2", Pids: 100}
+	m.Cages = &Cages{Podman: podman, Image: "localhost/bench:1", Memory: "4g", CPUs: "2", Pids: 100, Nft: "nft"}
 	t.Setenv("ANTHROPIC_API_KEY", "sk-test")
 	project := t.TempDir()
 
@@ -102,7 +110,9 @@ func TestACagedSessionRunsInItsOwnContainer(t *testing.T) {
 	}
 	for _, want := range []string{"--network " + cageNetwork, "--memory 4g", "--cpus 2", "--pids-limit 100",
 		"-v " + project + ":" + project + " ", "-v " + filepath.Join(state, "uploads") + ":" + filepath.Join(state, "uploads") + ":ro",
-		" localhost/bench:1 sleep infinity"} {
+		" localhost/bench:1 sleep infinity", "--cap-drop NET_ADMIN", "--label " + proxyLabel + "=1",
+		// Its own agent's socket, the only way it reaches agents (ADR-044).
+		"-v " + filepath.Join(state, "cages") + "/shrooms-box-"} {
 		if !strings.Contains(cs[create], want) {
 			t.Errorf("the container is made without %q:\n%s", want, cs[create])
 		}
@@ -115,10 +125,19 @@ func TestACagedSessionRunsInItsOwnContainer(t *testing.T) {
 	if exec < 0 || indexOf(cs, `^start `+name[1]+`$`) > exec {
 		t.Fatalf("the harness is not run in the started cage, in the project: %q", cs)
 	}
+	if !strings.Contains(cs[create], ".d:"+CageProxyDir+" ") {
+		t.Errorf("the cage's socket is not mounted at %s: %s", CageProxyDir, cs[create])
+	}
+	// The agent port closed inside it, after it started and before the
+	// harness runs in it.
+	if np := indexOf(cs, `^unshare nsenter -t 4242 -n nft -f -$`); np < 0 || np < indexOf(cs, `^start `+name[1]+`$`) || np > exec {
+		t.Fatalf("the agent port is not closed in the cage before the harness runs: %q", cs)
+	}
 
 	// What the harness is given: its keys and who it is, not the machine's.
 	env, _ := os.ReadFile(filepath.Join(state, "cages", name[1]+".env"))
-	for _, want := range []string{"ANTHROPIC_API_KEY=sk-test\n", "IS_SANDBOX=1\n", "SHROOMS_AGENT_SESSION=box\n", "HOME=" + home + "\n"} {
+	for _, want := range []string{"ANTHROPIC_API_KEY=sk-test\n", "IS_SANDBOX=1\n", "SHROOMS_AGENT_SESSION=box\n", "HOME=" + home + "\n",
+		"SHROOMS_AGENT_PROXY=" + CageProxyDir + "/proxy.sock\n"} {
 		if !strings.Contains(string(env), want) {
 			t.Errorf("the cage's environment lacks %q:\n%s", want, env)
 		}
@@ -288,6 +307,20 @@ func TestARealCage(t *testing.T) {
 		t.Fatalf("a file the cage wrote belongs to uid %d, not the owner", uid)
 	}
 	t.Logf("preview: %q", s.Info().Preview)
+
+	// From inside: no agent is reached directly, its own is through the
+	// socket (ADR-044).
+	m.Machines = func() ([]Machine, error) { return []Machine{{"here", netip.MustParseAddr("::1")}}, nil }
+	ctr := s.cage.Container
+	direct, _ := exec.Command("podman", "exec", ctr, "sh", "-c",
+		"curl -s -m 5 -o /dev/null -w '%{http_code}' http://[fd5e:ca9e:1::1]:7387/v1/sessions; echo \" $?\"").CombinedOutput()
+	if strings.HasPrefix(strings.TrimSpace(string(direct)), "200") {
+		t.Errorf("an agent port answers inside the cage: %s", direct)
+	}
+	via, _ := exec.Command("podman", "exec", ctr, "curl", "-s", "-m", "5", "--unix-socket", CageProxyDir+"/proxy.sock", "http://cage/machines").CombinedOutput()
+	if !strings.Contains(string(via), `"here"`) {
+		t.Errorf("the cage's socket does not answer: %s", via)
+	}
 }
 
 // moveWhenIdle moves a session once its turn has ended — the reply's text
@@ -404,4 +437,30 @@ func TestACageWithNix(t *testing.T) {
 	if nix == nil || nix.ro != (daemon == nil) {
 		t.Fatalf("the store is not read-only with a daemon, and the owner's to write without one: %+v", ms)
 	}
+}
+
+// A cage made before cages had their own agent's socket is made again on its
+// next start, and the conversation says what went with it.
+func TestAnOldCageIsMadeAgain(t *testing.T) {
+	podman, log := fakePodman(t, false)
+	m := newTestManager(t, t.TempDir())
+	m.Cages = &Cages{Podman: podman, Image: "localhost/bench:1", Nft: "nft"}
+	if _, err := m.CreateCaged("box", t.TempDir(), "claude", &Cage{}); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := m.Get("box")
+	name := s.cage.Container
+	dir := filepath.Dir(log)
+	os.WriteFile(filepath.Join(dir, "c-"+name), nil, 0o600)
+	os.WriteFile(filepath.Join(dir, "c-"+name+".old"), nil, 0o600)
+	if err := s.Send("hello", "phone"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, s, 0, func(e Event) bool { return strings.Contains(assistantText(e), "hello") })
+	cs := calls(t, log)
+	rm, create := indexOf(cs, `^rm -f -t 3 `+name+`$`), indexOf(cs, `^create --name `+name+` `)
+	if rm < 0 || create < rm {
+		t.Fatalf("an old cage is not made again before it is used: %q", cs)
+	}
+	waitFor(t, s, 0, func(e Event) bool { return e.Kind == "caged" && strings.Contains(string(e.Data), "made again") })
 }

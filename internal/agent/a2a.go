@@ -46,6 +46,8 @@ const (
 	a2aUnsupported    = -32004
 	// Ours, in the server range: a sender over its rate (a2aLimiter).
 	a2aTooMany = -32050
+	// a2aCagedRefused: the session takes no tasks from caged agents.
+	a2aCagedRefused = -32051
 )
 
 // a2aPart is a Part; only text is taken and given.
@@ -243,6 +245,8 @@ func (h *handler) view(t Task) a2aTask {
 			"shrooms/acknowledged": t.Acked, "shrooms/nudges": t.Nudges, "shrooms/stalled": t.Stalled,
 			"shrooms/queued": t.State == taskSubmitted, "shrooms/expired": t.Expired,
 			"shrooms/last_worker_line": trim(last, 600),
+			// Asked by a caged agent, as its own agent said (ADR-044).
+			"shrooms/caged": strings.Contains(t.From, ", in a cage)"),
 		}}
 	if !t.LastNudge.IsZero() {
 		out.Metadata["shrooms/last_nudge"] = t.LastNudge.UTC().Format(time.RFC3339)
@@ -357,9 +361,24 @@ func (h *handler) a2aSend(w http.ResponseWriter, r *http.Request, req rpcRequest
 		return
 	}
 	by := h.caller(r)
-	if from, _ := m.Metadata["shrooms/from"].(string); from != "" && by != "" {
-		// Who on that machine: its claim, beside what the mesh says.
-		by = by + " (" + from + ")"
+	caged := r.Header.Get(cagedHeader) != ""
+	if from, _ := m.Metadata["shrooms/from"].(string); from != "" && (by != "" || caged) {
+		// Who on that machine: its claim, beside what the mesh says — or,
+		// from a cage, what its own agent says (ADR-044).
+		if by == "" {
+			by = "this machine"
+		}
+		if caged {
+			by = by + " (" + from + ", in a cage)"
+		} else {
+			by = by + " (" + from + ")"
+		}
+	}
+	// The receiver decides whether it works for caged agents (ADR-044). A
+	// task already taken goes on.
+	if caged && m.TaskID == "" && !s.AcceptsCaged() {
+		rpcReply(w, req.ID, nil, &rpcError{a2aCagedRefused, "session " + s.Name() + " takes no tasks from caged agents"})
+		return
 	}
 	var params struct {
 		ReferenceTaskIDs []string `json:"referenceTaskIds"`

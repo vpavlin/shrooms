@@ -50,6 +50,8 @@ data class AgentSession(
     val cage: SessionCage? = null,
     /** Why it cannot work now for want of quota, and until when (epoch millis, 0 unknown); null when it can. */
     val limited: Limited? = null,
+    /** Whether it takes tasks from caged agents (ADR-044). */
+    val acceptCaged: Boolean = false,
 )
 
 /** A session out of quota: the plan's limit reached, or its key's allowance spent (the agent's `limited`). */
@@ -174,6 +176,7 @@ class AgentClient(private val address: String) {
                 tasksStalled = s.optInt("tasks_stalled"),
                 cage = SessionCage.parse(s.optJSONObject("cage")),
                 limited = Limited.parse(s.optJSONObject("limited")),
+                acceptCaged = s.optBoolean("accept_caged"),
             )
         }
     }
@@ -234,6 +237,11 @@ class AgentClient(private val address: String) {
     /** Stars a session, or unstars it: kept on the agent, so every device lists it first. */
     fun setStarred(session: String, on: Boolean) {
         request("POST", "/v1/sessions/${enc(session)}/settings", JSONObject().put("starred", on).toString())
+    }
+
+    /** Whether the session takes tasks from caged agents. */
+    fun setAcceptCaged(session: String, on: Boolean) {
+        request("POST", "/v1/sessions/${enc(session)}/settings", JSONObject().put("accept_caged", on).toString())
     }
 
     fun setAutoApprove(session: String, on: Boolean) {

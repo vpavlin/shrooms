@@ -349,6 +349,17 @@ keep asking each other run into it within the hour.
 that may give it tasks, and a switch that makes an auto-approving session
 accept tasks only from you.
 
+### Caged agents
+
+A session in a cage ([Cages](cages.md)) reaches other agents only through
+its own agent, which names it and marks the request as from a cage; the
+task reads "laptop (laptop/review, in a cage)" and carries
+`shrooms/caged: true`. Each session decides whether it takes such tasks —
+"caged tasks" in the apps, `accept_caged` over the API. By default a caged
+session does and a session outside a cage does not, so a caged agent works
+with other caged agents and asks nothing of your uncaged ones until you let
+it. A refused task is answered at once with why (-32051).
+
 ## Agents starting agents
 
 There is no first-class "spawn" yet. A session can create another today

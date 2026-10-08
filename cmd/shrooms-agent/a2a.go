@@ -7,6 +7,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -42,6 +43,8 @@ A task id is what send printed: SESSION:MESSAGE-ID.`
 // a2aClient reaches agents: machines found through the daemon's socket.
 type a2aClient struct {
 	sock string
+	// dial, when set, is how every request goes: a cage's socket.
+	dial func(ctx context.Context, network, addr string) (net.Conn, error)
 	// base is an agent's URL; the agent's port on its overlay address, but
 	// a test's server in tests.
 	base func(netip.Addr) string
@@ -55,6 +58,11 @@ type machine struct {
 }
 
 func newA2AClient(sock string) a2aClient {
+	// In a cage, agents are reached only through its own agent's socket
+	// (ADR-044): the machines from it, and every request through it.
+	if p := os.Getenv("SHROOMS_AGENT_PROXY"); p != "" {
+		return newProxiedClient(p)
+	}
 	c := a2aClient{sock: sock, base: func(a netip.Addr) string {
 		return "http://" + net.JoinHostPort(a.String(), fmt.Sprint(agent.Port))
 	}}
@@ -252,7 +260,7 @@ func (c a2aClient) update(id, state, summary string) (cliTask, error) {
 		return cliTask{}, fmt.Errorf("this machine's agent: %v", err)
 	}
 	body, _ := json.Marshal(map[string]string{"state": state, "summary": summary, "session": os.Getenv("SHROOMS_AGENT_SESSION")})
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Post(c.base(ms[0].Addr)+"/v1/tasks/"+url.PathEscape(id),
+	resp, err := c.http(30*time.Second).Post(c.base(ms[0].Addr)+"/v1/tasks/"+url.PathEscape(id),
 		"application/json", bytes.NewReader(body))
 	if err != nil {
 		return cliTask{}, err
@@ -276,7 +284,7 @@ func (c a2aClient) list() (string, error) {
 	var mu sync.Mutex
 	var lines []string
 	var wg sync.WaitGroup
-	hc := &http.Client{Timeout: 4 * time.Second}
+	hc := c.http(4 * time.Second)
 	for _, m := range ms {
 		wg.Add(1)
 		go func(m machine) {
@@ -315,7 +323,7 @@ func (c a2aClient) rpc(addr netip.Addr, path, method string, params any, long bo
 	if long {
 		timeout = 11 * time.Minute // the agent holds a blocking send for at most 10
 	}
-	hc := &http.Client{Timeout: timeout}
+	hc := c.http(timeout)
 	resp, err := hc.Post(c.base(addr)+path, "application/json", bytes.NewReader(body))
 	if err != nil {
 		return cliTask{}, err
@@ -370,4 +378,42 @@ func newMessageID() string {
 	b := make([]byte, 8)
 	rand.Read(b)
 	return "cli-" + time.Now().UTC().Format("20060102T150405") + "-" + hex.EncodeToString(b)
+}
+
+// http is a client with the timeout given, through the cage's socket when
+// there is one.
+func (c a2aClient) http(timeout time.Duration) *http.Client {
+	hc := &http.Client{Timeout: timeout}
+	if c.dial != nil {
+		hc.Transport = &http.Transport{DialContext: c.dial}
+	}
+	return hc
+}
+
+// newProxiedClient is the client inside a cage: everything through its own
+// agent's socket at path.
+func newProxiedClient(path string) a2aClient {
+	dial := func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", path)
+	}
+	c := a2aClient{sock: path, dial: dial, base: func(a netip.Addr) string {
+		return "http://cage/peer/" + a.String()
+	}}
+	c.peers = func() ([]machine, error) {
+		resp, err := c.http(10 * time.Second).Get("http://cage/machines")
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+		var ms []agent.Machine
+		if err := json.NewDecoder(resp.Body).Decode(&ms); err != nil {
+			return nil, err
+		}
+		out := make([]machine, len(ms))
+		for i, m := range ms {
+			out[i] = machine{m.Name, m.Addr}
+		}
+		return out, nil
+	}
+	return c
 }

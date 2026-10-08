@@ -1302,6 +1302,15 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String
                 }
                 if (working) Link("■ stop", Palette.Rust) { stopTurn() }
                 Link(if (searching) "close search" else "search", Palette.Sky) { searching = !searching }
+                // Whether it takes tasks from caged agents (ADR-044): lit when it does.
+                val takesCaged = info?.acceptCaged == true
+                Link(if (takesCaged) "CAGED TASKS" else "caged tasks", if (takesCaged) Palette.Violet else Palette.Ash) {
+                    scope.launch {
+                        withContext(Dispatchers.IO) { runCatching { client.setAcceptCaged(o.session, !takesCaged) } }
+                            .onSuccess { info = info?.copy(acceptCaged = !takesCaged) }
+                            .onFailure { actionError = it.message ?: "could not change it" }
+                    }
+                }
                 Link(if (info?.cage != null) "caged" else "cage", if (info?.cage != null) Palette.Phosphor else Palette.Ash) {
                     cageOpts = info?.cage ?: SessionCage("")
                     cageOffer = null

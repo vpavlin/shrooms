@@ -37,12 +37,17 @@ A caged session **can still**:
 - **spend tokens.** It has your model login or API keys; that is how it runs.
 - **reach the internet.** There is no egress limit. An allow-list is planned,
   not built.
-- **reach the mesh**, including this machine's own Shrooms Agents API. The
-  agent sees a request from the cage as one from this machine, which is how
-  the shrooms tools (`ask_agent`, `task_update`) work from inside. It also
-  means a caged session could start a new, uncaged session on this machine
-  over that API, or talk to agents on other machines. The cage limits what
-  the process can touch directly, not what it can ask for.
+- **reach the mesh** — every service on it — but **not any agent directly**
+  ([ADR-044](../adr/044-cages-reach-agents-through-their-own.md)). The agent
+  port is closed inside every cage, by a rule its root cannot remove. The
+  shrooms tools (`list_agents`, `ask_agent`, `task_status`, `task_update`,
+  `task_ack`) work through a socket to the cage's own agent, mounted at
+  `/run/shrooms-agent/proxy.sock`, which forwards only those. It cannot make,
+  delete or reconfigure a session, so a caged session cannot start an
+  uncaged one, here or anywhere. Its agent names it to the receiver itself,
+  and says it is caged; each session decides whether it takes tasks from
+  caged agents ("caged tasks" in the apps; by default caged sessions do and
+  the others do not).
 - **do anything inside its project.** The project is mounted read-write. That
   includes `.git/hooks`, a `Makefile`, a `package.json` script: anything you
   later run from that directory outside the cage runs as you.

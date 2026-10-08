@@ -50,4 +50,11 @@ class CageTest {
         assertEquals(listOf("a", "b"), o.cage?.images)
         assertTrue(o.cage!!.nix)
     }
+
+    @Test fun whetherASessionTakesCagedTasksIsRead() {
+        val s = """{"sessions":[{"name":"a","accept_caged":true},{"name":"b"}]}"""
+        val ss = org.json.JSONObject(s).getJSONArray("sessions")
+        assertTrue(ss.getJSONObject(0).optBoolean("accept_caged"))
+        assertFalse(ss.getJSONObject(1).optBoolean("accept_caged"))
+    }
 }

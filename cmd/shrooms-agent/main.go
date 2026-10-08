@@ -120,6 +120,18 @@ func run() error {
 	if *cages {
 		if m.Cages = agent.NewCages(*cageImage); m.Cages != nil {
 			m.Cages.Socket = *sock
+			// What a cage's socket offers as the mesh's machines (ADR-044).
+			m.Machines = func() ([]agent.Machine, error) {
+				st, err := fetchStatus(*sock)
+				if err != nil {
+					return nil, err
+				}
+				var out []agent.Machine
+				for _, x := range st.machines() {
+					out = append(out, agent.Machine{Name: x.Name, Addr: x.Addr})
+				}
+				return out, nil
+			}
 			log.Info("cages offered", "podman", m.Cages.Podman, "image", m.Cages.Image)
 			// The images caged sessions use, built again if this agent's
 			// Containerfile is newer than theirs.
