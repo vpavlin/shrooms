@@ -1372,6 +1372,14 @@ Item {
         root.boardMode = on
         savePref("agent_layout", on ? "board" : "list")
     }
+    // The board, with no session open in front of it.
+    function showBoard() {
+        root.agentCreating = false
+        noteRead()
+        root.agentOpen = null
+        chatModel.clear()
+        setBoard(true)
+    }
     function boardKey(h, name) { return h.name + "/" + name }
     // The cards: the starred first, as in the list, then each machine's.
     function boardCards(hosts) {
@@ -2443,9 +2451,11 @@ Item {
             // --- machines and their sessions ---------------------------------
             // Exactly as wide as set: a preferred width alone let the
             // conversation's longest line take room from it.
+            // On the board it gives way to the cards, and comes back beside a
+            // session opened from one: what needs the owner stays in sight.
             ColumnLayout {
                 objectName: "agentList"
-                visible: !root.boardMode
+                visible: !root.boardMode || root.agentOpen !== null || root.agentCreating
                 Layout.preferredWidth: root.listWidthPx()
                 Layout.minimumWidth: root.listWidthPx()
                 Layout.maximumWidth: root.listWidthPx()
@@ -2462,7 +2472,7 @@ Item {
                           base: !root.usageGlance ? cAsh : root.usageGlance.level === 2 ? cRust : root.usageGlance.level === 1 ? cAmber : cAsh
                           font.pixelSize: root.fs(10); onClicked: Qt.callLater(root.openUsage) }
                     Lnk { visible: root.haveCore; text: "voice"; base: cAsh; font.pixelSize: root.fs(10); onClicked: Qt.callLater(root.openVoice) }
-                    Lnk { visible: root.haveCore; objectName: "toBoard"; text: "board"; base: cAsh; font.pixelSize: root.fs(10); onClicked: Qt.callLater(root.setBoard, true) }
+                    Lnk { visible: root.haveCore; objectName: "toBoard"; text: "board"; base: cAsh; font.pixelSize: root.fs(10); onClicked: Qt.callLater(root.showBoard) }
                 }
                 Text {
                     Layout.fillWidth: true
@@ -2560,7 +2570,7 @@ Item {
             // The divider: drag to resize the list; double-click for the
             // default width.
             Item {
-                visible: !root.boardMode
+                visible: !root.boardMode || root.agentOpen !== null || root.agentCreating
                 Layout.fillHeight: true
                 Layout.preferredWidth: root.sz(9)
                 Rectangle {
@@ -2610,7 +2620,7 @@ Item {
                     visible: root.boardMode
                     spacing: 8
                     Lnk { objectName: "backToBoard"; text: "← board"; font.pixelSize: root.fs(11)
-                          onClicked: Qt.callLater(function() { root.agentCreating = false; root.noteRead(); root.agentOpen = null; chatModel.clear() }) }
+                          onClicked: Qt.callLater(root.showBoard) }
                     Text { visible: root.agentOpen !== null; text: root.agentOpen ? root.agentOpen.name : ""; color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(10) }
                 }
 

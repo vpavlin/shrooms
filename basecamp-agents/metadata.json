@@ -1,7 +1,7 @@
 {
   "name": "shrooms_agents",
   "display_name": "Shrooms Agents",
-  "version": "0.34.0",
+  "version": "0.35.0",
   "type": "ui_qml",
   "category": "network",
   "description": "Talk to the Claude Code sessions on your own machines over a Shrooms mesh, and approve what they want to do: streamed replies, permission prompts, files and voice notes, transcribed on the agent's machine. What grows out of the mycelium. Needs shrooms_core, and shrooms-agent on the machines (docs/agents.md).",

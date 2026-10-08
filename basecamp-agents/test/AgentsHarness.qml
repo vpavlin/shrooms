@@ -632,10 +632,10 @@ Item {
                 Qt.callLater(function() {
                     var back = top.findByName(view, "backToBoard")
                     var opened = view.agentOpen ? view.agentOpen.session : "none"
-                    var shown = back.visible && !top.findByName(view, "boardFlow").visible
+                    var shown = back.visible && !top.findByName(view, "boardFlow").visible && top.findByName(view, "agentList").visible
                     back.clicked()
                     Qt.callLater(function() {
-                        console.error("BOARDOPEN open=" + opened + " full=" + shown + " back=" + (view.agentOpen === null) + "," + top.findByName(view, "boardFlow").visible)
+                        console.error("BOARDOPEN open=" + opened + " withlist=" + shown + " back=" + (view.agentOpen === null) + "," + top.findByName(view, "boardFlow").visible + "," + !top.findByName(view, "agentList").visible)
                         Qt.quit()
                     })
                 })

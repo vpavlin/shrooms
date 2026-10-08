@@ -172,8 +172,9 @@ keeps its list): every session a card with its last lines (`?tail=6`), state,
 unread and figures, and a dashed curve from an agent to another that is working
 on a task it asked for — from each machine's `GET /v1/tasks`, the asker read
 from the claim in `shrooms/from` — green while worked on, amber blocked, red
-stalled, grey queued. A card opens its session across the whole panel;
-"← board" goes back. An asker that is no session (the CLI, an app) has no card
+stalled, grey queued. A card opens its session with the list back beside it,
+so a session that needs the owner stays in sight; "← board" (or "board")
+goes back. An asker that is no session (the CLI, an app) has no card
 and so no link.
 
 ## What it does
