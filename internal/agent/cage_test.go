@@ -318,12 +318,18 @@ func TestASessionMovesIntoACageAndOut(t *testing.T) {
 		t.Fatalf("a working session is moved into a cage: %v", err)
 	}
 	s.Interrupt("phone")
-	deadline := time.Now().Add(5 * time.Second)
-	for s.Info().State != Idle && time.Now().Before(deadline) {
-		time.Sleep(20 * time.Millisecond)
+	// Once the interrupted turn has ended, which a slow machine takes a
+	// while to report (CI, 2026-10-08): asked until it is idle.
+	deadline := time.Now().Add(10 * time.Second)
+	var in Info
+	var err error
+	for {
+		in, err = m.SetCage("review", &Cage{Image: DesktopImage, GitHub: true}, "phone")
+		if err == nil || !strings.Contains(err.Error(), "idle") || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
-
-	in, err := m.SetCage("review", &Cage{Image: DesktopImage, GitHub: true}, "phone")
 	if err != nil {
 		t.Fatal(err)
 	}
