@@ -104,10 +104,10 @@ type CageStatus struct {
 	// Images are those offered: the machine's, and the ones built here.
 	Images []string `json:"images,omitempty"`
 	// Nix: the machine has nix to give a cage.
-	Nix bool `json:"nix,omitempty"`
-	Ready     bool   `json:"ready"`              // the image is there
-	Building  bool   `json:"building,omitempty"` // it is being built
-	Error     string `json:"error,omitempty"`    // why the last build failed
+	Nix      bool   `json:"nix,omitempty"`
+	Ready    bool   `json:"ready"`              // the image is there
+	Building bool   `json:"building,omitempty"` // it is being built
+	Error    string `json:"error,omitempty"`    // why the last build failed
 }
 
 // NewCages finds podman; nil when the machine has none.

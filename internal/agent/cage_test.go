@@ -308,7 +308,9 @@ func TestASessionMovesIntoACageAndOut(t *testing.T) {
 	if err := s.Send("slow", "phone"); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, s, 0, func(e Event) bool { return claudeType(e) == "assistant" && strings.Contains(assistantText(e), "slow") || s.Info().State == Working })
+	waitFor(t, s, 0, func(e Event) bool {
+		return claudeType(e) == "assistant" && strings.Contains(assistantText(e), "slow") || s.Info().State == Working
+	})
 	if _, err := m.SetCage("review", &Cage{}, "phone"); err == nil || !strings.Contains(err.Error(), "idle") {
 		t.Fatalf("a working session is moved into a cage: %v", err)
 	}
