@@ -269,6 +269,12 @@ func (m *Manager) Adopt(name, dir, conversation string) (Info, error) {
 // AdoptWith is Adopt for a conversation of the named harness: Claude Code's,
 // or pi's — one running in a terminal of its own until now.
 func (m *Manager) AdoptWith(name, dir, conversation, harness string) (Info, error) {
+	return m.AdoptCaged(name, dir, conversation, harness, nil)
+}
+
+// AdoptCaged continues a conversation in a session that runs in a cage when
+// cage is not nil (cage.go): the transcript is where the cage sees it.
+func (m *Manager) AdoptCaged(name, dir, conversation, harness string, cage *Cage) (Info, error) {
 	if harness == "" {
 		harness = "claude"
 	}
@@ -317,7 +323,7 @@ func (m *Manager) AdoptWith(name, dir, conversation, harness string) (Info, erro
 		}
 	}
 	m.mu.Unlock()
-	if _, err := m.CreateWith(name, dir, harness); err != nil {
+	if _, err := m.CreateCaged(name, dir, harness, cage); err != nil {
 		return Info{}, err
 	}
 	s, _ := m.Get(name)

@@ -55,6 +55,8 @@ func run() error {
 	sttModel := flag.String("stt-model", filepath.Join(home, ".local", "share", "whisper", "ggml-parakeet-tdt-0.6b-v3-q4_k.bin"),
 		"ggml model for voice notes, Parakeet or Whisper (docs/speech-to-text.md); voice notes are off when it is missing")
 	sttBin := flag.String("stt-bin", "", "the CLI that runs it (default: parakeet-cli for a Parakeet model, else whisper-cli)")
+	cages := flag.Bool("cages", true, "offer cages: sessions in rootless podman containers of their own, when podman is here (docs/agents-in-cages.md)")
+	cageImage := flag.String("cage-image", "", "the image cages are made from (default: the workbench, built here when first needed)")
 	sttThreads := flag.Int("stt-threads", 0, "threads for transcription (default: this machine's cores, up to 12)")
 	piBin := flag.String("pi", "pi", "pi (pi.dev), offered for new sessions when found; \"\" to leave it out")
 	piArgs := flag.String("pi-args", "", "extra arguments for every pi session, e.g. \"--provider ollama --model qwen3\"")
@@ -113,6 +115,12 @@ func run() error {
 				self = real
 			}
 			m.Self = self
+		}
+	}
+	if *cages {
+		if m.Cages = agent.NewCages(*cageImage); m.Cages != nil {
+			m.Cages.Socket = *sock
+			log.Info("cages offered", "podman", m.Cages.Podman, "image", m.Cages.Image)
 		}
 	}
 	// Other harnesses, when this machine has them (docs/agents-harnesses.md).

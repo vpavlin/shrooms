@@ -128,6 +128,7 @@ object HostCache {
                     .put("auto_approve", s.autoApprove).put("context_used", s.contextUsed)
                     .put("context_window", s.contextWindow).put("preview", s.preview).put("model", s.model)
                     .put("harness", s.harness).put("approves", s.approves).put("starred", s.starred)
+                    .apply { if (s.cage != null) put("cage", s.cage) }
             }))
     }).toString()
 
@@ -147,6 +148,7 @@ object HostCache {
                         preview = s.optString("preview"), model = s.optString("model"),
                         harness = s.optString("harness").ifEmpty { "claude" }, approves = s.optBoolean("approves", true),
                         starred = s.optBoolean("starred"),
+                        cage = if (s.has("cage")) s.optString("cage") else null,
                     )
                 },
                 lastSeen = h.optLong("seen"))
@@ -291,6 +293,18 @@ fun contextLabel(used: Long, window: Long): String {
 /** "claude-opus-5[1m]" → "opus-5 1m". */
 /** The harness, named where it is not the usual one: "pi". */
 fun harnessLabel(h: String): String = if (h == "claude" || h.isEmpty()) "" else h
+
+/** What "in a cage" means, said beside it (Basecamp's cageNote). */
+fun cageNote(c: CageOffer): String {
+    val what = "root inside, and of this machine only the project, the files sent to it and the harness's settings; " +
+        "what it installs stays until the session is deleted"
+    return when {
+        c.error.isNotEmpty() -> "$what. The last build of the image failed: ${c.error}"
+        c.building -> "$what. The image is being built (a few minutes)."
+        !c.ready -> "$what. The image is built with the first one (a few minutes)."
+        else -> "$what."
+    }
+}
 
 fun shortModel(m: String): String =
     m.removePrefix("claude-").replace("[", " ").replace("]", "").replace(Regex("""-\d{8}$"""), "")
@@ -543,7 +557,7 @@ private fun SessionRow(s: AgentSession, where: String = "", reachable: Boolean =
         if (s.tasksStalled > 0) Text("⚠ " + (if (s.tasksStalled == 1) "a task stalled" else "${s.tasksStalled} tasks stalled") +
             " — no progress after the reminders", style = MaterialTheme.typography.labelSmall, color = Palette.Amber)
         val meta = listOf(whenSaid(s.lastTime), contextLabel(s.contextUsed, s.contextWindow),
-            harnessLabel(s.harness), shortModel(s.model), if (s.autoApprove && s.approves) "auto-approve" else "",
+            harnessLabel(s.harness), if (s.cage != null) "caged" else "", shortModel(s.model), if (s.autoApprove && s.approves) "auto-approve" else "",
             if (s.tasksOpen > 0) (if (s.tasksOpen == 1) "1 task" else "${s.tasksOpen} tasks") else "")
             .filter { it.isNotEmpty() }
         Text((meta + s.dir.replace(Regex("^/home/[^/]+"), "~")).joinToString("  ·  "),
@@ -572,8 +586,14 @@ private fun NewSession(h: AgentHost, onDone: () -> Unit, onOpen: (String) -> Uni
             .onFailure { convError = it.message ?: "could not list them" }
     }
     var harnesses by remember { mutableStateOf(claudeOnly) }
+    var cageOffer by remember { mutableStateOf<CageOffer?>(null) }
+    var caged by remember { mutableStateOf(false) }
     var harness by remember { mutableStateOf("claude") }
-    LaunchedEffect(h.address) { harnesses = withContext(Dispatchers.IO) { AgentClient(h.address).harnesses() } }
+    LaunchedEffect(h.address) {
+        val o = withContext(Dispatchers.IO) { AgentClient(h.address).offer() }
+        harnesses = o.harnesses
+        cageOffer = o.cage
+    }
     val chosen = harnesses.firstOrNull { it.name == harness } ?: claudeOnly[0]
     var name by remember { mutableStateOf("") }
     var dir by remember { mutableStateOf("~/") }
@@ -605,12 +625,22 @@ private fun NewSession(h: AgentHost, onDone: () -> Unit, onOpen: (String) -> Uni
             Text("auto-approve — never ask, like --dangerously-skip-permissions",
                 style = MaterialTheme.typography.bodySmall, color = if (auto) Palette.Bone else Palette.Ash)
         }
+        // In a container of its own, where the machine has podman.
+        cageOffer?.let { c ->
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { caged = !caged }) {
+                Box(Modifier.size(12.dp).border(1.dp, if (caged) Palette.Phosphor else Palette.Ash, RoundedCornerShape(3.dp))
+                    .background(if (caged) Palette.Phosphor else Color.Transparent, RoundedCornerShape(3.dp)))
+                Spacer(Modifier.width(10.dp))
+                Text("in a cage — " + cageNote(c), style = MaterialTheme.typography.bodySmall,
+                    color = if (caged) Palette.Bone else Palette.Ash)
+            }
+        }
         if (error.isNotEmpty()) Text(error, style = MaterialTheme.typography.bodySmall, color = Palette.Rust)
         Action("CREATE", enabled = !busy && name.isNotBlank() && dir.isNotBlank()) {
             busy = true
             scope.launch {
                 val r = withContext(Dispatchers.IO) {
-                    runCatching { AgentClient(h.address).create(name.trim(), dir.trim(), auto && chosen.approves, harness) }
+                    runCatching { AgentClient(h.address).create(name.trim(), dir.trim(), auto && chosen.approves, harness, caged && cageOffer != null) }
                 }
                 busy = false
                 r.onSuccess { onDone() }.onFailure { error = it.message ?: "could not create it" }
@@ -640,7 +670,7 @@ private fun NewSession(h: AgentHost, onDone: () -> Unit, onOpen: (String) -> Uni
                         busy = true
                         val n = sessionNameFor(c.dir, h.sessions.map { it.name })
                         scope.launch {
-                            val r = withContext(Dispatchers.IO) { runCatching { AgentClient(h.address).takeOver(n, c.id, auto) } }
+                            val r = withContext(Dispatchers.IO) { runCatching { AgentClient(h.address).takeOver(n, c.id, auto, caged && cageOffer != null) } }
                             busy = false
                             r.onSuccess { onOpen(n) }.onFailure { error = it.message ?: "could not take it over" }
                         }
@@ -1135,7 +1165,8 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String
                     working -> { Pulse(Palette.Phosphor); Spacer(Modifier.width(6.dp)); Label("WORKING") }
                 }
             }
-            val facts = listOf(o.host, o.mesh, harnessLabel(i?.harness ?: "claude"), shortModel(i?.model ?: ""),
+            val facts = listOf(o.host, o.mesh, harnessLabel(i?.harness ?: "claude"),
+                i?.cage?.let { "in a cage ($it)" } ?: "", shortModel(i?.model ?: ""),
                 contextLabel(i?.contextUsed ?: 0, i?.contextWindow ?: 0)).filter { it.isNotEmpty() }
             Text(facts.joinToString("  ·  "), style = MaterialTheme.typography.labelSmall, color = Palette.Ash,
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 30.dp))

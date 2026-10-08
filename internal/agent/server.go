@@ -39,7 +39,8 @@ func Handler(log *slog.Logger, m *Manager, who Who) http.Handler {
 		writeJSON(w, http.StatusOK, map[string]any{"machine": host, "rows": rows, "limits": m.Limits(), "credits": m.Credits()})
 	})
 	mux.HandleFunc("GET /v1/harnesses", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"harnesses": m.Harnesses()})
+		// With whether sessions can be caged here, for "+ session".
+		writeJSON(w, http.StatusOK, map[string]any{"harnesses": m.Harnesses(), "cage": m.Cages.Status()})
 	})
 	mux.HandleFunc("POST /v1/sessions", h.create)
 	mux.HandleFunc("DELETE /v1/sessions/{name}", h.remove)
@@ -133,6 +134,9 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		Harness string `json:"harness"`
 		// KeepRunning: never stopped as idle, and started again if it ends.
 		KeepRunning *bool `json:"keep_running"`
+		// Cage runs it in a container of its own (cage.go): {} for the
+		// machine's image, {"image": …} for another.
+		Cage *Cage `json:"cage"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		fail(w, http.StatusBadRequest, err)
@@ -142,9 +146,9 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 	var err error
 	switch {
 	case req.Resume != "":
-		in, err = h.m.AdoptWith(req.Name, req.Dir, req.Resume, req.Harness)
+		in, err = h.m.AdoptCaged(req.Name, req.Dir, req.Resume, req.Harness, req.Cage)
 	default:
-		in, err = h.m.CreateWith(req.Name, req.Dir, req.Harness)
+		in, err = h.m.CreateCaged(req.Name, req.Dir, req.Harness, req.Cage)
 	}
 	if err == nil && req.AutoApprove != nil {
 		if s, ok := h.m.Get(in.Name); ok {

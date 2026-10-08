@@ -1,7 +1,8 @@
 # Shrooms Agents in cages, and off the machine
 
 **Status:** research and a proposal, 2026-10-05; the open questions decided 2026-10-06
-(see the end; recorded as [ADR-037](adr/037-agents-in-cages.md)). Nothing built.
+(see the end; recorded as [ADR-037](adr/037-agents-in-cages.md)). Step 1, cages
+on the agent's own machine, built 2026-10-08 — see "As built" below.
 
 Two wishes that share a mechanism:
 
@@ -60,6 +61,55 @@ the session's process is inside. A session gets a "cage" setting, chosen in
 - **What it does not stop:** a session can still spend tokens, reach the
   internet and the mesh, and do anything inside its project. It cannot read
   the rest of the machine, take it over, or keep anything once deleted.
+
+## As built (2026-10-08)
+
+`internal/agent/cage.go`. "In a cage" in "+ session" — Basecamp and the
+phone — where the agent found podman (`--cages`, on by default;
+`--cage-image` for another machine-wide image, or `{"image": …}` per
+session over the API).
+
+- **The container** is made with the session's first start, named
+  `shrooms-<session>-<6 hex>` (a rename leaves it be), from the workbench
+  image with `sleep infinity`. The harness runs in it with
+  `podman exec -i`; when its process ends — idle, a restart, an error — the
+  container is stopped, which ends anything the session left running, and
+  started again with the next one. Deleting the session deletes it
+  (`podman rm -f`). Limits: 4 GB of memory, 2 CPUs, 2048 processes.
+- **The workbench image** (`internal/agent/workbench.Containerfile`, embedded
+  in the agent): node 22 on Debian bookworm with git, a C toolchain, Python,
+  ripgrep, jq and pi. Built on the machine with the first caged session
+  (a few minutes; until then a message is answered "being built"). Claude
+  Code is not in it: the machine's own program is mounted read-only, so a
+  cage runs the version the machine does and needs no rebuild when it
+  updates.
+- **What it sees, at the machine's own paths:** the project (read-write);
+  the files sent to sessions (`uploads/`, read-only); the harness's settings
+  and transcripts — `~/.claude` for Claude Code, `~/.pi/agent` for pi — so a
+  caged conversation resumes, is searched and read like any other;
+  shrooms-agent and the daemon's socket, for the shrooms MCP tools. Nothing
+  else of the owner's home. `HOME` is the owner's; Claude Code's settings
+  file goes to `~/.claude/.claude.json` (`CLAUDE_CONFIG_DIR`), since the one
+  beside the home directory is not there.
+- **Its environment:** model and provider keys and settings from the agent's
+  (`ANTHROPIC_*`, `*_API_KEY`, `*_TOKEN`, `*_BASE_URL`, `PI_*`, …, but not
+  the CLAUDE_CODE_ variables of a session the agent itself runs under),
+  `SHROOMS_AGENT_SESSION`, and `IS_SANDBOX=1` — Claude Code refuses to skip
+  permissions as root anywhere else. Written to a file only the owner reads
+  (`cages/<container>.env` in the state directory), not the command line.
+- **Network:** pasta, with an address of its own (`fd5e:ca9e:1::2`) and a
+  default route. Left to itself pasta copies one interface's addresses and
+  routes — on a machine with no IPv6 default route, a mesh's — and the other
+  meshes, and this machine's own agent, were not reachable. With it every
+  mesh is, through the machine's own sockets: the agent sees the cage's
+  requests as from this machine, so `task_update` works from inside.
+- **Work left running:** the task watchdog's "is a background command still
+  running" looks in the cage (`podman top`), not at the podman client's
+  children.
+
+Checked for real on the laptop (`SHROOMS_REAL_CAGE=1 go test ./internal/agent
+-run TestARealCage`): a Claude Code turn in a cage, as root, installing a
+package with apt and writing into the project a file the owner owns.
 
 ## Stronger walls: micro-VMs
 

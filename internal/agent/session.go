@@ -83,6 +83,9 @@ type Info struct {
 	// again when it ends — an agent that works on its own, from its
 	// extensions (a heartbeat, a chat bridge), and not only when asked.
 	KeepRunning bool `json:"keep_running,omitempty"`
+	// Cage is set for a session that runs in a container of its own, with
+	// the image it is made from (cage.go).
+	Cage *CageInfo `json:"cage,omitempty"`
 	// Turns counts the turns that have ended: what the phone notifies on,
 	// once each. The event count is no use for that — a session sends
 	// progress, heartbeats and thinking while it waits on background work.
@@ -113,7 +116,9 @@ type Session struct {
 	autoApprove bool
 	starred     bool
 	keepRunning bool
-	turns       uint64
+	// cage: the session runs in a container of its own (cage.go); nil not.
+	cage  *Cage
+	turns uint64
 	// ids are the device-made ids of messages and voice notes already taken,
 	// so a device that sends again — it did not hear the answer, the
 	// network went — does not send twice. The last maxIDs, loaded from the
@@ -180,6 +185,10 @@ type Manager struct {
 	// before it is stopped. The conversation is kept and resumed by id.
 	IdleStop time.Duration
 
+	// Cages makes containers for caged sessions (cage.go); nil when this
+	// machine has no podman.
+	Cages *Cages
+
 	// STT transcribes voice notes; nil when this machine has no model.
 	STT *Transcriber
 
@@ -201,6 +210,7 @@ type record struct {
 	AutoApprove bool   `json:"auto_approve,omitempty"`
 	Starred     bool   `json:"starred,omitempty"`
 	KeepRunning bool   `json:"keep_running,omitempty"`
+	Cage        *Cage  `json:"cage,omitempty"`
 }
 
 // NewManager loads the sessions kept in stateDir.
@@ -238,6 +248,7 @@ func NewManager(ctx context.Context, log *slog.Logger, stateDir, claudeBin strin
 			s.autoApprove = r.AutoApprove
 			s.starred = r.Starred
 			s.keepRunning = r.KeepRunning
+			s.cage = r.Cage
 			s.loadEvents()
 			m.sessions[r.Name] = s
 		}
@@ -353,7 +364,7 @@ func (m *Manager) save() error {
 	for _, s := range m.sessions {
 		s.mu.Lock()
 		r := record{Name: s.Name(), Dir: s.dir, ConvID: s.convID, AutoApprove: s.autoApprove, Starred: s.starred,
-			KeepRunning: s.keepRunning}
+			KeepRunning: s.keepRunning, Cage: s.cage}
 		if s.harness.Name() != "claude" {
 			r.Harness = s.harness.Name()
 		}
@@ -377,6 +388,12 @@ func (m *Manager) Create(name, dir string) (Info, error) { return m.CreateWith(n
 
 // CreateWith adds a session of the named harness for a directory.
 func (m *Manager) CreateWith(name, dir, harness string) (Info, error) {
+	return m.CreateCaged(name, dir, harness, nil)
+}
+
+// CreateCaged adds a session that runs in a cage (cage.go) when cage is not
+// nil: in the image it names, or the machine's.
+func (m *Manager) CreateCaged(name, dir, harness string, cage *Cage) (Info, error) {
 	if harness == "" {
 		harness = "claude"
 	}
@@ -413,12 +430,22 @@ func (m *Manager) CreateWith(name, dir, harness string) (Info, error) {
 	if _, ok := m.sessions[name]; ok {
 		return Info{}, fmt.Errorf("there is already a session called %q", name)
 	}
+	if cage != nil {
+		if m.Cages == nil {
+			return Info{}, errors.New("this machine has no podman to cage sessions with")
+		}
+		cage = &Cage{Image: cage.Image, Container: newContainerName(name)}
+		// The image, if it is ours and not here yet, while the first message
+		// is being written.
+		m.Cages.Prepare(m.Cages.image(cage), m.log.Info)
+	}
 	if missing {
 		if err := os.MkdirAll(abs, 0o755); err != nil {
 			return Info{}, fmt.Errorf("making %s: %w", abs, err)
 		}
 	}
 	s := m.newSession(name, abs, h)
+	s.cage = cage
 	m.sessions[name] = s
 	if err := m.save(); err != nil {
 		delete(m.sessions, name)
@@ -479,6 +506,9 @@ func (m *Manager) Remove(name string) error {
 	}
 	s.stop()
 	os.Remove(s.eventsPath())
+	if s.cage != nil && m.Cages != nil {
+		m.Cages.remove(s.cage.Container, m.dir)
+	}
 	return err
 }
 
@@ -551,6 +581,12 @@ func (s *Session) Info() Info {
 		ContextUsed: s.ctxUsed, ContextWindow: s.ctxWindow, Preview: s.preview, Model: s.model,
 		Harness: s.harness.Name(), Caps: s.harness.Caps(), Starred: s.starred, Turns: s.turns,
 		KeepRunning: s.keepRunning}
+	if s.cage != nil {
+		in.Cage = &CageInfo{Image: s.cage.Image}
+		if in.Cage.Image == "" && s.m.Cages != nil {
+			in.Cage.Image = s.m.Cages.Image
+		}
+	}
 	if n := len(s.events); n > 0 {
 		in.LastTime = s.events[n-1].Time
 	}
@@ -765,7 +801,14 @@ func (s *Session) ensureRunning() error {
 	host, _ := os.Hostname()
 	o := StartOptions{Resume: s.convID, AutoApprove: s.autoApprove && s.harness.Caps().Approve, Session: s.Name(),
 		MCP: s.m.Self, Note: AgentNote(host, s.Name())}
-	p, err := startProc(s.m.ctx, s.m.log.With("session", s.Name()), s.harness, bin, s.dir, o)
+	var cage *cageRun
+	if s.cage != nil {
+		var err error
+		if cage, err = s.m.prepareCage(s, bin); err != nil {
+			return err
+		}
+	}
+	p, err := startProc(s.m.ctx, s.m.log.With("session", s.Name()), s.harness, bin, s.dir, o, cage)
 	if err != nil {
 		return err
 	}

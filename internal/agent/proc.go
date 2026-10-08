@@ -43,13 +43,23 @@ type proc struct {
 	// a session removed once done is closed had its log recreated by that
 	// last write (2026-10-04).
 	read chan struct{}
+	// cage is where it runs; nil on the machine itself.
+	cage *cageRun
 }
 
-func startProc(ctx context.Context, log *slog.Logger, h Harness, bin, dir string, o StartOptions) (*proc, error) {
-	cmd := exec.CommandContext(ctx, bin, h.Args(o)...)
-	cmd.Dir = dir
-	if o.Session != "" {
-		cmd.Env = append(os.Environ(), "SHROOMS_AGENT_SESSION="+o.Session)
+// cage, when not nil, runs the process in the session's cage (cage.go),
+// which is stopped once the process has ended.
+func startProc(ctx context.Context, log *slog.Logger, h Harness, bin, dir string, o StartOptions, cage *cageRun) (*proc, error) {
+	var cmd *exec.Cmd
+	if cage != nil {
+		name, args := cage.command(h.Args(o))
+		cmd = exec.CommandContext(ctx, name, args...)
+	} else {
+		cmd = exec.CommandContext(ctx, bin, h.Args(o)...)
+		cmd.Dir = dir
+		if o.Session != "" {
+			cmd.Env = append(os.Environ(), "SHROOMS_AGENT_SESSION="+o.Session)
+		}
 	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -67,7 +77,7 @@ func startProc(ctx context.Context, log *slog.Logger, h Harness, bin, dir string
 		return nil, fmt.Errorf("start %s: %w", bin, err)
 	}
 	p := &proc{cmd: cmd, codec: h.Codec(), stdin: stdin, out: make(chan json.RawMessage, 64),
-		done: make(chan struct{}), read: make(chan struct{})}
+		done: make(chan struct{}), read: make(chan struct{}), cage: cage}
 
 	go func() {
 		sc := bufio.NewScanner(stderr)
@@ -93,6 +103,11 @@ func startProc(ctx context.Context, log *slog.Logger, h Harness, bin, dir string
 		}
 		close(p.out)
 		werr := cmd.Wait()
+		// Before done: a restart waits for it, and must not have its new
+		// process's cage stopped under it.
+		if cage != nil {
+			cage.stop()
+		}
 		switch {
 		case sc.Err() != nil:
 			p.err = sc.Err()

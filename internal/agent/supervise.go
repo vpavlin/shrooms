@@ -281,6 +281,9 @@ func (s *Session) backgroundWork() bool {
 	if p == nil || p.cmd.Process == nil {
 		return false
 	}
+	if p.cage != nil {
+		return p.cage.c.busy(p.cage.container, p.cage.bin)
+	}
 	return busyChildren(p.cmd.Process.Pid)
 }
 

@@ -1130,9 +1130,31 @@ Item {
     function loadHarnesses(h) {
         root.harnesses = claudeOnly
         root.nsHarness = "claude"
+        root.cageStatus = null
+        root.nsCage = false
         if (!h) return
         var r = unwrap(callCore("agentGet", [h.address, "/v1/harnesses"]))
         if (r && r.harnesses && r.harnesses.length > 0) root.harnesses = r.harnesses
+        if (r && r.cage && r.cage.available) root.cageStatus = r.cage
+    }
+    // Cages (docs/agents-in-cages.md): a session in a rootless podman
+    // container of its own, offered where the machine has podman.
+    property var cageStatus: null
+    property bool nsCage: false
+    function cageNote(st) {
+        if (!st) return ""
+        var what = "root inside, and of this machine only the project, the files sent to it and the harness's settings; what it installs stays until the session is deleted"
+        if (st.error) return what + ". The last build of the image failed: " + st.error
+        if (st.building) return what + ". The image is being built (a few minutes)."
+        if (!st.ready) return what + ". The image is built with the first one (a few minutes)."
+        return what + "."
+    }
+    function cageLabel(sess) { return sess && sess.cage ? "caged" : "" }
+    // What "+ session" and taking a conversation over send.
+    function sessionBody(fields) {
+        var b = Object.assign({}, fields)
+        if (nsCage && cageStatus) b.cage = {}
+        return JSON.stringify(b)
     }
     function harnessApproves(name) {
         for (var i = 0; i < harnesses.length; i++) if (harnesses[i].name === name) return !!(harnesses[i].caps && harnesses[i].caps.approve)
@@ -1141,7 +1163,7 @@ Item {
     function harnessLabel(h) { return (!h || h === "claude") ? "" : h }
     function createSession(host, name, dir, auto) {
         var r = agentCall("agentPost", [host.address, "/v1/sessions",
-            JSON.stringify({ name: name, dir: dir, harness: nsHarness, auto_approve: auto && harnessApproves(nsHarness) })])
+            sessionBody({ name: name, dir: dir, harness: nsHarness, auto_approve: auto && harnessApproves(nsHarness) })])
         return r !== null
     }
     function loadConversations(h) {
@@ -1167,7 +1189,7 @@ Item {
     function takeOver(h, conv) {
         var name = nameFor(h, conv)
         var r = agentCall("agentPost", [h.address, "/v1/sessions",
-                          JSON.stringify({ name: name, resume: conv.id, auto_approve: nsAuto.checked })])
+                          sessionBody({ name: name, resume: conv.id, auto_approve: nsAuto.checked })])
         if (r === null) return
         root.agentCreating = false
         refreshAgents()
@@ -2211,7 +2233,7 @@ Item {
                 width: parent.width
                 text: [root.clock(root.epoch(srow.sess.last_time)),
                        root.contextLabel(srow.sess.context_used, srow.sess.context_window),
-                       root.harnessLabel(srow.sess.harness), root.shortModel(srow.sess.model),
+                       root.harnessLabel(srow.sess.harness), root.cageLabel(srow.sess), root.shortModel(srow.sess.model),
                        srow.sess.auto_approve && !(srow.sess.caps && !srow.sess.caps.approve) ? "auto-approve" : "",
                        root.tasksLabel(srow.sess.tasks_open || 0)].filter(function(x) { return x !== "" }).join("  ·  ")
                 color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(9); elide: Text.ElideRight
@@ -2323,7 +2345,7 @@ Item {
                 width: parent.width
                 text: [root.clock(root.epoch(bcard.sess.last_time)),
                        root.contextLabel(bcard.sess.context_used, bcard.sess.context_window),
-                       root.harnessLabel(bcard.sess.harness), root.shortModel(bcard.sess.model),
+                       root.harnessLabel(bcard.sess.harness), root.cageLabel(bcard.sess), root.shortModel(bcard.sess.model),
                        root.tasksLabel(bcard.sess.tasks_open || 0)].filter(function(x) { return x !== "" }).join("  ·  ")
                 color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(9); elide: Text.ElideRight
             }
@@ -2671,6 +2693,16 @@ Item {
                         }
                     }
                     CheckBox { id: nsAuto; visible: root.harnessApproves(root.nsHarness); text: "auto-approve — never ask, like --dangerously-skip-permissions"; contentItem: Text { leftPadding: nsAuto.indicator.width + 6; text: nsAuto.text; color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(10); verticalAlignment: Text.AlignVCenter } }
+                    CheckBox {
+                        id: nsCageBox
+                        objectName: "nsCage"
+                        visible: root.cageStatus !== null
+                        checked: root.nsCage
+                        onToggled: root.nsCage = checked
+                        text: "in a cage — " + root.cageNote(root.cageStatus)
+                        contentItem: Text { leftPadding: nsCageBox.indicator.width + 6; text: nsCageBox.text; color: cAsh; wrapMode: Text.Wrap; font.family: "monospace"; font.pixelSize: root.fs(10); verticalAlignment: Text.AlignVCenter }
+                        Layout.fillWidth: true
+                    }
                     RowLayout {
                         Lnk {
                             text: "create"
@@ -2800,6 +2832,7 @@ Item {
                     Text {
                         text: root.agentOpen ? [root.agentOpen.name, root.agentOpen.mesh,
                               root.agentInfo ? root.harnessLabel(root.agentInfo.harness) : "",
+                              root.agentInfo && root.agentInfo.cage ? "in a cage (" + root.agentInfo.cage.image + ")" : "",
                               root.agentInfo ? root.shortModel(root.agentInfo.model) : "",
                               root.agentInfo ? root.contextLabel(root.agentInfo.context_used, root.agentInfo.context_window) : "",
                               root.agentKept > 0 ? "offline — as it was " + root.keptWhen(root.agentKept) : "",

@@ -256,6 +256,7 @@ expect "STOPPED=/v1/sessions/shrooms/interrupt" "stopping the reply does not int
 expect "RESTARTED=/v1/sessions/shrooms/restart SAID=restarted session shrooms" "restart does not restart the session"
 expect "OUTSIDE=true,heartbeat" "a turn the harness started is not marked as such"
 expect "FORMCLOSED=true" "opening a session leaves the new-session form in front of it"
+expect 'CAGE offered=true sent={} reset=true label=caged,' "a cage is not offered where the machine has podman, or not asked for"
 expect "HARNESS offered=claude,pi sent=pi auto=false label=[pi][]" "another harness is not offered, or a session of it not asked for"
 expect "STREAMING=[Pushing **now**…] WORKING=true" "the streamed reply is not shown as it grows"
 expect "CONTEXT=67% of 1M MODEL=opus-5 1m" "context and model are not read from the session"

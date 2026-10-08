@@ -1,7 +1,9 @@
 # 037. Agents in cages, and off the machine
 
-**Status:** accepted 2026-10-06, not built — research and plan in
-[docs/agents-in-cages.md](../agents-in-cages.md)
+**Status:** accepted 2026-10-06 — research and plan in
+[docs/agents-in-cages.md](../agents-in-cages.md). The first step, cages on the
+agent's own machine, built 2026-10-08 (`internal/agent/cage.go`); micro-VMs,
+Akash and spawning not yet.
 
 ## Context
 
