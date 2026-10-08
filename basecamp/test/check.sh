@@ -85,7 +85,10 @@ run() {
     # the view did or did not do, and set -e would abort before any of them
     # printed. A missing QML module reported itself as "make: Error 2" and not
     # one word more.
-    QT_QPA_PLATFORM=offscreen QT_ASSUME_STDERR_HAS_CONSOLE=1 \
+    # In one timezone wherever it runs: the fixtures' times are written in
+    # +02:00 and the checks read them as a clock shows them, so on CI's UTC
+    # "runs out 13:40" read 11:40 and failed (2026-10-08).
+    TZ=Europe/Prague QT_QPA_PLATFORM=offscreen QT_ASSUME_STDERR_HAS_CONSOLE=1 \
     QML_IMPORT_PATH="$QMLDIR" QML2_IMPORT_PATH="$QMLDIR" "$@" 2>&1 || true
 }
 

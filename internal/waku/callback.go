@@ -36,7 +36,7 @@ func goFFICallback(ret C.int, msg *C.char, length C.size_t, userData unsafe.Poin
 		s = C.GoStringN(msg, C.int(length))
 	}
 
-	switch v := cgo.Handle(userData).Value().(type) {
+	switch v := cgo.Handle(uintptr(userData)).Value().(type) {
 	case chan result:
 		// Buffered size 1, so this cannot block even if the caller has
 		// already timed out and stopped reading.

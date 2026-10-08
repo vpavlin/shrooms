@@ -12,44 +12,49 @@ package waku
 
 /*
 #include <stdlib.h>
+#include <stdint.h>
 #include "liblogosdelivery.h"
 
 // Defined in callback.go via //export.
 extern void goFFICallback(int ret, char *msg, size_t len, void *userData);
 
-// Thin bridges so Go never casts a Go symbol to a C function pointer.
-static void *bridge_create_node(const char *cfg, void *ud) {
-    return logosdelivery_create_node(cfg, (FFICallBack)goFFICallback, ud);
+// Thin bridges so Go never casts a Go symbol to a C function pointer. The
+// user data is a cgo.Handle, an integer: it crosses as uintptr_t and becomes a
+// pointer only here, because Go turning an integer into an unsafe.Pointer is
+// what -race's pointer checks refuse ("checkptr: pointer arithmetic computed
+// bad pointer value", CI 2026-10-08).
+static void *bridge_create_node(const char *cfg, uintptr_t ud) {
+    return logosdelivery_create_node(cfg, (FFICallBack)goFFICallback, (void *)ud);
 }
-static int bridge_start(void *ctx, void *ud) {
-    return logosdelivery_start_node(ctx, (FFICallBack)goFFICallback, ud);
+static int bridge_start(void *ctx, uintptr_t ud) {
+    return logosdelivery_start_node(ctx, (FFICallBack)goFFICallback, (void *)ud);
 }
-static int bridge_stop(void *ctx, void *ud) {
-    return logosdelivery_stop_node(ctx, (FFICallBack)goFFICallback, ud);
+static int bridge_stop(void *ctx, uintptr_t ud) {
+    return logosdelivery_stop_node(ctx, (FFICallBack)goFFICallback, (void *)ud);
 }
-static int bridge_destroy(void *ctx, void *ud) {
-    return logosdelivery_destroy(ctx, (FFICallBack)goFFICallback, ud);
+static int bridge_destroy(void *ctx, uintptr_t ud) {
+    return logosdelivery_destroy(ctx, (FFICallBack)goFFICallback, (void *)ud);
 }
-static int bridge_subscribe(void *ctx, void *ud, const char *topic) {
-    return logosdelivery_subscribe(ctx, (FFICallBack)goFFICallback, ud, topic);
+static int bridge_subscribe(void *ctx, uintptr_t ud, const char *topic) {
+    return logosdelivery_subscribe(ctx, (FFICallBack)goFFICallback, (void *)ud, topic);
 }
-static int bridge_unsubscribe(void *ctx, void *ud, const char *topic) {
-    return logosdelivery_unsubscribe(ctx, (FFICallBack)goFFICallback, ud, topic);
+static int bridge_unsubscribe(void *ctx, uintptr_t ud, const char *topic) {
+    return logosdelivery_unsubscribe(ctx, (FFICallBack)goFFICallback, (void *)ud, topic);
 }
-static int bridge_send(void *ctx, void *ud, const char *msgJSON) {
-    return logosdelivery_send(ctx, (FFICallBack)goFFICallback, ud, msgJSON);
+static int bridge_send(void *ctx, uintptr_t ud, const char *msgJSON) {
+    return logosdelivery_send(ctx, (FFICallBack)goFFICallback, (void *)ud, msgJSON);
 }
-static int bridge_node_info(void *ctx, void *ud, const char *id) {
-    return logosdelivery_get_node_info(ctx, (FFICallBack)goFFICallback, ud, id);
+static int bridge_node_info(void *ctx, uintptr_t ud, const char *id) {
+    return logosdelivery_get_node_info(ctx, (FFICallBack)goFFICallback, (void *)ud, id);
 }
-static int bridge_node_info_ids(void *ctx, void *ud) {
-    return logosdelivery_get_available_node_info_ids(ctx, (FFICallBack)goFFICallback, ud);
+static int bridge_node_info_ids(void *ctx, uintptr_t ud) {
+    return logosdelivery_get_available_node_info_ids(ctx, (FFICallBack)goFFICallback, (void *)ud);
 }
-static int bridge_available_configs(void *ctx, void *ud) {
-    return logosdelivery_get_available_configs(ctx, (FFICallBack)goFFICallback, ud);
+static int bridge_available_configs(void *ctx, uintptr_t ud) {
+    return logosdelivery_get_available_configs(ctx, (FFICallBack)goFFICallback, (void *)ud);
 }
-static void bridge_set_event_callback(void *ctx, void *ud) {
-    logosdelivery_set_event_callback(ctx, (FFICallBack)goFFICallback, ud);
+static void bridge_set_event_callback(void *ctx, uintptr_t ud) {
+    logosdelivery_set_event_callback(ctx, (FFICallBack)goFFICallback, (void *)ud);
 }
 
 // Kernel API. Declared here rather than included: the packaged build exports
@@ -58,14 +63,14 @@ extern int waku_pubsub_topic(void *ctx, FFICallBack callback, void *userData, co
 extern int waku_relay_get_num_peers_in_mesh(void *ctx, FFICallBack callback, void *userData, const char *pubsubTopic);
 extern int waku_get_my_peerid(void *ctx, FFICallBack callback, void *userData);
 
-static int bridge_pubsub_topic(void *ctx, void *ud, const char *topicName) {
-    return waku_pubsub_topic(ctx, (FFICallBack)goFFICallback, ud, topicName);
+static int bridge_pubsub_topic(void *ctx, uintptr_t ud, const char *topicName) {
+    return waku_pubsub_topic(ctx, (FFICallBack)goFFICallback, (void *)ud, topicName);
 }
-static int bridge_peers_in_mesh(void *ctx, void *ud, const char *pubsubTopic) {
-    return waku_relay_get_num_peers_in_mesh(ctx, (FFICallBack)goFFICallback, ud, pubsubTopic);
+static int bridge_peers_in_mesh(void *ctx, uintptr_t ud, const char *pubsubTopic) {
+    return waku_relay_get_num_peers_in_mesh(ctx, (FFICallBack)goFFICallback, (void *)ud, pubsubTopic);
 }
-static int bridge_my_peerid(void *ctx, void *ud) {
-    return waku_get_my_peerid(ctx, (FFICallBack)goFFICallback, ud);
+static int bridge_my_peerid(void *ctx, uintptr_t ud) {
+    return waku_get_my_peerid(ctx, (FFICallBack)goFFICallback, (void *)ud);
 }
 */
 import "C"
@@ -139,10 +144,10 @@ type eventSink struct{ node *Node }
 // call back with it later, and looking up a deleted handle is a panic — which
 // the old code risked on every timeout. A leaked handle per hung call is the
 // cheaper failure; a process in that state is about to be replaced anyway.
-func call(op string, fn func(ud unsafe.Pointer) C.int) (string, error) {
+func call(op string, fn func(ud C.uintptr_t) C.int) (string, error) {
 	ch := make(chan result, 1)
 	h := cgo.NewHandle(ch)
-	msg, err, settled := await(op, func() int { return int(fn(unsafe.Pointer(h))) }, ch, callTimeout)
+	msg, err, settled := await(op, func() int { return int(fn(C.uintptr_t(h))) }, ch, callTimeout)
 	if settled {
 		h.Delete()
 	}
@@ -163,7 +168,7 @@ func New(cfg Config) (*Node, error) {
 	h := cgo.NewHandle(ch)
 	defer h.Delete()
 
-	ctx := C.bridge_create_node(cCfg, unsafe.Pointer(h))
+	ctx := C.bridge_create_node(cCfg, C.uintptr_t(h))
 	if ctx == nil {
 		select {
 		case r := <-ch:
@@ -182,20 +187,20 @@ func New(cfg Config) (*Node, error) {
 	// missed. The handle is held for the node's lifetime.
 	eh := cgo.NewHandle(&eventSink{node: n})
 	n.evHandle = &eh
-	C.bridge_set_event_callback(n.ctx, unsafe.Pointer(eh))
+	C.bridge_set_event_callback(n.ctx, C.uintptr_t(eh))
 
 	return n, nil
 }
 
 // Start starts the node.
 func (n *Node) Start() error {
-	_, err := call("start", func(ud unsafe.Pointer) C.int { return C.bridge_start(n.ctx, ud) })
+	_, err := call("start", func(ud C.uintptr_t) C.int { return C.bridge_start(n.ctx, ud) })
 	return err
 }
 
 // Stop stops the node without destroying it.
 func (n *Node) Stop() error {
-	_, err := call("stop", func(ud unsafe.Pointer) C.int { return C.bridge_stop(n.ctx, ud) })
+	_, err := call("stop", func(ud C.uintptr_t) C.int { return C.bridge_stop(n.ctx, ud) })
 	return err
 }
 
@@ -221,8 +226,8 @@ func (n *Node) Close() error {
 	n.evHandle = nil
 	n.mu.Unlock()
 
-	_, _ = call("stop", func(ud unsafe.Pointer) C.int { return C.bridge_stop(n.ctx, ud) })
-	_, err := call("destroy", func(ud unsafe.Pointer) C.int { return C.bridge_destroy(n.ctx, ud) })
+	_, _ = call("stop", func(ud C.uintptr_t) C.int { return C.bridge_stop(n.ctx, ud) })
+	_, err := call("destroy", func(ud C.uintptr_t) C.int { return C.bridge_destroy(n.ctx, ud) })
 
 	// Only safe once the C side can no longer invoke the callback.
 	if eh != nil {
@@ -235,7 +240,7 @@ func (n *Node) Close() error {
 func (n *Node) Subscribe(contentTopic string) error {
 	ct := C.CString(contentTopic)
 	defer C.free(unsafe.Pointer(ct))
-	_, err := call("subscribe", func(ud unsafe.Pointer) C.int { return C.bridge_subscribe(n.ctx, ud, ct) })
+	_, err := call("subscribe", func(ud C.uintptr_t) C.int { return C.bridge_subscribe(n.ctx, ud, ct) })
 	return err
 }
 
@@ -243,7 +248,7 @@ func (n *Node) Subscribe(contentTopic string) error {
 func (n *Node) Unsubscribe(contentTopic string) error {
 	ct := C.CString(contentTopic)
 	defer C.free(unsafe.Pointer(ct))
-	_, err := call("unsubscribe", func(ud unsafe.Pointer) C.int { return C.bridge_unsubscribe(n.ctx, ud, ct) })
+	_, err := call("unsubscribe", func(ud C.uintptr_t) C.int { return C.bridge_unsubscribe(n.ctx, ud, ct) })
 	return err
 }
 
@@ -266,25 +271,25 @@ func (n *Node) Send(contentTopic string, payload []byte, ephemeral bool) (string
 	cMsg := C.CString(string(raw))
 	defer C.free(unsafe.Pointer(cMsg))
 
-	return call("send", func(ud unsafe.Pointer) C.int { return C.bridge_send(n.ctx, ud, cMsg) })
+	return call("send", func(ud C.uintptr_t) C.int { return C.bridge_send(n.ctx, ud, cMsg) })
 }
 
 // NodeInfo returns the node info blob for the given id.
 func (n *Node) NodeInfo(id string) (string, error) {
 	cID := C.CString(id)
 	defer C.free(unsafe.Pointer(cID))
-	return call("node_info", func(ud unsafe.Pointer) C.int { return C.bridge_node_info(n.ctx, ud, cID) })
+	return call("node_info", func(ud C.uintptr_t) C.int { return C.bridge_node_info(n.ctx, ud, cID) })
 }
 
 // NodeInfoIDs lists the available node-info ids.
 func (n *Node) NodeInfoIDs() (string, error) {
-	return call("node_info_ids", func(ud unsafe.Pointer) C.int { return C.bridge_node_info_ids(n.ctx, ud) })
+	return call("node_info_ids", func(ud C.uintptr_t) C.int { return C.bridge_node_info_ids(n.ctx, ud) })
 }
 
 // AvailableConfigs asks the library which config fields it accepts. Useful for
 // discovering the real config surface instead of guessing.
 func (n *Node) AvailableConfigs() (string, error) {
-	return call("available_configs", func(ud unsafe.Pointer) C.int { return C.bridge_available_configs(n.ctx, ud) })
+	return call("available_configs", func(ud C.uintptr_t) C.int { return C.bridge_available_configs(n.ctx, ud) })
 }
 
 // NamedPubsubTopic formats a *named* (static-sharding) pubsub topic as
@@ -296,7 +301,7 @@ func (n *Node) AvailableConfigs() (string, error) {
 func (n *Node) NamedPubsubTopic(contentTopic string) (string, error) {
 	ct := C.CString(contentTopic)
 	defer C.free(unsafe.Pointer(ct))
-	return call("pubsub_topic", func(ud unsafe.Pointer) C.int { return C.bridge_pubsub_topic(n.ctx, ud, ct) })
+	return call("pubsub_topic", func(ud C.uintptr_t) C.int { return C.bridge_pubsub_topic(n.ctx, ud, ct) })
 }
 
 // PeersInMesh reports how many gossipsub mesh peers we have for a pubsub topic.
@@ -304,12 +309,12 @@ func (n *Node) NamedPubsubTopic(contentTopic string) (string, error) {
 func (n *Node) PeersInMesh(pubsubTopic string) (string, error) {
 	pt := C.CString(pubsubTopic)
 	defer C.free(unsafe.Pointer(pt))
-	return call("peers_in_mesh", func(ud unsafe.Pointer) C.int { return C.bridge_peers_in_mesh(n.ctx, ud, pt) })
+	return call("peers_in_mesh", func(ud C.uintptr_t) C.int { return C.bridge_peers_in_mesh(n.ctx, ud, pt) })
 }
 
 // PeerID returns this node's libp2p peer id.
 func (n *Node) PeerID() (string, error) {
-	return call("peer_id", func(ud unsafe.Pointer) C.int { return C.bridge_my_peerid(n.ctx, ud) })
+	return call("peer_id", func(ud C.uintptr_t) C.int { return C.bridge_my_peerid(n.ctx, ud) })
 }
 
 // Events returns the channel asynchronous events are delivered on.
