@@ -218,9 +218,12 @@ func TestWorkLeftRunningInACage(t *testing.T) {
 }
 
 func TestWhatACageIsGiven(t *testing.T) {
+	if passedToCage("GH_TOKEN", false) || passedToCage("GITHUB_TOKEN", false) || !passedToCage("GITHUB_TOKEN", true) {
+		t.Error("GitHub's tokens reach a cage without the GitHub login, or not with it")
+	}
 	for k, want := range map[string]bool{"ANTHROPIC_API_KEY": true, "VENICE_API_KEY": true, "CLAUDE_CODE_OAUTH_TOKEN": true,
-		"GH_TOKEN": true, "CLAUDE_CODE_SESSION_ID": false, "CLAUDE_CODE_MESSAGING_TOKEN": false, "PATH": false, "HOME": false, "SSH_AUTH_SOCK": false, "DISPLAY": false, "DBUS_SESSION_BUS_ADDRESS": false} {
-		if passedToCage(k) != want {
+		"CLAUDE_CODE_SESSION_ID": false, "CLAUDE_CODE_MESSAGING_TOKEN": false, "PATH": false, "HOME": false, "SSH_AUTH_SOCK": false, "DISPLAY": false, "DBUS_SESSION_BUS_ADDRESS": false} {
+		if passedToCage(k, false) != want {
 			t.Errorf("%s given to a cage: %v, want %v", k, !want, want)
 		}
 	}

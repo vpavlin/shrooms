@@ -252,12 +252,16 @@ func (m *Manager) cageMounts(s *Session, harness string) []mount {
 	ms := []mount{{path: s.dir}, {path: up, ro: true}}
 	switch harness {
 	case "claude":
-		ms = append(ms, mount{path: filepath.Join(home, ".claude")})
+		dir := filepath.Join(home, ".claude")
+		ms = append(ms, mount{path: dir})
+		ms = append(ms, readOnlyIn(dir, claudeHostCode)...)
 		if bin, err := claudeProgram(m.binOf("claude")); err == nil {
 			ms = append(ms, mount{path: filepath.Dir(bin), ro: true})
 		}
 	case "pi":
-		ms = append(ms, mount{path: piAgentDir()})
+		dir := piAgentDir()
+		ms = append(ms, mount{path: dir})
+		ms = append(ms, readOnlyIn(dir, piHostCode)...)
 	}
 	if s.cage.Nix {
 		ms = append(ms, nixMounts(home)...)
@@ -283,6 +287,29 @@ func (m *Manager) cageMounts(s *Session, harness string) []mount {
 		if _, err := os.Stat(x.path); err == nil {
 			out = append(out, x)
 		}
+	}
+	return out
+}
+
+// The harness's settings directory is the cage's to write — its login is
+// refreshed there, its transcripts kept — but not what the harness runs or
+// obeys on the machine: a caged agent that could write a hook into
+// ~/.claude/settings.json, or an extension into ~/.pi/agent, would have it run
+// on the host by the next session outside a cage. Those paths are mounted
+// again, read-only, over the writable directory.
+var (
+	claudeHostCode = []string{"settings.json", "settings.local.json", "CLAUDE.md", "hooks", "skills", "plugins",
+		"commands", "agents", "output-styles", "bin"}
+	piHostCode = []string{"settings.json", "models.json", "mcp.json", "extensions", "skills", "prompts", "themes",
+		"AGENTS.md", "SYSTEM.md", "APPEND_SYSTEM.md", "bin"}
+)
+
+// readOnlyIn is each of names under dir, read-only (cageMounts keeps only
+// those that exist).
+func readOnlyIn(dir string, names []string) []mount {
+	out := make([]mount, len(names))
+	for i, n := range names {
+		out[i] = mount{path: filepath.Join(dir, n), ro: true}
 	}
 	return out
 }
@@ -431,7 +458,7 @@ func (m *Manager) cageEnv(s *Session) (string, error) {
 	}
 	for _, kv := range os.Environ() {
 		k, v, _ := strings.Cut(kv, "=")
-		if passedToCage(k) {
+		if passedToCage(k, s.cage.GitHub) {
 			vars[k] = v
 		}
 	}
@@ -458,7 +485,12 @@ func (m *Manager) cageEnv(s *Session) (string, error) {
 // passedToCage: the agent's environment variables a caged harness is given —
 // the keys and settings of models and providers, not the machine's own (its
 // PATH, its desktop, its user).
-func passedToCage(k string) bool {
+func passedToCage(k string, github bool) bool {
+	// GitHub's tokens only to a cage given the GitHub login: otherwise the
+	// *_TOKEN rule below handed the owner's GitHub to every cage.
+	if strings.HasPrefix(k, "GH_") || strings.HasPrefix(k, "GITHUB_") {
+		return github
+	}
 	// Claude Code's own CLAUDE_CODE_ variables, when the agent runs under
 	// it, are about that session — its id, its socket — not this one's.
 	if strings.HasPrefix(k, "CLAUDE_CODE_") {
