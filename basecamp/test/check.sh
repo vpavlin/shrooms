@@ -87,8 +87,9 @@ run() {
     # one word more.
     # In one timezone wherever it runs: the fixtures' times are written in
     # +02:00 and the checks read them as a clock shows them, so on CI's UTC
-    # "runs out 13:40" read 11:40 and failed (2026-10-08).
-    TZ=Europe/Prague QT_QPA_PLATFORM=offscreen QT_ASSUME_STDERR_HAS_CONSOLE=1 \
+    # "runs out 13:40" read 11:40 and failed (2026-10-08). A POSIX rule, not
+    # a zone name: nix's Qt finds no zone database and falls back to UTC.
+    TZ='CET-1CEST,M3.5.0,M10.5.0/3' QT_QPA_PLATFORM=offscreen QT_ASSUME_STDERR_HAS_CONSOLE=1 \
     QML_IMPORT_PATH="$QMLDIR" QML2_IMPORT_PATH="$QMLDIR" "$@" 2>&1 || true
 }
 
