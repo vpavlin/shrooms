@@ -103,6 +103,25 @@ session over the API).
   meshes, and this machine's own agent, were not reachable. With it every
   mesh is, through the machine's own sockets: the agent sees the cage's
   requests as from this machine, so `task_update` works from inside.
+- **Two images of ours**, from the one Containerfile's stages: the
+  *workbench*, and the *desktop* — the workbench with Xvfb, xdotool,
+  ImageMagick, ffmpeg and what Qt apps and browsers load, AppImages
+  unpacking themselves (no FUSE in a cage): to run, drive and record an app,
+  as a reviewer does (1.4 GB). Both have the GitHub CLI. Each is labelled
+  with a hash of the Containerfile and built again when an agent has a newer
+  one — at its start for the images caged sessions use, and when a cage is
+  made; the old one serves meanwhile. Built on the machine's network: a
+  build through pasta timed out fetching from npm on the laptop.
+- **Options per cage:** *nix* — the machine's store and the owner's profile
+  (on PATH); builds go through the daemon where there is one, and a
+  single-user nix (the laptop's) is written by the cage, as the owner would.
+  *GitHub* — `~/.config/gh`, read-only. Neither by default.
+- **Moving a session in, between cages, and out**
+  (`POST /v1/sessions/{name}/cage`; "cage" by an open session in both apps):
+  only while idle; the process is stopped and the next message resumes the
+  conversation where it now runs — the same paths inside, so it is the same
+  conversation. A cage changed or left is deleted, with what was installed in
+  it. A `caged` event notes it in the conversation.
 - **Work left running:** the task watchdog's "is a background command still
   running" looks in the cage (`podman top`), not at the podman client's
   children.
@@ -155,6 +174,15 @@ Console's API or `provider-services`, paid in AKT (Console Air); a budget per
 deployment, and nothing remote started without your yes.
 
 ## Agents starting agents
+
+**What there is already (2026-10-08):** a session can make another with the
+agent's API — `POST /v1/sessions`, from its shell — as
+jimmy-crib/vpavlin made jimmy-crib/publisher; the mesh is the
+authentication, so any agent can, on any machine. Then they work together
+with tasks (ADR-042). What is not there is what makes it safe to leave to
+them: the link between the two, limits, and a cage by default. The rest of
+this section is that.
+
 
 With tasks (`docs/agents-together.md`), one tool: `spawn(where, harness,
 task)` — `where` being this machine in a cage, a micro-VM, or Akash. The new

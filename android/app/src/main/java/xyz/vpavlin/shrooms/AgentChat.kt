@@ -162,6 +162,7 @@ object AgentChat {
                 "stopped" -> out += ChatItem.Stopped(e.seq, e.time, e.data.optString("reason"))
                 "restarted" -> out += ChatItem.Note(e.seq, e.time, "restarted${by(e)}")
                 "renamed" -> out += ChatItem.Note(e.seq, e.time, "renamed (was ${e.data.optString("from")})${by(e)}")
+                "caged" -> out += ChatItem.Note(e.seq, e.time, cagedNote(e.data) + by(e))
                 // An A2A task's end, or its supervision giving up on it.
                 "task" -> out += ChatItem.Note(e.seq, e.time, taskNote(e.data.optString("id"),
                     e.data.optString("state"), e.data.optString("summary")))
@@ -302,3 +303,8 @@ object AgentChat {
         else -> ""
     }
 }
+
+/** A session moved into a cage or out of one (Basecamp's cagedNote). */
+fun cagedNote(d: org.json.JSONObject): String =
+    if (d.optBoolean("caged")) "moved into a cage (${cageWords(SessionCage(d.optString("image"), d.optBoolean("nix"), d.optBoolean("github")))})"
+    else "taken out of its cage"

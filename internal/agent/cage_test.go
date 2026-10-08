@@ -123,7 +123,10 @@ func TestACagedSessionRunsInItsOwnContainer(t *testing.T) {
 			t.Errorf("the cage's environment lacks %q:\n%s", want, env)
 		}
 	}
-	for _, not := range []string{"PATH=", "CLAUDE_CODE_SESSION_ID=", "CLAUDE_CODE_MESSAGING_SOCKET="} {
+	if !strings.Contains(string(env), "\nPATH="+cagePath(home, false)+"\n") {
+		t.Errorf("the cage's PATH is not the image's:\n%s", env)
+	}
+	for _, not := range []string{"PATH=" + os.Getenv("PATH") + "\n", "CLAUDE_CODE_SESSION_ID=", "CLAUDE_CODE_MESSAGING_SOCKET="} {
 		if strings.Contains("\n"+string(env), "\n"+not) {
 			t.Errorf("%s… of the machine (or of a session the agent runs under) is given to the cage:\n%s", not, env)
 		}
@@ -173,7 +176,7 @@ func TestAFirstCageBuildsTheWorkbench(t *testing.T) {
 		t.Fatalf("a message before the image is there is not told it is being built: %v", err)
 	}
 	deadline := time.Now().Add(5 * time.Second)
-	for indexOf(calls(t, log), `^build -t `+regexp.QuoteMeta(WorkbenchImage)+` -f - `) < 0 {
+	for indexOf(calls(t, log), `^build --network host --target workbench --label `+workbenchLabel+`=`+workbenchHash()+` -t `+regexp.QuoteMeta(WorkbenchImage)+` -f - `) < 0 {
 		if time.Now().After(deadline) {
 			t.Fatalf("the workbench is not built: %q", calls(t, log))
 		}
@@ -282,4 +285,110 @@ func TestARealCage(t *testing.T) {
 		t.Fatalf("a file the cage wrote belongs to uid %d, not the owner", uid)
 	}
 	t.Logf("preview: %q", s.Info().Preview)
+}
+
+func TestASessionMovesIntoACageAndOut(t *testing.T) {
+	podman, log := fakePodman(t, false)
+	state := t.TempDir()
+	m := newTestManager(t, state)
+	m.Cages = &Cages{Podman: podman, Image: WorkbenchImage}
+	if _, err := m.Create("review", t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := m.Get("review")
+	if err := s.Send("first", "phone"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, s, 0, func(e Event) bool { return claudeType(e) == "result/success" })
+	if indexOf(calls(t, log), `^exec `) >= 0 {
+		t.Fatal("a session not in a cage ran in one")
+	}
+
+	// Not while it works: the turn would be cut off.
+	if err := s.Send("slow", "phone"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, s, 0, func(e Event) bool { return claudeType(e) == "assistant" && strings.Contains(assistantText(e), "slow") || s.Info().State == Working })
+	if _, err := m.SetCage("review", &Cage{}, "phone"); err == nil || !strings.Contains(err.Error(), "idle") {
+		t.Fatalf("a working session is moved into a cage: %v", err)
+	}
+	s.Interrupt("phone")
+	deadline := time.Now().Add(5 * time.Second)
+	for s.Info().State != Idle && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	in, err := m.SetCage("review", &Cage{Image: DesktopImage, GitHub: true}, "phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if in.Cage == nil || in.Cage.Image != DesktopImage || !in.Cage.GitHub || in.Running {
+		t.Fatalf("the session is not in the desktop cage, stopped until the next message: %+v", in)
+	}
+	waitFor(t, s, 0, func(e Event) bool { return e.Kind == "caged" && strings.Contains(string(e.Data), DesktopImage) })
+	if err := s.Send("second", "phone"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, s, 0, func(e Event) bool { return strings.Contains(assistantText(e), "second") })
+	cs := calls(t, log)
+	create := indexOf(cs, `^create --name shrooms-review-`)
+	if create < 0 || !strings.Contains(cs[create], " "+DesktopImage+" sleep infinity") {
+		t.Fatalf("the next message is not run in a desktop cage: %q", cs)
+	}
+	home, _ := os.UserHomeDir()
+	if gh := filepath.Join(home, ".config", "gh"); isDir(gh) && !strings.Contains(cs[create], "-v "+gh+":"+gh+":ro") {
+		t.Errorf("the GitHub login is not given read-only: %s", cs[create])
+	}
+	// The conversation goes on where it was: resumed, not started again.
+	if indexOf(cs, `^exec .* --resume fake-session-1`) < 0 {
+		t.Fatalf("the moved session does not resume its conversation: %q", cs)
+	}
+	name := regexp.MustCompile(`--name (\S+)`).FindStringSubmatch(cs[create])[1]
+
+	// Out again: the cage is deleted, and the session runs on the machine.
+	if _, err := m.SetCage("review", nil, "phone"); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(5 * time.Second)
+	for indexOf(calls(t, log), `^rm -f -t 3 `+name+`$`) < 0 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if indexOf(calls(t, log), `^rm -f -t 3 `+name+`$`) < 0 {
+		t.Fatalf("a session taken out of its cage leaves the container: %q", calls(t, log))
+	}
+	if s.Info().Cage != nil {
+		t.Fatal("the session is still shown caged")
+	}
+	execs := len(regexp.MustCompile(`(?m)^exec `).FindAllString(strings.Join(calls(t, log), "\n"), -1))
+	if err := s.Send("third", "phone"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, s, 0, func(e Event) bool { return strings.Contains(assistantText(e), "third") })
+	if n := len(regexp.MustCompile(`(?m)^exec `).FindAllString(strings.Join(calls(t, log), "\n"), -1)); n != execs {
+		t.Fatal("a session out of its cage still runs in one")
+	}
+}
+
+func TestACageWithNix(t *testing.T) {
+	home := "/home/me"
+	if p := cagePath(home, true); !strings.HasPrefix(p, "/home/me/.local/state/nix/profiles/profile/bin:") || !strings.HasSuffix(p, ":/usr/bin:/sbin:/bin") {
+		t.Fatalf("a cage with nix does not find the owner's nix profile first: %s", p)
+	}
+	if p := cagePath(home, false); strings.Contains(p, "nix") {
+		t.Fatalf("a cage without nix has it on its PATH: %s", p)
+	}
+	if !nixHere() {
+		t.Skip("no nix here")
+	}
+	ms := nixMounts(home)
+	var nix *mount
+	for i := range ms {
+		if ms[i].path == "/nix" {
+			nix = &ms[i]
+		}
+	}
+	_, daemon := os.Stat(nixDaemonSocket)
+	if nix == nil || nix.ro != (daemon == nil) {
+		t.Fatalf("the store is not read-only with a daemon, and the owner's to write without one: %+v", ms)
+	}
 }

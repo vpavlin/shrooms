@@ -902,6 +902,7 @@ Item {
             else if (e.kind === "restarted") add(e, { kind: "note", text: "restarted" + (e.by ? " from " + e.by : "") })
             else if (e.kind === "task") add(e, { kind: "note", text: taskNote(d.id || "", d.state || "", d.summary || "") })
             else if (e.kind === "renamed") add(e, { kind: "note", text: "renamed (was " + (d.from || "") + ")" + (e.by ? " from " + e.by : "") })
+            else if (e.kind === "caged") add(e, { kind: "note", text: cagedNote(d, e.by) })
             else if (e.kind === "setting" && d.auto_approve !== undefined)
                 add(e, { kind: "note", text: (d.auto_approve ? "auto-approve on" : "auto-approve off") + (e.by ? " from " + e.by : "") })
             else if (e.kind === "claude") {
@@ -1132,6 +1133,7 @@ Item {
         root.nsHarness = "claude"
         root.cageStatus = null
         root.nsCage = false
+        root.cageOpts = { image: "", nix: false, github: false }
         if (!h) return
         var r = unwrap(callCore("agentGet", [h.address, "/v1/harnesses"]))
         if (r && r.harnesses && r.harnesses.length > 0) root.harnesses = r.harnesses
@@ -1150,11 +1152,55 @@ Item {
         return what + "."
     }
     function cageLabel(sess) { return sess && sess.cage ? "caged" : "" }
+    // What a cage is given, chosen in "+ session" and in the cage dialog:
+    // its image ("" for the machine's), nix, the GitHub login.
+    property var cageOpts: ({ image: "", nix: false, github: false })
+    function cageBody(o) {
+        var b = {}
+        if (o && o.image) b.image = o.image
+        if (o && o.nix) b.nix = true
+        if (o && o.github) b.github = true
+        return b
+    }
+    function imageLabel(img) {
+        if (img === "localhost/shrooms-workbench:latest") return "workbench"
+        if (img === "localhost/shrooms-workbench:desktop") return "desktop — Xvfb, xdotool, ffmpeg"
+        return String(img || "")
+    }
+    function shortImage(img) { return img === "localhost/shrooms-workbench:latest" ? "workbench" : img === "localhost/shrooms-workbench:desktop" ? "desktop" : String(img || "") }
+    function cageWords(c) {
+        return [shortImage(c.image), c.nix ? "nix" : "", c.github ? "GitHub login" : ""].filter(function(x) { return x !== "" }).join(", ")
+    }
+    function cagedNote(d, by) {
+        return (d && d.caged ? "moved into a cage (" + cageWords(d) + ")" : "taken out of its cage") + (by ? " from " + by : "")
+    }
     // What "+ session" and taking a conversation over send.
     function sessionBody(fields) {
         var b = Object.assign({}, fields)
-        if (nsCage && cageStatus) b.cage = {}
+        if (nsCage && cageStatus) b.cage = cageBody(cageOpts)
         return JSON.stringify(b)
+    }
+    // Moving the open session into a cage, changing it, or out of it.
+    function askCage() {
+        var h = null
+        for (var i = 0; i < agentHosts.length; i++) if (agentOpen && agentHosts[i].address === agentOpen.address) h = agentHosts[i]
+        root.cageStatus = null
+        if (h) {
+            var r = unwrap(callCore("agentGet", [h.address, "/v1/harnesses"]))
+            if (r && r.cage && r.cage.available) root.cageStatus = r.cage
+        }
+        var c = agentInfo && agentInfo.cage
+        root.cageOpts = c ? { image: c.image, nix: !!c.nix, github: !!c.github } : { image: "", nix: false, github: false }
+        cageDialog.open()
+    }
+    function cageOpenSession(caged) {
+        if (!agentOpen) return false
+        var body = JSON.stringify({ cage: caged ? cageBody(cageOpts) : null })
+        if (agentCall("agentPost", [agentOpen.address, "/v1/sessions/" + agentOpen.session + "/cage", body]) === null) return false
+        root.said = caged ? "session " + agentOpen.session + " is in a cage from its next message" : "session " + agentOpen.session + " is out of its cage"
+        root.saidBad = false
+        Qt.callLater(refreshAgents)
+        return true
     }
     function harnessApproves(name) {
         for (var i = 0; i < harnesses.length; i++) if (harnesses[i].name === name) return !!(harnesses[i].caps && harnesses[i].caps.approve)
@@ -1530,7 +1576,7 @@ Item {
     readonly property var boardCardList: boardCards(agentHosts)
     readonly property var boardEdgeList: boardEdges(agentHosts)
     function askDelete() { deleteDialog.open() }
-    function dialogs() { return [usageDialog, voiceDialog, deleteDialog, renameDialog, restartDialog, readingDialog] }
+    function dialogs() { return [usageDialog, voiceDialog, deleteDialog, renameDialog, restartDialog, readingDialog, cageDialog] }
     function closeDialogs() { dialogs().forEach(function(d) { d.close() }) }
     function deleteDialogOpen() { return deleteDialog.visible }
     function deleteOpenSession() {
@@ -2109,6 +2155,51 @@ Item {
             }
         }
     }
+    Dialog {
+        id: cageDialog
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(root.sz(560), root.width - root.sz(40))
+        padding: root.sz(20)
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        Overlay.modal: Rectangle { color: Qt.rgba(0, 0, 0, 0.6) }
+        background: Rectangle { color: cPanel; radius: root.sz(12); border.color: cPhosphor }
+        header: Item {}
+        footer: Item {}
+        contentItem: ColumnLayout {
+            spacing: root.sz(14)
+            readonly property bool caged: !!(root.agentInfo && root.agentInfo.cage)
+            Text {
+                Layout.fillWidth: true; wrapMode: Text.Wrap
+                text: root.agentOpen ? (parent.caged ? "Session \"" + root.agentOpen.session + "\" is in a cage (" + root.cageWords(root.agentInfo.cage) + ")"
+                                                     : "Move session \"" + root.agentOpen.session + "\" on " + root.agentOpen.name + " into a cage?") : ""
+                color: cBone; font.family: "monospace"; font.pixelSize: root.fs(14)
+            }
+            Text {
+                Layout.fillWidth: true; wrapMode: Text.Wrap
+                text: root.cageStatus === null ? "This machine's agent has no podman, or is too old to cage sessions."
+                    : root.cageNote(root.cageStatus) + " Its process is stopped and the conversation carries on in the cage with the next message"
+                      + (parent.caged ? "; a cage changed or left is deleted, with what was installed in it." : ".")
+                color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(11)
+            }
+            CageOptions { visible: root.cageStatus !== null; Layout.fillWidth: true }
+            Text {
+                visible: root.agentWorking
+                Layout.fillWidth: true; wrapMode: Text.Wrap
+                text: "It is working: move it once it is idle."
+                color: cAmber; font.family: "monospace"; font.pixelSize: root.fs(11)
+            }
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                spacing: root.sz(20)
+                Lnk { text: "CANCEL"; base: cBone; font.pixelSize: root.fs(12); onClicked: cageDialog.close() }
+                Lnk { visible: parent.parent.caged; text: "TAKE OUT"; base: cRust; font.pixelSize: root.fs(12)
+                      onClicked: if (root.cageOpenSession(false)) cageDialog.close() }
+                Lnk { visible: root.cageStatus !== null; text: parent.parent.caged ? "CHANGE" : "MOVE INTO THE CAGE"; base: cPhosphor; font.pixelSize: root.fs(12)
+                      onClicked: if (root.cageOpenSession(true)) cageDialog.close() }
+            }
+        }
+    }
     // A search result from before this agent had the conversation: no event to
     // jump to, so it is shown whole.
     Dialog {
@@ -2252,6 +2343,48 @@ Item {
             opacity: srow.sess.starred ? 1 : (starMouse.containsMouse ? 0.6 : 0.25)
             MouseArea { id: starMouse; anchors.fill: parent; anchors.margins: -4; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                         onClicked: Qt.callLater(root.setStarred, srow.host, srow.sess.name, !srow.sess.starred) }
+        }
+    }
+
+    // What a cage is given: its image, nix, the GitHub login (root.cageOpts),
+    // as the machine offers them (root.cageStatus).
+    component CageOptions: ColumnLayout {
+        spacing: root.sz(6)
+        Flow {
+            Layout.fillWidth: true
+            spacing: root.sz(8)
+            Repeater {
+                model: root.cageStatus && root.cageStatus.images ? root.cageStatus.images : []
+                delegate: Text {
+                    id: ichip
+                    required property var modelData
+                    required property int index
+                    readonly property bool on: root.cageOpts.image === ichip.modelData || (root.cageOpts.image === "" && ichip.index === 0)
+                    text: root.imageLabel(ichip.modelData)
+                    color: on ? cVoid : cBone; font.family: "monospace"; font.pixelSize: root.fs(10)
+                    leftPadding: root.sz(10); rightPadding: root.sz(10); topPadding: root.sz(5); bottomPadding: root.sz(5)
+                    Rectangle { anchors.fill: parent; z: -1; radius: root.sz(10); color: ichip.on ? cPhosphor : "transparent"; border.color: ichip.on ? cPhosphor : cLine }
+                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                onClicked: root.cageOpts = Object.assign({}, root.cageOpts, { image: ichip.index === 0 ? "" : ichip.modelData }) }
+                }
+            }
+        }
+        CheckBox {
+            id: nixBox
+            visible: !!(root.cageStatus && root.cageStatus.nix)
+            checked: root.cageOpts.nix
+            onToggled: root.cageOpts = Object.assign({}, root.cageOpts, { nix: checked })
+            text: "nix — the machine's store and profile (a single-user nix: written by the cage, as by you)"
+            contentItem: Text { leftPadding: nixBox.indicator.width + 6; text: nixBox.text; color: cAsh; wrapMode: Text.Wrap; font.family: "monospace"; font.pixelSize: root.fs(10); verticalAlignment: Text.AlignVCenter }
+            Layout.fillWidth: true
+        }
+        CheckBox {
+            id: ghBox
+            checked: root.cageOpts.github
+            onToggled: root.cageOpts = Object.assign({}, root.cageOpts, { github: checked })
+            text: "GitHub login — your gh login, read-only"
+            contentItem: Text { leftPadding: ghBox.indicator.width + 6; text: ghBox.text; color: cAsh; wrapMode: Text.Wrap; font.family: "monospace"; font.pixelSize: root.fs(10); verticalAlignment: Text.AlignVCenter }
+            Layout.fillWidth: true
         }
     }
 
@@ -2703,6 +2836,7 @@ Item {
                         contentItem: Text { leftPadding: nsCageBox.indicator.width + 6; text: nsCageBox.text; color: cAsh; wrapMode: Text.Wrap; font.family: "monospace"; font.pixelSize: root.fs(10); verticalAlignment: Text.AlignVCenter }
                         Layout.fillWidth: true
                     }
+                    CageOptions { visible: root.nsCage && root.cageStatus !== null; Layout.fillWidth: true; Layout.leftMargin: root.sz(24) }
                     RowLayout {
                         Lnk {
                             text: "create"
@@ -2825,6 +2959,8 @@ Item {
                         Lnk { readonly property bool on: root.autoPlayOn(root.agentOpen)
                               text: on ? "AUTO-PLAY" : "auto-play"; base: on ? cPhosphor : cAsh
                               onClicked: root.setAutoPlay(root.agentOpen, !on) }
+                        Lnk { objectName: "cageLink"; text: root.agentInfo && root.agentInfo.cage ? "caged" : "cage"
+                              base: root.agentInfo && root.agentInfo.cage ? cPhosphor : cAsh; onClicked: Qt.callLater(root.askCage) }
                         Lnk { text: "restart"; base: cAsh; onClicked: root.askRestart() }
                         Lnk { text: "delete"; base: cAsh; onClicked: root.askDelete() }
                         Lnk { visible: root.agentWorking; text: "■ stop"; base: cRust; onClicked: root.stopTurn() }

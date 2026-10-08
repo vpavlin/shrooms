@@ -22,6 +22,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	_ "embed"
 	"encoding/hex"
 	"errors"
@@ -39,8 +40,16 @@ import (
 var workbenchContainerfile []byte
 
 // WorkbenchImage is the image cages are made from unless the machine or the
-// session names another: built here from workbench.Containerfile.
-const WorkbenchImage = "localhost/shrooms-workbench:latest"
+// session names another: built here from workbench.Containerfile. And
+// DesktopImage is the workbench with an X server, to run, drive and record
+// apps in.
+const (
+	WorkbenchImage = "localhost/shrooms-workbench:latest"
+	DesktopImage   = "localhost/shrooms-workbench:desktop"
+)
+
+// builtin are the images built here, from workbench.Containerfile's stages.
+var builtin = map[string]string{WorkbenchImage: "workbench", DesktopImage: "desktop"}
 
 // Cage is how a session is caged; nil for a session that is not.
 type Cage struct {
@@ -50,6 +59,12 @@ type Cage struct {
 	// the session's name then, and a few random letters, so a rename leaves
 	// it be and a later session of the same name gets its own.
 	Container string `json:"container,omitempty"`
+	// Nix gives the cage the machine's nix: its store and profile, and
+	// builds through its daemon where it has one. A single-user nix has
+	// none, and the cage then writes the store itself — as the owner would.
+	Nix bool `json:"nix,omitempty"`
+	// GitHub gives it the owner's GitHub CLI login (~/.config/gh), read-only.
+	GitHub bool `json:"github,omitempty"`
 }
 
 // cageNetwork gives a cage an address of its own and a default route through
@@ -77,13 +92,19 @@ type Cages struct {
 
 // CageInfo is a session's cage as the list shows it.
 type CageInfo struct {
-	Image string `json:"image"`
+	Image  string `json:"image"`
+	Nix    bool   `json:"nix,omitempty"`
+	GitHub bool   `json:"github,omitempty"`
 }
 
 // CageStatus is what the apps are told: whether sessions can be caged here.
 type CageStatus struct {
 	Available bool   `json:"available"`
 	Image     string `json:"image,omitempty"`
+	// Images are those offered: the machine's, and the ones built here.
+	Images []string `json:"images,omitempty"`
+	// Nix: the machine has nix to give a cage.
+	Nix bool `json:"nix,omitempty"`
 	Ready     bool   `json:"ready"`              // the image is there
 	Building  bool   `json:"building,omitempty"` // it is being built
 	Error     string `json:"error,omitempty"`    // why the last build failed
@@ -129,22 +150,47 @@ func (c *Cages) imageExists(image string) bool {
 	return err == nil
 }
 
+// workbenchLabel carries a hash of the Containerfile an image of ours was
+// built from: an agent with a newer one builds it again.
+const workbenchLabel = "xyz.vpavlin.shrooms.containerfile"
+
+func workbenchHash() string {
+	sum := sha256.Sum256(workbenchContainerfile)
+	return hex.EncodeToString(sum[:8])
+}
+
+// current: an image of ours built from this agent's Containerfile.
+func (c *Cages) current(image string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	out, err := c.run(ctx, "image", "inspect", "--format", "{{index .Labels \""+workbenchLabel+"\"}}", image)
+	return err == nil && strings.TrimSpace(out) == workbenchHash()
+}
+
 // Status says whether the machine's image is ready.
 func (c *Cages) Status() CageStatus {
 	if c == nil {
 		return CageStatus{}
 	}
 	c.mu.Lock()
-	st := CageStatus{Available: true, Image: c.Image, Building: c.building, Error: c.buildErr}
+	st := CageStatus{Available: true, Image: c.Image, Building: c.building, Error: c.buildErr,
+		Images: []string{c.Image}, Nix: nixHere()}
 	c.mu.Unlock()
+	for _, im := range []string{WorkbenchImage, DesktopImage} {
+		if im != c.Image {
+			st.Images = append(st.Images, im)
+		}
+	}
 	st.Ready = !st.Building && c.imageExists(c.Image)
 	return st
 }
 
-// Prepare builds the workbench image, in the background, if it is the one a
-// cage needs and it is not there. Another image is the owner's to provide.
+// Prepare builds an image of ours, in the background, if it is the one a
+// cage needs and it is not there, or was built from an older Containerfile
+// (the old one serves until then). Another image is the owner's to provide.
 func (c *Cages) Prepare(image string, log func(msg string, args ...any)) {
-	if image != WorkbenchImage || c.imageExists(image) {
+	target, ours := builtin[image]
+	if !ours || c.current(image) {
 		return
 	}
 	c.mu.Lock()
@@ -158,7 +204,10 @@ func (c *Cages) Prepare(image string, log func(msg string, args ...any)) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		defer cancel()
 		log("building the workbench image for cages", "image", image)
-		cmd := exec.CommandContext(ctx, c.Podman, "build", "-t", image, "-f", "-", os.TempDir())
+		// On the machine's network: a build's own, through pasta, timed
+		// out fetching from npm on the laptop (2026-10-08).
+		cmd := exec.CommandContext(ctx, c.Podman, "build", "--network", "host", "--target", target,
+			"--label", workbenchLabel+"="+workbenchHash(), "-t", image, "-f", "-", os.TempDir())
 		cmd.Stdin = bytes.NewReader(workbenchContainerfile)
 		out, err := cmd.CombinedOutput()
 		c.mu.Lock()
@@ -210,6 +259,12 @@ func (m *Manager) cageMounts(s *Session, harness string) []mount {
 	case "pi":
 		ms = append(ms, mount{path: piAgentDir()})
 	}
+	if s.cage.Nix {
+		ms = append(ms, nixMounts(home)...)
+	}
+	if s.cage.GitHub {
+		ms = append(ms, mount{path: filepath.Join(home, ".config", "gh"), ro: true})
+	}
 	if m.Self != "" {
 		if self, err := filepath.EvalSymlinks(m.Self); err == nil {
 			ms = append(ms, mount{path: self, ro: true})
@@ -240,6 +295,38 @@ func claudeProgram(bin string) (string, error) {
 		return "", err
 	}
 	return filepath.EvalSymlinks(p)
+}
+
+// nixDaemonSocket is where a multi-user nix's daemon listens.
+const nixDaemonSocket = "/nix/var/nix/daemon-socket"
+
+func nixHere() bool {
+	_, err := os.Stat("/nix/store")
+	return err == nil
+}
+
+// nixMounts give a cage the machine's nix. With a daemon, the store is read
+// and builds go to the daemon, as for any user; a single-user nix is the
+// owner's own, and the cage writes it as the owner.
+func nixMounts(home string) []mount {
+	if !nixHere() {
+		return nil
+	}
+	ms := []mount{{path: filepath.Join(home, ".local", "state", "nix")}, {path: filepath.Join(home, ".config", "nix"), ro: true}}
+	if _, err := os.Stat(nixDaemonSocket); err == nil {
+		return append(ms, mount{path: "/nix", ro: true}, mount{path: nixDaemonSocket})
+	}
+	return append(ms, mount{path: "/nix"})
+}
+
+// cagePath is the PATH of a cage's processes: the image's, after nix's
+// profile when the cage has nix.
+func cagePath(home string, nix bool) string {
+	p := "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+	if nix {
+		p = filepath.Join(home, ".local", "state", "nix", "profiles", "profile", "bin") + ":/nix/var/nix/profiles/default/bin:" + p
+	}
+	return p
 }
 
 func piAgentDir() string {
@@ -296,8 +383,8 @@ func (m *Manager) prepareCage(s *Session, bin string) (*cageRun, error) {
 			if st := c.Status(); st.Error != "" {
 				return nil, errors.New(st.Error)
 			}
-			if image == WorkbenchImage {
-				return nil, errors.New("the workbench image for this session's cage is being built (a few minutes, the first time); send again then")
+			if _, ours := builtin[image]; ours {
+				return nil, errors.New("the image for this session's cage is being built (a few minutes, the first time); send again then")
 			}
 			return nil, fmt.Errorf("there is no image %s on this machine for this session's cage", image)
 		}
@@ -335,6 +422,12 @@ func (m *Manager) cageEnv(s *Session) (string, error) {
 		// except in a sandbox, which a cage is.
 		"IS_SANDBOX":            "1",
 		"SHROOMS_AGENT_SESSION": s.Name(),
+		"PATH":                  cagePath(home, s.cage.Nix),
+	}
+	if s.cage.Nix {
+		if _, err := os.Stat(nixDaemonSocket); err == nil {
+			vars["NIX_REMOTE"] = "daemon"
+		}
 	}
 	for _, kv := range os.Environ() {
 		k, v, _ := strings.Cut(kv, "=")
@@ -433,4 +526,45 @@ func busyIn(top, harnessBin string) bool {
 		return true
 	}
 	return false
+}
+
+// SetCage puts a session in a cage, changes its cage, or takes it out of one
+// (cage nil). Not while it works or a prompt waits: its process is stopped,
+// and the next message starts it where it now runs, on the same
+// conversation. The cage it had is deleted, and what was installed in it.
+func (m *Manager) SetCage(name string, cage *Cage, by string) (Info, error) {
+	s, ok := m.Get(name)
+	if !ok {
+		return Info{}, fmt.Errorf("no session called %q", name)
+	}
+	if cage != nil && m.Cages == nil {
+		return Info{}, errors.New("this machine has no podman to cage sessions with")
+	}
+	if in := s.Info(); in.State != Idle || in.Pending > 0 {
+		return Info{}, fmt.Errorf("session %s is %s: move it once it is idle", name, in.State)
+	}
+	s.stop()
+	s.mu.Lock()
+	old := s.cage
+	if cage != nil {
+		cage = &Cage{Image: cage.Image, Nix: cage.Nix, GitHub: cage.GitHub, Container: newContainerName(s.Name())}
+	}
+	s.cage = cage
+	data := map[string]any{"caged": cage != nil}
+	if cage != nil {
+		data["image"] = m.Cages.image(cage)
+		data["nix"], data["github"] = cage.Nix, cage.GitHub
+	}
+	s.record("caged", by, data)
+	s.mu.Unlock()
+	m.mu.Lock()
+	err := m.save()
+	m.mu.Unlock()
+	if old != nil && m.Cages != nil {
+		go m.Cages.remove(old.Container, m.dir)
+	}
+	if cage != nil {
+		m.Cages.Prepare(m.Cages.image(cage), m.log.Info)
+	}
+	return s.Info(), err
 }

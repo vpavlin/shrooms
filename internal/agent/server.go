@@ -61,6 +61,7 @@ func Handler(log *slog.Logger, m *Manager, who Who) http.Handler {
 	mux.HandleFunc("POST /v1/sessions/{name}/interrupt", h.interrupt)
 	mux.HandleFunc("POST /v1/sessions/{name}/restart", h.restart)
 	mux.HandleFunc("POST /v1/sessions/{name}/rename", h.rename)
+	mux.HandleFunc("POST /v1/sessions/{name}/cage", h.cage)
 	// A2A (a2a.go): the machine's card, each session's, and JSON-RPC.
 	mux.HandleFunc("GET /.well-known/agent-card.json", h.machineCard)
 	mux.HandleFunc("GET /a2a/{name}/.well-known/agent-card.json", h.a2aCard)
@@ -604,4 +605,22 @@ func (h *handler) events(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
+}
+
+// cage moves a session into a cage, changes it, or takes it out:
+// {"cage": {image?, nix?, github?}} or {"cage": null}.
+func (h *handler) cage(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Cage *Cage `json:"cage"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, err)
+		return
+	}
+	in, err := h.m.SetCage(r.PathValue("name"), req.Cage, h.caller(r))
+	if err != nil {
+		fail(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, in)
 }

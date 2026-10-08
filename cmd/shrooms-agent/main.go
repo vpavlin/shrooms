@@ -121,6 +121,13 @@ func run() error {
 		if m.Cages = agent.NewCages(*cageImage); m.Cages != nil {
 			m.Cages.Socket = *sock
 			log.Info("cages offered", "podman", m.Cages.Podman, "image", m.Cages.Image)
+			// The images caged sessions use, built again if this agent's
+			// Containerfile is newer than theirs.
+			for _, in := range m.List() {
+				if in.Cage != nil {
+					m.Cages.Prepare(in.Cage.Image, log.Info)
+				}
+			}
 		}
 	}
 	// Other harnesses, when this machine has them (docs/agents-harnesses.md).

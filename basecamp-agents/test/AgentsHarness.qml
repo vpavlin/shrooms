@@ -166,7 +166,8 @@ Item {
                 if (method === "agentGet" && String(args[1]) === "/v1/harnesses") return JSON.stringify({ harnesses: [
                     { name: "claude", title: "Claude Code", caps: { approve: true, takeover: true } },
                     { name: "pi", title: "pi", caps: { approve: false, takeover: false } } ],
-                    cage: { available: true, image: "localhost/shrooms-workbench:latest", ready: false } })
+                    cage: { available: true, image: "localhost/shrooms-workbench:latest", ready: false, nix: true,
+                            images: ["localhost/shrooms-workbench:latest", "localhost/shrooms-workbench:desktop"] } })
                 if (method === "agentGet" && String(args[1]).indexOf("/v1/conversations") === 0 && top.noConversations) return JSON.stringify({ conversations: [] })
                 if (method === "agentGet" && String(args[1]).indexOf("/v1/conversations") === 0) return JSON.stringify({ conversations: [
                     { id: "c-new", dir: "/home/someone/shrooms", modified: "2026-10-03T15:00:00+02:00", size: 1000,
@@ -245,6 +246,16 @@ Item {
             view.askRestart()
             view.restartOpenSession()
             console.error("RESTARTED=" + top.lastPostPath + " SAID=" + view.said)
+            // Into a cage from the open session: the machine's offer asked
+            // for, the dialog opened, the session moved with its options.
+            view.askCage()
+            var cageOpen = view.dialogs().some(function(d) { return d.visible })
+            view.cageOpts = { image: "localhost/shrooms-workbench:desktop", nix: false, github: true }
+            view.cageOpenSession(true)
+            var moved = top.lastPostPath + " " + top.lastPost
+            view.cageOpenSession(false)
+            console.error("CAGED open=" + cageOpen + " offer=" + (view.cageStatus !== null) + " moved=" + moved + " out=" + top.lastPost)
+            view.closeDialogs()
             // A turn the harness started itself: labelled by its source.
             var kept = view.agentEventsList
             view.agentEventsList = [ev(90, "message", { text: "HEARTBEAT: pick one", outside: true }, "heartbeat")]
@@ -394,10 +405,15 @@ Item {
             view.nsCage = true
             view.createSession(view.agentHosts[0], "boxed", "~/proj", false)
             var boxed = JSON.parse(top.lastPost)
+            view.cageOpts = { image: "localhost/shrooms-workbench:desktop", nix: true, github: false }
+            view.createSession(view.agentHosts[0], "desk", "~/proj", false)
+            var desk = JSON.parse(top.lastPost).cage
             view.loadHarnesses(view.agentHosts[0])
             view.createSession(view.agentHosts[0], "free", "~/proj", false)
             console.error("CAGE offered=" + cageOffered + " sent=" + JSON.stringify(boxed.cage) + " reset=" + (JSON.parse(top.lastPost).cage === undefined)
-                          + " label=" + view.cageLabel({ cage: { image: "x" } }) + "," + view.cageLabel({}))
+                          + " label=" + view.cageLabel({ cage: { image: "x" } }) + "," + view.cageLabel({})
+                          + " desk=" + JSON.stringify(desk)
+                          + " note=[" + view.cagedNote({ caged: true, image: "localhost/shrooms-workbench:desktop", github: true }, "laptop.office") + "|" + view.cagedNote({ caged: false }, "") + "]")
             view.nsHarness = "pi"
             console.error("HARNESS offered=" + offered + " sent=" + made.harness + " auto=" + made.auto_approve
                           + " label=[" + view.harnessLabel("pi") + "][" + view.harnessLabel("claude") + "]")

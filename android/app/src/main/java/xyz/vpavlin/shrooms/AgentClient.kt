@@ -46,15 +46,32 @@ data class AgentSession(
     /** A2A tasks it has open, and of them those that stalled after the reminders. */
     val tasksOpen: Int = 0,
     val tasksStalled: Int = 0,
-    /** The image of the container it runs in (docs/agents-in-cages.md); null when it is not caged. */
-    val cage: String? = null,
+    /** The container it runs in (docs/agents-in-cages.md); null when it is not caged. */
+    val cage: SessionCage? = null,
 )
+
+/** A cage: its image, and whether it has the machine's nix and the owner's GitHub login. */
+data class SessionCage(val image: String, val nix: Boolean = false, val github: Boolean = false) {
+    fun json(): JSONObject = JSONObject().apply {
+        if (image.isNotEmpty()) put("image", image)
+        if (nix) put("nix", true)
+        if (github) put("github", true)
+    }
+
+    companion object {
+        fun parse(o: JSONObject?): SessionCage? = o?.let { SessionCage(it.optString("image"), it.optBoolean("nix"), it.optBoolean("github")) }
+    }
+}
 
 /** A coding agent a machine can run sessions of (GET /v1/harnesses). */
 data class Harness(val name: String, val title: String, val approves: Boolean)
 
 /** Whether a machine can cage sessions (GET /v1/harnesses' "cage"): it has podman, and the image is ready, being built, or failed to build. */
-data class CageOffer(val image: String, val ready: Boolean, val building: Boolean, val error: String)
+data class CageOffer(
+    val image: String, val ready: Boolean, val building: Boolean, val error: String,
+    /** The images offered, the machine's first; and whether it has nix to give. */
+    val images: List<String> = listOf(image), val nix: Boolean = false,
+)
 
 /** What "+ session" offers on a machine: its harnesses, and a cage if it has podman. */
 data class SessionOffer(val harnesses: List<Harness>, val cage: CageOffer?)
@@ -134,14 +151,19 @@ class AgentClient(private val address: String) {
                 turns = s.optLong("turns", -1),
                 tasksOpen = s.optInt("tasks_open"),
                 tasksStalled = s.optInt("tasks_stalled"),
-                cage = s.optJSONObject("cage")?.optString("image"),
+                cage = SessionCage.parse(s.optJSONObject("cage")),
             )
         }
     }
 
-    fun create(name: String, dir: String, autoApprove: Boolean = false, harness: String = "claude", caged: Boolean = false) {
+    fun create(name: String, dir: String, autoApprove: Boolean = false, harness: String = "claude", cage: SessionCage? = null) {
         request("POST", "/v1/sessions", sessionBody(JSONObject().put("name", name).put("dir", dir)
-            .put("auto_approve", autoApprove).put("harness", harness), caged))
+            .put("auto_approve", autoApprove).put("harness", harness), cage))
+    }
+
+    /** Moves a session into a cage, changes it, or (null) takes it out: from its next message. */
+    fun setCage(session: String, cage: SessionCage?) {
+        request("POST", "/v1/sessions/${enc(session)}/cage", cageBody(cage))
     }
 
     /** The harnesses this machine runs, Claude Code first. */
@@ -176,9 +198,9 @@ class AgentClient(private val address: String) {
     }
 
     /** A session continuing a conversation, in the directory it ran in. */
-    fun takeOver(name: String, conversation: String, autoApprove: Boolean, caged: Boolean = false) {
+    fun takeOver(name: String, conversation: String, autoApprove: Boolean, cage: SessionCage? = null) {
         request("POST", "/v1/sessions", sessionBody(JSONObject().put("name", name).put("resume", conversation)
-            .put("auto_approve", autoApprove), caged))
+            .put("auto_approve", autoApprove), cage))
     }
 
     /** Ends a terminal's claude, so its conversation can be carried on here. */
@@ -435,9 +457,12 @@ class AgentClient(private val address: String) {
 
 class AgentError(message: String) : Exception(message)
 
-/** What creating a session sends: [fields], and an empty cage — the machine's image — when [caged]. */
-fun sessionBody(fields: JSONObject, caged: Boolean): String =
-    (if (caged) fields.put("cage", JSONObject()) else fields).toString()
+/** What creating a session sends: [fields], and its [cage] if it is to have one. */
+fun sessionBody(fields: JSONObject, cage: SessionCage?): String =
+    (if (cage != null) fields.put("cage", cage.json()) else fields).toString()
+
+/** What moving a session sends: its new cage, or null to take it out. */
+fun cageBody(cage: SessionCage?): String = JSONObject().put("cage", cage?.json() ?: JSONObject.NULL).toString()
 
 /** GET /v1/harnesses: the harnesses (Claude Code alone from an agent too old to list them) and the cage, if offered. */
 fun parseOffer(raw: String): SessionOffer {
@@ -448,5 +473,10 @@ fun parseOffer(raw: String): SessionOffer {
         Harness(h.optString("name"), h.optString("title"), h.optJSONObject("caps")?.optBoolean("approve") ?: false)
     }.ifEmpty { claudeOnly }
     val c = o.optJSONObject("cage")?.takeIf { it.optBoolean("available") }
-    return SessionOffer(hs, c?.let { CageOffer(it.optString("image"), it.optBoolean("ready"), it.optBoolean("building"), it.optString("error")) })
+    return SessionOffer(hs, c?.let {
+        val ims = it.optJSONArray("images")
+        CageOffer(it.optString("image"), it.optBoolean("ready"), it.optBoolean("building"), it.optString("error"),
+            (0 until (ims?.length() ?: 0)).map { i -> ims!!.getString(i) }.ifEmpty { listOf(it.optString("image")) },
+            it.optBoolean("nix"))
+    })
 }

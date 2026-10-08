@@ -128,7 +128,7 @@ object HostCache {
                     .put("auto_approve", s.autoApprove).put("context_used", s.contextUsed)
                     .put("context_window", s.contextWindow).put("preview", s.preview).put("model", s.model)
                     .put("harness", s.harness).put("approves", s.approves).put("starred", s.starred)
-                    .apply { if (s.cage != null) put("cage", s.cage) }
+                    .apply { if (s.cage != null) put("cage", s.cage.json().put("image", s.cage.image)) }
             }))
     }).toString()
 
@@ -148,7 +148,9 @@ object HostCache {
                         preview = s.optString("preview"), model = s.optString("model"),
                         harness = s.optString("harness").ifEmpty { "claude" }, approves = s.optBoolean("approves", true),
                         starred = s.optBoolean("starred"),
-                        cage = if (s.has("cage")) s.optString("cage") else null,
+                        // A string from 0.37.0, which kept the image only.
+                        cage = s.optJSONObject("cage")?.let { SessionCage.parse(it) }
+                            ?: s.optString("cage").takeIf { s.has("cage") }?.let { SessionCage(it) },
                     )
                 },
                 lastSeen = h.optLong("seen"))
@@ -293,6 +295,22 @@ fun contextLabel(used: Long, window: Long): String {
 /** "claude-opus-5[1m]" → "opus-5 1m". */
 /** The harness, named where it is not the usual one: "pi". */
 fun harnessLabel(h: String): String = if (h == "claude" || h.isEmpty()) "" else h
+
+fun imageLabel(img: String): String = when (img) {
+    "localhost/shrooms-workbench:latest" -> "workbench"
+    "localhost/shrooms-workbench:desktop" -> "desktop — Xvfb, xdotool, ffmpeg"
+    else -> img
+}
+
+private fun shortImage(img: String): String = when (img) {
+    "localhost/shrooms-workbench:latest" -> "workbench"
+    "localhost/shrooms-workbench:desktop" -> "desktop"
+    else -> img
+}
+
+/** A cage in a few words (Basecamp's cageWords): "desktop, nix, GitHub login". */
+fun cageWords(c: SessionCage): String =
+    listOf(shortImage(c.image), if (c.nix) "nix" else "", if (c.github) "GitHub login" else "").filter { it.isNotEmpty() }.joinToString(", ")
 
 /** What "in a cage" means, said beside it (Basecamp's cageNote). */
 fun cageNote(c: CageOffer): String {
@@ -575,6 +593,37 @@ private fun SessionRow(s: AgentSession, where: String = "", reachable: Boolean =
     }
 }
 
+/** What a cage is given: its image, nix, the GitHub login — as the machine offers them. "" is the machine's image. */
+@Composable
+private fun CageOptions(offer: CageOffer, opts: SessionCage, modifier: Modifier = Modifier, onChange: (SessionCage) -> Unit) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            offer.images.forEachIndexed { idx, img ->
+                val on = opts.image == img || (opts.image.isEmpty() && idx == 0)
+                Text(imageLabel(img), style = MaterialTheme.typography.labelSmall,
+                    color = if (on) Palette.Void else Palette.Bone,
+                    modifier = Modifier.background(if (on) Palette.Phosphor else Color.Transparent, RoundedCornerShape(10.dp))
+                        .border(1.dp, if (on) Palette.Phosphor else Palette.Line, RoundedCornerShape(10.dp))
+                        .clickable { onChange(opts.copy(image = if (idx == 0) "" else img)) }.padding(horizontal = 10.dp, vertical = 6.dp))
+            }
+        }
+        if (offer.nix) Tick("nix — the machine's store and profile (a single-user nix: written by the cage, as by you)", opts.nix) {
+            onChange(opts.copy(nix = !opts.nix))
+        }
+        Tick("GitHub login — your gh login, read-only", opts.github) { onChange(opts.copy(github = !opts.github)) }
+    }
+}
+
+@Composable
+private fun Tick(text: String, on: Boolean, onClick: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { onClick() }) {
+        Box(Modifier.size(12.dp).border(1.dp, if (on) Palette.Phosphor else Palette.Ash, RoundedCornerShape(3.dp))
+            .background(if (on) Palette.Phosphor else Color.Transparent, RoundedCornerShape(3.dp)))
+        Spacer(Modifier.width(10.dp))
+        Text(text, style = MaterialTheme.typography.bodySmall, color = if (on) Palette.Bone else Palette.Ash)
+    }
+}
+
 @Composable
 private fun NewSession(h: AgentHost, onDone: () -> Unit, onOpen: (String) -> Unit) {
     var convs by remember { mutableStateOf<List<Conversation>?>(null) }
@@ -588,6 +637,7 @@ private fun NewSession(h: AgentHost, onDone: () -> Unit, onOpen: (String) -> Uni
     var harnesses by remember { mutableStateOf(claudeOnly) }
     var cageOffer by remember { mutableStateOf<CageOffer?>(null) }
     var caged by remember { mutableStateOf(false) }
+    var cageOpts by remember { mutableStateOf(SessionCage("")) }
     var harness by remember { mutableStateOf("claude") }
     LaunchedEffect(h.address) {
         val o = withContext(Dispatchers.IO) { AgentClient(h.address).offer() }
@@ -634,13 +684,14 @@ private fun NewSession(h: AgentHost, onDone: () -> Unit, onOpen: (String) -> Uni
                 Text("in a cage — " + cageNote(c), style = MaterialTheme.typography.bodySmall,
                     color = if (caged) Palette.Bone else Palette.Ash)
             }
+            if (caged) CageOptions(c, cageOpts, Modifier.padding(start = 22.dp)) { cageOpts = it }
         }
         if (error.isNotEmpty()) Text(error, style = MaterialTheme.typography.bodySmall, color = Palette.Rust)
         Action("CREATE", enabled = !busy && name.isNotBlank() && dir.isNotBlank()) {
             busy = true
             scope.launch {
                 val r = withContext(Dispatchers.IO) {
-                    runCatching { AgentClient(h.address).create(name.trim(), dir.trim(), auto && chosen.approves, harness, caged && cageOffer != null) }
+                    runCatching { AgentClient(h.address).create(name.trim(), dir.trim(), auto && chosen.approves, harness, cageOpts.takeIf { caged && cageOffer != null }) }
                 }
                 busy = false
                 r.onSuccess { onDone() }.onFailure { error = it.message ?: "could not create it" }
@@ -670,7 +721,7 @@ private fun NewSession(h: AgentHost, onDone: () -> Unit, onOpen: (String) -> Uni
                         busy = true
                         val n = sessionNameFor(c.dir, h.sessions.map { it.name })
                         scope.launch {
-                            val r = withContext(Dispatchers.IO) { runCatching { AgentClient(h.address).takeOver(n, c.id, auto, caged && cageOffer != null) } }
+                            val r = withContext(Dispatchers.IO) { runCatching { AgentClient(h.address).takeOver(n, c.id, auto, cageOpts.takeIf { caged && cageOffer != null }) } }
                             busy = false
                             r.onSuccess { onOpen(n) }.onFailure { error = it.message ?: "could not take it over" }
                         }
@@ -743,6 +794,10 @@ private fun Field(label: String, value: String, onChange: (String) -> Unit) {
 private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String) -> Unit = {}) {
     var askDelete by remember { mutableStateOf(false) }
     var askRestart by remember { mutableStateOf(false) }
+    // The cage dialog: the machine's offer, asked when it opens, and the options chosen.
+    var cageAsk by remember { mutableStateOf(false) }
+    var cageOffer by remember { mutableStateOf<CageOffer?>(null) }
+    var cageOpts by remember { mutableStateOf(SessionCage("")) }
     var renaming by remember { mutableStateOf<String?>(null) }
     // How many of the last events are loaded: 0 is everything, once asked for;
     // more, to reach a search result further back.
@@ -1108,6 +1163,45 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String
             },
         )
     }
+    if (cageAsk) {
+        val caged = info?.cage != null
+        fun move(to: SessionCage?) {
+            cageAsk = false
+            scope.launch {
+                withContext(Dispatchers.IO) { runCatching { client.setCage(o.session, to) } }
+                    .onSuccess { info = info?.copy(cage = to, running = false) }
+                    .onFailure { actionError = it.message ?: "could not move it" }
+            }
+        }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { cageAsk = false },
+            containerColor = Palette.Panel,
+            title = { Text(if (caged) "${o.session} is in a cage (${cageWords(info!!.cage!!)})" else "Move ${o.session} into a cage?", color = Palette.Bone) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    val offer = cageOffer
+                    Text(if (offer == null) "asking ${o.host}…" else cageNote(offer) +
+                        " Its process is stopped and the conversation carries on in the cage with the next message" +
+                        if (caged) "; a cage changed or left is deleted, with what was installed in it." else ".",
+                        style = MaterialTheme.typography.bodySmall, color = Palette.Ash)
+                    if (offer != null) CageOptions(offer, cageOpts) { cageOpts = it }
+                    if (working) Text("It is working: move it once it is idle.", style = MaterialTheme.typography.bodySmall, color = Palette.Amber)
+                }
+            },
+            confirmButton = {
+                Row {
+                    if (caged) Text("TAKE OUT", style = MaterialTheme.typography.labelSmall, color = Palette.Rust,
+                        modifier = Modifier.clickable { move(null) }.padding(12.dp))
+                    if (cageOffer != null) Text(if (caged) "CHANGE" else "MOVE IN", style = MaterialTheme.typography.labelSmall, color = Palette.Phosphor,
+                        modifier = Modifier.clickable { move(cageOpts) }.padding(12.dp))
+                }
+            },
+            dismissButton = {
+                Text("CANCEL", style = MaterialTheme.typography.labelSmall, color = Palette.Ash,
+                    modifier = Modifier.clickable { cageAsk = false }.padding(12.dp))
+            },
+        )
+    }
     if (askRestart) {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { askRestart = false },
@@ -1166,7 +1260,7 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String
                 }
             }
             val facts = listOf(o.host, o.mesh, harnessLabel(i?.harness ?: "claude"),
-                i?.cage?.let { "in a cage ($it)" } ?: "", shortModel(i?.model ?: ""),
+                i?.cage?.let { "in a cage (${cageWords(it)})" } ?: "", shortModel(i?.model ?: ""),
                 contextLabel(i?.contextUsed ?: 0, i?.contextWindow ?: 0)).filter { it.isNotEmpty() }
             Text(facts.joinToString("  ·  "), style = MaterialTheme.typography.labelSmall, color = Palette.Ash,
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 30.dp))
@@ -1193,6 +1287,12 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String
                 }
                 if (working) Link("■ stop", Palette.Rust) { stopTurn() }
                 Link(if (searching) "close search" else "search", Palette.Sky) { searching = !searching }
+                Link(if (info?.cage != null) "caged" else "cage", if (info?.cage != null) Palette.Phosphor else Palette.Ash) {
+                    cageOpts = info?.cage ?: SessionCage("")
+                    cageOffer = null
+                    cageAsk = true
+                    scope.launch { cageOffer = withContext(Dispatchers.IO) { client.offer().cage } }
+                }
                 Link("restart", Palette.Ash) { askRestart = true }
                 Link("delete", Palette.Ash) { askDelete = true }
             }

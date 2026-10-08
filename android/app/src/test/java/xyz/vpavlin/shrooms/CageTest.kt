@@ -21,15 +21,33 @@ class CageTest {
     }
 
     @Test fun aCagedSessionIsAskedForWithTheMachinesImage() {
-        val caged = JSONObject(sessionBody(JSONObject().put("name", "box"), true))
+        val caged = JSONObject(sessionBody(JSONObject().put("name", "box"), SessionCage("")))
         assertEquals(0, caged.getJSONObject("cage").length())
-        assertFalse(JSONObject(sessionBody(JSONObject().put("name", "free"), false)).has("cage"))
+        assertFalse(JSONObject(sessionBody(JSONObject().put("name", "free"), null)).has("cage"))
+        val desk = JSONObject(sessionBody(JSONObject(), SessionCage("localhost/shrooms-workbench:desktop", nix = true))).getJSONObject("cage")
+        assertEquals("localhost/shrooms-workbench:desktop", desk.getString("image"))
+        assertTrue(desk.getBoolean("nix") && !desk.has("github"))
     }
 
     @Test fun aCagedSessionIsKeptCagedInTheCache() {
-        val s = AgentSession("box", "/p", "idle", 0, false, 0, cage = "localhost/bench:1")
+        val s = AgentSession("box", "/p", "idle", 0, false, 0, cage = SessionCage("localhost/bench:1", github = true))
         val back = HostCache.decode(HostCache.encode(listOf(AgentHost("laptop", "office", "fd00::1", listOf(s, s.copy(name = "free", cage = null)), lastSeen = 1))))
-        assertEquals("localhost/bench:1", back[0].sessions[0].cage)
+        assertEquals(SessionCage("localhost/bench:1", github = true), back[0].sessions[0].cage)
         assertNull(back[0].sessions[1].cage)
+        // As 0.37.0 kept it: the image alone.
+        val old = """[{"name":"laptop","mesh":"office","address":"fd00::1","sessions":[{"name":"box","cage":"localhost/bench:1"}]}]"""
+        assertEquals(SessionCage("localhost/bench:1"), HostCache.decode(old)[0].sessions[0].cage)
+    }
+
+    @Test fun aMoveIsAskedForAndNoted() {
+        assertEquals("""{"cage":null}""", cageBody(null))
+        assertEquals("""{"cage":{"image":"localhost/shrooms-workbench:desktop","github":true}}""",
+            cageBody(SessionCage("localhost/shrooms-workbench:desktop", github = true)))
+        assertEquals("moved into a cage (desktop, GitHub login)",
+            cagedNote(JSONObject("""{"caged":true,"image":"localhost/shrooms-workbench:desktop","github":true}""")))
+        assertEquals("taken out of its cage", cagedNote(JSONObject("""{"caged":false}""")))
+        val o = parseOffer("""{"harnesses":[],"cage":{"available":true,"image":"a","images":["a","b"],"nix":true}}""")
+        assertEquals(listOf("a", "b"), o.cage?.images)
+        assertTrue(o.cage!!.nix)
     }
 }
