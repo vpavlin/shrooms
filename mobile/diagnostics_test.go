@@ -167,3 +167,15 @@ func TestDiagnosticsIncludeMemory(t *testing.T) {
 		t.Errorf("memory should come before the log, which nobody reads first")
 	}
 }
+
+func TestARebuildIsNotReportedAsAKill(t *testing.T) {
+	dir := t.TempDir()
+	SessionStarted(dir, "v1")
+	SessionRebuilt(dir, "rendezvous stalled")
+	if note := SessionStarted(dir, "v1"); note != "" {
+		t.Errorf("a rebuild in the same process was reported as a kill: %q", note)
+	}
+	if s := tail(stopsPath(dir), 10); !strings.Contains(s, "rebuilt after") || !strings.Contains(s, "rendezvous stalled") || strings.Contains(s, "KILLED") {
+		t.Errorf("the rebuild is not recorded as one, with why: %q", s)
+	}
+}

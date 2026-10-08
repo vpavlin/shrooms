@@ -128,6 +128,28 @@ func SessionStarted(configDir, version string) string {
 	return note
 }
 
+// SessionRebuilt records that the app is rebuilding this session in the same
+// process — a reconnect, the watchdog after the rendezvous stalled, mesh names
+// coming back — so the start that follows does not read it as a kill. Those
+// rebuilds were listed as "KILLED after 4s" while the office's internet was
+// down on 2026-10-08, every five minutes, which reads as crashing.
+func SessionRebuilt(configDir, why string) {
+	if configDir == "" {
+		return
+	}
+	if b, err := os.ReadFile(sessionPath(configDir)); err == nil {
+		var prev sessionRecord
+		if json.Unmarshal(b, &prev) == nil && prev.Started > 0 {
+			ran := time.Since(time.Unix(prev.Started, 0)).Round(time.Second)
+			appendCapped(stopsPath(configDir),
+				fmt.Sprintf("%s  rebuilt after %s: %s\n", time.Now().Format("2006-01-02 15:04:05"), ran, why),
+				maxStopBytes)
+		}
+	}
+	appendLog(configDir, "INFO", "session rebuilt: "+why)
+	_ = os.Remove(sessionPath(configDir))
+}
+
 // SessionStopped records that this session ended on purpose.
 //
 // Whatever calls this is saying "we meant it" — so the absence of the call is

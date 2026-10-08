@@ -191,7 +191,7 @@ class MeshVpnService : VpnService() {
                 return START_NOT_STICKY
             }
             ACTION_RECONNECT -> {
-                restart()
+                restart("reconnect asked for")
                 return START_STICKY
             }
             else -> start()
@@ -616,7 +616,7 @@ class MeshVpnService : VpnService() {
                         } else {
                             Log.w(TAG, "rendezvous stalled: ${s.rendezvous.problem} — rebuilding")
                             MeshState.log("WARN", "rendezvous stalled, reconnecting")
-                            restart()
+                            restart("rendezvous stalled: ${s.rendezvous.problem}")
                         }
                     }
                 }
@@ -638,7 +638,7 @@ class MeshVpnService : VpnService() {
      * process-global state — and there is nothing to gain from a few seconds of
      * silence.
      */
-    private fun restart() {
+    private fun restart(why: String) {
         val seq = requests.incrementAndGet()
         scope.launch {
             sessionLock.withLock {
@@ -646,6 +646,9 @@ class MeshVpnService : VpnService() {
                     Log.i(TAG, "a disconnect arrived after this reconnect; not reconnecting")
                     return@withLock
                 }
+                // A rebuild, not a kill: said so before the next start reads
+                // the marker (Mobile.sessionStarted).
+                runCatching { Mobile.sessionRebuilt(filesDir.absolutePath, why) }
                 runCatching { Mobile.stopForRestart() }
                     .onFailure { Log.e(TAG, "stop for restart", it) }
                 runCatching { tunnel?.close() }
@@ -977,7 +980,7 @@ class MeshVpnService : VpnService() {
                     rebuiltForNames = true
                     Log.i(TAG, "names were unavailable and a resolver is reachable again; rebuilding")
                     MeshState.log("INFO", "network is back — rebuilding the tunnel to restore mesh names")
-                    restart()
+                    restart("network back, restoring mesh names")
                 }
             }
         }
