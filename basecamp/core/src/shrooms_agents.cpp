@@ -371,11 +371,17 @@ void Hub::find(const std::string& peers)
         for (const auto& p : list) {
             probes.emplace_back([this, p]() {
                 std::string body, err;
-                bool ok = request(p[2], "GET", "/v1/sessions", "", 3, body, err);
+                // With each session's last lines, for the board; an agent
+                // from before them ignores the question.
+                bool ok = request(p[2], "GET", "/v1/sessions?tail=6", "", 3, body, err);
+                // And the tasks between agents, for the board's links; an
+                // agent from before them has none to say.
+                std::string tasks, terr;
+                if (!ok || !request(p[2], "GET", "/v1/tasks", "", 3, tasks, terr) || tasks.empty() || tasks[0] != '{') tasks = "{}";
                 std::lock_guard<std::mutex> g(mu_);
                 if (ok) {
                     found_[p[2]] = "{\"name\":\"" + jsonEscape(p[0]) + "\",\"mesh\":\"" + jsonEscape(p[1]) +
-                                   "\",\"address\":\"" + jsonEscape(p[2]) + "\",\"list\":" + body + "}";
+                                   "\",\"address\":\"" + jsonEscape(p[2]) + "\",\"list\":" + body + ",\"tasks\":" + tasks + "}";
                 } else {
                     found_.erase(p[2]);
                 }

@@ -76,6 +76,9 @@ type Info struct {
 	// them those it stopped making progress on (tasks.go).
 	TasksOpen    int `json:"tasks_open,omitempty"`
 	TasksStalled int `json:"tasks_stalled,omitempty"`
+	// Tail is the last lines, oldest first, when the list was asked for
+	// them (?tail=N): a glance at every agent at once (tail.go).
+	Tail []string `json:"tail,omitempty"`
 	// KeepRunning: the process is never stopped as idle, and is started
 	// again when it ends — an agent that works on its own, from its
 	// extensions (a heartbeat, a chat bridge), and not only when asked.

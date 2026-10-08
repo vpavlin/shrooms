@@ -102,7 +102,7 @@ On each machine's overlay addresses, port 7387.
 
 | | |
 |---|---|
-| `GET /v1/sessions` | list: name, directory, state (idle / working / waiting), pending prompts, context used and window, model, the last reply, auto-approve, `harness` and its `caps`, and `turns` — how many turns have ended, which the phone notifies on, once each (events are no use for that: a session waiting on background work sends heartbeats and progress between turns). A turn Claude Code starts by itself, when background work finishes, makes the session working |
+| `GET /v1/sessions` | list: name, directory, state (idle / working / waiting), pending prompts, context used and window, model, the last reply, auto-approve, `harness` and its `caps`, and `turns` — how many turns have ended, which the phone notifies on, once each (events are no use for that: a session waiting on background work sends heartbeats and progress between turns). A turn Claude Code starts by itself, when background work finishes, makes the session working. `?tail=N` (at most 20) adds each session's `tail`: its last lines, oldest first — what was asked (`› you:`), the model's text, its tools (`▸ Bash make test`) and tasks (`◆ task …`) — for Basecamp's board |
 | `GET /v1/harnesses` | `{"harnesses":[{name, title, caps:{approve, takeover}}]}` — the coding agents this machine runs sessions of, Claude Code first (docs/agents-harnesses.md) |
 | `POST /v1/sessions` | `{name, dir, harness?, auto_approve?}` — create, with Claude Code unless `harness` names another; `dir` (`~` is the agent user's home) is made if it does not exist, once the request is otherwise accepted, and refused if it is a file; `{name, resume: id, harness?}` — continue an existing Claude Code (or, with `harness: "pi"`, pi) conversation, in the directory it ran in |
 | `DELETE /v1/sessions/{name}` | stop and forget |
@@ -165,6 +165,16 @@ session is started knowing it:
   process has `SHROOMS_AGENT_SESSION`, which `send` gives as who is asking.
 
 `--mcp=false` starts sessions with neither.
+
+**Seen together: Basecamp's board.** Beside the list, Basecamp has a second
+layout ("board" by AGENTS, kept as `agent_layout`; an experiment, the phone
+keeps its list): every session a card with its last lines (`?tail=6`), state,
+unread and figures, and a dashed curve from an agent to another that is working
+on a task it asked for — from each machine's `GET /v1/tasks`, the asker read
+from the claim in `shrooms/from` — green while worked on, amber blocked, red
+stalled, grey queued. A card opens its session across the whole panel;
+"← board" goes back. An asker that is no session (the CLI, an app) has no card
+and so no link.
 
 ## What it does
 

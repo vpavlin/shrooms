@@ -272,6 +272,7 @@ Item {
             var ap = JSON.parse(String(callCore("getPref", ["agent_autoplay"]) || "{}"))
             if (ap && typeof ap === "object" && !Array.isArray(ap)) root.autoPlay = ap
         } catch (e) {}
+        root.boardMode = String(callCore("getPref", ["agent_layout"]) || "") === "board"
         var lw = parseFloat(String(callCore("getPref", ["agent_list_width"]) || ""))
         if (!isNaN(lw)) root.listWidth = lw
         var n = parseFloat(String(callCore("getPref", ["ui_nudge"]) || ""))
@@ -388,7 +389,8 @@ Item {
             if (seen[h.name]) continue
             seen[h.name] = true
             hosts.push({ name: h.name, mesh: h.mesh, address: h.address,
-                         sessions: (h.list && h.list.sessions) ? h.list.sessions : [] })
+                         sessions: (h.list && h.list.sessions) ? h.list.sessions : [],
+                         tasks: (h.tasks && h.tasks.tasks) ? h.tasks.tasks : [] })
             // Where its subscription stands comes with the list: kept for the
             // usage link at a glance (one that misses a round keeps its last).
             var pl = h.list ? planLimits(h.name, h.list.limits) : null
@@ -401,7 +403,8 @@ Item {
         // Kept for the next start, now and then rather than every round.
         if (now - lastHostsSave > 30000) {
             lastHostsSave = now
-            savePref("agent_hosts", JSON.stringify(agentHosts))
+            // Not the tasks: a week of them, and the next round brings them.
+            savePref("agent_hosts", JSON.stringify(agentHosts.map(function(h) { return Object.assign({}, h, { tasks: [] }) })))
         }
     }
 
@@ -1359,6 +1362,129 @@ Item {
     function taskNote(id, state, summary) { return "task " + id + " " + String(state).replace(/_/g, " ") + (summary ? " — " + summary : "") }
     function tasksLabel(n) { return n > 0 ? (n === 1 ? "1 task" : n + " tasks") : "" }
     function stalledLabel(n) { return "⚠ " + (n === 1 ? "a task stalled" : n + " tasks stalled") + " — no progress after the reminders" }
+
+    // The board: every session a card with its last lines, and a dashed link
+    // from an agent to another that is working on a task it asked for. A
+    // second layout beside the list (agent_layout), an experiment
+    // (2026-10-08); the phone keeps its list.
+    property bool boardMode: false
+    function setBoard(on) {
+        root.boardMode = on
+        savePref("agent_layout", on ? "board" : "list")
+    }
+    function boardKey(h, name) { return h.name + "/" + name }
+    // The cards: the starred first, as in the list, then each machine's.
+    function boardCards(hosts) {
+        var out = [], starred = []
+        for (var i = 0; i < hosts.length; i++) {
+            var ss = hosts[i].sessions || []
+            for (var j = 0; j < ss.length; j++) {
+                var c = { key: boardKey(hosts[i], ss[j].name), host: hosts[i], sess: ss[j] }
+                if (ss[j].starred) starred.push(c); else out.push(c)
+            }
+        }
+        starred.sort(function(a, b) { return a.sess.name === b.sess.name ? (a.host.name < b.host.name ? -1 : 1) : (a.sess.name < b.sess.name ? -1 : 1) })
+        return starred.concat(out)
+    }
+    // Who asked: a task's shrooms/from is "DEVICE (MACHINE/SESSION)" — the
+    // device the mesh names and the session it claims to be. The card is the
+    // claimed session's on that machine; a machine named a little otherwise
+    // ("laptop" for "laptop.home") still finds it; an asker that is no
+    // session (the CLI, an app) has no card.
+    function askerKey(from, keys) {
+        var m = /\(([^)\/]+)\/([^)]+)\)\s*$/.exec(String(from || ""))
+        if (!m) return ""
+        var want = m[1] + "/" + m[2]
+        if (keys[want]) return want
+        for (var k in keys) {
+            var slash = k.indexOf("/")
+            var mach = k.substring(0, slash), sess = k.substring(slash + 1)
+            if (sess === m[2] && (mach.indexOf(m[1] + ".") === 0 || m[1].indexOf(mach + ".") === 0)) return k
+        }
+        return ""
+    }
+    // The links: one per open task whose asker and worker both have a card,
+    // from the asker to the worker.
+    function boardEdges(hosts) {
+        var keys = {}, out = []
+        for (var i = 0; i < hosts.length; i++) {
+            var ss = hosts[i].sessions || []
+            for (var j = 0; j < ss.length; j++) keys[boardKey(hosts[i], ss[j].name)] = true
+        }
+        for (i = 0; i < hosts.length; i++) {
+            var ts = hosts[i].tasks || []
+            for (j = 0; j < ts.length; j++) {
+                var t = ts[j], md = t.metadata || {}, st = t.status ? t.status.state : ""
+                if (/COMPLETED|FAILED|CANCELED|REJECTED/.test(st)) continue
+                var to = boardKey(hosts[i], md["shrooms/session"] || "")
+                var from = askerKey(md["shrooms/from"], keys)
+                if (!keys[to] || from === "" || from === to) continue
+                out.push({ id: t.id, from: from, to: to, state: md["shrooms/stalled"] ? "stalled" : stateWordOf(st) })
+            }
+        }
+        return out
+    }
+    function stateWordOf(st) { return String(st || "").replace(/^TASK_STATE_/, "").toLowerCase().replace(/_/g, "-") }
+    function edgeTint(state) {
+        return state === "working" ? cPhosphor : state === "input-required" ? cAmber : state === "stalled" ? cRust : cAsh
+    }
+    // A link's curve between two cards (x, y, w, h), as a cubic Bézier's four
+    // points: cards in a row, from top to top, arcing over the row by lift
+    // (and further for cards further apart, so it clears those between);
+    // otherwise from the facing edges, bottom to top. spread parts several
+    // links between the same two cards.
+    function linkCurve(a, b, spread, lift) {
+        var ax = a.x + a.w / 2, bx = b.x + b.w / 2
+        if (Math.abs(a.y - b.y) < a.h / 2) {
+            var y0 = a.y, y1 = b.y
+            // Not off the top of the board: a curve's peak is 3/4 of its lift.
+            var up = Math.min(lift + Math.abs(bx - ax) * 0.12 + spread, 2.5 * lift, (Math.min(y0, y1) - 2) / 0.75)
+            var sx = ax + (bx > ax ? 1 : -1) * a.w * 0.2, ex = bx - (bx > ax ? 1 : -1) * b.w * 0.2
+            return [{ x: sx, y: y0 }, { x: sx, y: y0 - up }, { x: ex, y: y1 - up }, { x: ex, y: y1 }]
+        }
+        var down = b.y > a.y
+        // Leaving and arriving off-centre, towards each other: a link that
+        // goes on sideways does not start where one from above arrives.
+        var side = Math.abs(bx - ax) < a.w / 4 ? 0 : (bx > ax ? 1 : -1)
+        var s = { x: ax + side * a.w * 0.2 + spread, y: down ? a.y + a.h : a.y }, e = { x: bx - side * b.w * 0.2 + spread, y: down ? b.y : b.y + b.h }
+        var dy = (e.y - s.y) / 2
+        return [s, { x: s.x, y: s.y + dy }, { x: e.x, y: e.y - dy }, e]
+    }
+    function bezierAt(p, t) {
+        var u = 1 - t
+        return { x: u*u*u*p[0].x + 3*u*u*t*p[1].x + 3*u*t*t*p[2].x + t*t*t*p[3].x,
+                 y: u*u*u*p[0].y + 3*u*u*t*p[1].y + 3*u*t*t*p[2].y + t*t*t*p[3].y }
+    }
+    // Dashes drawn by hand along the curve (no reliance on setLineDash), an
+    // arrowhead at the worker's end and a dot at the asker's.
+    function drawDashed(ctx, p, color, offset, width) {
+        var dash = 6, gap = 5, period = dash + gap
+        ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = width; ctx.lineCap = "round"
+        // Steps of about 2 px, so every dash is as long as the next.
+        var hull = 0
+        for (var k = 1; k < 4; k++) hull += Math.sqrt((p[k].x - p[k-1].x) * (p[k].x - p[k-1].x) + (p[k].y - p[k-1].y) * (p[k].y - p[k-1].y))
+        var steps = Math.max(40, Math.ceil(hull / 2)), prev = p[0], along = (period - offset % period) % period
+        ctx.beginPath()
+        for (var i = 1; i <= steps; i++) {
+            var q = bezierAt(p, i / steps)
+            var len = Math.sqrt((q.x - prev.x) * (q.x - prev.x) + (q.y - prev.y) * (q.y - prev.y))
+            var mid = along + len / 2
+            if (mid % period < dash) { ctx.moveTo(prev.x, prev.y); ctx.lineTo(q.x, q.y) }
+            along += len
+            prev = q
+        }
+        ctx.stroke()
+        var tip = p[3], back = bezierAt(p, 0.95)
+        var ang = Math.atan2(tip.y - back.y, tip.x - back.x), h = width * 5
+        ctx.beginPath()
+        ctx.moveTo(tip.x, tip.y)
+        ctx.lineTo(tip.x - h * Math.cos(ang - 0.45), tip.y - h * Math.sin(ang - 0.45))
+        ctx.lineTo(tip.x - h * Math.cos(ang + 0.45), tip.y - h * Math.sin(ang + 0.45))
+        ctx.closePath(); ctx.fill()
+        ctx.beginPath(); ctx.arc(p[0].x, p[0].y, width * 1.6, 0, 2 * Math.PI); ctx.fill()
+    }
+    readonly property var boardCardList: boardCards(agentHosts)
+    readonly property var boardEdgeList: boardEdges(agentHosts)
     function askDelete() { deleteDialog.open() }
     function deleteDialogOpen() { return deleteDialog.visible }
     function deleteOpenSession() {
@@ -2102,6 +2228,194 @@ Item {
         MouseArea { id: lnkMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: lnk.clicked() }
     }
 
+    // One session on the board: its name, machine and state, its last lines
+    // (the agent's ?tail), and its figures. Clicked, it fills the panel.
+    component BoardCard: Rectangle {
+        id: bcard
+        required property var card
+        readonly property string cardKey: card.key
+        readonly property var host: card.host
+        readonly property var sess: card.sess
+        readonly property bool up: root.hostReachable(bcard.host)
+        readonly property int tailLines: 6
+        opacity: up ? 1 : 0.5
+        height: bCol.implicitHeight + root.sz(16)
+        radius: root.sz(8)
+        color: cPanel
+        border.width: 1
+        border.color: !bcard.up ? cLine : bcard.sess.state === "waiting" ? cAmber : bcard.sess.state === "working" ? Qt.rgba(0.21, 0.94, 0.63, 0.5) : cLine
+        Column {
+            id: bCol
+            anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+            anchors.margins: root.sz(8)
+            spacing: 3
+            RowLayout {
+                width: parent.width
+                spacing: 6
+                Text { text: (bcard.sess.starred ? "🍄 " : "") + bcard.sess.name; color: cBone; font.family: "monospace"; font.pixelSize: root.fs(13); elide: Text.ElideRight; Layout.maximumWidth: bcard.width * 0.5 }
+                Rectangle {
+                    readonly property int n: root.unreadOf(bcard.host, bcard.sess)
+                    visible: n > 0
+                    implicitWidth: bUnread.implicitWidth + root.sz(10); implicitHeight: bUnread.implicitHeight + root.sz(2)
+                    radius: height / 2; color: cBone
+                    Text { id: bUnread; anchors.centerIn: parent; text: parent.n > 99 ? "99+" : String(parent.n)
+                           color: cVoid; font.family: "monospace"; font.pixelSize: root.fs(9); font.bold: true }
+                }
+                Text { text: bcard.host.name; color: root.meshTint(bcard.host.mesh); font.family: "monospace"; font.pixelSize: root.fs(10); elide: Text.ElideRight; Layout.fillWidth: true }
+                Pulse { visible: bcard.up && bcard.sess.state !== "idle"; tint: bcard.sess.state === "waiting" ? cAmber : cPhosphor }
+                Text {
+                    text: !bcard.up ? "unreachable" : bcard.sess.state === "waiting" ? "NEEDS YOU" : (bcard.sess.state === "working" ? "WORKING" : (bcard.sess.running ? "idle" : "asleep"))
+                    color: !bcard.up ? cAsh : bcard.sess.state === "waiting" ? cAmber : (bcard.sess.state === "working" ? cPhosphor : cAsh)
+                    font.family: "monospace"; font.pixelSize: root.fs(9); font.letterSpacing: 1
+                }
+            }
+            // The last lines, a fixed number of rows so the cards line up;
+            // an agent from before ?tail shows the preview instead.
+            Column {
+                width: parent.width
+                height: bcard.tailLines * (root.fs(10) + root.sz(5))
+                clip: true
+                Repeater {
+                    model: (bcard.sess.tail && bcard.sess.tail.length > 0) ? bcard.sess.tail.slice(-bcard.tailLines)
+                                                                          : [bcard.sess.preview || ""]
+                    delegate: Text {
+                        required property var modelData
+                        width: parent.width
+                        text: String(modelData)
+                        color: /^›/.test(text) ? cBone : /^▸/.test(text) ? cAsh : /^◆/.test(text) ? cViolet : Qt.rgba(0.84, 0.87, 0.89, 0.8)
+                        font.family: "monospace"; font.pixelSize: root.fs(10)
+                        elide: Text.ElideRight; maximumLineCount: 1
+                        height: root.fs(10) + root.sz(5)
+                    }
+                }
+            }
+            Text {
+                visible: (bcard.sess.tasks_stalled || 0) > 0
+                width: parent.width
+                text: root.stalledLabel(bcard.sess.tasks_stalled || 0)
+                color: cAmber; font.family: "monospace"; font.pixelSize: root.fs(9); elide: Text.ElideRight
+            }
+            Text {
+                width: parent.width
+                text: [root.clock(root.epoch(bcard.sess.last_time)),
+                       root.contextLabel(bcard.sess.context_used, bcard.sess.context_window),
+                       root.harnessLabel(bcard.sess.harness), root.shortModel(bcard.sess.model),
+                       root.tasksLabel(bcard.sess.tasks_open || 0)].filter(function(x) { return x !== "" }).join("  ·  ")
+                color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(9); elide: Text.ElideRight
+            }
+        }
+        // As the list's cards: the handler only schedules (Qt.callLater).
+        MouseArea { objectName: "boardCardArea"; anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: Qt.callLater(root.openSession, bcard.host, bcard.sess.name) }
+    }
+
+    // The board: the cards in a grid that fills the panel, and over them the
+    // tasks between agents, a dashed curve from the asker to the worker,
+    // coloured by how the task stands; one being worked on moves.
+    component BoardView: ColumnLayout {
+        id: board
+        spacing: root.sz(10)
+        RowLayout {
+            spacing: 8
+            Pulse {}
+            Text { text: "AGENTS · BOARD"; color: cPhosphor; font.family: "monospace"; font.pixelSize: root.fs(12); font.letterSpacing: 1.5 }
+            Item { Layout.fillWidth: true }
+            Row {
+                spacing: root.sz(10)
+                visible: root.boardEdgeList.length > 0
+                Repeater {
+                    model: [["working", "working"], ["input-required", "blocked"], ["stalled", "stalled"], ["submitted", "queued"]]
+                    delegate: Text {
+                        required property var modelData
+                        text: "╌ " + modelData[1]; color: root.edgeTint(modelData[0])
+                        font.family: "monospace"; font.pixelSize: root.fs(9)
+                    }
+                }
+            }
+            Lnk { visible: root.haveCore; text: root.usageGlance ? "usage " + root.usageGlance.percent + "%" : "usage"
+                  base: !root.usageGlance ? cAsh : root.usageGlance.level === 2 ? cRust : root.usageGlance.level === 1 ? cAmber : cAsh
+                  font.pixelSize: root.fs(10); onClicked: Qt.callLater(root.openUsage) }
+            Lnk { visible: root.haveCore; text: "voice"; base: cAsh; font.pixelSize: root.fs(10); onClicked: Qt.callLater(root.openVoice) }
+            Lnk { objectName: "toList"; text: "list"; base: cAsh; font.pixelSize: root.fs(10); onClicked: Qt.callLater(root.setBoard, false) }
+        }
+        Text {
+            Layout.fillWidth: true
+            visible: root.agentHosts.length === 0
+            wrapMode: Text.Wrap
+            text: root.haveCore ? "Looking for agents among the reachable peers…" : "Agents need shrooms_core, which runs inside Basecamp."
+            color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(11)
+        }
+        ScrollView {
+            id: boardScroll
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            clip: true
+            contentWidth: availableWidth
+            Item {
+                width: boardScroll.availableWidth
+                // Room above the first row for a link that arcs over it.
+                implicitHeight: boardFlow.y + boardFlow.height + root.sz(8)
+                height: implicitHeight
+                Flow {
+                    id: boardFlow
+                    objectName: "boardFlow"
+                    y: root.sz(40)
+                    width: parent.width
+                    readonly property real gap: root.sz(28)
+                    readonly property int cols: Math.max(1, Math.floor((width + gap) / (root.sz(380) + gap)))
+                    readonly property real cardW: Math.floor((width - gap * (cols - 1)) / cols)
+                    spacing: gap
+                    onPositioningComplete: links.requestPaint()
+                    Repeater {
+                        model: root.boardCardList
+                        delegate: BoardCard {
+                            required property var modelData
+                            card: modelData
+                            width: boardFlow.cardW
+                        }
+                    }
+                }
+                Canvas {
+                    id: links
+                    objectName: "boardLinks"
+                    anchors.fill: parent
+                    // The dashes' offset: moving along a link being worked on.
+                    property real march: 0
+                    property int drawn: 0
+                    Connections { target: root; function onBoardEdgeListChanged() { links.requestPaint() } }
+                    Timer {
+                        interval: 90; repeat: true
+                        running: board.visible && root.boardEdgeList.some(function(e) { return e.state === "working" })
+                        onTriggered: { links.march = (links.march + 1.5) % 11; links.requestPaint() }
+                    }
+                    function rectOf(key) {
+                        for (var i = 0; i < boardFlow.children.length; i++) {
+                            var c = boardFlow.children[i]
+                            if (c.cardKey === key) return { x: c.x, y: c.y + boardFlow.y, w: c.width, h: c.height }
+                        }
+                        return null
+                    }
+                    onPaint: {
+                        var ctx = getContext("2d")
+                        ctx.reset()
+                        var es = root.boardEdgeList, n = 0
+                        // Several tasks between the same two cards: each its own curve.
+                        var seen = {}
+                        for (var i = 0; i < es.length; i++) {
+                            var a = rectOf(es[i].from), b = rectOf(es[i].to)
+                            if (!a || !b) continue
+                            var pair = es[i].from + ">" + es[i].to, k = seen[pair] || 0
+                            seen[pair] = k + 1
+                            var pts = root.linkCurve(a, b, k * root.sz(10), root.sz(30))
+                            root.drawDashed(ctx, pts, root.edgeTint(es[i].state), es[i].state === "working" ? march : 0, root.sz(2))
+                            n++
+                        }
+                        drawn = n
+                    }
+                }
+            }
+        }
+    }
+
     component Pulse: Rectangle {
         property color tint: cPhosphor
         width: root.sz(8); height: width; radius: width / 2
@@ -2131,6 +2445,7 @@ Item {
             // conversation's longest line take room from it.
             ColumnLayout {
                 objectName: "agentList"
+                visible: !root.boardMode
                 Layout.preferredWidth: root.listWidthPx()
                 Layout.minimumWidth: root.listWidthPx()
                 Layout.maximumWidth: root.listWidthPx()
@@ -2147,6 +2462,7 @@ Item {
                           base: !root.usageGlance ? cAsh : root.usageGlance.level === 2 ? cRust : root.usageGlance.level === 1 ? cAmber : cAsh
                           font.pixelSize: root.fs(10); onClicked: Qt.callLater(root.openUsage) }
                     Lnk { visible: root.haveCore; text: "voice"; base: cAsh; font.pixelSize: root.fs(10); onClicked: Qt.callLater(root.openVoice) }
+                    Lnk { visible: root.haveCore; objectName: "toBoard"; text: "board"; base: cAsh; font.pixelSize: root.fs(10); onClicked: Qt.callLater(root.setBoard, true) }
                 }
                 Text {
                     Layout.fillWidth: true
@@ -2244,6 +2560,7 @@ Item {
             // The divider: drag to resize the list; double-click for the
             // default width.
             Item {
+                visible: !root.boardMode
                 Layout.fillHeight: true
                 Layout.preferredWidth: root.sz(9)
                 Rectangle {
@@ -2274,12 +2591,28 @@ Item {
             // --- the conversation -------------------------------------------
             // Its width is what is left, never what its text would like: an
             // implicit width from a long line made it grow and the list shrink.
+            BoardView {
+                visible: root.boardMode && root.agentOpen === null && !root.agentCreating
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+            }
+
             ColumnLayout {
+                visible: !root.boardMode || root.agentOpen !== null || root.agentCreating
                 Layout.fillWidth: true
                 Layout.preferredWidth: 0
                 Layout.minimumWidth: 0
                 Layout.fillHeight: true
                 spacing: root.sz(8)
+
+                // On the board, a session is the whole panel; back to the board.
+                RowLayout {
+                    visible: root.boardMode
+                    spacing: 8
+                    Lnk { objectName: "backToBoard"; text: "← board"; font.pixelSize: root.fs(11)
+                          onClicked: Qt.callLater(function() { root.agentCreating = false; root.noteRead(); root.agentOpen = null; chatModel.clear() }) }
+                    Text { visible: root.agentOpen !== null; text: root.agentOpen ? root.agentOpen.name : ""; color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(10) }
+                }
 
                 // New session form, in place of the conversation.
                 ColumnLayout {

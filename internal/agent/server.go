@@ -110,7 +110,15 @@ func (h *handler) session(w http.ResponseWriter, r *http.Request) (*Session, boo
 func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 	// With where the subscription stands, so an app shows it at a glance
 	// without asking for usage (Limits).
-	writeJSON(w, http.StatusOK, map[string]any{"sessions": h.m.List(), "limits": h.m.Limits(), "credits": h.m.Credits()})
+	list := h.m.List()
+	if n, err := strconv.Atoi(r.URL.Query().Get("tail")); err == nil && n > 0 {
+		for i := range list {
+			if s, ok := h.m.Get(list[i].Name); ok {
+				list[i].Tail = s.Tail(n)
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sessions": list, "limits": h.m.Limits(), "credits": h.m.Credits()})
 }
 
 func (h *handler) create(w http.ResponseWriter, r *http.Request) {

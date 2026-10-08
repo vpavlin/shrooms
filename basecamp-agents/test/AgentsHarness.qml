@@ -98,6 +98,7 @@ Item {
                     { name: "laptop", mesh: "office", overlay: "fdb0:9afc:a5ef:388c:8264:7716:36fc:64eb", online: true } ] })
                 // The same machine answering on a second mesh address.
                 if (method === "agentsFind" && top.findNone) return JSON.stringify([])
+                if (method === "agentsFind" && top.boardFind) return JSON.stringify(top.boardFind)
                 if (method === "agentsFind") { top.lastFind = args[0]
                     return JSON.stringify(top.hosts.concat([Object.assign({}, top.hosts[0], { mesh: "home", address: "fd7b::1" })])) }
                 // The core's outbox, as a list here.
@@ -582,10 +583,62 @@ Item {
             console.error("DELETED=" + top.lastDelete + " OPEN=" + (view.agentOpen === null ? "none" : view.agentOpen.session))
             console.error("CALLS=" + top.calls.filter(function(c) { return c.indexOf("agent") === 0 })
                           .filter(function(c, i, a) { return a.indexOf(c) === i }).join(","))
+            // Then the board, as the agents answer with their last lines
+            // and their tasks.
+            top.boardFind = top.boardHosts
+            view.refreshAgents()
+            view.setBoard(true)
+            boardTimer.start()
+        }
+    }
+    function task(id, session, from, state, extra) {
+        return { id: id, status: { state: state }, metadata: Object.assign({ "shrooms/session": session, "shrooms/from": from }, extra || {}) }
+    }
+    property var boardFind: null
+    readonly property var boardHosts: [
+        { name: "laptop", mesh: "office", address: "fd00::1", list: { sessions: [
+            { name: "shrooms", state: "working", running: true, turns: 0, tail: ["› you: can you check the board?", "Looking at Main.qml.", "▸ Read basecamp-agents/Main.qml", "▸ Bash go test ./internal/agent/"] },
+            { name: "notes", state: "idle", running: true, turns: 0, preview: "an agent from before tail" } ] },
+          tasks: { tasks: [
+            task("notes:m1", "notes", "proteus (proteus/review)", "TASK_STATE_INPUT_REQUIRED"),
+            task("shrooms:m2", "shrooms", "duet (duet/claude)", "TASK_STATE_WORKING"),            // no card: dropped
+            task("shrooms:m3", "shrooms", "pi5 (pi5/jimmy)", "TASK_STATE_COMPLETED") ] } },  // finished: dropped
+        { name: "pi5", mesh: "office", address: "fd00::2", list: { sessions: [
+            { name: "jimmy", state: "idle", running: true, starred: true, turns: 0, tail: ["◆ task jimmy:m4 stalled"] } ] },
+          tasks: { tasks: [ task("jimmy:m4", "jimmy", "laptop (laptop/shrooms)", "TASK_STATE_WORKING", { "shrooms/stalled": true }) ] } },
+        { name: "proteus", mesh: "office", address: "fd00::3", list: { sessions: [
+            { name: "review", state: "working", running: true, turns: 0, tail: ["Reviewing the diff."] } ] },
+          // A machine named a little otherwise in the claim.
+          tasks: { tasks: [ task("review:m5", "review", "pi5 (pi5.home/jimmy)", "TASK_STATE_WORKING") ] } } ]
+    Timer {
+        id: boardTimer
+        interval: 400
+        property bool settled: false
+        onTriggered: {
+            // A session an earlier check left opening (a deferred call): the
+            // board is what shows with none open.
+            if (!settled) { settled = true; view.agentOpen = null; view.agentCreating = false; restart(); return }
+            var links = top.findByName(view, "boardLinks")
+            console.error("BOARD cards=" + view.boardCardList.map(function(c) { return c.key }).join(",")
+                          + " edges=" + view.boardEdgeList.map(function(e) { return e.from + ">" + e.to + ":" + e.state }).join(",")
+                          + " drawn=" + (links ? links.drawn : -1)
+                          + " list=" + top.findByName(view, "agentList").visible + " flow=" + top.findByName(view, "boardFlow").visible
+                          + " tasks=" + view.agentHosts[0].tasks.length)
             top.grabToImage(function(img) {
                 img.saveToFile(top.out)
                 console.error("SAVED " + top.out)
-                Qt.quit()
+                // A card opens its session in the whole panel; "← board" goes back.
+                top.findByName(view, "boardCardArea").clicked(null)
+                Qt.callLater(function() {
+                    var back = top.findByName(view, "backToBoard")
+                    var opened = view.agentOpen ? view.agentOpen.session : "none"
+                    var shown = back.visible && !top.findByName(view, "boardFlow").visible
+                    back.clicked()
+                    Qt.callLater(function() {
+                        console.error("BOARDOPEN open=" + opened + " full=" + shown + " back=" + (view.agentOpen === null) + "," + top.findByName(view, "boardFlow").visible)
+                        Qt.quit()
+                    })
+                })
             })
         }
     }
