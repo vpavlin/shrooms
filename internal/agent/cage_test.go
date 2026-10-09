@@ -38,7 +38,7 @@ inspect)
   *Pid*) echo 4242 ;;
   *proxy*) [ -f "$D/c-$4.old" ] || echo 2 ;;
   esac ;;
-unshare) cat > /dev/null ;;
+unshare) cat > "$D/nft-rules" ;;
 build) cat > $D/Containerfile ;;
 exec)
   shift

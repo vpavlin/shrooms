@@ -56,6 +56,7 @@ func run() error {
 		"ggml model for voice notes, Parakeet or Whisper (docs/speech-to-text.md); voice notes are off when it is missing")
 	sttBin := flag.String("stt-bin", "", "the CLI that runs it (default: parakeet-cli for a Parakeet model, else whisper-cli)")
 	cages := flag.Bool("cages", true, "offer cages: sessions in rootless podman containers of their own, when podman is here (docs/agents-in-cages.md)")
+	sealedToken := flag.String("sealed-token", "", "the file with the Claude Code token sealed cages run on (default: sealed-claude-token in the state directory; make one with `claude setup-token`)")
 	cageImage := flag.String("cage-image", "", "the image cages are made from (default: the workbench, built here when first needed)")
 	sttThreads := flag.Int("stt-threads", 0, "threads for transcription (default: this machine's cores, up to 12)")
 	piBin := flag.String("pi", "pi", "pi (pi.dev), offered for new sessions when found; \"\" to leave it out")
@@ -120,6 +121,10 @@ func run() error {
 	if *cages {
 		if m.Cages = agent.NewCages(*cageImage); m.Cages != nil {
 			m.Cages.Socket = *sock
+			m.Cages.SealedToken = *sealedToken
+			if m.Cages.SealedToken == "" {
+				m.Cages.SealedToken = filepath.Join(*stateDir, agent.SealedTokenFile)
+			}
 			// What a cage's socket offers as the mesh's machines (ADR-044).
 			m.Machines = func() ([]agent.Machine, error) {
 				st, err := fetchStatus(*sock)

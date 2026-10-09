@@ -83,6 +83,40 @@ against a session that is deliberately turned against you, for example by a
 prompt injection in a web page it read. For that, keep secrets out of the
 agent's environment, leave the two options off, and review what it pushes.
 
+
+## Sealed cages: for code nobody vouches for
+
+For reviewing someone else's code — a contributor's pull request, an
+application a stranger built — tick **sealed** beside "in a cage"
+([ADR-045](../adr/045-sealed-cages-for-code-nobody-vouches-for.md)). A
+sealed cage is an ordinary cage, and also:
+
+- **the internet and nothing local**: no LAN (your router, your NAS, the
+  machines beside it), no mesh over IPv6 or IPv4, no link-local. DNS, the
+  cage's own loopback (an app it starts to test) and the internet work. Set
+  from outside, like the agent-port rule; root inside cannot remove it.
+- **its own login**: Claude Code runs on the machine's *sealed token*, not
+  on your `~/.claude`. The cage has none of your settings, none of your
+  other conversations, none of the keys in the agent's environment. Claude
+  Code only; GitHub and nix are not offered.
+- **asks nothing**: it can finish the tasks it is given, and cannot ask
+  another agent for anything.
+- **an outbox**: `~/shrooms-outbox/<session>` on the machine, `/outbox`
+  inside, for its results. Read what is in it as untrusted text: a review of
+  hostile code can carry instructions for whoever reads it.
+
+**Giving a machine its sealed token, once:**
+
+```
+claude setup-token
+install -m 600 /dev/stdin ~/.local/share/shrooms-agent/sealed-claude-token
+```
+
+Paste the token `claude setup-token` printed into the second command, then
+Ctrl-D. It belongs to your subscription and can be revoked from your
+account; `--sealed-token FILE` keeps it elsewhere. Until it exists, the apps
+show how instead of the option.
+
 ## Requirements
 
 - **Podman, rootless**, for the user the agent runs as. Check with

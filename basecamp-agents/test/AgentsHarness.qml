@@ -425,11 +425,14 @@ Item {
             view.cageOpts = { image: "localhost/shrooms-workbench:desktop", nix: true, github: false }
             view.createSession(view.agentHosts[0], "desk", "~/proj", false)
             var desk = JSON.parse(top.lastPost).cage
+            view.cageOpts = { image: "localhost/shrooms-workbench:desktop", nix: true, github: true, sealed: true }
+            view.createSession(view.agentHosts[0], "sealedrev", "~/proj", false)
+            var sealedBody = JSON.parse(top.lastPost).cage
             view.loadHarnesses(view.agentHosts[0])
             view.createSession(view.agentHosts[0], "free", "~/proj", false)
             console.error("CAGE offered=" + cageOffered + " sent=" + JSON.stringify(boxed.cage) + " reset=" + (JSON.parse(top.lastPost).cage === undefined)
                           + " label=" + view.cageLabel({ cage: { image: "x" } }) + "," + view.cageLabel({})
-                          + " desk=" + JSON.stringify(desk)
+                          + " desk=" + JSON.stringify(desk) + " sealed=" + JSON.stringify(sealedBody) + " words=" + view.cageWords({ sealed: true, image: "localhost/shrooms-workbench:desktop" })
                           + " note=[" + view.cagedNote({ caged: true, image: "localhost/shrooms-workbench:desktop", github: true }, "laptop.office") + "|" + view.cagedNote({ caged: false }, "") + "]")
             view.nsHarness = "pi"
             console.error("HARNESS offered=" + offered + " sent=" + made.harness + " auto=" + made.auto_approve

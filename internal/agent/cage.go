@@ -65,6 +65,23 @@ type Cage struct {
 	Nix bool `json:"nix,omitempty"`
 	// GitHub gives it the owner's GitHub CLI login (~/.config/gh), read-only.
 	GitHub bool `json:"github,omitempty"`
+	// Sealed: for code nobody vouches for (sealed.go, ADR-045) — the
+	// internet and nothing local, a credential of its own, no agents to
+	// ask, results through Outbox (a directory on the machine).
+	Sealed bool   `json:"sealed,omitempty"`
+	Outbox string `json:"outbox,omitempty"`
+}
+
+// newCage is the cage a session is given from what was asked: its own
+// container name, and for a sealed one its outbox and none of the options
+// that widen a cage.
+func newCage(asked *Cage, session string) *Cage {
+	c := &Cage{Image: asked.Image, Nix: asked.Nix, GitHub: asked.GitHub, Sealed: asked.Sealed, Container: newContainerName(session)}
+	if c.Sealed {
+		c.Nix, c.GitHub = false, false
+		c.Outbox = sealedOutbox(session)
+	}
+	return c
 }
 
 // cageNetwork gives a cage an address of its own and a default route through
@@ -86,6 +103,9 @@ type Cages struct {
 	Socket string
 	// Nft is the nft program closing the agent port in cages; "" finds it.
 	Nft string
+	// SealedToken is the file with the Claude Code token sealed cages run
+	// on; "" for sealed-claude-token in the state directory.
+	SealedToken string
 
 	mu       sync.Mutex
 	building bool
@@ -97,6 +117,8 @@ type CageInfo struct {
 	Image  string `json:"image"`
 	Nix    bool   `json:"nix,omitempty"`
 	GitHub bool   `json:"github,omitempty"`
+	Sealed bool   `json:"sealed,omitempty"`
+	Outbox string `json:"outbox,omitempty"`
 }
 
 // CageStatus is what the apps are told: whether sessions can be caged here.
@@ -106,7 +128,9 @@ type CageStatus struct {
 	// Images are those offered: the machine's, and the ones built here.
 	Images []string `json:"images,omitempty"`
 	// Nix: the machine has nix to give a cage.
-	Nix      bool   `json:"nix,omitempty"`
+	Nix bool `json:"nix,omitempty"`
+	// Sealed: the machine has a token for sealed cages (sealed.go).
+	Sealed   bool   `json:"sealed,omitempty"`
 	Ready    bool   `json:"ready"`              // the image is there
 	Building bool   `json:"building,omitempty"` // it is being built
 	Error    string `json:"error,omitempty"`    // why the last build failed
@@ -176,7 +200,7 @@ func (c *Cages) Status() CageStatus {
 	}
 	c.mu.Lock()
 	st := CageStatus{Available: true, Image: c.Image, Building: c.building, Error: c.buildErr,
-		Images: []string{c.Image}, Nix: nixHere()}
+		Images: []string{c.Image}, Nix: nixHere(), Sealed: tokenIn(c.SealedToken)}
 	c.mu.Unlock()
 	for _, im := range []string{WorkbenchImage, DesktopImage} {
 		if im != c.Image {
@@ -443,7 +467,14 @@ func (m *Manager) prepareCage(s *Session, bin string) (*cageRun, error) {
 			}
 			return nil, fmt.Errorf("there is no image %s on this machine for this session's cage", image)
 		}
-		if _, err := c.run(ctx, c.createArgs(name, s.Name(), image, m.cageMounts(s, s.harness.Name()))...); err != nil {
+		ms := m.cageMounts(s, s.harness.Name())
+		if s.cage.Sealed {
+			var err error
+			if ms, err = m.sealedMounts(s); err != nil {
+				return nil, err
+			}
+		}
+		if _, err := c.run(ctx, c.createArgs(name, s.Name(), image, ms)...); err != nil {
 			return nil, err
 		}
 	}
@@ -453,7 +484,7 @@ func (m *Manager) prepareCage(s *Session, bin string) (*cageRun, error) {
 	if _, err := c.run(ctx, "start", name); err != nil {
 		return nil, err
 	}
-	if err := c.closeAgentPort(ctx, name); err != nil {
+	if err := c.closeAgentPort(ctx, name, s.cage.Sealed); err != nil {
 		// Not run with the port open: it would reach agents as this machine.
 		c.run(ctx, "stop", "-t", "3", name)
 		return nil, err
@@ -474,6 +505,13 @@ func (m *Manager) prepareCage(s *Session, bin string) (*cageRun, error) {
 // cageEnv writes what a caged process is started with, to a file only the
 // owner reads: keys stay out of the process list.
 func (m *Manager) cageEnv(s *Session) (string, error) {
+	if s.cage.Sealed {
+		vars, err := m.sealedEnv(s)
+		if err != nil {
+			return "", err
+		}
+		return m.writeCageEnv(s, vars)
+	}
 	home, _ := os.UserHomeDir()
 	vars := map[string]string{
 		"HOME": home,
@@ -500,6 +538,11 @@ func (m *Manager) cageEnv(s *Session) (string, error) {
 			vars[k] = v
 		}
 	}
+	return m.writeCageEnv(s, vars)
+}
+
+// writeCageEnv writes a cage's environment file, which only the owner reads.
+func (m *Manager) writeCageEnv(s *Session, vars map[string]string) (string, error) {
 	keys := make([]string, 0, len(vars))
 	for k := range vars {
 		keys = append(keys, k)
@@ -610,6 +653,11 @@ func (m *Manager) SetCage(name string, cage *Cage, by string) (Info, error) {
 	if cage != nil && m.Cages == nil {
 		return Info{}, errors.New("this machine has no podman to cage sessions with")
 	}
+	if cage != nil && cage.Sealed {
+		if err := m.canSeal(s.harness.Name()); err != nil {
+			return Info{}, err
+		}
+	}
 	if in := s.Info(); in.State != Idle || in.Pending > 0 {
 		return Info{}, fmt.Errorf("session %s is %s: move it once it is idle", name, in.State)
 	}
@@ -617,13 +665,13 @@ func (m *Manager) SetCage(name string, cage *Cage, by string) (Info, error) {
 	s.mu.Lock()
 	old := s.cage
 	if cage != nil {
-		cage = &Cage{Image: cage.Image, Nix: cage.Nix, GitHub: cage.GitHub, Container: newContainerName(s.Name())}
+		cage = newCage(cage, s.Name())
 	}
 	s.cage = cage
 	data := map[string]any{"caged": cage != nil}
 	if cage != nil {
 		data["image"] = m.Cages.image(cage)
-		data["nix"], data["github"] = cage.Nix, cage.GitHub
+		data["nix"], data["github"], data["sealed"] = cage.Nix, cage.GitHub, cage.Sealed
 	}
 	s.record("caged", by, data)
 	s.mu.Unlock()

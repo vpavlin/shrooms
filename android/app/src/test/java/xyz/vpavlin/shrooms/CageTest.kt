@@ -57,4 +57,15 @@ class CageTest {
         assertTrue(ss.getJSONObject(0).optBoolean("accept_caged"))
         assertFalse(ss.getJSONObject(1).optBoolean("accept_caged"))
     }
+
+    @Test fun aSealedCageAsksForNothingThatWidensIt() {
+        val b = SessionCage("localhost/shrooms-workbench:desktop", nix = true, github = true, sealed = true).json()
+        assertTrue(b.getBoolean("sealed"))
+        assertFalse(b.has("nix") || b.has("github"))
+        val back = SessionCage.parse(JSONObject("""{"image":"x","sealed":true,"outbox":"/home/u/shrooms-outbox/review"}"""))!!
+        assertTrue(back.sealed)
+        assertEquals("/home/u/shrooms-outbox/review", back.outbox)
+        assertEquals("sealed, x", cageWords(back))
+        assertTrue(parseOffer("""{"harnesses":[],"cage":{"available":true,"image":"a","sealed":true}}""").cage!!.sealed)
+    }
 }

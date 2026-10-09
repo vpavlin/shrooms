@@ -265,7 +265,7 @@ expect 'CAGED open=true offer=true moved=/v1/sessions/shrooms/cage {"cage":{"ima
 expect "RESTARTED=/v1/sessions/shrooms/restart SAID=restarted session shrooms" "restart does not restart the session"
 expect "OUTSIDE=true,heartbeat" "a turn the harness started is not marked as such"
 expect "FORMCLOSED=true" "opening a session leaves the new-session form in front of it"
-expect 'CAGE offered=true sent={} reset=true label=caged, desk={"image":"localhost/shrooms-workbench:desktop","nix":true} note=[moved into a cage (desktop, GitHub login) from laptop.office|taken out of its cage]' "a cage is not offered where the machine has podman, not asked for with its image and options, or its moves are not noted"
+expect 'CAGE offered=true sent={} reset=true label=caged, desk={"image":"localhost/shrooms-workbench:desktop","nix":true} sealed={"image":"localhost/shrooms-workbench:desktop","sealed":true} words=sealed, desktop note=[moved into a cage (desktop, GitHub login) from laptop.office|taken out of its cage]' "a cage is not offered where the machine has podman, not asked for with its image and options, or its moves are not noted"
 expect "HARNESS offered=claude,pi sent=pi auto=false label=[pi][]" "another harness is not offered, or a session of it not asked for"
 expect "STREAMING=[Pushing **now**…] WORKING=true" "the streamed reply is not shown as it grows"
 expect "CONTEXT=67% of 1M MODEL=opus-5 1m" "context and model are not read from the session"

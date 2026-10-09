@@ -128,7 +128,7 @@ object HostCache {
                     .put("auto_approve", s.autoApprove).put("context_used", s.contextUsed)
                     .put("context_window", s.contextWindow).put("preview", s.preview).put("model", s.model)
                     .put("harness", s.harness).put("approves", s.approves).put("starred", s.starred)
-                    .apply { if (s.cage != null) put("cage", s.cage.json().put("image", s.cage.image)) }
+                    .apply { if (s.cage != null) put("cage", s.cage.json().put("image", s.cage.image).put("outbox", s.cage.outbox)) }
             }))
     }).toString()
 
@@ -310,7 +310,7 @@ private fun shortImage(img: String): String = when (img) {
 
 /** A cage in a few words (Basecamp's cageWords): "desktop, nix, GitHub login". */
 fun cageWords(c: SessionCage): String =
-    listOf(shortImage(c.image), if (c.nix) "nix" else "", if (c.github) "GitHub login" else "").filter { it.isNotEmpty() }.joinToString(", ")
+    listOf(if (c.sealed) "sealed" else "", shortImage(c.image), if (c.nix) "nix" else "", if (c.github) "GitHub login" else "").filter { it.isNotEmpty() }.joinToString(", ")
 
 /** What "in a cage" means, said beside it (Basecamp's cageNote). */
 fun cageNote(c: CageOffer): String {
@@ -557,8 +557,10 @@ private fun SessionRow(s: AgentSession, where: String = "", reachable: Boolean =
             // In a cage: a tag in the cage's violet, its details in the line below.
             if (s.cage != null) {
                 Spacer(Modifier.width(8.dp))
-                Text("CAGED", style = MaterialTheme.typography.labelSmall, color = Palette.Violet, maxLines = 1,
-                    modifier = Modifier.border(1.dp, Palette.Violet, RoundedCornerShape(4.dp)).padding(horizontal = 5.dp, vertical = 1.dp))
+                val sealed = s.cage.sealed
+                val tint = if (sealed) Palette.Amber else Palette.Violet
+                Text(if (sealed) "SEALED" else "CAGED", style = MaterialTheme.typography.labelSmall, color = tint, maxLines = 1,
+                    modifier = Modifier.border(1.dp, tint, RoundedCornerShape(4.dp)).padding(horizontal = 5.dp, vertical = 1.dp))
             }
             // Out of quota: when it comes back.
             s.limited?.let { lim ->
@@ -622,10 +624,17 @@ private fun CageOptions(offer: CageOffer, opts: SessionCage, modifier: Modifier 
                         .clickable { onChange(opts.copy(image = if (idx == 0) "" else img)) }.padding(horizontal = 10.dp, vertical = 6.dp))
             }
         }
-        if (offer.nix) Tick("nix — the machine's store and profile (a single-user nix: written by the cage, as by you)", opts.nix) {
-            onChange(opts.copy(nix = !opts.nix))
+        // Sealed (ADR-045): offered once the machine has a token of its own for it.
+        if (offer.sealed) Tick("sealed — for code you don't trust: the internet and nothing local (no LAN, no mesh, no agents), its own login, results in ~/shrooms-outbox", opts.sealed) {
+            onChange(opts.copy(sealed = !opts.sealed))
+        } else Text("sealed cages need a token of their own on that machine: `claude setup-token`, saved to ~/.local/share/shrooms-agent/sealed-claude-token",
+            style = MaterialTheme.typography.labelSmall, color = Palette.Ash)
+        if (!opts.sealed) {
+            if (offer.nix) Tick("nix — the machine's store and profile (a single-user nix: written by the cage, as by you)", opts.nix) {
+                onChange(opts.copy(nix = !opts.nix))
+            }
+            Tick("GitHub login — your gh login, read-only", opts.github) { onChange(opts.copy(github = !opts.github)) }
         }
-        Tick("GitHub login — your gh login, read-only", opts.github) { onChange(opts.copy(github = !opts.github)) }
     }
 }
 
@@ -1275,7 +1284,7 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String
                 }
             }
             val facts = listOf(o.host, o.mesh, harnessLabel(i?.harness ?: "claude"),
-                i?.cage?.let { "in a cage (${cageWords(it)})" } ?: "", shortModel(i?.model ?: ""),
+                i?.cage?.let { "in a cage (${cageWords(it)})" + if (it.outbox.isNotEmpty()) ", results in ${it.outbox}" else "" } ?: "", shortModel(i?.model ?: ""),
                 contextLabel(i?.contextUsed ?: 0, i?.contextWindow ?: 0)).filter { it.isNotEmpty() }
             Text(facts.joinToString("  ·  "), style = MaterialTheme.typography.labelSmall, color = Palette.Ash,
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 30.dp))

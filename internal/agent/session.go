@@ -452,7 +452,12 @@ func (m *Manager) CreateCaged(name, dir, harness string, cage *Cage) (Info, erro
 		if m.Cages == nil {
 			return Info{}, errors.New("this machine has no podman to cage sessions with")
 		}
-		cage = &Cage{Image: cage.Image, Nix: cage.Nix, GitHub: cage.GitHub, Container: newContainerName(name)}
+		if cage.Sealed {
+			if err := m.canSeal(harness); err != nil {
+				return Info{}, err
+			}
+		}
+		cage = newCage(cage, name)
 		// The image, if it is ours and not here yet, while the first message
 		// is being written.
 		m.Cages.Prepare(m.Cages.image(cage), m.log.Info)
@@ -603,7 +608,7 @@ func (s *Session) Info() Info {
 		Harness: s.harness.Name(), Caps: s.harness.Caps(), Starred: s.starred, Turns: s.turns,
 		KeepRunning: s.keepRunning, AcceptCaged: s.acceptsCaged()}
 	if s.cage != nil {
-		in.Cage = &CageInfo{Image: s.cage.Image, Nix: s.cage.Nix, GitHub: s.cage.GitHub}
+		in.Cage = &CageInfo{Image: s.cage.Image, Nix: s.cage.Nix, GitHub: s.cage.GitHub, Sealed: s.cage.Sealed, Outbox: s.cage.Outbox}
 		if in.Cage.Image == "" && s.m.Cages != nil {
 			in.Cage.Image = s.m.Cages.Image
 		}

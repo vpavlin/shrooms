@@ -54,3 +54,4 @@ number appears, its source is named.
 | [042](042-a-task-is-open-until-the-worker-finishes-it.md) | A task is open until the worker finishes it | accepted; built — supervised by a watchdog, queued, acknowledged |
 | [043](043-peers-are-probed-on-evidence-not-only-announces.md) | Peers are probed on evidence, not only on announces | accepted; built — remembered, answering, after a move, or probing us; roaming without the bus |
 | [044](044-cages-reach-agents-through-their-own.md) | Cages reach agents only through their own, which says so | accepted; built — agent port closed in cages, a socket to their own agent, receivers choose (accept_caged) |
+| [045](045-sealed-cages-for-code-nobody-vouches-for.md) | Sealed cages, for code nobody vouches for | accepted; built — internet only, its own token, asks nothing, results in an outbox |

@@ -147,6 +147,16 @@ func (m *Manager) cageProxy(s *Session) http.Handler {
 			Params json.RawMessage `json:"params"`
 		}
 		json.Unmarshal(body, &rpc)
+		s.mu.Lock()
+		sealed := s.cage != nil && s.cage.Sealed
+		s.mu.Unlock()
+		// A sealed cage answers and asks nothing (ADR-045): it finishes its
+		// own tasks, and a review poisoned by what it read cannot instruct
+		// the owner's other agents.
+		if sealed && !(r.Method == http.MethodPost && strings.HasPrefix(path, "/v1/tasks/")) {
+			fail(w, http.StatusForbidden, fmt.Errorf("not from a sealed cage: %s %s %s", r.Method, path, rpc.Method))
+			return
+		}
 		if !proxyAllowed(r.Method, path, rpc.Method) {
 			fail(w, http.StatusForbidden, fmt.Errorf("not from a cage: %s %s %s", r.Method, path, rpc.Method))
 			return
@@ -263,7 +273,7 @@ func (m *Manager) machines() ([]Machine, error) {
 // closeAgentPort closes the agent port inside a started cage's network
 // namespace, from outside it: an nftables rule its root, without NET_ADMIN,
 // cannot remove. On every start, since the namespace is made anew.
-func (c *Cages) closeAgentPort(ctx context.Context, container string) error {
+func (c *Cages) closeAgentPort(ctx context.Context, container string, sealed bool) error {
 	pid, err := c.run(ctx, "inspect", "--format", "{{.State.Pid}}", container)
 	if err != nil {
 		return err
@@ -276,13 +286,7 @@ func (c *Cages) closeAgentPort(ctx context.Context, container string) error {
 		}
 	}
 	cmd := exec.CommandContext(ctx, c.Podman, "unshare", "nsenter", "-t", pid, "-n", nft, "-f", "-")
-	cmd.Stdin = strings.NewReader(fmt.Sprintf(`table inet shrooms_cage {
-	chain out {
-		type filter hook output priority 0; policy accept;
-		tcp dport %d reject with tcp reset
-	}
-}
-`, Port))
+	cmd.Stdin = strings.NewReader(cageRules(sealed))
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("closing the agent port in the cage: %v: %s", err, lastLine(strings.TrimSpace(string(out))))
 	}

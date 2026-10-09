@@ -1177,10 +1177,12 @@ Item {
     function cageLabel(sess) { return sess && sess.cage ? "caged" : "" }
     // What a cage is given, chosen in "+ session" and in the cage dialog:
     // its image ("" for the machine's), nix, the GitHub login.
-    property var cageOpts: ({ image: "", nix: false, github: false })
+    property var cageOpts: ({ image: "", nix: false, github: false, sealed: false })
     function cageBody(o) {
         var b = {}
         if (o && o.image) b.image = o.image
+        // Sealed (ADR-045): none of the options that widen a cage.
+        if (o && o.sealed) { b.sealed = true; return b }
         if (o && o.nix) b.nix = true
         if (o && o.github) b.github = true
         return b
@@ -1192,7 +1194,7 @@ Item {
     }
     function shortImage(img) { return img === "localhost/shrooms-workbench:latest" ? "workbench" : img === "localhost/shrooms-workbench:desktop" ? "desktop" : String(img || "") }
     function cageWords(c) {
-        return [shortImage(c.image), c.nix ? "nix" : "", c.github ? "GitHub login" : ""].filter(function(x) { return x !== "" }).join(", ")
+        return [c.sealed ? "sealed" : "", shortImage(c.image), c.nix ? "nix" : "", c.github ? "GitHub login" : ""].filter(function(x) { return x !== "" }).join(", ")
     }
     function cagedNote(d, by) {
         return (d && d.caged ? "moved into a cage (" + cageWords(d) + ")" : "taken out of its cage") + (by ? " from " + by : "")
@@ -1213,7 +1215,7 @@ Item {
             if (r && r.cage && r.cage.available) root.cageStatus = r.cage
         }
         var c = agentInfo && agentInfo.cage
-        root.cageOpts = c ? { image: c.image, nix: !!c.nix, github: !!c.github } : { image: "", nix: false, github: false }
+        root.cageOpts = c ? { image: c.image, nix: !!c.nix, github: !!c.github, sealed: !!c.sealed } : { image: "", nix: false, github: false, sealed: false }
         cageDialog.open()
     }
     // Whether the open session takes tasks from caged agents.
@@ -2404,9 +2406,23 @@ Item {
                 }
             }
         }
+        // Sealed (ADR-045): for code nobody vouches for. Offered once the
+        // machine has a token of its own for it; how to give it one, until then.
+        CheckBox {
+            id: sealBox
+            objectName: "sealBox"
+            enabled: !!(root.cageStatus && root.cageStatus.sealed)
+            checked: root.cageOpts.sealed
+            onToggled: root.cageOpts = Object.assign({}, root.cageOpts, { sealed: checked })
+            text: root.cageStatus && root.cageStatus.sealed
+                ? "sealed — for code you don't trust: the internet and nothing local (no LAN, no mesh, no agents), its own login, results in ~/shrooms-outbox"
+                : "sealed — needs a token of its own on that machine: run `claude setup-token` there and save it to ~/.local/share/shrooms-agent/sealed-claude-token"
+            contentItem: Text { leftPadding: sealBox.indicator.width + 6; text: sealBox.text; color: sealBox.enabled ? cAmber : cAsh; wrapMode: Text.Wrap; font.family: "monospace"; font.pixelSize: root.fs(10); verticalAlignment: Text.AlignVCenter }
+            Layout.fillWidth: true
+        }
         CheckBox {
             id: nixBox
-            visible: !!(root.cageStatus && root.cageStatus.nix)
+            visible: !!(root.cageStatus && root.cageStatus.nix) && !root.cageOpts.sealed
             checked: root.cageOpts.nix
             onToggled: root.cageOpts = Object.assign({}, root.cageOpts, { nix: checked })
             text: "nix — the machine's store and profile (a single-user nix: written by the cage, as by you)"
@@ -2415,6 +2431,7 @@ Item {
         }
         CheckBox {
             id: ghBox
+            visible: !root.cageOpts.sealed
             checked: root.cageOpts.github
             onToggled: root.cageOpts = Object.assign({}, root.cageOpts, { github: checked })
             text: "GitHub login — your gh login, read-only"
@@ -2640,13 +2657,14 @@ Item {
         required property var sess
         objectName: "cageTag"
         visible: !!(sess && sess.cage)
-        text: "CAGED"
-        color: cViolet
+        // SEALED in amber for code nobody vouches for (ADR-045).
+        text: sess && sess.cage && sess.cage.sealed ? "SEALED" : "CAGED"
+        color: sess && sess.cage && sess.cage.sealed ? cAmber : cViolet
         font.family: "monospace"; font.pixelSize: root.fs(9); font.letterSpacing: 1; font.bold: true
         leftPadding: root.sz(5); rightPadding: root.sz(5); topPadding: root.sz(1); bottomPadding: root.sz(1)
-        Rectangle { anchors.fill: parent; z: -1; radius: root.sz(4); color: "transparent"; border.color: cViolet; border.width: 1 }
+        Rectangle { anchors.fill: parent; z: -1; radius: root.sz(4); color: "transparent"; border.color: ctag.color; border.width: 1 }
         ToolTip.visible: ctagMouse.containsMouse && visible
-        ToolTip.text: sess && sess.cage ? "in a cage: " + root.cageWords(sess.cage) : ""
+        ToolTip.text: sess && sess.cage ? "in a cage: " + root.cageWords(sess.cage) + (sess.cage.outbox ? "; results in " + sess.cage.outbox : "") : ""
         MouseArea { id: ctagMouse; anchors.fill: parent; hoverEnabled: true; acceptedButtons: Qt.NoButton }
     }
 
@@ -3044,7 +3062,7 @@ Item {
                     Text {
                         text: root.agentOpen ? [root.agentOpen.name, root.agentOpen.mesh,
                               root.agentInfo ? root.harnessLabel(root.agentInfo.harness) : "",
-                              root.agentInfo && root.agentInfo.cage ? "in a cage (" + root.agentInfo.cage.image + ")" : "",
+                              root.agentInfo && root.agentInfo.cage ? "in a cage (" + root.cageWords(root.agentInfo.cage) + ")" + (root.agentInfo.cage.outbox ? ", results in " + root.agentInfo.cage.outbox : "") : "",
                               root.agentInfo ? root.shortModel(root.agentInfo.model) : "",
                               root.agentInfo ? root.contextLabel(root.agentInfo.context_used, root.agentInfo.context_window) : "",
                               root.agentKept > 0 ? "offline — as it was " + root.keptWhen(root.agentKept) : "",
