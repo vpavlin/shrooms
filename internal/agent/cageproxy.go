@@ -41,6 +41,10 @@ const CageProxyDir = "/run/shrooms-agent"
 const (
 	proxyLabel     = "xyz.vpavlin.shrooms.proxy"
 	cageGeneration = "2"
+	// sealedLabel marks a sealed cage with how it was sealed; 1: without
+	// user namespaces (seccomp).
+	sealedLabel      = "xyz.vpavlin.shrooms.sealed"
+	sealedGeneration = "1"
 )
 
 // Machine is one machine on the mesh with an agent's address: this one

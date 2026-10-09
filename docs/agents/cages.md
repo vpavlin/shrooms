@@ -101,6 +101,10 @@ sealed cage is an ordinary cage, and also:
   Code only; GitHub and nix are not offered.
 - **asks nothing**: it can finish the tasks it is given, and cannot ask
   another agent for anything.
+- **no user namespaces**: a seccomp profile (podman's default, with
+  `CLONE_NEWUSER` refused) closes the door most container escapes go
+  through. Programs and threads run as usual; `bwrap`, rootless podman and
+  the like do not, inside a sealed cage.
 - **its conversation only**: a session moved into a sealed cage keeps its
   conversation (that transcript is copied in, no other), so the code under
   review could read it. For a review, a new session is the clean start.

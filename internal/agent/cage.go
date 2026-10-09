@@ -404,7 +404,7 @@ func (m *Manager) binOf(harness string) string {
 }
 
 // createArgs makes a session's container.
-func (c *Cages) createArgs(name, session, image string, ms []mount) []string {
+func (c *Cages) createArgs(name, session, image string, ms []mount, extra ...string) []string {
 	args := []string{"create", "--name", name, "--label", "xyz.vpavlin.shrooms.session=" + session,
 		// A cage made with its own agent's socket (ADR-044); one without is
 		// made again.
@@ -433,6 +433,7 @@ func (c *Cages) createArgs(name, session, image string, ms []mount) []string {
 		}
 		args = append(args, "-v", v)
 	}
+	args = append(args, extra...)
 	return append(args, image, "sleep", "infinity")
 }
 
@@ -450,7 +451,12 @@ func (m *Manager) prepareCage(s *Session, bin string) (*cageRun, error) {
 	if _, err := c.run(ctx, "container", "exists", name); err == nil {
 		// Made before cages had their own agent's socket: made again, and
 		// what was installed in it goes (ADR-044).
-		if out, _ := c.run(ctx, "inspect", "--format", "{{index .Config.Labels \""+proxyLabel+"\"}}", name); strings.TrimSpace(out) != cageGeneration {
+		out, _ := c.run(ctx, "inspect", "--format", "{{index .Config.Labels \""+proxyLabel+"\"}}", name)
+		sealedOut := sealedGeneration
+		if s.cage.Sealed {
+			sealedOut, _ = c.run(ctx, "inspect", "--format", "{{index .Config.Labels \""+sealedLabel+"\"}}", name)
+		}
+		if strings.TrimSpace(out) != cageGeneration || strings.TrimSpace(sealedOut) != sealedGeneration {
 			c.run(ctx, "rm", "-f", "-t", "3", name)
 			s.record("caged", "shrooms", map[string]any{"caged": true, "image": image, "nix": s.cage.Nix, "github": s.cage.GitHub,
 				"remade": "made again, to reach agents only through its own; what was installed in it is gone"})
@@ -468,13 +474,19 @@ func (m *Manager) prepareCage(s *Session, bin string) (*cageRun, error) {
 			return nil, fmt.Errorf("there is no image %s on this machine for this session's cage", image)
 		}
 		ms := m.cageMounts(s, s.harness.Name())
+		var extra []string
 		if s.cage.Sealed {
 			var err error
 			if ms, err = m.sealedMounts(s); err != nil {
 				return nil, err
 			}
+			prof, err := m.sealedSeccomp()
+			if err != nil {
+				return nil, err
+			}
+			extra = []string{"--security-opt", "seccomp=" + prof, "--label", sealedLabel + "=" + sealedGeneration}
 		}
-		if _, err := c.run(ctx, c.createArgs(name, s.Name(), image, ms)...); err != nil {
+		if _, err := c.run(ctx, c.createArgs(name, s.Name(), image, ms, extra...)...); err != nil {
 			return nil, err
 		}
 	}

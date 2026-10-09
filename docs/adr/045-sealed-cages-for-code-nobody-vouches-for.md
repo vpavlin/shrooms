@@ -34,6 +34,17 @@ on 2026-10-09, an ordinary cage still:
   settings and transcripts in a directory of its own. None of `~/.claude`,
   none of the agent's environment. Claude Code only: pi would need the
   owner's model keys. GitHub and nix are not offered.
+- **No user namespaces.** Asked to look for ways out of its own sealed cage,
+  the reviewer found the boundary held — root inside is an unprivileged user
+  outside, no dangerous capabilities, no runtime sockets, no cgroup v1
+  release agent, no metadata endpoint — but that it could create a user
+  namespace and hold every capability in it: the door nearly every recent
+  container escape (overlayfs, nf_tables, io_uring) has gone through. A
+  sealed cage runs under podman's default seccomp profile with `clone` and
+  `unshare` allowed only without `CLONE_NEWUSER`, and `clone3` answering
+  ENOSYS so that callers fall back to `clone`, where the flag can be seen.
+  Processes, threads and Claude Code are unaffected; tools that need user
+  namespaces (`bwrap`) do not work there, which ordinary cages keep.
 - **Answers, asks nothing.** Its socket to its agent finishes its own tasks
   and does nothing else.
 - **Results through an outbox**: `~/shrooms-outbox/<session>` on the machine,

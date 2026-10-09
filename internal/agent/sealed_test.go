@@ -19,7 +19,67 @@ import (
 // A sealed cage (ADR-045) is made with nothing of the owner's but the
 // project, the files sent to it and a token of its own; reaches nothing
 // local; and hands results back through its outbox.
+// sampleSeccomp is the shape of podman's default profile: what matters is
+// the unconditional allow holding clone, clone3 and unshare.
+const sampleSeccomp = `{"defaultAction":"SCMP_ACT_ERRNO","syscalls":[
+ {"names":["read","clone","clone3","unshare","setns"],"action":"SCMP_ACT_ALLOW","args":[],"includes":{},"excludes":{}},
+ {"names":["setns"],"action":"SCMP_ACT_ALLOW","args":[],"includes":{"caps":["CAP_SYS_ADMIN"]},"excludes":{}}]}`
+
+// useSampleSeccomp points the agent at a sample of podman's default profile,
+// which a machine without podman's containers-common (CI) does not have.
+func useSampleSeccomp(t *testing.T) {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "seccomp.json")
+	os.WriteFile(p, []byte(sampleSeccomp), 0o600)
+	old := seccompDefaults
+	seccompDefaults = []string{p}
+	t.Cleanup(func() { seccompDefaults = old })
+}
+
+// No user namespaces in a sealed cage: clone and unshare only without
+// CLONE_NEWUSER, clone3 refused, the rest of podman's profile as it was.
+func TestASealedProfileHasNoUserNamespaces(t *testing.T) {
+	out, err := noUserNamespaces([]byte(sampleSeccomp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p struct {
+		Syscalls []struct {
+			Names    []string
+			Action   string
+			ErrnoRet int
+			Args     []struct {
+				Index int
+				Value uint64
+				Op    string
+			}
+		}
+	}
+	json.Unmarshal(out, &p)
+	var free, newuser, clone3 bool
+	for _, r := range p.Syscalls {
+		for _, n := range r.Names {
+			switch {
+			case r.Action == "SCMP_ACT_ALLOW" && len(r.Args) == 0 && (n == "clone" || n == "unshare" || n == "clone3"):
+				free = true
+			case r.Action == "SCMP_ACT_ALLOW" && (n == "clone" || n == "unshare") && len(r.Args) == 1 &&
+				r.Args[0].Value == cloneNewUser && r.Args[0].Op == "SCMP_CMP_MASKED_EQ":
+				newuser = true
+			case n == "clone3" && r.Action == "SCMP_ACT_ERRNO" && r.ErrnoRet == 38:
+				clone3 = true
+			}
+		}
+	}
+	if free || !newuser || !clone3 {
+		t.Fatalf("user namespaces not refused (free %v, flag-checked %v, clone3 refused %v):\n%s", free, newuser, clone3, out)
+	}
+	if !strings.Contains(string(out), `"read"`) || !strings.Contains(string(out), "CAP_SYS_ADMIN") {
+		t.Errorf("the rest of the profile was not kept:\n%s", out)
+	}
+}
+
 func TestASealedCageHasNothingOfTheOwners(t *testing.T) {
+	useSampleSeccomp(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("ANTHROPIC_API_KEY", "the-owners-key")
@@ -64,6 +124,7 @@ func TestASealedCageHasNothingOfTheOwners(t *testing.T) {
 	}
 	c := cs[create]
 	for _, want := range []string{
+		"--security-opt seccomp=" + filepath.Join(state, "cages", "sealed-seccomp.json"),
 		"-v " + project + ":" + project + " ",
 		"-v " + filepath.Join(state, "uploads", "review") + ":" + filepath.Join(state, "uploads", "review") + ":ro",
 		".claude:" + sealedHome + "/.claude ",
@@ -185,6 +246,12 @@ func TestARealSealedCage(t *testing.T) {
 		if got := probe(url); got != "000" {
 			t.Errorf("a sealed cage reaches %s: %s", url, got)
 		}
+	}
+	if out, _ := exec.Command("podman", "exec", s.cage.Container, "sh", "-c", "unshare -U true 2>/dev/null && echo allowed || echo refused").CombinedOutput(); !strings.Contains(string(out), "refused") {
+		t.Errorf("a sealed cage can make a user namespace: %s", out)
+	}
+	if out, _ := exec.Command("podman", "exec", s.cage.Container, "python3", "-c", "import subprocess,threading; t=threading.Thread(target=lambda:None); t.start(); t.join(); print(subprocess.run(['echo','ok'],capture_output=True,text=True).stdout)").CombinedOutput(); !strings.Contains(string(out), "ok") {
+		t.Errorf("processes and threads do not work in a sealed cage: %s", out)
 	}
 	if out, _ := exec.Command("podman", "exec", s.cage.Container, "sh", "-c", "getent hosts api.anthropic.com >/dev/null && echo ok").CombinedOutput(); !strings.Contains(string(out), "ok") {
 		t.Errorf("no DNS in a sealed cage: %s", out)

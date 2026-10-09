@@ -22,6 +22,7 @@ package agent
 //     agent to pick up — as untrusted text.
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -231,4 +232,89 @@ func cageRules(sealed bool) string {
 	}
 	b.WriteString("\t}\n}\n")
 	return b.String()
+}
+
+// No user namespaces in a sealed cage (2026-10-09). The reviewer, asked to
+// look for ways out of its own sealed cage, found the boundary held but that
+// it could create a user namespace and in it hold every capability — the
+// door nearly every recent container-escape bug (overlayfs, nf_tables,
+// io_uring) has gone through. Podman will not set user.max_user_namespaces
+// per container, so: its default seccomp profile, with clone and unshare
+// allowed only without CLONE_NEWUSER, and clone3 answering "not implemented"
+// so that callers fall back to clone, where the flag can be seen. Ordinary
+// cages keep user namespaces: bwrap and the like need them.
+
+// seccompDefaults are where podman keeps its default profile.
+var seccompDefaults = []string{"/usr/share/containers/seccomp.json", "/etc/containers/seccomp.json"}
+
+// sealedSeccomp writes the sealed cages' profile, from podman's default, and
+// says where it is.
+func (m *Manager) sealedSeccomp() (string, error) {
+	var base []byte
+	for _, p := range seccompDefaults {
+		if b, err := os.ReadFile(p); err == nil {
+			base = b
+			break
+		}
+	}
+	if base == nil {
+		return "", errors.New("no default seccomp profile of podman's to seal a cage with (/usr/share/containers/seccomp.json)")
+	}
+	out, err := noUserNamespaces(base)
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(m.dir, "cages")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	p := filepath.Join(dir, "sealed-seccomp.json")
+	return p, os.WriteFile(p, out, 0o600)
+}
+
+// cloneNewUser is CLONE_NEWUSER.
+const cloneNewUser = 0x10000000
+
+// noUserNamespaces is a seccomp profile without user namespaces: clone,
+// clone3 and unshare taken out of its unconditional allow, then clone and
+// unshare allowed when their flags (the first argument) lack CLONE_NEWUSER,
+// and clone3 refused with ENOSYS.
+func noUserNamespaces(profile []byte) ([]byte, error) {
+	var p map[string]any
+	if err := json.Unmarshal(profile, &p); err != nil {
+		return nil, fmt.Errorf("podman's seccomp profile: %w", err)
+	}
+	rules, _ := p["syscalls"].([]any)
+	gone := map[string]bool{"clone": true, "clone3": true, "unshare": true}
+	for _, r := range rules {
+		rule, _ := r.(map[string]any)
+		if rule["action"] != "SCMP_ACT_ALLOW" || len(asList(rule["args"])) > 0 || len(asMap(rule["includes"])) > 0 {
+			continue
+		}
+		var keep []any
+		for _, n := range asList(rule["names"]) {
+			if !gone[fmt.Sprint(n)] {
+				keep = append(keep, n)
+			}
+		}
+		rule["names"] = keep
+	}
+	rules = append(rules,
+		map[string]any{"names": []string{"clone", "unshare"}, "action": "SCMP_ACT_ALLOW",
+			"args":    []map[string]any{{"index": 0, "value": cloneNewUser, "valueTwo": 0, "op": "SCMP_CMP_MASKED_EQ"}},
+			"comment": "shrooms sealed cage: no new user namespaces (ADR-045)"},
+		map[string]any{"names": []string{"clone3"}, "action": "SCMP_ACT_ERRNO", "errnoRet": 38,
+			"comment": "shrooms sealed cage: clone3 hides its flags from seccomp; ENOSYS, and callers fall back to clone"})
+	p["syscalls"] = rules
+	return json.MarshalIndent(p, "", " ")
+}
+
+func asList(v any) []any {
+	l, _ := v.([]any)
+	return l
+}
+
+func asMap(v any) map[string]any {
+	m, _ := v.(map[string]any)
+	return m
 }

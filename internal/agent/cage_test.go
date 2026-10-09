@@ -37,6 +37,7 @@ inspect)
   case "$3" in
   *Pid*) echo 4242 ;;
   *proxy*) [ -f "$D/c-$4.old" ] || echo 2 ;;
+  *sealed*) echo 1 ;;
   esac ;;
 unshare) cat > "$D/nft-rules" ;;
 build) cat > $D/Containerfile ;;
