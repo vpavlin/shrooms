@@ -133,6 +133,14 @@ func cmdDaemon(args []string) error {
 	// builder, which the FFI configuration layer rejects outright —
 	// "Unrecognized configuration option(s)" — so the strings in the shared
 	// object are not the list of keys this accepts.
+	// The delivery node's own metrics, on loopback, which the daemon's
+	// passes through (docs/metrics.md): it is the one place that says what
+	// the rendezvous plane costs in bytes.
+	if cfg.MetricsPort != 0 {
+		nodeCfg["metricsServer"] = true
+		nodeCfg["metricsServerAddress"] = "127.0.0.1"
+		nodeCfg["metricsServerPort"] = deliveryMetricsPort
+	}
 	if cfg.DeliveryPort != 0 {
 		nodeCfg["tcpPort"] = cfg.DeliveryPort
 		// And the discovery port, which is UDP and was left to the library.
@@ -1722,6 +1730,11 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 		json.NewEncoder(w).Encode(snapshot())
 	}
 	mux.HandleFunc("/status", status)
+
+	// Prometheus metrics on the mesh addresses (docs/metrics.md).
+	if cfg.MetricsPort != 0 {
+		go newMetricsServer(cfg.MetricsPort, snapshot, log).run(ctx)
+	}
 
 	// A second, read-only mux for the loopback port (ADR-025).
 	//

@@ -185,6 +185,12 @@ type Config struct {
 	// that quietly stops working.
 	DeliveryPort uint16
 
+	// MetricsPort serves Prometheus metrics on this node's mesh addresses
+	// (docs/metrics.md): what each peer's tunnel carried, what the delivery
+	// node exchanged, what the machine's interfaces moved. 0 turns it off.
+	// Members of the mesh can read it; nobody else can reach it.
+	MetricsPort uint16
+
 	// EntryNodes are explicit bootstrap addresses (enrtree:, enr:, or
 	// multiaddr), used instead of whatever the preset would supply.
 	//
@@ -393,6 +399,9 @@ type Config struct {
 	MeshLabel string
 }
 
+// DefaultMetricsPort is where a node serves its metrics unless told otherwise.
+const DefaultMetricsPort = 9180
+
 // DefaultConfig returns a config with everything but the network key filled in.
 func DefaultConfig() Config {
 	host, _ := os.Hostname()
@@ -403,6 +412,7 @@ func DefaultConfig() Config {
 		Name:        host,
 		ListenPort:  51820,
 		PortMapping: true,
+		MetricsPort: DefaultMetricsPort,
 		Interface:   "shrooms0",
 		Preset:      DefaultPreset,
 		Mode:        "Core",
@@ -995,6 +1005,12 @@ func parseConfig(text string) (Config, error) {
 			c.Interface = unquote(val)
 		case "preset":
 			c.Preset = unquote(val)
+		case "metrics_port":
+			var p uint16
+			if _, err := fmt.Sscanf(unquote(val), "%d", &p); err != nil {
+				return c, fmt.Errorf("line %d: metrics_port: %w", n+1, err)
+			}
+			c.MetricsPort = p
 		case "delivery_port":
 			var p uint16
 			if _, err := fmt.Sscanf(unquote(val), "%d", &p); err != nil {
@@ -1164,6 +1180,8 @@ func RenderConfig(c Config) (string, error) {
 	} else {
 		b.WriteString("# delivery_port = 30304\n")
 	}
+	b.WriteString("\n# Prometheus metrics on this node's mesh addresses (docs/metrics.md); 0 is off.\n")
+	fmt.Fprintf(&b, "metrics_port = %d\n", c.MetricsPort)
 	b.WriteString("\n# Core relays for the whole cluster (~20 MB/h measured idle, most of it\n")
 	b.WriteString("# other applications' traffic); Edge subscribes and forwards nothing\n")
 	b.WriteString("# (~3 MB/h). Use Edge on anything metered or battery-powered.\n")
