@@ -209,7 +209,7 @@ mkdir -p "$work/agents"
 cp basecamp-agents/Main.qml basecamp-agents/test/AgentsHarness.qml "$work/agents/"
 shot=${AGENTS_SHOT:-$work/agents.png}
 out=$(run "$QML" -I "$work/agents" "$work/agents/AgentsHarness.qml" "$shot")
-echo "$out" | grep -E "^qml: (HOSTS|PROBED|ROWS|STREAMING|PROMPT|CALLS|ATTACHED|SENT|CONVERSATIONS|TAKEOVER|LISTWIDTH|PLANS|GLANCE)" || true
+echo "$out" | grep -E "^qml: (HOSTS|PROBED|ROWS|STREAMING|PROMPT|CALLS|ATTACHED|SENT|CONVERSATIONS|TAKEOVER|LISTWIDTH|PLANS|GLANCE|TASKROWS|TASKORDER|TASKNAME|ASKER|AGE|TASKROW1)" || true
 expect() { echo "$out" | grep -qF "$1" || { echo "FAIL: $2"; exit 1; }; }
 # The first one also says why, when the view did not load at all: a QML
 # module the runner lacks (QtQuick.Dialogs, 2026-10-03) prints nothing else.
@@ -219,6 +219,14 @@ if echo "$out" | grep -E "Main.qml:[0-9]+:.*(TypeError|ReferenceError|is not a f
     echo "FAIL: the view hit a script error"; exit 1
 fi
 expect "HOSTS=1 SESSIONS=2" "the agents were not listed"
+# The tasks panel's rows: grouped Needs you / Working / Stalled / Done unacked, with the
+# acked one gone, the ages right, and each row carrying what a person needs to judge it.
+expect "TASKROWS needs-you:m1:1h,working:m2:30m,stalled:m3:2h,unacked:m4:3h" "the task rows are not grouped and ordered as a person needs them"
+expect "TASKORDER needs-you,working,stalled,unacked labels=Needs you/Working/Stalled/Done, unacked" "the task groups are not in the agreed order or named as agreed"
+expect "TASKNAME named by the asker|From X: the request|the real ask|the worker's own summary|" "a task is not named by the asker's title, then the request's first line, then the summary"
+expect "ASKER SPEL,jimmy,," "the asker is not read as a session from the device claim"
+expect "AGE 30s,1h,10h," "the age is not in the units a person reads"
+expect "TASKROW1 From Jimmy: review the module | from=jimmy to=review | latest=which of the two? | ref=laptop/review:m1" "a row does not carry its title, asker, worker, latest line and ref"
 # This device first: an agent on the machine Basecamp runs on is no peer of it.
 expect "PROBED=desk|office|fdb0:9afc:a5ef:1111:2222:3333:4444:5555;laptop|office|fdb0:9afc:a5ef:388c" "this device's own agent is not looked for"
 # History before the conversation, the conversation's rows in order, the

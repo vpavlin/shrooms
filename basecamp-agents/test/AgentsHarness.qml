@@ -632,12 +632,52 @@ Item {
                           .filter(function(c, i, a) { return a.indexOf(c) === i }).join(","))
             // Then the board, as the agents answer with their last lines
             // and their tasks.
+            // The tasks panel's rows, from the machines' own answers.
+            var tnow = Date.parse("2026-10-09T12:00:00Z")
+            var trows = view.taskRows(top.taskHosts, tnow)
+            console.error("TASKROWS " + trows.map(function(r) { return r.group + ":" + r.id.split(":")[1] + ":" + r.age }).join(","))
+            console.error("TASKORDER " + view.taskGroupOrder.join(",") + " labels=" + view.taskGroupOrder.map(view.taskGroupLabel).join("/"))
+            console.error("TASKNAME " + [
+                view.taskTitleOf({ metadata: { "shrooms/title": "named by the asker" }, history: [{ role: "ROLE_USER", parts: [{ text: "From X: the request" }] }] }),
+                view.taskTitleOf({ history: [{ role: "ROLE_USER", parts: [{ text: "From X: the request\n\nand more" }] }] }),
+                view.taskTitleOf({ history: [{ role: "ROLE_AGENT", parts: [{ text: "not the request" }] }, { role: "ROLE_USER", parts: [{ text: "the real ask" }] }] }),
+                view.taskTitleOf({ summary: "the worker's own summary" }),
+                view.taskTitleOf({})
+            ].join("|"))
+            console.error("ASKER " + [view.askerName("laptop.default (laptop/SPEL)"), view.askerName("pi5 (pi5/jimmy)"),
+                                      view.askerName("no claim here"), view.askerName("")].join(","))
+            console.error("AGE " + [view.ageOf("2026-10-09T11:59:30Z", tnow), view.ageOf("2026-10-09T11:00:00Z", tnow),
+                                    view.ageOf("2026-10-09T02:00:00Z", tnow), view.ageOf("nonsense", tnow)].join(","))
+            console.error("TASKROW1 " + (trows[0] ? trows[0].title + " | from=" + trows[0].asker + " to=" + trows[0].worker
+                          + " | latest=" + trows[0].latest + " | ref=" + trows[0].ref : "none"))
             top.boardFind = top.boardHosts
             view.refreshAgents()
             view.setBoard(true)
             boardTimer.start()
         }
     }
+    // The tasks the panel is built from: one per group, one acked (which is
+    // finished and must not be listed), one stalled, and one whose name the
+    // asker set. Timestamps are fixed so the ages and the order are exact.
+    readonly property var taskHosts: [
+        { name: "laptop", address: "fd00::1", tasks: [
+            { id: "review:m1", status: { state: "TASK_STATE_INPUT_REQUIRED", timestamp: "2026-10-09T11:00:00Z",
+                                         message: { parts: [{ text: "which of the two?" }] } },
+              metadata: { "shrooms/session": "review", "shrooms/from": "pi5 (pi5/jimmy)" },
+              history: [{ role: "ROLE_USER", parts: [{ text: "From Jimmy: review the module\n\nand the second line" }] }] },
+            { id: "review:m2", status: { state: "TASK_STATE_WORKING", timestamp: "2026-10-09T11:30:00Z",
+                                         message: { parts: [{ text: "reading it now" }] } },
+              metadata: { "shrooms/session": "review", "shrooms/from": "laptop (laptop/shrooms)",
+                          "shrooms/title": "the asker named this one" } },
+            { id: "review:m3", status: { state: "TASK_STATE_WORKING", timestamp: "2026-10-09T10:00:00Z" },
+              metadata: { "shrooms/session": "review", "shrooms/from": "pi5 (pi5/jimmy)", "shrooms/stalled": true } },
+            { id: "review:m4", status: { state: "TASK_STATE_COMPLETED", timestamp: "2026-10-09T09:00:00Z",
+                                         message: { parts: [{ text: "done, and here is why" }] } },
+              metadata: { "shrooms/session": "review", "shrooms/from": "pi5 (pi5/jimmy)" } },
+            { id: "review:m5", status: { state: "TASK_STATE_COMPLETED", timestamp: "2026-10-09T08:00:00Z" },
+              metadata: { "shrooms/session": "review", "shrooms/from": "pi5 (pi5/jimmy)", "shrooms/acknowledged": true } }
+        ] }
+    ]
     function task(id, session, from, state, extra) {
         return { id: id, status: { state: state }, metadata: Object.assign({ "shrooms/session": session, "shrooms/from": from }, extra || {}) }
     }

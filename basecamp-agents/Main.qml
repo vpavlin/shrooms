@@ -1549,6 +1549,107 @@ Item {
         return out
     }
     function stateWordOf(st) { return String(st || "").replace(/^TASK_STATE_/, "").toLowerCase().replace(/_/g, "-") }
+
+    // ---- the tasks themselves, read live from the agents -------------------
+    // A link on the board IS a task, and so is a row in the tasks panel: the
+    // same objects, read from the machine that ran them. Nothing is copied to a
+    // hub, so there is no bridge lag and no second copy to disagree with.
+    //
+    // A task's NAME: the asker's title (shrooms/title), else the first line of
+    // the request (the A2A history's ROLE_USER message), else the worker's
+    // summary. Same precedence the hub board uses, so the two never disagree.
+    function taskTitleOf(t) {
+        var md = (t && t.metadata) || {}
+        var named = oneLine(md["shrooms/title"] || (t && t.title))
+        if (named !== "") return named
+        var h = (t && t.history) || []
+        for (var i = 0; i < h.length; i++) {
+            var m = h[i]
+            if (!m) continue
+            var role = String(m.role || "").toLowerCase()
+            if (role !== "" && role !== "role_user" && role !== "user") continue
+            var p = (m.parts && m.parts[0] && m.parts[0].text) || m.text || m.content || ""
+            var line = oneLine(firstLine(p))
+            if (line !== "") return line
+        }
+        return oneLine(t && t.summary)
+    }
+    // One line, whitespace collapsed, cut to fit. A title is a label.
+    function oneLine(s) {
+        var v = String(s === null || s === undefined ? "" : s).replace(/\s+/g, " ").trim()
+        return v.length > 90 ? v.substring(0, 89) + "\u2026" : v
+    }
+    // The first line only: a request is usually "From X..." and then the ask.
+    function firstLine(s) {
+        if (s === null || s === undefined) return ""
+        var parts = String(s).split("\n")
+        for (var i = 0; i < parts.length; i++) { var l = parts[i].trim(); if (l !== "") return l }
+        return ""
+    }
+    // What the task last said, for the line under the title.
+    function taskLatestOf(t) {
+        try { return oneLine(t.status.message.parts[0].text) } catch (e) { return "" }
+    }
+    function taskAtOf(t) { return (t && t.status && t.status.timestamp) || "" }
+    function taskAckedOf(t) { return !!((t && t.metadata) || {})["shrooms/acknowledged"] }
+    function taskStalledOf(t) { return !!((t && t.metadata) || {})["shrooms/stalled"] }
+    // Which group a row belongs to. "Needs you" first: a task waiting on a
+    // person is the only one that is urgent. Acked tasks are finished and are
+    // not listed at all - the list is what is still owed.
+    function taskGroup(t) {
+        var w = stateWordOf(t && t.status ? t.status.state : "")
+        if (taskStalledOf(t)) return "stalled"
+        if (w === "input-required") return "needs-you"
+        if (/completed|failed|canceled|rejected|expired/.test(w)) return taskAckedOf(t) ? "done" : "unacked"
+        return "working"
+    }
+    readonly property var taskGroupOrder: ["needs-you", "working", "stalled", "unacked"]
+    function taskGroupLabel(g) {
+        return g === "needs-you" ? "Needs you" : g === "working" ? "Working"
+             : g === "stalled" ? "Stalled" : "Done, unacked"
+    }
+    // The age, in the units a person reads.
+    function ageOf(at, now) {
+        var ms = Date.parse(at)
+        if (isNaN(ms)) return ""
+        var s = Math.max(0, Math.floor(((now === undefined ? Date.now() : now) - ms) / 1000))
+        if (s < 60) return s + "s"
+        if (s < 3600) return Math.floor(s / 60) + "m"
+        if (s < 86400) return Math.floor(s / 3600) + "h"
+        return Math.floor(s / 86400) + "d"
+    }
+    // The asker as a SESSION, not the device claim: "laptop.default
+    // (laptop/SPEL)" is the session SPEL on the machine laptop.
+    function askerName(from) {
+        var m = /\(([^)\/]+)\/([^)]+)\)\s*$/.exec(String(from || ""))
+        return m ? m[2] : ""
+    }
+    // Every task on every machine, as the panel's rows. The machines' own
+    // answers, straight through, grouped in the order a person needs them.
+    function taskRows(hosts, now) {
+        var out = []
+        for (var i = 0; i < (hosts || []).length; i++) {
+            var h = hosts[i], ts = h.tasks || []
+            for (var j = 0; j < ts.length; j++) {
+                var t = ts[j], g = taskGroup(t)
+                if (g === "done") continue
+                var md = t.metadata || {}, who = md["shrooms/session"] || ""
+                out.push({ id: t.id, group: g, title: taskTitleOf(t), latest: taskLatestOf(t),
+                           from: md["shrooms/from"] || "", asker: askerName(md["shrooms/from"]),
+                           worker: who, ref: h.name + "/" + who + ":" + String(t.id || "").split(":").pop(),
+                           machine: h.name, address: h.address, session: who,
+                           at: taskAtOf(t), age: ageOf(taskAtOf(t), now),
+                           acked: taskAckedOf(t), stalled: taskStalledOf(t) })
+            }
+        }
+        out.sort(function(a, b) {
+            var d = root.taskGroupOrder.indexOf(a.group) - root.taskGroupOrder.indexOf(b.group)
+            return d !== 0 ? d : (a.at < b.at ? -1 : a.at > b.at ? 1 : 0)
+        })
+        return out
+    }
+    readonly property var taskRowList: taskRows(agentHosts, nowMs)
+
     function edgeTint(state) {
         return state === "working" ? cPhosphor : state === "input-required" ? cAmber : state === "stalled" ? cRust : cAsh
     }
