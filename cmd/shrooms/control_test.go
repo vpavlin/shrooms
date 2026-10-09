@@ -457,3 +457,42 @@ func TestPerMeshFlagRejectsUnknownLabel(t *testing.T) {
 		t.Errorf("the refusal does not name the mesh: %q", w.Body.String())
 	}
 }
+
+// A node on several meshes, none of them top-level, has no top-level
+// `services` that means anything: a write there was accepted and never
+// published. It goes to the mesh named, and without a name it is refused.
+func TestServicesGoToAMeshWhenThereIsNoTopLevelOne(t *testing.T) {
+	mux, path := controlFixture(t)
+	cfg := reload(t, path)
+	other, err := identity.NewNetworkKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.MeshSet["home"] = state.Mesh{Label: "home", NetworkKey: cfg.NetworkKey}
+	cfg.NetworkKey = ""
+	cfg.MeshSet["test"] = state.Mesh{Label: "test", NetworkKey: other.String()}
+	if err := state.WriteConfig(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	if w := post(t, mux, "/config/services", `{"services":["grafana:3000"]}`); w.Code == 200 {
+		t.Error("took services without saying which mesh")
+	}
+	if w := post(t, mux, "/config/services", `{"services":["grafana:3000"],"label":"test"}`); w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	got := reload(t, path)
+	if s := got.MeshSet["test"].Services; len(s) != 1 || s[0] != "grafana:3000" {
+		t.Errorf("mesh test has %v", s)
+	}
+	if len(got.Services) != 0 || len(got.MeshSet["home"].Services) != 0 {
+		t.Errorf("written elsewhere too: top %v, home %v", got.Services, got.MeshSet["home"].Services)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/config/services?mesh=test", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if !strings.Contains(w.Body.String(), "grafana:3000") {
+		t.Errorf("reading mesh test back: %d %s", w.Code, w.Body)
+	}
+}

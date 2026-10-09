@@ -8,12 +8,14 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/vpavlin/shrooms/internal/logtail"
 	"github.com/vpavlin/shrooms/internal/mesh"
+	"github.com/vpavlin/shrooms/internal/service"
 	"github.com/vpavlin/shrooms/internal/state"
 )
 
@@ -178,11 +180,19 @@ func controlHandlers(mux *http.ServeMux, log *slog.Logger, cfgPath string, rl *r
 	// silently, as the ordinary result of adding an unrelated one.
 	mux.HandleFunc("/config/services", readOrWrite(configuredServices(cfgPath), writeSetting(log, cfgPath,
 		func(cfg *state.Config, in settingRequest) (string, error) {
-			was := cfg.Services
-			cfg.Services = in.Services
-			if _, err := cfg.ServiceSpecs(); err != nil {
-				cfg.Services = was
+			label, err := servicesMesh(*cfg, in.Label)
+			if err != nil {
 				return "", err
+			}
+			if _, err := service.ParseSpecs(in.Services); err != nil {
+				return "", err
+			}
+			if label == "" {
+				cfg.Services = in.Services
+			} else {
+				m := cfg.MeshSet[label]
+				m.Services = in.Services
+				cfg.MeshSet[label] = m
 			}
 			return fmt.Sprintf("%d service(s) published", len(in.Services)), nil
 		})))
@@ -434,6 +444,36 @@ func setMeshBool(cfg *state.Config, label string, top *bool,
 	return nil
 }
 
+// servicesMesh says whose services a request means: "" for the top-level
+// mesh, or a label in MeshSet.
+//
+// A node on several meshes and none of them top-level — the VPS, after its
+// config was flattened — used to take a services write without a label into
+// the top-level `services`, which belongs to no mesh there. The write
+// succeeded, the list read back, and nothing was ever published.
+func servicesMesh(cfg state.Config, label string) (string, error) {
+	top := cfg.NetworkKey != "" && cfg.NetworkKey != state.KeyPlaceholder
+	switch {
+	case label == "" && top, label == state.DefaultLabel && top:
+		return "", nil
+	case label != "":
+		if _, ok := cfg.MeshSet[label]; !ok {
+			return "", fmt.Errorf("no mesh called %q", label)
+		}
+		return label, nil
+	}
+	labels := make([]string, 0, len(cfg.MeshSet))
+	for l := range cfg.MeshSet {
+		labels = append(labels, l)
+	}
+	if len(labels) == 1 {
+		return labels[0], nil
+	}
+	sort.Strings(labels)
+	return "", fmt.Errorf("this node is on several meshes (%s): say which with --mesh",
+		strings.Join(labels, ", "))
+}
+
 // settingRequest is every field any of the setting endpoints reads. One shape
 // rather than four, because the alternative is four almost-identical decoders
 // and a fifth that gets forgotten.
@@ -552,14 +592,14 @@ func configuredServices(cfgPath string) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		label, err := servicesMesh(cfg, r.URL.Query().Get("mesh"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
 		out := cfg.Services
-		if label := r.URL.Query().Get("mesh"); label != "" {
-			m, ok := cfg.MeshSet[label]
-			if !ok {
-				http.Error(w, "no mesh called "+label, http.StatusNotFound)
-				return
-			}
-			out = m.Services
+		if label != "" {
+			out = cfg.MeshSet[label].Services
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"services": out})

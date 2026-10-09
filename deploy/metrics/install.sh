@@ -38,7 +38,11 @@ if [ "${1:-}" = "--uninstall" ]; then
     systemctl disable --now shrooms-grafana shrooms-prometheus 2>/dev/null || true
     rm -f /etc/systemd/system/shrooms-grafana.service /etc/systemd/system/shrooms-prometheus.service
     systemctl daemon-reload
-    shrooms_cli services remove grafana 2>/dev/null || true
+    for label in $(curl -s --unix-socket "$SOCK" http://shrooms/status | python3 -c '
+import json,sys
+for m in json.load(sys.stdin).get("meshes") or []: print(m.get("label",""))'); do
+        shrooms_cli services remove grafana --mesh "$label" 2>/dev/null || true
+    done
     echo "removed; data kept in $DATA, settings in $ETC"
     exit 0
 fi
@@ -113,8 +117,15 @@ systemctl daemon-reload
 systemctl enable --now shrooms-prometheus shrooms-grafana
 systemctl restart shrooms-prometheus shrooms-grafana
 
-shrooms_cli services add grafana --to 127.0.0.1:3000 >/dev/null 2>&1 || shrooms_cli services list | grep -q grafana || \
-    echo "could not publish grafana as a shrooms service: shrooms services add grafana --to 127.0.0.1:3000"
+# On every mesh this node is on: a services list belongs to one mesh, and the
+# dashboard is for whoever can reach this node.
+LABELS=$(curl -s --unix-socket "$SOCK" http://shrooms/status | python3 -c '
+import json,sys
+for m in json.load(sys.stdin).get("meshes") or []: print(m.get("label",""))')
+for label in ${LABELS:-default}; do
+    shrooms_cli services add grafana --to 127.0.0.1:3000 --mesh "$label" >/dev/null || \
+        echo "could not publish grafana on mesh $label: shrooms services add grafana --to 127.0.0.1:3000 --mesh $label"
+done
 
 echo "Prometheus: 127.0.0.1:9090, scraping what $TARGETS lists"
 echo "Grafana:    http://grafana.<this node>.<mesh>.mesh  (shrooms services list shows the name)"
