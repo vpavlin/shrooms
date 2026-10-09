@@ -1,0 +1,14 @@
+# Prometheus for a shrooms mesh (docs/metrics.md). install.sh fills in
+# SHROOMS_TARGETS: a node's /targets, which lists it and every peer.
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+scrape_configs:
+  - job_name: shrooms
+    http_sd_configs:
+      - url: SHROOMS_TARGETS
+        refresh_interval: 60s
+    # A phone, or a node with metrics off, is listed but never answers:
+    # quickly, so it does not hold up the round.
+    scrape_timeout: 10s

@@ -40,9 +40,19 @@ import (
 )
 
 // deliveryMetricsPort is where the delivery node serves its metrics, on
-// loopback only. Not 8008, the library's default, which another delivery node
-// on the machine (Basecamp's) may hold.
-const deliveryMetricsPort = 8018
+// loopback only: a port the kernel gave as free when the node was set up
+// (freeLoopbackPort); 0 when it serves none.
+var deliveryMetricsPort int
+
+// freeLoopbackPort is a loopback TCP port nothing holds now.
+func freeLoopbackPort() (int, error) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port, nil
+}
 
 // metricsServer serves /metrics and /targets on each mesh address.
 type metricsServer struct {
@@ -57,9 +67,11 @@ type metricsServer struct {
 }
 
 func newMetricsServer(port uint16, snapshot func() statusPayload, log *slog.Logger) *metricsServer {
-	return &metricsServer{port: port, snapshot: snapshot, log: log,
-		delivery: fmt.Sprintf("http://127.0.0.1:%d/metrics", deliveryMetricsPort),
-		netdev:   "/proc/net/dev", ls: map[string]net.Listener{}}
+	m := &metricsServer{port: port, snapshot: snapshot, log: log, netdev: "/proc/net/dev", ls: map[string]net.Listener{}}
+	if deliveryMetricsPort != 0 {
+		m.delivery = fmt.Sprintf("http://127.0.0.1:%d/metrics", deliveryMetricsPort)
+	}
+	return m
 }
 
 // run keeps a listener on each mesh address — meshes come and go with

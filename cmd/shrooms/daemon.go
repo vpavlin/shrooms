@@ -136,10 +136,20 @@ func cmdDaemon(args []string) error {
 	// The delivery node's own metrics, on loopback, which the daemon's
 	// passes through (docs/metrics.md): it is the one place that says what
 	// the rendezvous plane costs in bytes.
+	//
+	// On a port the kernel says is free, not a fixed one: with two delivery
+	// nodes on a machine wanting the same port, the second failed to start
+	// at all ("Starting metrics server failed … Address already in use", CI
+	// 2026-10-09) — the rendezvous plane lost for a metric. And not retried
+	// without it, since this library does not survive a node being made
+	// again inside one process.
 	if cfg.MetricsPort != 0 {
-		nodeCfg["metricsServer"] = true
-		nodeCfg["metricsServerAddress"] = "127.0.0.1"
-		nodeCfg["metricsServerPort"] = deliveryMetricsPort
+		if p, err := freeLoopbackPort(); err == nil {
+			nodeCfg["metricsServer"] = true
+			nodeCfg["metricsServerAddress"] = "127.0.0.1"
+			nodeCfg["metricsServerPort"] = p
+			deliveryMetricsPort = p
+		}
 	}
 	if cfg.DeliveryPort != 0 {
 		nodeCfg["tcpPort"] = cfg.DeliveryPort

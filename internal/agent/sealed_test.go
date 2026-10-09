@@ -173,7 +173,9 @@ func TestASealedCageAsksNothing(t *testing.T) {
 	m := newTestManager(t, t.TempDir())
 	m.Create("review", t.TempDir())
 	s, _ := m.Get("review")
+	s.mu.Lock()
 	s.cage = &Cage{Sealed: true, Container: "shrooms-review-sealed"}
+	s.mu.Unlock()
 	self := netip.MustParseAddr("fd00::1")
 	m.Machines = func() ([]Machine, error) { return []Machine{{"laptop", self}}, nil }
 	var got []string
