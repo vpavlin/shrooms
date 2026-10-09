@@ -648,6 +648,11 @@ Item {
                                       view.askerName("no claim here"), view.askerName("")].join(","))
             console.error("AGE " + [view.ageOf("2026-10-09T11:59:30Z", tnow), view.ageOf("2026-10-09T11:00:00Z", tnow),
                                     view.ageOf("2026-10-09T02:00:00Z", tnow), view.ageOf("nonsense", tnow)].join(","))
+            // The links carrying their tasks, and the load on each card.
+            var links = view.boardLinkList(top.taskHosts)
+            console.error("LINKS " + links.map(function(e) { return e.from + ">" + e.to + ":" + e.count + ":" + e.tone + ":" + view.linkLabel(e) }).join(","))
+            var load = view.cardLoad(top.taskHosts)
+            console.error("LOAD " + Object.keys(load).sort().map(function(k) { return k + "=" + view.loadLabel(load[k]) }).join(","))
             console.error("TASKROW1 " + (trows[0] ? trows[0].title + " | from=" + trows[0].asker + " to=" + trows[0].worker
                           + " | latest=" + trows[0].latest + " | ref=" + trows[0].ref : "none"))
             top.boardFind = top.boardHosts
@@ -660,7 +665,7 @@ Item {
     // finished and must not be listed), one stalled, and one whose name the
     // asker set. Timestamps are fixed so the ages and the order are exact.
     readonly property var taskHosts: [
-        { name: "laptop", address: "fd00::1", tasks: [
+        { name: "laptop", address: "fd00::1", sessions: [ { name: "review" }, { name: "shrooms" } ], tasks: [
             { id: "review:m1", status: { state: "TASK_STATE_INPUT_REQUIRED", timestamp: "2026-10-09T11:00:00Z",
                                          message: { parts: [{ text: "which of the two?" }] } },
               metadata: { "shrooms/session": "review", "shrooms/from": "pi5 (pi5/jimmy)" },
@@ -676,7 +681,8 @@ Item {
               metadata: { "shrooms/session": "review", "shrooms/from": "pi5 (pi5/jimmy)" } },
             { id: "review:m5", status: { state: "TASK_STATE_COMPLETED", timestamp: "2026-10-09T08:00:00Z" },
               metadata: { "shrooms/session": "review", "shrooms/from": "pi5 (pi5/jimmy)", "shrooms/acknowledged": true } }
-        ] }
+        ] },
+        { name: "pi5", address: "fd00::2", sessions: [ { name: "jimmy" } ], tasks: [] }
     ]
     function task(id, session, from, state, extra) {
         return { id: id, status: { state: state }, metadata: Object.assign({ "shrooms/session": session, "shrooms/from": from }, extra || {}) }

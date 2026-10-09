@@ -1549,6 +1549,79 @@ Item {
         return out
     }
     function stateWordOf(st) { return String(st || "").replace(/^TASK_STATE_/, "").toLowerCase().replace(/_/g, "-") }
+    // The links, ONE ENTRY PER PAIR of sessions, carrying the tasks on it: how
+    // many are open and the tone of the most urgent. A task that needs a person
+    // is what someone must see from across the board, so it wins the link's
+    // colour; a stalled one is next; otherwise the link is working.
+    function boardLinkList(hosts) {
+        var keys = {}, out = [], byPair = {}
+        for (var i = 0; i < hosts.length; i++) {
+            var ss = hosts[i].sessions || []
+            for (var j = 0; j < ss.length; j++) keys[boardKey(hosts[i], ss[j].name)] = true
+        }
+        for (i = 0; i < hosts.length; i++) {
+            var ts = hosts[i].tasks || []
+            for (j = 0; j < ts.length; j++) {
+                var t = ts[j], md = t.metadata || {}, w = stateWordOf(t.status ? t.status.state : "")
+                if (/completed|failed|canceled|rejected|expired/.test(w)) continue
+                var to = boardKey(hosts[i], md["shrooms/session"] || "")
+                var from = askerKey(md["shrooms/from"], keys)
+                if (!keys[to] || from === "" || from === to) continue
+                var pair = from + ">" + to
+                if (!byPair[pair]) {
+                    byPair[pair] = { from: from, to: to, count: 0, needsYou: 0, stalled: 0, working: 0,
+                                     tasks: [], tone: "working" }
+                    out.push(byPair[pair])
+                }
+                var e = byPair[pair]
+                e.count++
+                e.tasks.push({ id: t.id, title: taskTitleOf(t), state: taskStalledOf(t) ? "stalled" : w })
+                if (taskStalledOf(t)) e.stalled++
+                else if (w === "input-required") e.needsYou++
+                else e.working++
+                e.tone = e.needsYou > 0 ? "input-required" : e.stalled > 0 ? "stalled" : "working"
+            }
+        }
+        return out
+    }
+    readonly property var boardLinkData: boardLinkList(agentHosts)
+    // What a session OWES and what it is WAITING FOR: the tasks it is working on,
+    // and the tasks it asked others for. A card doing four things should say so.
+    function cardLoad(hosts) {
+        var keys = {}, out = {}
+        for (var i = 0; i < hosts.length; i++) {
+            var ss = hosts[i].sessions || []
+            for (var j = 0; j < ss.length; j++) keys[boardKey(hosts[i], ss[j].name)] = true
+        }
+        for (i = 0; i < hosts.length; i++) {
+            var ts = hosts[i].tasks || []
+            for (j = 0; j < ts.length; j++) {
+                var t = ts[j], md = t.metadata || {}, w = stateWordOf(t.status ? t.status.state : "")
+                if (/completed|failed|canceled|rejected|expired/.test(w)) continue
+                var mine = boardKey(hosts[i], md["shrooms/session"] || "")
+                if (keys[mine]) { out[mine] = out[mine] || { waiting: 0, asked: 0 }; out[mine].waiting++ }
+                var from = askerKey(md["shrooms/from"], keys)
+                if (from !== "" && keys[from]) { out[from] = out[from] || { waiting: 0, asked: 0 }; out[from].asked++ }
+            }
+        }
+        return out
+    }
+    readonly property var cardLoadData: cardLoad(agentHosts)
+    // A short label for a load count: "2 owed · 1 asked", and nothing when idle.
+    function loadLabel(l) {
+        if (!l) return ""
+        var bits = []
+        if (l.waiting > 0) bits.push(l.waiting + " owed")
+        if (l.asked > 0) bits.push(l.asked + " asked")
+        return bits.join(" \u00b7 ")
+    }
+    // A link's badge: the count, and the word when it is not simply working.
+    function linkLabel(e) {
+        if (!e || e.count < 1) return ""
+        if (e.needsYou > 0) return e.count + (e.needsYou === 1 ? " \u00b7 needs you" : " \u00b7 " + e.needsYou + " need you")
+        if (e.stalled > 0) return e.count + " \u00b7 stalled"
+        return String(e.count)
+    }
 
     // ---- the tasks themselves, read live from the agents -------------------
     // A link on the board IS a task, and so is a row in the tasks panel: the
