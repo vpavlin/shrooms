@@ -42,10 +42,20 @@ func TestASealedCageHasNothingOfTheOwners(t *testing.T) {
 		t.Fatalf("not sealed, kept options that widen it, or no outbox: %+v", in.Cage)
 	}
 	s, _ := m.Get("review")
+	// It had a conversation before it was sealed.
+	tp := filepath.Join(home, ".claude", "projects", "-p", "conv-sealed.jsonl")
+	os.MkdirAll(filepath.Dir(tp), 0o700)
+	os.WriteFile(tp, []byte(`{"type":"user"}`+"\n"), 0o600)
+	s.mu.Lock()
+	s.convID = "conv-sealed"
+	s.mu.Unlock()
 	if err := s.Send("hello", "phone"); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, s, 0, func(e Event) bool { return strings.Contains(assistantText(e), "hello") })
+	if _, err := os.Stat(filepath.Join(m.sealedConfigDir(s.cage.Container), "projects", "-p", "conv-sealed.jsonl")); err != nil {
+		t.Error("the session's conversation was not carried into its sealed cage, so it cannot resume")
+	}
 
 	cs := calls(t, log)
 	create := indexOf(cs, `^create `)
@@ -181,5 +191,36 @@ func TestARealSealedCage(t *testing.T) {
 	}
 	if out, _ := exec.Command("podman", "exec", s.cage.Container, "sh", "-c", "python3 -m http.server 8123 >/dev/null 2>&1 & sleep 1; curl -s -m 3 -o /dev/null -w '%{http_code}' http://127.0.0.1:8123/").CombinedOutput(); strings.TrimSpace(string(out)) != "200" {
 		t.Errorf("an app run inside a sealed cage cannot be reached on its own loopback: %s", out)
+	}
+}
+
+// A session moved into a sealed cage keeps its conversation: that one
+// transcript is carried into the cage's own directory, and no other.
+func TestASealedCageCarriesItsConversationOnly(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	proj := filepath.Join(home, ".claude", "projects", "-p-review")
+	os.MkdirAll(filepath.Join(proj, "conv-1"), 0o700)
+	os.WriteFile(filepath.Join(proj, "conv-1.jsonl"), []byte(`{"type":"user"}`+"\n"), 0o600)
+	os.WriteFile(filepath.Join(proj, "conv-1", "tool-result.txt"), []byte("x"), 0o600)
+	os.WriteFile(filepath.Join(proj, "conv-other.jsonl"), []byte("secret"), 0o600)
+	cfg := t.TempDir()
+	if err := carryConversation("conv-1", cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(cfg, "projects", "-p-review", "conv-1.jsonl")); err != nil {
+		t.Error("the conversation was not carried into the sealed cage")
+	}
+	if _, err := os.Stat(filepath.Join(cfg, "projects", "-p-review", "conv-1", "tool-result.txt")); err != nil {
+		t.Error("what Claude Code keeps beside the conversation was not carried")
+	}
+	if _, err := os.Stat(filepath.Join(cfg, "projects", "-p-review", "conv-other.jsonl")); err == nil {
+		t.Error("another conversation was carried into the sealed cage")
+	}
+	// The cage's copy is the one in use from then on: not overwritten.
+	os.WriteFile(filepath.Join(cfg, "projects", "-p-review", "conv-1.jsonl"), []byte("newer"), 0o600)
+	carryConversation("conv-1", cfg)
+	if b, _ := os.ReadFile(filepath.Join(cfg, "projects", "-p-review", "conv-1.jsonl")); string(b) != "newer" {
+		t.Error("the cage's own copy was overwritten")
 	}
 }

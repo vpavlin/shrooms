@@ -101,6 +101,9 @@ sealed cage is an ordinary cage, and also:
   Code only; GitHub and nix are not offered.
 - **asks nothing**: it can finish the tasks it is given, and cannot ask
   another agent for anything.
+- **its conversation only**: a session moved into a sealed cage keeps its
+  conversation (that transcript is copied in, no other), so the code under
+  review could read it. For a review, a new session is the clean start.
 - **an outbox**: `~/shrooms-outbox/<session>` on the machine, `/outbox`
   inside, for its results. Read what is in it as untrusted text: a review of
   hostile code can carry instructions for whoever reads it.

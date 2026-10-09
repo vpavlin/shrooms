@@ -97,6 +97,9 @@ func (m *Manager) sealedMounts(s *Session) ([]mount, error) {
 			return nil, err
 		}
 	}
+	if err := carryConversation(s.convID, cfg); err != nil {
+		return nil, fmt.Errorf("carrying the conversation into the sealed cage: %w", err)
+	}
 	// What a reader of the outbox must remember.
 	note := filepath.Join(out, "README-UNTRUSTED.txt")
 	if _, err := os.Stat(note); err != nil {
@@ -133,6 +136,59 @@ func (m *Manager) sealedMounts(s *Session) ([]mount, error) {
 		}
 	}
 	return kept, nil
+}
+
+// carryConversation copies one conversation — its transcript and what Claude
+// Code keeps beside it — from the owner's ~/.claude into a sealed cage's own
+// directory, once. A session moved into a sealed cage resumes its
+// conversation, which a sealed cage cannot otherwise see: "No conversation
+// found with session ID" (2026-10-09). Only that conversation goes in, none
+// of the others.
+func carryConversation(id, cfg string) error {
+	if id == "" {
+		return nil
+	}
+	src, err := transcriptPath(id)
+	if err != nil || src == "" {
+		return nil // not on this machine: a new conversation starts
+	}
+	dst := filepath.Join(cfg, "projects", filepath.Base(filepath.Dir(src)), filepath.Base(src))
+	if _, err := os.Stat(dst); err == nil {
+		return nil // carried already; the cage's copy is the one in use
+	}
+	if err := copyTree(src, dst); err != nil {
+		return err
+	}
+	side := strings.TrimSuffix(src, ".jsonl")
+	if st, err := os.Stat(side); err == nil && st.IsDir() {
+		return copyTree(side, strings.TrimSuffix(dst, ".jsonl"))
+	}
+	return nil
+}
+
+// copyTree copies a file, or a directory and what is in it.
+func copyTree(src, dst string) error {
+	return filepath.Walk(src, func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(src, p)
+		to := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(to, 0o700)
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		if err := os.MkdirAll(filepath.Dir(to), 0o700); err != nil {
+			return err
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(to, b, 0o600)
+	})
 }
 
 // sealedEnv is all a sealed cage's harness is given: its token, who it is,

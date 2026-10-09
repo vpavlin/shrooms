@@ -49,7 +49,11 @@ on 2026-10-09, an ordinary cage still:
 - Whoever reads the outbox — the owner, or an agent — must treat it as
   untrusted input: a review of malicious code can carry instructions aimed at
   its reader. The outbox says so.
-- History from before the agent had the conversation is not read for a
-  sealed session (its transcripts are not in `~/.claude`); its own events
-  are complete.
+- A session moved into a sealed cage keeps its conversation: that one
+  transcript is copied into the cage's own directory when the cage is made,
+  and no other (without it Claude Code stopped with "No conversation found",
+  2026-10-09). So the code under review can read that conversation; start a
+  new session for a review if it holds anything that should not be read.
+  From then on the cage's copy is the conversation, and history the agent
+  reads from `~/.claude` stops at the move; its own events are complete.
 - The machine needs a token: until one is saved, the apps say how.
