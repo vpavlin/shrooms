@@ -15,7 +15,7 @@ import (
 // tools, and each tool against a mesh of one machine — a stand-in agent that
 // lists a session and answers A2A as shrooms-agent does.
 func TestMCPServesTheMeshsAgents(t *testing.T) {
-	var asked map[string]any
+	var asked, first map[string]any
 	var updated map[string]string
 	var updatedPath string
 	var methods []string
@@ -38,6 +38,9 @@ func TestMCPServesTheMeshsAgents(t *testing.T) {
 			methods = append(methods, req.Method)
 			if req.Method == "SendMessage" {
 				asked = req.Params
+				if first == nil {
+					first = req.Params
+				}
 			}
 			io.WriteString(w, `{"jsonrpc":"2.0","id":1,"result":{"task":{"id":"proteus:m1","status":{"state":"TASK_STATE_COMPLETED",`+
 				`"message":{"role":"ROLE_AGENT","parts":[{"text":"42"}]}}}}}`)
@@ -57,7 +60,7 @@ func TestMCPServesTheMeshsAgents(t *testing.T) {
 		`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
 		`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`,
 		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_agents","arguments":{}}}`,
-		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"ask_agent","arguments":{"to":"proteus/proteus","text":"what is 6*7?"}}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"ask_agent","arguments":{"to":"proteus/proteus","text":"what is 6*7?","title":"Six times seven"}}}`,
 		`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"task_status","arguments":{"task":"proteus/proteus:m1"}}}`,
 		`{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"ask_agent","arguments":{"to":"nobody"}}}`,
 		`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"task_update","arguments":{"task":"proteus:m1","state":"done","summary":"probe written"}}}`,
@@ -110,6 +113,12 @@ func TestMCPServesTheMeshsAgents(t *testing.T) {
 	meta, _ := msg["metadata"].(map[string]any)
 	if !strings.HasSuffix(meta["shrooms/from"].(string), "/jimmy") {
 		t.Errorf("sent without saying who: %v", msg)
+	}
+	if m, _ := first["message"].(map[string]any); m["metadata"].(map[string]any)["shrooms/title"] != "Six times seven" {
+		t.Errorf("sent without its title: %v", first)
+	}
+	if m, _ := asked["message"].(map[string]any); m["metadata"].(map[string]any)["shrooms/title"] != nil {
+		t.Errorf("an answer carried a title: %v", asked)
 	}
 	if s, _ := text(5); !strings.Contains(s, "completed") {
 		t.Errorf("task_status: %q", s)

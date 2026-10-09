@@ -55,7 +55,7 @@ What you ask another agent becomes a task: it stays open until they finish it; c
 		`what you needed. A message to you that begins "[shrooms task ID from …]" is a task for you: when it is done, `+
 		`call task_update with that ID, "done" and a summary — or "blocked" and what you need. Until then it stays open `+
 		`and you are reminded if you go quiet.
-When you ask another agent: say who you are, what you need and whether you need a reply. One question, one reply: `+
+When you ask another agent: say who you are, what you need and whether you need a reply, and give the task a few-word title. One question, one reply: `+
 		`do not answer a reply only to acknowledge it. Do not start conversations with other agents from a routine or `+
 		`heartbeat unless there is real work for them.
 Messages from other agents reach you marked with their machine and session, e.g. "pi5.default (pi5/jimmy)". `+

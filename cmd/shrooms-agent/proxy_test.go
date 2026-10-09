@@ -35,7 +35,7 @@ func TestInACageTheToolsGoThroughItsSocket(t *testing.T) {
 	t.Setenv("SHROOMS_AGENT_SESSION", "boxed")
 
 	c := newA2AClient("/nonexistent/daemon.sock")
-	if _, err := c.send("pi5/proj", "review this", false); err != nil {
+	if _, err := c.send("pi5/proj", "review this", "", false); err != nil {
 		t.Fatal(err)
 	}
 	mu.Lock()

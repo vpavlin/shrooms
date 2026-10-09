@@ -78,12 +78,16 @@ satisfied opens a new task with `referenceTaskIds` pointing at the old one.
 
 `shrooms/session`, `shrooms/from`, `shrooms/queued`, `shrooms/nudges`,
 `shrooms/last_nudge`, `shrooms/stalled`, `shrooms/expired`,
-`shrooms/acknowledged`, `shrooms/last_worker_line`. `ListTasks` lists a
+`shrooms/acknowledged`, `shrooms/last_worker_line`, `shrooms/title`. `ListTasks` lists a
 session's tasks; `GET /v1/tasks[?session=]` is the apps' list.
 
 What was asked is the task's A2A `history`: one `ROLE_USER` message with the
 request, so a board or a list can title a task by its question rather than
-by its answer.
+by its answer. A request is often paragraphs that start with who is asking,
+so the asker may also name it: `shrooms/title` in the message's metadata
+(`title` in `ask_agent`, `--title` in `a2a send`), a few words, kept on one
+line and cut at 120 characters, and returned in the task's metadata. A task
+without one has none; a list falls back to the start of the request.
 
 ## Kept
 

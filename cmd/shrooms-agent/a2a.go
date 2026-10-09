@@ -30,7 +30,9 @@ import (
 
 const a2aUsage = `usage:
   shrooms-agent a2a list                                 the agents on the mesh: MACHINE/SESSION, harness, state
-  shrooms-agent a2a send [--wait] MACHINE/SESSION TEXT   ask a session; --wait prints its reply
+  shrooms-agent a2a send [--wait] [--title T] MACHINE/SESSION TEXT
+                                                         ask a session; --wait prints its reply, --title
+                                                         names the task in lists
   shrooms-agent a2a get  MACHINE/TASK-ID                 where a task stands, and its reply
   shrooms-agent a2a cancel MACHINE/TASK-ID               interrupt it
   shrooms-agent a2a ack MACHINE/TASK-ID                  you have seen its result: it is closed for you
@@ -108,6 +110,7 @@ func a2aMain(args []string) error {
 	}
 	fs := flag.NewFlagSet("a2a "+args[0], flag.ContinueOnError)
 	wait := fs.Bool("wait", false, "wait for the turn to end and print the reply")
+	title := fs.String("title", "", "send: a few words saying what you ask, for lists of tasks")
 	sock := fs.String("socket", "/run/shrooms/shrooms.sock", "the shrooms daemon's control socket, to find machines by name")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
@@ -125,7 +128,7 @@ func a2aMain(args []string) error {
 		fmt.Print(out)
 		return nil
 	case args[0] == "send" && len(rest) >= 2:
-		t, err = c.send(rest[0], strings.Join(rest[1:], " "), *wait)
+		t, err = c.send(rest[0], strings.Join(rest[1:], " "), *title, *wait)
 	case args[0] == "get" && len(rest) == 1:
 		t, err = c.task(rest[0], "GetTask")
 	case args[0] == "cancel" && len(rest) == 1:
@@ -197,8 +200,8 @@ func (t cliTask) String() string {
 }
 
 // send asks MACHINE/SESSION; with wait, the answer is the turn's end.
-func (c a2aClient) send(to, text string, wait bool) (cliTask, error) {
-	return c.message(to, "", text, wait)
+func (c a2aClient) send(to, text, title string, wait bool) (cliTask, error) {
+	return c.message(to, "", text, title, wait)
 }
 
 // answer is more on a task already open — what it said it needs:
@@ -209,10 +212,10 @@ func (c a2aClient) answer(ref, text string, wait bool) (cliTask, error) {
 	if !ok || !strings.Contains(id, ":") {
 		return cliTask{}, fmt.Errorf("%q: want MACHINE/SESSION:MESSAGE-ID", ref)
 	}
-	return c.message(name+"/"+session, id, text, wait)
+	return c.message(name+"/"+session, id, text, "", wait)
 }
 
-func (c a2aClient) message(to, taskID, text string, wait bool) (cliTask, error) {
+func (c a2aClient) message(to, taskID, text, title string, wait bool) (cliTask, error) {
 	name, session, ok := strings.Cut(to, "/")
 	if !ok || session == "" {
 		return cliTask{}, fmt.Errorf("%q: want MACHINE/SESSION", to)
@@ -229,6 +232,9 @@ func (c a2aClient) message(to, taskID, text string, wait bool) (cliTask, error) 
 			host = ms[0].Name
 		}
 		meta["shrooms/from"] = host + "/" + me
+	}
+	if title != "" {
+		meta["shrooms/title"] = title
 	}
 	msg := map[string]any{"messageId": newMessageID(), "role": "ROLE_USER",
 		"parts": []any{map[string]any{"text": text}}, "metadata": meta}

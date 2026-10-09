@@ -34,6 +34,8 @@ var mcpTools = []map[string]any{
 		"inputSchema": map[string]any{"type": "object", "required": []string{"to", "text"}, "properties": map[string]any{
 			"to":   map[string]any{"type": "string", "description": "MACHINE/SESSION, e.g. proteus/proteus"},
 			"text": map[string]any{"type": "string", "description": "The message: say who you are, what you want, and whether you need a reply."},
+			"title": map[string]any{"type": "string", "description": "A few words saying what you ask, e.g. \"Review notes on shrooms-board\": " +
+				"lists of tasks show it. Always set it on a new task; not used when answering one."},
 			"task": map[string]any{"type": "string", "description": "Only to answer a task that needs input: MACHINE/SESSION:MESSAGE-ID."},
 			"wait": map[string]any{"type": "boolean", "description": "Wait for the reply (default true)."},
 		}},
@@ -136,6 +138,7 @@ func serveMCP(in io.Reader, out io.Writer, c a2aClient) error {
 type mcpArgs struct {
 	To      string `json:"to"`
 	Text    string `json:"text"`
+	Title   string `json:"title"`
 	Wait    *bool  `json:"wait"`
 	Task    string `json:"task"`
 	State   string `json:"state"`
@@ -159,7 +162,7 @@ func (c a2aClient) call(tool string, a mcpArgs) (string, error) {
 		if a.Task != "" {
 			t, err = c.answer(a.Task, a.Text, wait)
 		} else {
-			t, err = c.send(a.To, a.Text, wait)
+			t, err = c.send(a.To, a.Text, a.Title, wait)
 		}
 		if err != nil {
 			return "", err

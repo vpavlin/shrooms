@@ -23,17 +23,20 @@ import (
 
 // Task is one piece of work asked of a session.
 type Task struct {
-	ID        string    `json:"id"` // session:messageId
-	Session   string    `json:"session"`
-	MessageID string    `json:"message_id"`
-	From      string    `json:"from"` // the device the mesh names, and the session it claims
-	Request   string    `json:"request"`
-	Refs      []string  `json:"refs,omitempty"` // tasks this one follows on from (A2A referenceTaskIds)
-	Created   time.Time `json:"created"`
-	Started   time.Time `json:"started,omitempty"` // sent to the session; zero while queued
-	Updated   time.Time `json:"updated"`
-	State     string    `json:"state"`             // an A2A task state
-	Summary   string    `json:"summary,omitempty"` // the worker's: what was done, or what it needs
+	ID        string `json:"id"` // session:messageId
+	Session   string `json:"session"`
+	MessageID string `json:"message_id"`
+	From      string `json:"from"` // the device the mesh names, and the session it claims
+	Request   string `json:"request"`
+	// Title is the asker's few words for what it asks (shrooms/title), for
+	// lists of tasks; empty when it gave none.
+	Title   string    `json:"title,omitempty"`
+	Refs    []string  `json:"refs,omitempty"` // tasks this one follows on from (A2A referenceTaskIds)
+	Created time.Time `json:"created"`
+	Started time.Time `json:"started,omitempty"` // sent to the session; zero while queued
+	Updated time.Time `json:"updated"`
+	State   string    `json:"state"`             // an A2A task state
+	Summary string    `json:"summary,omitempty"` // the worker's: what was done, or what it needs
 	// More messages from the asker for this task (answers to "blocked"),
 	// waiting for the session to be free.
 	FollowUps []string `json:"follow_ups,omitempty"`
@@ -154,13 +157,13 @@ func taskHeader(t Task) string {
 
 // Submit records a task asked of session s, and starts it if the session is
 // free, else queues it. A messageId seen before is the same task.
-func (m *Manager) Submit(s *Session, messageID, from, text string, refs []string) (Task, error) {
+func (m *Manager) Submit(s *Session, messageID, from, text, title string, refs []string) (Task, error) {
 	id := s.Name() + ":" + messageID
 	if t, ok := m.tasks.get(id); ok {
 		return t, nil
 	}
 	now := time.Now()
-	t := &Task{ID: id, Session: s.Name(), MessageID: messageID, From: from, Request: text, Refs: refs,
+	t := &Task{ID: id, Session: s.Name(), MessageID: messageID, From: from, Request: text, Title: title, Refs: refs,
 		Created: now, Updated: now, State: taskSubmitted}
 	m.tasks.mu.Lock()
 	m.tasks.tasks[id] = t

@@ -406,3 +406,25 @@ func TestA2ALimitsASender(t *testing.T) {
 		t.Error("another sender, or an hour later, was refused")
 	}
 }
+
+// An asker's title names the task in lists: kept on one line and short, and
+// returned with the task. A task without one has none, not a made-up one.
+func TestA2ATaskKeepsTheAskersTitle(t *testing.T) {
+	r := newA2A(t)
+	p := send("m-t", "From pi5/jimmy. A long request\nthat goes on.", false)
+	p["message"].(map[string]any)["metadata"].(map[string]any)["shrooms/title"] = "  Review notes\n on the board  "
+	got := call(t, r.remote.URL+"/a2a/proj", "SendMessage", p)
+	if got.Error != nil || got.Result.Task.Metadata["shrooms/title"] != "Review notes on the board" {
+		t.Fatalf("send: %+v %+v", got.Result.Task.Metadata, got.Error)
+	}
+	if ts := r.m.Tasks("proj"); len(ts) != 1 || ts[0].Title != "Review notes on the board" {
+		t.Errorf("stored: %+v", ts)
+	}
+	got = call(t, r.remote.URL+"/a2a/proj", "SendMessage", send("m-u", "no title here", false))
+	if _, has := got.Result.Task.Metadata["shrooms/title"]; has {
+		t.Errorf("a title nobody gave: %v", got.Result.Task.Metadata["shrooms/title"])
+	}
+	if long := taskTitle(strings.Repeat("word ", 60)); len([]rune(long)) > 121 {
+		t.Errorf("not cut: %d runes", len([]rune(long)))
+	}
+}

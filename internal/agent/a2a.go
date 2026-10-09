@@ -252,6 +252,9 @@ func (h *handler) view(t Task) a2aTask {
 			// Asked by a caged agent, as its own agent said (ADR-044).
 			"shrooms/caged": strings.Contains(t.From, ", in a cage)"),
 		}}
+	if t.Title != "" {
+		out.Metadata["shrooms/title"] = t.Title
+	}
 	if t.Request != "" {
 		out.History = []a2aMessage{{MessageID: t.MessageID, ContextID: ctx, TaskID: t.ID,
 			Role: "ROLE_USER", Parts: []a2aPart{{Text: t.Request}}}}
@@ -411,7 +414,8 @@ func (h *handler) a2aSend(w http.ResponseWriter, r *http.Request, req rpcRequest
 			rpcReply(w, req.ID, nil, &rpcError{a2aTooMany, fmt.Sprintf("more than %d messages to this session from you in an hour", a2aLimit)})
 			return
 		}
-		t, err = h.m.Submit(s, m.MessageID, by, strings.Join(text, "\n\n"), params.ReferenceTaskIDs)
+		title, _ := m.Metadata["shrooms/title"].(string)
+		t, err = h.m.Submit(s, m.MessageID, by, strings.Join(text, "\n\n"), taskTitle(title), params.ReferenceTaskIDs)
 	}
 	if err != nil {
 		rpcReply(w, req.ID, nil, &rpcError{rpcInvalidParams, err.Error()})
@@ -530,4 +534,10 @@ func (h *handler) tasksList(w http.ResponseWriter, r *http.Request) {
 		out = append(out, h.view(t))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tasks": out})
+}
+
+// taskTitle is an asker's title as a list shows it: one line, and short. It
+// is the asker's word, so it is kept as said, only cut down.
+func taskTitle(s string) string {
+	return trim(strings.Join(strings.Fields(s), " "), 120)
 }
