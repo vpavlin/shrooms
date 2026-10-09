@@ -56,3 +56,4 @@ number appears, its source is named.
 | [044](044-cages-reach-agents-through-their-own.md) | Cages reach agents only through their own, which says so | accepted; built — agent port closed in cages, a socket to their own agent, receivers choose (accept_caged) |
 | [045](045-sealed-cages-for-code-nobody-vouches-for.md) | Sealed cages, for code nobody vouches for | accepted; built — internet only, its own token, asks nothing, results in an outbox |
 | [046](046-metrics-on-the-mesh-addresses.md) | Metrics on the mesh addresses | accepted; built — tunnels, delivery and interfaces per node; Prometheus + Grafana via deploy/metrics |
+| [047](047-the-tasks-board-is-read-from-the-agents.md) | The tasks board lives in the agents' own view, read from the agents | accepted; being built — links carry their tasks, cards carry their load, a panel grouped as a person needs it, ACK to the worker's agent |

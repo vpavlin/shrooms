@@ -227,6 +227,7 @@ expect "TASKNAME named by the asker|From X: the request|the real ask|the worker'
 expect "ASKER SPEL,jimmy,," "the asker is not read as a session from the device claim"
 expect "AGE 30s,1h,10h," "the age is not in the units a person reads"
 expect "TASKROW1 From Jimmy: review the module | from=jimmy to=review | latest=which of the two? | ref=laptop/review:m1" "a row does not carry its title, asker, worker, latest line and ref"
+expect "PANEL [Needs you 1] m1 [Working 1] m2 [Stalled 1] m3 [Done, unacked 1] m4" "the panel does not head each non-empty group, or a group with nothing in it is headed anyway"
 expect "LINKS pi5/jimmy>laptop/review:2:input-required:2 · needs you,laptop/shrooms>laptop/review:1:working:1" "a link does not carry the tasks on it, or the most urgent tone does not win"
 expect "LOAD laptop/review=3 owed,laptop/shrooms=1 asked,pi5/jimmy=2 asked" "a card does not show what it owes and what it is waiting for"
 # This device first: an agent on the machine Basecamp runs on is no peer of it.

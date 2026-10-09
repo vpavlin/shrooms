@@ -1489,6 +1489,34 @@ Item {
         onActivated: Qt.callLater(root.escToBoard)
     }
     // The board, with no session open in front of it.
+    // A tap on a task row: open the session that is WORKING ON it. The task
+    // arrived in that session's conversation, which is where a person wants to
+    // be - not on the machine that asked.
+    // ACK a finished task: the asker has seen the result. It goes to the WORKER's
+    // agent (A2A AckTask at /a2a/<session>), because the task lives on the machine
+    // that ran it - the board is only the surface that shows it.
+    function ackTask(row) {
+        if (!row || row.kind !== "task") return false
+        var body = { jsonrpc: "2.0", id: "ack-" + row.id, method: "AckTask", params: { id: row.id } }
+        var r = agentCall("agentPost", [row.address, "/a2a/" + row.session, JSON.stringify(body)])
+        if (r === null) {
+            root.said = "could not ack " + row.id
+            root.saidBad = true
+            return false
+        }
+        root.said = "acked " + (row.title || row.id)
+        root.saidBad = false
+        refreshAgents()
+        return true
+    }
+    function openTaskRow(row) {
+        if (!row || row.kind !== "task") return
+        for (var i = 0; i < agentHosts.length; i++) {
+            if (agentHosts[i].name !== row.machine) continue
+            openSession(agentHosts[i], row.session, true, true)
+            return
+        }
+    }
     function showBoard() {
         root.agentCreating = false
         noteRead()
@@ -1722,6 +1750,23 @@ Item {
         return out
     }
     readonly property var taskRowList: taskRows(agentHosts, nowMs)
+    // The panel's rows INCLUDING a header before each group that has something in
+    // it. One flat list, because a QML Repeater cannot insert a header when a
+    // value changes - and a group with nothing in it gets no header, so the
+    // panel never shows an empty heading.
+    function taskPanelRows(hosts, now) {
+        var rows = taskRows(hosts, now), out = [], last = null
+        for (var i = 0; i < rows.length; i++) {
+            if (rows[i].group !== last) {
+                last = rows[i].group
+                out.push({ kind: "header", group: last, label: taskGroupLabel(last),
+                           count: rows.filter(function(r) { return r.group === last }).length })
+            }
+            out.push(Object.assign({ kind: "task" }, rows[i]))
+        }
+        return out
+    }
+    readonly property var taskPanelList: taskPanelRows(agentHosts, nowMs)
 
     function edgeTint(state) {
         return state === "working" ? cPhosphor : state === "input-required" ? cAmber : state === "stalled" ? cRust : cAsh
@@ -2655,6 +2700,14 @@ Item {
             anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
             anchors.margins: root.sz(8)
             spacing: 3
+            // What this session OWES and what it is WAITING FOR. A card doing four
+            // things should say so rather than looking idle.
+            Text {
+                width: parent.width; elide: Text.ElideRight
+                visible: text !== ""
+                text: root.loadLabel(root.cardLoadData[bcard.cardKey])
+                color: cAmber; font.family: "monospace"; font.pixelSize: root.fs(9)
+            }
             RowLayout {
                 width: parent.width
                 spacing: 6
@@ -2752,6 +2805,10 @@ Item {
             text: root.haveCore ? "Looking for agents among the reachable peers…" : "Agents need shrooms_core, which runs inside Basecamp."
             color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(11)
         }
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            spacing: root.sz(10)
         ScrollView {
             id: boardScroll
             Layout.fillWidth: true
@@ -2818,9 +2875,112 @@ Item {
                             n++
                         }
                         drawn = n
+                        // The links carry their tasks: one badge per PAIR, at the middle of the
+                        // curve between them, saying how many and - when it is not simply working -
+                        // why it is coloured that way. A link that needs a person should say so
+                        // where the person is looking.
+                        var badges = root.boardLinkData
+                        for (var m = 0; m < badges.length; m++) {
+                            var lb = badges[m]
+                            var ra = rectOf(lb.from), rb = rectOf(lb.to)
+                            if (!ra || !rb) continue
+                            var label = root.linkLabel(lb)
+                            if (label === "") continue
+                            var lp = root.linkCurve(ra, rb, 0, root.sz(30))
+                            // The cubic at t=0.5: (p0 + 3p1 + 3p2 + p3) / 8.
+                            var mx = (lp[0].x + 3 * lp[1].x + 3 * lp[2].x + lp[3].x) / 8
+                            var my = (lp[0].y + 3 * lp[1].y + 3 * lp[2].y + lp[3].y) / 8
+                            ctx.font = root.fs(9) + "px monospace"
+                            var bw = ctx.measureText(label).width + root.sz(8)
+                            ctx.fillStyle = root.cVoid
+                            ctx.fillRect(mx - bw / 2, my - root.sz(7), bw, root.sz(14))
+                            ctx.strokeStyle = root.edgeTint(lb.tone)
+                            ctx.lineWidth = 1
+                            ctx.strokeRect(mx - bw / 2, my - root.sz(7), bw, root.sz(14))
+                            ctx.fillStyle = root.edgeTint(lb.tone)
+                            ctx.textAlign = "center"
+                            ctx.textBaseline = "middle"
+                            ctx.fillText(label, mx, my)
+                        }
                     }
                 }
             }
+        }
+        // The tasks panel: every task on every machine, grouped as a person
+        // needs them, BESIDE the board whose links are those same tasks. A link
+        // is one task or several; this is the list of them, in the order that
+        // matters - what is waiting on a person first.
+        Rectangle {
+            id: taskPanel
+            objectName: "taskPanel"
+            visible: root.boardMode && root.taskPanelList.length > 0
+            Layout.preferredWidth: Math.min(root.sz(380), Math.max(root.sz(240), root.width * 0.32))
+            Layout.fillHeight: true
+            color: "transparent"
+            ScrollView {
+                anchors.fill: parent
+                clip: true
+                contentWidth: availableWidth
+                Column {
+                    width: taskPanel.width
+                    spacing: root.sz(2)
+                    Repeater {
+                        model: root.taskPanelList
+                        delegate: Item {
+                            id: trow
+                            required property var modelData
+                            width: taskPanel.width
+                            height: trow.modelData.kind === "header" ? root.sz(26) : root.sz(58)
+                            Text {
+                                anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                                anchors.topMargin: root.sz(6)
+                                visible: trow.modelData.kind === "header"
+                                text: trow.modelData.kind === "header" ? trow.modelData.label + "  " + trow.modelData.count : ""
+                                color: trow.modelData.kind === "header" && trow.modelData.group === "needs-you" ? cAmber : cAsh
+                                font.family: "monospace"; font.pixelSize: root.fs(10); font.bold: true
+                            }
+                            Column {
+                                visible: trow.modelData.kind === "task"
+                                anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                                Text {
+                                    width: parent.width; elide: Text.ElideRight
+                                    text: trow.modelData.kind === "task" ? trow.modelData.title : ""
+                                    color: cBone; font.family: "monospace"; font.pixelSize: root.fs(11)
+                                }
+                                Text {
+                                    width: parent.width; elide: Text.ElideRight
+                                    text: trow.modelData.kind === "task"
+                                          ? (trow.modelData.asker || "?") + " \u2192 " + (trow.modelData.worker || "?")
+                                            + "  " + trow.modelData.age
+                                          : ""
+                                    color: root.edgeTint(trow.modelData.kind === "task" ? trow.modelData.group : "")
+                                    font.family: "monospace"; font.pixelSize: root.fs(9)
+                                }
+                                Text {
+                                    width: parent.width; elide: Text.ElideRight
+                                    text: trow.modelData.kind === "task" ? trow.modelData.latest : ""
+                                    color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(9)
+                                }
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                enabled: trow.modelData.kind === "task"
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: Qt.callLater(function() { root.openTaskRow(trow.modelData) })
+                                // A finished task still owes an ack: that is the one thing a person
+                                // must be able to say back, and only where it does something.
+                                Lnk {
+                                    anchors.right: parent.right; anchors.top: parent.top
+                                    visible: trow.modelData.kind === "task" && trow.modelData.group === "unacked"
+                                    text: "ACK"; base: cAmber; font.pixelSize: root.fs(9)
+                                    onClicked: Qt.callLater(function() { root.ackTask(trow.modelData) })
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         }
     }
 

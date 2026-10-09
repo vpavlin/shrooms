@@ -648,6 +648,9 @@ Item {
                                       view.askerName("no claim here"), view.askerName("")].join(","))
             console.error("AGE " + [view.ageOf("2026-10-09T11:59:30Z", tnow), view.ageOf("2026-10-09T11:00:00Z", tnow),
                                     view.ageOf("2026-10-09T02:00:00Z", tnow), view.ageOf("nonsense", tnow)].join(","))
+            // The panel's rows, with a header per non-empty group.
+            var prows = view.taskPanelRows(top.taskHosts, tnow)
+            console.error("PANEL " + prows.map(function(r) { return r.kind === "header" ? "[" + r.label + " " + r.count + "]" : r.id.split(":")[1] }).join(" "))
             // The links carrying their tasks, and the load on each card.
             var links = view.boardLinkList(top.taskHosts)
             console.error("LINKS " + links.map(function(e) { return e.from + ">" + e.to + ":" + e.count + ":" + e.tone + ":" + view.linkLabel(e) }).join(","))
