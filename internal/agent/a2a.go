@@ -77,11 +77,15 @@ type a2aArtifact struct {
 }
 
 type a2aTask struct {
-	ID        string         `json:"id"`
-	ContextID string         `json:"contextId"`
-	Status    a2aStatus      `json:"status"`
-	Artifacts []a2aArtifact  `json:"artifacts,omitempty"`
-	Metadata  map[string]any `json:"metadata,omitempty"`
+	ID        string        `json:"id"`
+	ContextID string        `json:"contextId"`
+	Status    a2aStatus     `json:"status"`
+	Artifacts []a2aArtifact `json:"artifacts,omitempty"`
+	// History is A2A's record of the messages that make the task; ours holds
+	// the request, so whoever shows a task can say what was asked and not
+	// only what was answered.
+	History  []a2aMessage   `json:"history,omitempty"`
+	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
 // a2aLimit bounds what one device may ask one session over A2A in an hour:
@@ -248,6 +252,10 @@ func (h *handler) view(t Task) a2aTask {
 			// Asked by a caged agent, as its own agent said (ADR-044).
 			"shrooms/caged": strings.Contains(t.From, ", in a cage)"),
 		}}
+	if t.Request != "" {
+		out.History = []a2aMessage{{MessageID: t.MessageID, ContextID: ctx, TaskID: t.ID,
+			Role: "ROLE_USER", Parts: []a2aPart{{Text: t.Request}}}}
+	}
 	if !t.LastNudge.IsZero() {
 		out.Metadata["shrooms/last_nudge"] = t.LastNudge.UTC().Format(time.RFC3339)
 	}

@@ -141,6 +141,11 @@ func TestA2ATaskLastsUntilTheWorkerFinishesIt(t *testing.T) {
 	if g.Result.Task.Status.State != taskCompleted || statusText(g.Result.Task) != "said hello back" || len(g.Result.Task.Artifacts) != 1 {
 		t.Fatalf("done: %+v", g.Result.Task)
 	}
+	// What was asked stays with it, as A2A's history: the answer alone does
+	// not say what the task was.
+	if h := g.Result.Task.History; len(h) != 1 || h[0].Role != "ROLE_USER" || len(h[0].Parts) != 1 || h[0].Parts[0].Text != "hello" {
+		t.Errorf("history: %+v", h)
+	}
 	waitFor(t, s, 0, func(e Event) bool { return e.Kind == "task" && strings.Contains(string(e.Data), `"completed"`) })
 	a := call(t, r.remote.URL+"/a2a", "AckTask", map[string]any{"id": "proj:m-1"})
 	if a.Result.Task.Metadata["shrooms/acknowledged"] != true {

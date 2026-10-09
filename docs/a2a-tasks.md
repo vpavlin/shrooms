@@ -81,6 +81,10 @@ satisfied opens a new task with `referenceTaskIds` pointing at the old one.
 `shrooms/acknowledged`, `shrooms/last_worker_line`. `ListTasks` lists a
 session's tasks; `GET /v1/tasks[?session=]` is the apps' list.
 
+What was asked is the task's A2A `history`: one `ROLE_USER` message with the
+request, so a board or a list can title a task by its question rather than
+by its answer.
+
 ## Kept
 
 `tasks.json` in the agent's state directory; finished tasks are dropped a week
