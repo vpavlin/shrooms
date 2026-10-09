@@ -87,7 +87,9 @@ session over the API).
   the files sent to sessions (`uploads/`, read-only); the harness's settings
   and transcripts — `~/.claude` for Claude Code, `~/.pi/agent` for pi — so a
   caged conversation resumes, is searched and read like any other;
-  shrooms-agent and the daemon's socket, for the shrooms MCP tools. Nothing
+  shrooms-agent, for the shrooms MCP tools, which reach agents through the
+  cage's socket to its own (ADR-044) — not the daemon's control socket, whose
+  group tier can change the mesh (mounted until 2026-10-09). Nothing
   else of the owner's home. `HOME` is the owner's; Claude Code's settings
   file goes to `~/.claude/.claude.json` (`CLAUDE_CONFIG_DIR`), since the one
   beside the home directory is not there.

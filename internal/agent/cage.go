@@ -285,11 +285,12 @@ func (m *Manager) cageMounts(s *Session, harness string) []mount {
 			}
 		}
 	}
-	if m.Cages.Socket != "" {
-		if _, err := os.Stat(m.Cages.Socket); err == nil {
-			ms = append(ms, mount{path: m.Cages.Socket})
-		}
-	}
+	// Not the shrooms daemon's control socket. It was mounted for the
+	// shrooms tools to find the machines, but the agent's user's tier on it
+	// can leave or join a mesh, change the relay, the services and what is
+	// announced, and restart the daemon — the machine, from a cage (found
+	// 2026-10-09). The tools find the machines through the cage's own socket
+	// to its agent now (cageproxy.go).
 	var out []mount
 	for _, x := range ms {
 		if _, err := os.Stat(x.path); err == nil {
@@ -383,7 +384,7 @@ func (c *Cages) createArgs(name, session, image string, ms []mount) []string {
 	args := []string{"create", "--name", name, "--label", "xyz.vpavlin.shrooms.session=" + session,
 		// A cage made with its own agent's socket (ADR-044); one without is
 		// made again.
-		"--label", proxyLabel + "=1",
+		"--label", proxyLabel + "=" + cageGeneration,
 		"--network", cageNetwork, "--security-opt", "label=disable",
 		// Not in podman's defaults either; said so, since the rule that
 		// closes the agent port depends on it.
@@ -425,7 +426,7 @@ func (m *Manager) prepareCage(s *Session, bin string) (*cageRun, error) {
 	if _, err := c.run(ctx, "container", "exists", name); err == nil {
 		// Made before cages had their own agent's socket: made again, and
 		// what was installed in it goes (ADR-044).
-		if out, _ := c.run(ctx, "inspect", "--format", "{{index .Config.Labels \""+proxyLabel+"\"}}", name); strings.TrimSpace(out) != "1" {
+		if out, _ := c.run(ctx, "inspect", "--format", "{{index .Config.Labels \""+proxyLabel+"\"}}", name); strings.TrimSpace(out) != cageGeneration {
 			c.run(ctx, "rm", "-f", "-t", "3", name)
 			s.record("caged", "shrooms", map[string]any{"caged": true, "image": image, "nix": s.cage.Nix, "github": s.cage.GitHub,
 				"remade": "made again, to reach agents only through its own; what was installed in it is gone"})

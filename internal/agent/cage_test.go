@@ -36,7 +36,7 @@ rm) eval last=\${$#}; rm -f "$D/c-$last" "$D/c-$last.old" ;;
 inspect)
   case "$3" in
   *Pid*) echo 4242 ;;
-  *proxy*) [ -f "$D/c-$4.old" ] || echo 1 ;;
+  *proxy*) [ -f "$D/c-$4.old" ] || echo 2 ;;
   esac ;;
 unshare) cat > /dev/null ;;
 build) cat > $D/Containerfile ;;
@@ -82,7 +82,9 @@ func TestACagedSessionRunsInItsOwnContainer(t *testing.T) {
 	podman, log := fakePodman(t, false)
 	state := t.TempDir()
 	m := newTestManager(t, state)
-	m.Cages = &Cages{Podman: podman, Image: "localhost/bench:1", Memory: "4g", CPUs: "2", Pids: 100, Nft: "nft"}
+	daemonSock := filepath.Join(t.TempDir(), "shrooms.sock")
+	os.WriteFile(daemonSock, nil, 0o600)
+	m.Cages = &Cages{Podman: podman, Image: "localhost/bench:1", Memory: "4g", CPUs: "2", Pids: 100, Nft: "nft", Socket: daemonSock}
 	t.Setenv("ANTHROPIC_API_KEY", "sk-test")
 	project := t.TempDir()
 
@@ -110,12 +112,15 @@ func TestACagedSessionRunsInItsOwnContainer(t *testing.T) {
 	}
 	for _, want := range []string{"--network " + cageNetwork, "--memory 4g", "--cpus 2", "--pids-limit 100",
 		"-v " + project + ":" + project + " ", "-v " + filepath.Join(state, "uploads") + ":" + filepath.Join(state, "uploads") + ":ro",
-		" localhost/bench:1 sleep infinity", "--cap-drop NET_ADMIN", "--label " + proxyLabel + "=1",
+		" localhost/bench:1 sleep infinity", "--cap-drop NET_ADMIN", "--label " + proxyLabel + "=" + cageGeneration,
 		// Its own agent's socket, the only way it reaches agents (ADR-044).
 		"-v " + filepath.Join(state, "cages") + "/shrooms-box-"} {
 		if !strings.Contains(cs[create], want) {
 			t.Errorf("the container is made without %q:\n%s", want, cs[create])
 		}
+	}
+	if sock := m.Cages.Socket; sock != "" && strings.Contains(cs[create], sock) {
+		t.Errorf("the shrooms daemon's control socket is in the cage: %s", cs[create])
 	}
 	home, _ := os.UserHomeDir()
 	if strings.Contains(cs[create], "-v "+home+":") {

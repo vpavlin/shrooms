@@ -35,8 +35,13 @@ const cagedHeader = "X-Shrooms-Caged"
 // CageProxyDir is where a cage sees its socket.
 const CageProxyDir = "/run/shrooms-agent"
 
-// proxyLabel marks a container made with its socket.
-const proxyLabel = "xyz.vpavlin.shrooms.proxy"
+// proxyLabel marks a container with how it was made; one of an older
+// generation is made again on its next start. 1: with its socket to its
+// agent (ADR-044). 2: without the shrooms daemon's control socket.
+const (
+	proxyLabel     = "xyz.vpavlin.shrooms.proxy"
+	cageGeneration = "2"
+)
 
 // Machine is one machine on the mesh with an agent's address: this one
 // first, then its peers (cmd/shrooms-agent fills Manager.Machines).

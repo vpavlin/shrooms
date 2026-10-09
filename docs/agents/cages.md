@@ -218,8 +218,12 @@ curl -X POST "http://[MESH-ADDRESS]:7387/v1/sessions/webapp/cage" \
   read-only;
 - for Claude Code, `~/.claude` read-write and the directory of the machine's
   `claude` program read-only; for pi, `~/.pi/agent` read-write;
-- `shrooms-agent` itself and the shrooms daemon's socket, for the shrooms MCP
-  tools;
+- `shrooms-agent` itself, for the shrooms MCP tools, and the cage's socket to
+  its own agent at `/run/shrooms-agent/proxy.sock`, which they go through.
+  **Not** the shrooms daemon's control socket: your user's tier on it can
+  leave or join a mesh, change the relay and the services, and restart the
+  daemon. It was mounted until 2026-10-09, and cages made with it are made
+  again;
 - with nix: `/nix`, `~/.local/state/nix` and `~/.config/nix`; with GitHub:
   `~/.config/gh`.
 
@@ -366,10 +370,11 @@ every caged session. If you run `claude` yourself in a cage with
 `podman exec`, pass it: `podman exec -it -e IS_SANDBOX=1 …`, or
 `--env-file` with the session's environment file.
 
-**The shrooms tools fail inside a cage.** The shrooms daemon's socket and the
-`shrooms-agent` program are mounted when the container is made. If the
-daemon was not running then, or the agent's binary has since moved to
-another path, the container lacks them: move the session out and back in.
+**The shrooms tools fail inside a cage.** The `shrooms-agent` program is
+mounted when the container is made. If the agent's binary has since moved to
+another path, the container lacks it: move the session out and back in. The
+tools reach agents only through `/run/shrooms-agent/proxy.sock`, which the
+agent serves while it runs.
 
 **A message fails with a podman error about cgroups or controllers.** The
 limits could not be applied: see Requirements.
