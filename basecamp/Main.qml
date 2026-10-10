@@ -3669,7 +3669,7 @@ Layout.preferredWidth: 0
                                         property bool armed: false
                                         visible: root.cardJob.step === "idle" && !!modelData.device
                                         text: armed ? "revoke?" : "revoke"
-                                        color: armed ? cAmber : cLine
+                                        color: armed ? cAmber : cAsh
                                         font.family: "monospace"; font.pixelSize: root.fs(9)
                                         MouseArea {
                                             anchors.fill: parent
