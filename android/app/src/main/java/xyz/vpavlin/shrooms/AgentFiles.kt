@@ -62,6 +62,7 @@ fun FilesDialog(client: AgentClient, session: String, start: AgentSession?, onCh
     var info by remember { mutableStateOf(start) }
     var files by remember { mutableStateOf<List<DroppedFile>?>(null) }
     var adding by remember { mutableStateOf("") }
+    var sendTo by remember { mutableStateOf("") }
     var said by remember { mutableStateOf("") }
     var round by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
@@ -85,7 +86,8 @@ fun FilesDialog(client: AgentClient, session: String, start: AgentSession?, onCh
         confirmButton = { TextButton(onClick = onClose) { Text("Done") } },
         text = {
             Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (said.isNotEmpty()) Text(said, color = Palette.Rust, style = MaterialTheme.typography.labelSmall)
+                if (said.isNotEmpty()) Text(said, color = if (said.startsWith("could not")) Palette.Rust else Palette.Phosphor,
+                    style = MaterialTheme.typography.labelSmall)
                 val asks = info?.fileRequests.orEmpty()
                 if (asks.isNotEmpty()) {
                     Text("WANTS TO SEND FILES", style = MaterialTheme.typography.labelSmall, color = Palette.Amber)
@@ -121,6 +123,29 @@ fun FilesDialog(client: AgentClient, session: String, start: AgentSession?, onCh
                                 change("add") { client.setAcceptFiles(session, AgentFiles.allow(allowed, e)) }
                             }
                         }.padding(6.dp))
+                }
+                // A sealed session sends nothing itself; its machine's agent carries its
+                // outbox out, packed without following links (ADR-048).
+                if (info?.cage?.sealed == true) {
+                    Text("OUTBOX", style = MaterialTheme.typography.labelSmall, color = Palette.Ash, modifier = Modifier.padding(top = 8.dp))
+                    Text("Sent to a task's asker when the task ends. To send it all elsewhere:",
+                        style = MaterialTheme.typography.labelSmall, color = Palette.Ash)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(sendTo, { sendTo = it }, modifier = Modifier.weight(1f), singleLine = true,
+                            placeholder = { Text("machine/session", style = MaterialTheme.typography.labelSmall) },
+                            textStyle = MaterialTheme.typography.bodySmall)
+                        Spacer(Modifier.width(8.dp))
+                        Text("send", color = if (AgentFiles.valid(sendTo)) Palette.Phosphor else Palette.Ash,
+                            style = MaterialTheme.typography.labelSmall, modifier = Modifier.clickable {
+                                if (AgentFiles.valid(sendTo)) {
+                                    val to = sendTo.trim()
+                                    scope.launch {
+                                        said = withContext(Dispatchers.IO) { runCatching { client.sendOutbox(session, to) } }
+                                            .fold({ it }, { "could not send: ${it.message}" })
+                                    }
+                                }
+                            }.padding(6.dp))
+                    }
                 }
                 Text("RECEIVED", style = MaterialTheme.typography.labelSmall, color = Palette.Ash, modifier = Modifier.padding(top = 8.dp))
                 val fs = files

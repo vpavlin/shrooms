@@ -302,6 +302,11 @@ class AgentClient(private val address: String) {
         }
     }
 
+    /** Sends a sealed session's whole outbox, packed by its machine's agent, to MACHINE/SESSION. */
+    fun sendOutbox(session: String, to: String): String =
+        JSONObject(request("POST", "/v1/sessions/${enc(session)}/outbox/send", JSONObject().put("to", to).toString(), 360_000))
+            .optString("result")
+
     fun removeDropped(session: String, from: String, file: String) {
         request("DELETE", "/v1/sessions/${enc(session)}/drop?from=${enc(from)}&file=${enc(file)}", null)
     }

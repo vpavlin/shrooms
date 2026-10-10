@@ -1409,6 +1409,17 @@ Item {
     }
     function sizeLabel(n) { return n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : n >= 1024 ? (n / 1024).toFixed(1) + " kB" : n + " bytes" }
     function openFiles() { loadDropped(); filesDialog.open() }
+    // A sealed session's whole outbox, packed by its machine's agent (never
+    // following a link) and sent as the session to MACHINE/SESSION (ADR-048).
+    function sendOutbox(to) {
+        if (!agentOpen || !filesValid(to)) return false
+        var r = agentCall("agentPost", [agentOpen.address, "/v1/sessions/" + agentOpen.session + "/outbox/send",
+                                        JSON.stringify({ to: String(to).trim() })])
+        if (r === null) return false
+        root.said = r.result || "sent"
+        root.saidBad = false
+        return true
+    }
 
     // Which of its machine's meshes the open session is there for (ADR-049):
     // from any other it does not exist. None ticked is every mesh.
@@ -3033,6 +3044,25 @@ Item {
                     }
                     Lnk { id: addFiles; text: "ADD"; base: root.filesValid(filesAdd.text) ? cPhosphor : cAsh; font.pixelSize: root.fs(10)
                           onClicked: if (root.filesValid(filesAdd.text) && root.setAcceptFiles(root.filesAllow(root.agentInfo ? root.agentInfo.accept_files_from : [], filesAdd.text))) filesAdd.text = "" }
+                }
+                // A sealed session sends nothing itself: its outbox is carried out by its
+                // machine's agent, to a task's asker when the task ends, or here by hand.
+                Text { visible: !!(root.agentInfo && root.agentInfo.cage && root.agentInfo.cage.sealed)
+                       text: "OUTBOX — sent to a task's asker when the task ends; to send it all elsewhere:"
+                       Layout.fillWidth: true; wrapMode: Text.Wrap
+                       color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(10); Layout.topMargin: root.sz(8) }
+                RowLayout {
+                    visible: !!(root.agentInfo && root.agentInfo.cage && root.agentInfo.cage.sealed)
+                    Layout.fillWidth: true
+                    TextField {
+                        id: outboxTo
+                        Layout.fillWidth: true
+                        placeholderText: "machine/session"
+                        color: cBone; placeholderTextColor: cAsh; font.family: "monospace"; font.pixelSize: root.fs(11)
+                        background: Rectangle { color: cVoid; radius: 6; border.color: outboxTo.activeFocus ? cPhosphor : cLine }
+                    }
+                    Lnk { text: "SEND"; base: root.filesValid(outboxTo.text) ? cPhosphor : cAsh; font.pixelSize: root.fs(10)
+                          onClicked: if (root.sendOutbox(outboxTo.text)) outboxTo.text = "" }
                 }
                 // What other agents sent it.
                 Text { text: "RECEIVED"; color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(10); Layout.topMargin: root.sz(8) }
