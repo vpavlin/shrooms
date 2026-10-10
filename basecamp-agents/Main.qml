@@ -1499,8 +1499,12 @@ Item {
         if (!row || row.kind !== "task") return false
         var body = { jsonrpc: "2.0", id: "ack-" + row.id, method: "AckTask", params: { id: row.id } }
         var r = agentCall("agentPost", [row.address, "/a2a/" + row.session, JSON.stringify(body)])
-        if (r === null) {
-            root.said = "could not ack " + row.id
+        // A JSON-RPC ERROR comes back as a body, not as a failure, so this used to say
+        // "acked ..." while the agent had refused (no such task, session renamed away).
+        var err = null
+        try { var o = typeof r === "string" ? JSON.parse(r) : r; if (o && o.error) err = o.error } catch (e) { }
+        if (r === null || err) {
+            root.said = "could not ack " + row.id + (err && err.message ? ": " + err.message : "")
             root.saidBad = true
             return false
         }
@@ -1544,7 +1548,10 @@ Item {
     // ("laptop" for "laptop.home") still finds it; an asker that is no
     // session (the CLI, an app) has no card.
     function askerKey(from, keys) {
-        var m = /\(([^)\/]+)\/([^)]+)\)\s*$/.exec(String(from || ""))
+        // The same two shapes askerName knows about. A CAGED sender is
+        // "laptop (laptop/shrooms, in a cage)": the old regex captured "shrooms, in a cage"
+        // as the session, found no such card, and the link silently vanished.
+        var m = /\(([^)\/]+)\/([^),]+)(,\s*[^)]*)?\)\s*$/.exec(String(from || ""))
         if (!m) return ""
         var want = m[1] + "/" + m[2]
         if (keys[want]) return want
@@ -1675,10 +1682,11 @@ Item {
         }
         return oneLine(t && t.summary)
     }
-    // One line, whitespace collapsed, cut to fit. A title is a label.
+    // One line, whitespace collapsed. NOT cut: fitting a narrow card is the view's job
+    // (elide: Text.ElideRight), and a second number in the data would only drift from the
+    // store's 120. A wide panel can then show more of the same title.
     function oneLine(s) {
-        var v = String(s === null || s === undefined ? "" : s).replace(/\s+/g, " ").trim()
-        return v.length > 90 ? v.substring(0, 89) + "\u2026" : v
+        return String(s === null || s === undefined ? "" : s).replace(/\s+/g, " ").trim()
     }
     // The first line only: a request is usually "From X..." and then the ask.
     function firstLine(s) {
@@ -1699,8 +1707,11 @@ Item {
     // not listed at all - the list is what is still owed.
     function taskGroup(t) {
         var w = stateWordOf(t && t.status ? t.status.state : "")
-        if (taskStalledOf(t)) return "stalled"
+        // Needs you FIRST, even when it is also stalled: a task waiting on a person is the
+        // one that is urgent, and a stalled task that is also blocked on you is still blocked
+        // on you. (The reviewer: it should stay in Needs you.)
         if (w === "input-required") return "needs-you"
+        if (taskStalledOf(t)) return "stalled"
         if (/completed|failed|canceled|rejected|expired/.test(w)) return taskAckedOf(t) ? "done" : "unacked"
         return "working"
     }
@@ -1719,11 +1730,29 @@ Item {
         if (s < 86400) return Math.floor(s / 3600) + "h"
         return Math.floor(s / 86400) + "d"
     }
-    // The asker as a SESSION, not the device claim: "laptop.default
-    // (laptop/SPEL)" is the session SPEL on the machine laptop.
+    // The age, labelled for what it is: "quiet 2h" while a task is open (how long since it
+    // last moved), "done 3h" once it is finished (how long since it finished).
+    function ageLabel(row) {
+        if (!row || !row.age) return ""
+        return (row.quiet ? "quiet " : "done ") + row.age
+    }
+
+    // The asker as a SESSION, not the device claim. Two shapes to know about:
+    //   "laptop.default (laptop/SPEL)"                 -> SPEL
+    //   "laptop (laptop/shrooms, in a cage)"           -> shrooms, and it IS caged
+    //   "pi5.office"                                   -> no session at all: a phone or
+    //                                                     Basecamp user. Someone asked, so
+    //                                                     show the DEVICE rather than nobody.
+    // The cage used to come through as part of the session ("shrooms, in a cage"), which then
+    // matched no card and silently dropped the link.
     function askerName(from) {
-        var m = /\(([^)\/]+)\/([^)]+)\)\s*$/.exec(String(from || ""))
-        return m ? m[2] : ""
+        var s = String(from || "")
+        var m = /\(([^)\/]+)\/([^),]+)(,\s*[^)]*)?\)\s*$/.exec(s)
+        if (m) return m[2].trim()
+        return s.trim()
+    }
+    function askerCaged(from) {
+        return /,\s*in a cage/.test(String(from || ""))
     }
     // Every task on every machine, as the panel's rows. The machines' own
     // answers, straight through, grouped in the order a person needs them.
@@ -1735,11 +1764,19 @@ Item {
                 var t = ts[j], g = taskGroup(t)
                 if (g === "done") continue
                 var md = t.metadata || {}, who = md["shrooms/session"] || ""
-                out.push({ id: t.id, group: g, title: taskTitleOf(t), latest: taskLatestOf(t),
-                           from: md["shrooms/from"] || "", asker: askerName(md["shrooms/from"]),
-                           worker: who, ref: h.name + "/" + who + ":" + String(t.id || "").split(":").pop(),
-                           machine: h.name, address: h.address, session: who,
+                var from = md["shrooms/from"] || ""
+                // A row is never a gap: a task from an older agent may have no title, no
+                // request and no summary, and the id is still something a person can use.
+                var title = taskTitleOf(t)
+                if (title === "") title = String(t.id || "(no id)")
+                out.push({ id: t.id, group: g, title: title, latest: taskLatestOf(t),
+                           from: from, asker: askerName(from), caged: askerCaged(from),
+                           worker: who, machine: h.name, address: h.address, session: who,
                            at: taskAtOf(t), age: ageOf(taskAtOf(t), now),
+                           // `status.timestamp` is the last UPDATE, so this is how long the
+                           // task has been QUIET, not how long since it was asked. Say which:
+                           // a task asked three days ago that moved a minute ago is quiet 1m.
+                           quiet: g !== "unacked",
                            acked: taskAckedOf(t), stalled: taskStalledOf(t) })
             }
         }

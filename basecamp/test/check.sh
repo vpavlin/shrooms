@@ -221,15 +221,18 @@ fi
 expect "HOSTS=1 SESSIONS=2" "the agents were not listed"
 # The tasks panel's rows: grouped Needs you / Working / Stalled / Done unacked, with the
 # acked one gone, the ages right, and each row carrying what a person needs to judge it.
-expect "TASKROWS needs-you:m1:1h,working:m2:30m,stalled:m3:2h,unacked:m4:3h" "the task rows are not grouped and ordered as a person needs them"
+expect "TASKROWS needs-you:m1:1h,needs-you:m6:15m,working:m2:30m,working:m7:10m,stalled:m3:2h,unacked:m4:3h" "the task rows are not grouped and ordered as a person needs them: Needs you first, then oldest-first inside each group"
 expect "TASKORDER needs-you,working,stalled,unacked labels=Needs you/Working/Stalled/Done, unacked" "the task groups are not in the agreed order or named as agreed"
 expect "TASKNAME named by the asker|From X: the request|the real ask|the worker's own summary|" "a task is not named by the asker's title, then the request's first line, then the summary"
-expect "ASKER SPEL,jimmy,," "the asker is not read as a session from the device claim"
+expect "ASKER SPEL,jimmy,shrooms,pi5.office," "the asker is not read as a session: a caged one, or one with no session at all"
 expect "AGE 30s,1h,10h," "the age is not in the units a person reads"
-expect "TASKROW1 From Jimmy: review the module | from=jimmy to=review | latest=which of the two? | ref=laptop/review:m1" "a row does not carry its title, asker, worker, latest line and ref"
-expect "PANEL [Needs you 1] m1 [Working 1] m2 [Stalled 1] m3 [Done, unacked 1] m4" "the panel does not head each non-empty group, or a group with nothing in it is headed anyway"
-expect "LINKS pi5/jimmy>laptop/review:2:input-required:2 · needs you,laptop/shrooms>laptop/review:1:working:1" "a link does not carry the tasks on it, or the most urgent tone does not win"
-expect "LOAD laptop/review=3 owed,laptop/shrooms=1 asked,pi5/jimmy=2 asked" "a card does not show what it owes and what it is waiting for"
+expect "TASKROW1 From Jimmy: review the module | from=jimmy to=review | latest=which of the two? | quiet 1h | hasref=false" "a row does not carry its title, asker, worker, latest line, labelled age"
+expect "CAGED true,false" "a caged asker is not told apart from an uncaged one"
+expect "AGELABEL quiet 2h,done 3h," "the age is not labelled for what it measures"
+expect "BAREROW jimmy:no-title-1" "a task with no title leaves a gap instead of falling back to its id"
+expect "PANEL [Needs you 2] m1 m6 [Working 2] m2 m7 [Stalled 1] m3 [Done, unacked 1] m4" "the panel does not head each non-empty group, or a task that is both blocked and stalled is not in Needs you"
+expect "LINKS pi5/jimmy>laptop/review:2:input-required:2 · needs you,laptop/shrooms>laptop/review:2:stalled:2 · stalled" "a link does not carry the tasks on it, the most urgent tone does not win, or a CAGED asker's link silently vanished"
+expect "LOAD laptop/review=5 owed,laptop/shrooms=2 asked,pi5/jimmy=2 asked" "a card does not show what it owes and what it is waiting for"
 # This device first: an agent on the machine Basecamp runs on is no peer of it.
 expect "PROBED=desk|office|fdb0:9afc:a5ef:1111:2222:3333:4444:5555;laptop|office|fdb0:9afc:a5ef:388c" "this device's own agent is not looked for"
 # History before the conversation, the conversation's rows in order, the

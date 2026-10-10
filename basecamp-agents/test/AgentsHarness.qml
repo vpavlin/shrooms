@@ -645,7 +645,10 @@ Item {
                 view.taskTitleOf({})
             ].join("|"))
             console.error("ASKER " + [view.askerName("laptop.default (laptop/SPEL)"), view.askerName("pi5 (pi5/jimmy)"),
-                                      view.askerName("no claim here"), view.askerName("")].join(","))
+                                      view.askerName("laptop (laptop/shrooms, in a cage)"), view.askerName("pi5.office"),
+                                      view.askerName("")].join(","))
+            console.error("CAGED " + [view.askerCaged("laptop (laptop/shrooms, in a cage)"),
+                                      view.askerCaged("laptop.default (laptop/SPEL)")].join(","))
             console.error("AGE " + [view.ageOf("2026-10-09T11:59:30Z", tnow), view.ageOf("2026-10-09T11:00:00Z", tnow),
                                     view.ageOf("2026-10-09T02:00:00Z", tnow), view.ageOf("nonsense", tnow)].join(","))
             // The panel's rows, with a header per non-empty group.
@@ -657,7 +660,16 @@ Item {
             var load = view.cardLoad(top.taskHosts)
             console.error("LOAD " + Object.keys(load).sort().map(function(k) { return k + "=" + view.loadLabel(load[k]) }).join(","))
             console.error("TASKROW1 " + (trows[0] ? trows[0].title + " | from=" + trows[0].asker + " to=" + trows[0].worker
-                          + " | latest=" + trows[0].latest + " | ref=" + trows[0].ref : "none"))
+                          + " | latest=" + trows[0].latest + " | " + view.ageLabel(trows[0])
+                          + " | hasref=" + (trows[0].ref !== undefined) : "none"))
+            console.error("AGELABEL " + [view.ageLabel({ age: "2h", quiet: true }), view.ageLabel({ age: "3h", quiet: false }),
+                                         view.ageLabel({})].join(","))
+            // a task with no title at all must still be a row, not a gap
+            var bare = view.taskRows([{ name: "pi5", address: "fd00::9",
+                sessions: [{ name: "jimmy" }],
+                tasks: [{ id: "jimmy:no-title-1", status: { state: "TASK_STATE_WORKING", timestamp: "2026-10-09T11:00:00Z" },
+                          metadata: { "shrooms/session": "jimmy" } }] }], tnow)
+            console.error("BAREROW " + (bare[0] ? bare[0].title : "none"))
             top.boardFind = top.boardHosts
             view.refreshAgents()
             view.setBoard(true)
@@ -679,6 +691,13 @@ Item {
                           "shrooms/title": "the asker named this one" } },
             { id: "review:m3", status: { state: "TASK_STATE_WORKING", timestamp: "2026-10-09T10:00:00Z" },
               metadata: { "shrooms/session": "review", "shrooms/from": "pi5 (pi5/jimmy)", "shrooms/stalled": true } },
+            // input-required AND stalled: a task waiting on a person stays in Needs you
+            { id: "review:m6", status: { state: "TASK_STATE_INPUT_REQUIRED", timestamp: "2026-10-09T11:45:00Z" },
+              metadata: { "shrooms/session": "review", "shrooms/from": "laptop (laptop/shrooms, in a cage)",
+                          "shrooms/stalled": true } },
+            // the session in the id is the OLD name after a rename; shrooms/session is the new one
+            { id: "oldname:m7", status: { state: "TASK_STATE_WORKING", timestamp: "2026-10-09T11:50:00Z" },
+              metadata: { "shrooms/session": "review", "shrooms/from": "pi5.office" } },
             { id: "review:m4", status: { state: "TASK_STATE_COMPLETED", timestamp: "2026-10-09T09:00:00Z",
                                          message: { parts: [{ text: "done, and here is why" }] } },
               metadata: { "shrooms/session": "review", "shrooms/from": "pi5 (pi5/jimmy)" } },
