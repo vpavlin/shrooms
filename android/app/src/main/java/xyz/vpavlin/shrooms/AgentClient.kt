@@ -291,6 +291,21 @@ class AgentClient(private val address: String) {
         request("POST", "/v1/tasks/${enc(id).replace("%3A", ":")}/ack", "")
     }
 
+    /** Answers a task waiting on its asker, in the asker's place. */
+    fun answer(id: String, text: String) {
+        request("POST", "/v1/tasks/${enc(id).replace("%3A", ":")}/answer", JSONObject().put("text", text).toString())
+    }
+
+    /** Sends a task's asker its note again. */
+    fun nudge(id: String) {
+        request("POST", "/v1/tasks/${enc(id).replace("%3A", ":")}/nudge", "")
+    }
+
+    /** Calls a task off. */
+    fun cancel(id: String) {
+        request("POST", "/v1/tasks/${enc(id).replace("%3A", ":")}/cancel", "")
+    }
+
     fun remove(name: String) {
         request("DELETE", "/v1/sessions/${enc(name)}", null)
     }

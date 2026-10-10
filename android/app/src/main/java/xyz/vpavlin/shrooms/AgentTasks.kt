@@ -40,16 +40,18 @@ data class TaskRow(val host: String, val address: String, val mesh: String, val 
 
 object AgentTasks {
     const val NEEDS_YOU = "needs-you"
+    const val BLOCKED = "blocked"
     const val WORKING = "working"
     const val STALLED = "stalled"
     const val UNACKED = "unacked"
     const val DONE = "done"
-    val ORDER = listOf(NEEDS_YOU, WORKING, STALLED, UNACKED)
+    val ORDER = listOf(NEEDS_YOU, BLOCKED, WORKING, STALLED, UNACKED)
 
     private val FINISHED = setOf("completed", "failed", "canceled", "rejected", "expired")
 
     fun label(group: String): String = when (group) {
         NEEDS_YOU -> "Needs you"
+        BLOCKED -> "Blocked"
         WORKING -> "Working"
         STALLED -> "Stalled"
         else -> "Done, unacked"
@@ -59,12 +61,15 @@ object AgentTasks {
     fun stateWord(s: String): String = s.removePrefix("TASK_STATE_").lowercase().replace('_', '-')
 
     /**
-     * Where a task belongs. A task waiting on a person comes first even when
-     * it also stalled: that is the one somebody has to answer. Acknowledged
-     * ones are finished and not listed at all.
+     * Where a task belongs. A task waiting on its asker comes first even when
+     * it also stalled: somebody has to answer it. Waiting on a person — asked
+     * from an app, so no session named — it needs you; waiting on the agent
+     * session that asked, it is blocked on that agent (which is told, and may
+     * be answered for, nudged, or called off). Acknowledged ones are finished
+     * and not listed at all.
      */
     fun group(t: AgentTask): String = when {
-        t.state == "input-required" -> NEEDS_YOU
+        t.state == "input-required" -> if (CLAIM.containsMatchIn(t.from)) BLOCKED else NEEDS_YOU
         t.state in FINISHED -> if (t.acked) DONE else UNACKED
         t.stalled -> STALLED
         else -> WORKING
@@ -125,7 +130,21 @@ object AgentTasks {
 
     /** The tasks with those acknowledged here marked so, until their agents say the same. */
     fun withAcked(perHost: List<Pair<AgentHost, List<AgentTask>>>, ids: Set<String>): List<Pair<AgentHost, List<AgentTask>>> =
-        if (ids.isEmpty()) perHost else perHost.map { (h, ts) -> h to ts.map { if (it.id in ids) it.copy(acked = true) else it } }
+        withLocal(perHost, ids, emptyMap())
+
+    /**
+     * What was done here, over what the agents last said: acknowledged, and
+     * answered (working again) — so the row moves at once, not a round later.
+     */
+    fun withLocal(perHost: List<Pair<AgentHost, List<AgentTask>>>, acked: Set<String>,
+                  states: Map<String, String>): List<Pair<AgentHost, List<AgentTask>>> =
+        if (acked.isEmpty() && states.isEmpty()) perHost
+        else perHost.map { (h, ts) ->
+            h to ts.map { t ->
+                val s = states[t.id]?.takeIf { t.state == "input-required" } ?: t.state
+                if (t.id in acked || s != t.state) t.copy(acked = t.acked || t.id in acked, state = s) else t
+            }
+        }
 
     /**
      * Of a search for the task, the hit that IS its arrival: the agent's own

@@ -38,7 +38,8 @@ class AgentTasksTest {
 
     // Needs you wins over stalled; acknowledged tasks are not listed.
     @Test fun tasksAreGroupedByWhatAPersonHasToDo() {
-        assertEquals(AgentTasks.NEEDS_YOU, AgentTasks.group(task("a:1", "input-required", stalled = true)))
+        assertEquals(AgentTasks.BLOCKED, AgentTasks.group(task("a:1", "input-required", stalled = true)))
+        assertEquals(AgentTasks.NEEDS_YOU, AgentTasks.group(task("a:1", "input-required", from = "nothing.default")))
         assertEquals(AgentTasks.STALLED, AgentTasks.group(task("a:2", "working", stalled = true)))
         assertEquals(AgentTasks.WORKING, AgentTasks.group(task("a:3", "submitted")))
         assertEquals(AgentTasks.UNACKED, AgentTasks.group(task("a:4", "failed")))
@@ -121,5 +122,24 @@ class AgentTasksTest {
         val per = listOf(h to listOf(task("a:1", "completed"), task("a:2", "completed")))
         assertEquals(listOf("a:2"), AgentTasks.rows(AgentTasks.withAcked(per, setOf("a:1"))).map { it.task.id })
         assertEquals(2, AgentTasks.rows(AgentTasks.withAcked(per, emptySet())).size)
+    }
+
+    // Waiting on a person is "Needs you"; waiting on the agent session that asked, caged or not, is "Blocked".
+    @Test fun aTaskWaitingOnAnAgentIsBlockedNotYours() {
+        assertEquals(AgentTasks.BLOCKED, AgentTasks.group(task("a:1", "input-required", from = "jimmy-crib.default (jimmy-crib/vpavlin)")))
+        assertEquals(AgentTasks.BLOCKED, AgentTasks.group(task("a:1", "input-required", from = "laptop (laptop/shrooms, in a cage)")))
+        assertEquals(AgentTasks.NEEDS_YOU, AgentTasks.group(task("a:1", "input-required", from = "pi5.office")))
+        val h = AgentHost("pi5", "office", "fd00::2", emptyList())
+        val rows = AgentTasks.rows(listOf(h to listOf(
+            task("a:b", "input-required", at = 1), task("a:n", "input-required", from = "nothing.default", at = 2))))
+        assertEquals(listOf("a:n", "a:b"), rows.map { it.task.id })
+    }
+
+    // Answered here, a blocked task is working again at once; a finished one is left as it is.
+    @Test fun anAnsweredTaskIsWorkingAtOnce() {
+        val h = AgentHost("pi5", "office", "fd00::2", emptyList())
+        val per = listOf(h to listOf(task("a:1", "input-required"), task("a:2", "completed")))
+        val got = AgentTasks.rows(AgentTasks.withLocal(per, emptySet(), mapOf("a:1" to "working", "a:2" to "working")))
+        assertEquals(listOf("a:1" to AgentTasks.WORKING, "a:2" to AgentTasks.UNACKED), got.map { it.task.id to it.group })
     }
 }
