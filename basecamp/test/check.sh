@@ -210,7 +210,12 @@ cp basecamp-agents/Main.qml basecamp-agents/test/AgentsHarness.qml "$work/agents
 shot=${AGENTS_SHOT:-$work/agents.png}
 out=$(run "$QML" -I "$work/agents" "$work/agents/AgentsHarness.qml" "$shot")
 echo "$out" | grep -E "^qml: (HOSTS|PROBED|ROWS|STREAMING|PROMPT|CALLS|ATTACHED|SENT|CONVERSATIONS|TAKEOVER|LISTWIDTH|PLANS|GLANCE|TASKROWS|TASKORDER|TASKNAME|ASKER|AGE|TASKROW1)" || true
-expect() { echo "$out" | grep -qF "$1" || { echo "FAIL: $2"; exit 1; }; }
+expect() { echo "$out" | grep -qF "$1" || { echo "FAIL: $2"
+    # Show what it actually said, so the next reader does not have to re-run it
+    # by hand to find out (which is exactly what this line cost me on 2026-10-10).
+    echo "  wanted: $1"
+    echo "$out" | grep -F "${1%% *}" | head -3 | sed "s/^/  got:    /"
+    exit 1; }; }
 # The first one also says why, when the view did not load at all: a QML
 # module the runner lacks (QtQuick.Dialogs, 2026-10-03) prints nothing else.
 echo "$out" | grep -qF "HOSTS=" || { echo "$out" | head -20; echo "FAIL: the view did not load"; exit 1; }
@@ -230,6 +235,7 @@ expect "TASKROW1 From Jimmy: review the module | from=jimmy to=review | latest=w
 expect "CAGED true,false" "a caged asker is not told apart from an uncaged one"
 expect "AGELABEL quiet 2h,done 3h," "the age is not labelled for what it measures"
 expect "BAREROW jimmy:no-title-1" "a task with no title leaves a gap instead of falling back to its id"
+expect "ACKERR no such task | null | no reply" "an ACK the agent refused is not told apart from one that was accepted"
 expect "PANEL [Needs you 2] m1 m6 [Working 2] m2 m7 [Stalled 1] m3 [Done, unacked 1] m4" "the panel does not head each non-empty group, or a task that is both blocked and stalled is not in Needs you"
 expect "LINKS pi5/jimmy>laptop/review:2:input-required:2 · needs you,laptop/shrooms>laptop/review:2:stalled:2 · stalled" "a link does not carry the tasks on it, the most urgent tone does not win, or a CAGED asker's link silently vanished"
 expect "LOAD laptop/review=5 owed,laptop/shrooms=2 asked,pi5/jimmy=2 asked" "a card does not show what it owes and what it is waiting for"

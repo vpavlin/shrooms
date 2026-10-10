@@ -670,6 +670,13 @@ Item {
                 tasks: [{ id: "jimmy:no-title-1", status: { state: "TASK_STATE_WORKING", timestamp: "2026-10-09T11:00:00Z" },
                           metadata: { "shrooms/session": "jimmy" } }] }], tnow)
             console.error("BAREROW " + (bare[0] ? bare[0].title : "none"))
+            // An ACK the agent refused must not read as success. The DECISION is pure
+            // (ackRefusal), because calling ackTask() starts an async refresh a test cannot
+            // wait on - the first version of this case hung the whole suite exactly that way.
+            console.error("ACKERR " + view.ackRefusal(JSON.stringify(
+                { jsonrpc: "2.0", id: "ack-review:m1", error: { code: -32001, message: "no such task" } }))
+                + " | " + view.ackRefusal(JSON.stringify({ ok: true }))
+                + " | " + view.ackRefusal(null))
             top.boardFind = top.boardHosts
             view.refreshAgents()
             view.setBoard(true)

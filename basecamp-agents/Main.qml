@@ -1495,16 +1495,27 @@ Item {
     // ACK a finished task: the asker has seen the result. It goes to the WORKER's
     // agent (A2A AckTask at /a2a/<session>), because the task lives on the machine
     // that ran it - the board is only the surface that shows it.
+        // What an ACK reply MEANS: a JSON-RPC error comes back as a BODY, not as a failure,
+        // so this used to say "acked ..." while the agent had refused (no such task, the
+        // session renamed away). Pure, so the harness pins it - the call itself starts an
+        // async path a test cannot wait on, which is why a direct ackTask() case hangs.
+        // Returns the reason to show, or null when the ack really was accepted.
+        function ackRefusal(reply) {
+            if (reply === null || reply === undefined) return "no reply"
+            try {
+                var o = (typeof reply === "string") ? JSON.parse(reply) : reply
+                if (o && o.error) return (o.error.message || "the agent refused")
+            } catch (e) { return "unreadable reply" }
+            return null
+        }
+
     function ackTask(row) {
         if (!row || row.kind !== "task") return false
         var body = { jsonrpc: "2.0", id: "ack-" + row.id, method: "AckTask", params: { id: row.id } }
-        var r = agentCall("agentPost", [row.address, "/a2a/" + row.session, JSON.stringify(body)])
-        // A JSON-RPC ERROR comes back as a body, not as a failure, so this used to say
-        // "acked ..." while the agent had refused (no such task, session renamed away).
-        var err = null
-        try { var o = typeof r === "string" ? JSON.parse(r) : r; if (o && o.error) err = o.error } catch (e) { }
-        if (r === null || err) {
-            root.said = "could not ack " + row.id + (err && err.message ? ": " + err.message : "")
+        var refusal = ackRefusal(agentCall("agentPost", [row.address, "/a2a/" + row.session,
+                                                    JSON.stringify(body)]))
+        if (refusal !== null) {
+            root.said = "could not ack " + row.id + (refusal === "no reply" ? "" : ": " + refusal)
             root.saidBad = true
             return false
         }
@@ -1716,6 +1727,14 @@ Item {
         return "working"
     }
     readonly property var taskGroupOrder: ["needs-you", "working", "stalled", "unacked"]
+    // Where a link badge is drawn vertically, clamped into the canvas. The top row's links
+    // arc ABOVE the cards, so an unclamped badge lands under the header and is cut in half -
+    // and a badge half off the top reads as a rendering fault, which is worse than not
+    // drawing it. Pure, so the harness pins it and a mutation fails.
+    function badgeY(y, height, pad) {
+        var p = (pad === undefined) ? 9 : pad
+        return Math.max(p, Math.min(y, height - p))
+    }
     function taskGroupLabel(g) {
         return g === "needs-you" ? "Needs you" : g === "working" ? "Working"
              : g === "stalled" ? "Stalled" : "Done, unacked"
@@ -1735,6 +1754,16 @@ Item {
     function ageLabel(row) {
         if (!row || !row.age) return ""
         return (row.quiet ? "quiet " : "done ") + row.age
+    }
+
+    // Does this card have a task waiting on a person? That is what amber is for.
+    function cardNeedsYou(key) {
+        var rows = root.taskPanelList
+        for (var i = 0; i < rows.length; i++) {
+            if (rows[i].kind === "task" && rows[i].group === "needs-you"
+                && (rows[i].machine + "/" + rows[i].session) === key) return true
+        }
+        return false
     }
 
     // The asker as a SESSION, not the device claim. Two shapes to know about:
@@ -2743,7 +2772,7 @@ Item {
                 width: parent.width; elide: Text.ElideRight
                 visible: text !== ""
                 text: root.loadLabel(root.cardLoadData[bcard.cardKey])
-                color: cAmber; font.family: "monospace"; font.pixelSize: root.fs(9)
+                color: root.cardNeedsYou(bcard.cardKey) ? cAmber : cAsh font.family: "monospace"; font.pixelSize: root.fs(9)
             }
             RowLayout {
                 width: parent.width
@@ -2926,7 +2955,8 @@ Item {
                             var lp = root.linkCurve(ra, rb, 0, root.sz(30))
                             // The cubic at t=0.5: (p0 + 3p1 + 3p2 + p3) / 8.
                             var mx = (lp[0].x + 3 * lp[1].x + 3 * lp[2].x + lp[3].x) / 8
-                            var my = (lp[0].y + 3 * lp[1].y + 3 * lp[2].y + lp[3].y) / 8
+                            var my = root.badgeY((lp[0].y + 3 * lp[1].y + 3 * lp[2].y + lp[3].y) / 8,
+                                                 ctx.height, root.sz(34))
                             ctx.font = root.fs(9) + "px monospace"
                             var bw = ctx.measureText(label).width + root.sz(8)
                             ctx.fillStyle = root.cVoid
@@ -2967,7 +2997,8 @@ Item {
                             id: trow
                             required property var modelData
                             width: taskPanel.width
-                            height: trow.modelData.kind === "header" ? root.sz(26) : root.sz(58)
+                            height: trow.modelData.kind === "header" ? root.sz(26)
+                  : (trow.modelData.latest ? root.sz(58) : root.sz(42))
                             Text {
                                 anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
                                 anchors.topMargin: root.sz(6)
