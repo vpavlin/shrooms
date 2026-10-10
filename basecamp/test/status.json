@@ -108,7 +108,8 @@
         "ssh:22"
       ],
       "expires": 1790062365,
-      "mesh": "test"
+      "mesh": "test",
+      "overlay_v4": "198.19.7.12"
     },
     {
       "name": "laptop",
@@ -344,7 +345,8 @@
       "bound_here": [
         "ssh:22",
         "dev:3000"
-      ]
+      ],
+      "relay_using": "jimmy-crib"
     },
     {
       "label": "test",
@@ -363,8 +365,25 @@
       "interface": "shrooms2",
       "port": 51822,
       "peers": 0,
-      "left": true
+      "left": true,
+      "quiet_revocations": true
     }
   ],
-  "port_mapping": true
+  "port_mapping": true,
+  "due": [
+    {
+      "mesh": "default",
+      "name": "vps",
+      "self": true,
+      "not_after": "2026-10-20T10:00:00Z",
+      "fix": "shrooms admin renew --mesh default"
+    },
+    {
+      "mesh": "default",
+      "name": "nothing",
+      "not_after": "2026-10-01T10:00:00Z",
+      "expired": true,
+      "fix": "shrooms admin renew --mesh default"
+    }
+  ]
 }

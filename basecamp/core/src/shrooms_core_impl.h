@@ -329,6 +329,67 @@ public:
     std::string reloadOn(const std::string& socketPath);
 
     /**
+     * @brief The services one mesh has CONFIGURED, as `{"services":[…]}`.
+     *
+     * As services(), for a named mesh. A node on several meshes keeps a list
+     * per mesh, and a write without a label is refused there — so a form that
+     * edits services edits one mesh's, read with this first.
+     *
+     * @param label The mesh as status() names it; empty for the top level.
+     */
+    std::string servicesOf(const std::string& label);
+
+    /** @brief Replaces one mesh's services. REPLACES — read servicesOf() first. */
+    std::string setServicesOf(const std::string& label, const std::string& csv);
+
+    /**
+     * @brief Whether this node repeats what has been revoked on a mesh, so a
+     * peer that was offline when it was published still learns it.
+     */
+    std::string setAnnounceRevocations(const std::string& label, bool on);
+
+    /**
+     * @brief The blind relays this device uses, as JSON: device-wide, and
+     * per mesh where one overrides it (docs/blind-relays.md).
+     *
+     * `{"relays":[…],"none":bool,"token_set":bool,"meshes":{label:{…}}}`. The
+     * token is never returned, only whether there is one.
+     */
+    std::string blindRelays();
+
+    /**
+     * @brief Sets the blind relays, keeping the token as it is.
+     *
+     * @param label Empty for every mesh; a label overrides for that one.
+     * @param relays ADDRESS:PORT entries separated by commas or spaces,
+     * "none" to refuse blind relays, or empty to use whatever the mesh's admin
+     * names. Applies on the next restart, which the daemon says.
+     */
+    std::string setBlindRelays(const std::string& label, const std::string& relays);
+
+    /** @brief As setBlindRelays(), replacing the token too (empty clears it). */
+    std::string setBlindRelaysWithToken(const std::string& label, const std::string& relays,
+                                        const std::string& token);
+
+    /**
+     * @brief Starts joining a mesh on a thread of its own and returns at once.
+     *
+     * The join waits for the device that made the invite, for up to two
+     * minutes, and joinWithInvite() gives up after two seconds — so from the
+     * view it always reported a timeout. Poll joinProgress() for the answer.
+     * One join at a time; a second is refused while the first runs.
+     */
+    std::string joinWithInviteStart(const std::string& token, const std::string& name,
+                                    const std::string& label);
+
+    /**
+     * @brief How the last join is going: `{"running":true}`, `{"idle":true}`
+     * when none was started, or `{"done":true,"result":{…}}` with what the
+     * daemon said — `{"result":"…"}` on success, `{"error":…}` otherwise.
+     */
+    std::string joinProgress();
+
+    /**
      * @brief Starts looking for agents (docs/agents.md) among the given peers,
      * in the background, and returns what has been found so far.
      *

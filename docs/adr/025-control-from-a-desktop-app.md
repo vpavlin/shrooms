@@ -1,8 +1,8 @@
 # 025. Control from a desktop app, and what the socket group may do
 
-**Status:** accepted; settings, mesh on/off and leaving are built. Joining and
-issuing a credential from the socket are not — see "What is deliberately still
-manual".
+**Status:** accepted; settings, mesh on/off, joining and leaving are built
+(joining a first mesh by invite too, ADR-050). Issuing a credential from the
+socket is not — see "What is deliberately still manual".
 
 ## Context
 

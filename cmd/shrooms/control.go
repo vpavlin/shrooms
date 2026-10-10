@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"sort"
 	"strconv"
 	"strings"
@@ -378,6 +379,111 @@ func controlHandlers(mux *http.ServeMux, log *slog.Logger, cfgPath string, rl *r
 			}
 			return in.Label + " switched off; it stops on the next restart", nil
 		}))
+
+	blindRelayHandlers(mux, log, cfgPath)
+}
+
+// blindRelayHandlers reads and sets the blind relays a device uses: relays
+// somebody else runs, for when no member of the mesh can carry traffic
+// between two peers (docs/blind-relays.md). The phone has had this since it
+// first met carrier-grade NAT; a desktop behind one needs it just as much.
+//
+// Device-wide with no label, which is what the phone sets and what every mesh
+// inherits; per mesh with one, overriding the device for that mesh only.
+//
+// The token is reported as whether there is one, never its value: anyone in
+// the socket group may read this, and the token is the relay operator's, not
+// theirs to copy elsewhere. Writing one is fine — it is only ever sent to the
+// relays it was configured with.
+func blindRelayHandlers(mux *http.ServeMux, log *slog.Logger, cfgPath string) {
+	mux.HandleFunc("/config/blind-relays", readOrWrite(
+		func(w http.ResponseWriter, r *http.Request) {
+			cfg, err := state.LoadConfig(cfgPath)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			type relays struct {
+				Relays   []string `json:"relays"`
+				None     bool     `json:"none,omitempty"`
+				TokenSet bool     `json:"token_set,omitempty"`
+			}
+			out := struct {
+				relays
+				Meshes map[string]relays `json:"meshes,omitempty"`
+			}{relays: relays{Relays: orEmpty(cfg.RelayBlind), None: cfg.RelayNone, TokenSet: cfg.RelayToken != ""}}
+			for label, m := range cfg.MeshSet {
+				if len(m.RelayBlind) == 0 && !m.RelayNone && m.RelayToken == "" {
+					continue
+				}
+				if out.Meshes == nil {
+					out.Meshes = map[string]relays{}
+				}
+				out.Meshes[label] = relays{Relays: orEmpty(m.RelayBlind), None: m.RelayNone, TokenSet: m.RelayToken != ""}
+			}
+			writeJSON(w, out)
+		},
+		writeSetting(log, cfgPath, func(cfg *state.Config, in settingRequest) (string, error) {
+			list, none, err := parseBlindRelays(in.Relays)
+			if err != nil {
+				return "", err
+			}
+			blind, isNone, token := &cfg.RelayBlind, &cfg.RelayNone, &cfg.RelayToken
+			where := "every mesh"
+			var m state.Mesh
+			perMesh := in.Label != "" && !(in.Label == state.DefaultLabel && cfg.NetworkKey != "")
+			if perMesh {
+				var ok bool
+				if m, ok = cfg.MeshSet[in.Label]; !ok {
+					return "", fmt.Errorf("no mesh called %q", in.Label)
+				}
+				blind, isNone, token = &m.RelayBlind, &m.RelayNone, &m.RelayToken
+				where = in.Label
+			}
+			*blind, *isNone = list, none
+			if in.Token != nil {
+				*token = strings.TrimSpace(*in.Token)
+			}
+			if none {
+				*token = ""
+			}
+			if perMesh {
+				cfg.MeshSet[in.Label] = m
+			}
+			switch {
+			case none:
+				return where + " refuses blind relays, the admin's included; restart to apply", nil
+			case len(list) == 0:
+				return where + " uses the relays the mesh's admin names, if any; restart to apply", nil
+			}
+			return fmt.Sprintf("%s uses %d blind relay(s); restart to apply", where, len(list)), nil
+		})))
+}
+
+// parseBlindRelays reads a list as a person types it: commas, spaces or
+// newlines between entries, each ADDRESS:PORT. Checked here, because a
+// mistyped relay is otherwise indistinguishable from one that is down — both
+// are silence.
+func parseBlindRelays(s string) (list []string, none bool, err error) {
+	if strings.EqualFold(strings.TrimSpace(s), "none") {
+		return nil, true, nil
+	}
+	for _, one := range strings.FieldsFunc(s, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\n' || r == '\t'
+	}) {
+		if _, err := netip.ParseAddrPort(one); err != nil {
+			return nil, false, fmt.Errorf("%q is not an address and port, like 203.0.113.10:31760", one)
+		}
+		list = append(list, one)
+	}
+	return list, false, nil
+}
+
+func orEmpty(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }
 
 // leaveHandler removes a mesh from the config.
@@ -485,6 +591,13 @@ type settingRequest struct {
 	HostsSuffix string `json:"hosts_suffix,omitempty"`
 	Label       string `json:"label,omitempty"`
 	Enabled     bool   `json:"enabled,omitempty"`
+	// Relays is a list of blind relays as a person types it — commas or
+	// spaces between ADDRESS:PORT — or "none", or empty to inherit
+	// (docs/blind-relays.md). Token is the operator's token for them; nil
+	// leaves the one configured as it is, so a form that never shows the
+	// token can change the list without wiping it.
+	Relays string  `json:"relays,omitempty"`
+	Token  *string `json:"token,omitempty"`
 }
 
 // rejected marks a change the caller got wrong, as opposed to one this daemon
@@ -564,9 +677,9 @@ func writeJSON(w http.ResponseWriter, v any) {
 // the exchange, and the admin key signs the credential. The socket can do the
 // first and must not be able to do the second — that separation is what makes
 // group access to this socket a bounded grant rather than a way to admit
-// anybody. So a desktop invite flow needs the passphrase, in the user session,
-// which means running the CLI rather than teaching the socket to sign. Recorded
-// in ADR-025 rather than left as a surprise.
+// anybody. The group may hold an invite and publish a reply that an admin key
+// has already signed (ADR-033), which is how a card admits a device from a
+// desktop; the signing itself never happens here (ADR-025, ADR-050).
 
 // readOrWrite answers GET from one handler and everything else from another.
 func readOrWrite(get, rest http.HandlerFunc) http.HandlerFunc {

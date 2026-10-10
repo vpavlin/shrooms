@@ -14,14 +14,10 @@ Item {
         id: view
         anchors.fill: parent
         statusPath: fixture
-        // Deliberately not "status.json": that name is also the sibling file
-        // the view tries first, so serving it here would let source 0 satisfy
-        // the endpoint test and the escalation would never be exercised.
-        statusUrl: "http://127.0.0.1:8787/endpoint.json"
     }
 
     Timer {
-        interval: 7000     // long enough to walk all three sources in order
+        interval: 5000     // long enough to walk both sources in order
         running: true
         onTriggered: {
             console.error("PEERS=" + view.peers.length

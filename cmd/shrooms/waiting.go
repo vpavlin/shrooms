@@ -93,7 +93,11 @@ func runWaiting(ctx context.Context, log *slog.Logger, cfgPath, stateDir, sock s
 		json.NewEncoder(w).Encode(statusPayload{Name: "", Waiting: true, Config: absPath(cfgPath)})
 	})
 
-	mux.HandleFunc("/join", requireRoot(func(w http.ResponseWriter, r *http.Request) {
+	// Joining with an invite is open to the socket group, as it is on a
+	// running daemon: an invite is the admin's decision, made on another
+	// device, and redeeming it is what Basecamp's join form does (ADR-050).
+	// Joining with a bare network key is not an invite and stays root's.
+	mux.HandleFunc("/join", requireIdentified(func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
 			Token   string `json:"token"`
 			Key     string `json:"key"`
@@ -107,6 +111,11 @@ func runWaiting(ctx context.Context, log *slog.Logger, cfgPath, stateDir, sock s
 		}
 		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&in); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if firstJoinNeedsRoot(in.Token, in.Key) && !callerIsRoot(r) {
+			http.Error(w, "joining with a network key needs root; with an invite, the socket "+
+				"group may join", http.StatusForbidden)
 			return
 		}
 		if in.Name == "" {
@@ -205,6 +214,13 @@ func runWaiting(ctx context.Context, log *slog.Logger, cfgPath, stateDir, sock s
 		}
 		return reexec(log)
 	}
+}
+
+// firstJoinNeedsRoot says whether a waiting daemon's join is root's alone:
+// anything but an invite and nothing else. A token is an admin's decision made
+// elsewhere; a bare network key is membership with nobody's say-so.
+func firstJoinNeedsRoot(token, key string) bool {
+	return key != "" || token == ""
 }
 
 // joinResult is what the daemon reports after joining.

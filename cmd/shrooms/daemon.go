@@ -516,6 +516,15 @@ type meshStatus struct {
 	Relay            bool `json:"relay,omitempty"`
 	AnnounceServices bool `json:"announce_services,omitempty"`
 	AnnounceBound    bool `json:"announce_bound,omitempty"`
+	// QuietRevocations means this node does not repeat what has been
+	// revoked on this mesh. Reported the other way round from the switch a
+	// UI shows, because absent has to keep meaning the default: repeating.
+	QuietRevocations bool `json:"quiet_revocations,omitempty"`
+	// BlindRelaysConfigured and BlindRelaysRefused are what the config says
+	// about blind relays for this mesh, after inheriting the device's — so a
+	// form can say which relays a mesh will use without reading the config.
+	BlindRelaysConfigured int  `json:"blind_relays_configured,omitempty"`
+	BlindRelaysRefused    bool `json:"blind_relays_refused,omitempty"`
 
 	// BoundHere is what is listening on *this* device's address on this mesh,
 	// whether or not it is announced — the same list `shrooms bound` prints.
@@ -1576,6 +1585,10 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 					out.Meshes[i].Relay = mc.Relay
 					out.Meshes[i].AnnounceServices = mc.AnnounceServices
 					out.Meshes[i].AnnounceBound = mc.AnnounceBound
+					out.Meshes[i].QuietRevocations = mc.QuietRevocations
+					eff := onDisk.ForMesh(mc, mc.ListenPort)
+					out.Meshes[i].BlindRelaysConfigured = len(eff.RelayBlind)
+					out.Meshes[i].BlindRelaysRefused = eff.RelayNone
 					delete(at, mc.Label)
 				}
 				// What each running mesh has bound to its own address, which

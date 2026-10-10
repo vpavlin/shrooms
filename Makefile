@@ -32,7 +32,7 @@ GO ?= go
 VERSION ?= $(shell git describe --tags --match 'v*' --always --dirty 2>/dev/null || echo dev)
 
 .PHONY: all deps deps-basecamp check-lib shrooms wakuspike s3topics m0demo \
-        s1 s3 probe relay relay-image m0 m1 m2 m2-edm m3 m3-remote dist dist-arm64 image push-image agent-image agent-image-ctx push-agent-image deps-release install uninstall test-uninstall purge build-all vet-cgo vet-pcsc test test-unit e2e e2e-two-nodes e2e-keycard e2e-keycard-mesh android-deps android-core aar apk fdroid basecamp-check basecamp-lgx basecamp-agents-lgx site-adrs fmt clean
+        s1 s3 probe relay relay-image m0 m1 m2 m2-edm m3 m3-remote dist dist-arm64 image push-image agent-image agent-image-ctx push-agent-image deps-release install uninstall test-uninstall purge build-all vet-cgo vet-pcsc test test-unit e2e e2e-two-nodes e2e-keycard e2e-keycard-mesh android-deps android-core aar apk fdroid basecamp-check basecamp-core-check basecamp-lgx basecamp-agents-lgx site-adrs fmt clean
 
 all: shrooms
 
@@ -310,6 +310,11 @@ android-core: android-deps
 ## QML looks right" is not a test.
 basecamp-check:
 	./basecamp/test/check.sh
+
+## The core module's daemon calls, against a stand-in daemon. Needs the Logos
+## C++ SDK headers (LOGOS_SDK_INCLUDE, or found in the nix store).
+basecamp-core-check:
+	./basecamp/test/core_check.sh
 
 ## Build the Basecamp module as a portable LGX, the installable package format.
 ##

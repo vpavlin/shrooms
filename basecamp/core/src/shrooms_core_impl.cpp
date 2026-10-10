@@ -8,8 +8,10 @@
 #include <cstring>
 #include <fstream>
 #include <map>
+#include <mutex>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <sys/stat.h>
@@ -25,7 +27,15 @@ namespace {
 // renamed. Both are tried, for the same reason the daemon itself honours the
 // old paths: a node is migrated when its owner gets to it, not when a module
 // is installed.
-const char* kSocket = "/run/shrooms/shrooms.sock";
+//
+// SHROOMS_CONTROL_SOCKET names another, for a daemon started with its own
+// --socket and for the tests, which run a stand-in daemon.
+const char* defaultSocket()
+{
+    const char* e = std::getenv("SHROOMS_CONTROL_SOCKET");
+    return (e && *e) ? e : "/run/shrooms/shrooms.sock";
+}
+const char* kSocket = defaultSocket();
 const char* kLegacySocket = "/run/logos-vpn/logos-vpn.sock";
 
 // A status document is a few kilobytes. This bound is generous and exists so a
@@ -130,7 +140,7 @@ enum class RequestOutcome {
 RequestOutcome httpRequestUnix(const std::string& path, const std::string& method,
                                const std::string& target, const std::string& contentType,
                                const std::string& requestBody, std::string& body,
-                               std::string& err)
+                               std::string& err, int timeoutS = 2)
 {
     int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0) {
@@ -150,8 +160,11 @@ RequestOutcome httpRequestUnix(const std::string& path, const std::string& metho
     // Bounded, so a wedged daemon cannot hang the caller. The view calls this
     // synchronously from the UI thread; a blocking read there would freeze
     // Basecamp, which is a far worse outcome than showing stale numbers.
+    //
+    // The one exception is a join, which waits for the far side by design and
+    // runs on a thread of its own (joinWithInviteStart), never on the view's.
     timeval tv{};
-    tv.tv_sec = 2;
+    tv.tv_sec = timeoutS;
     ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
@@ -763,6 +776,161 @@ std::string ShroomsCoreImpl::reloadOn(const std::string& socketPath)
 std::string ShroomsCoreImpl::reload()
 {
     return postToDaemon("/reload", "");
+}
+
+// --- settings by mesh, relays, revocations ---------------------------------
+
+namespace {
+
+/**
+ * A mesh label fit to go into a query string, or "" when it is not one.
+ *
+ * Labels are the daemon's own (letters, digits, dot, dash, underscore), so
+ * anything else is refused rather than escaped: a label that needs escaping is
+ * not one the daemon could have given the view.
+ */
+std::string labelQuery(const std::string& label)
+{
+    if (label.empty()) return "";
+    if (label.size() > 64) return "!";
+    for (unsigned char c : label) {
+        if (!std::isalnum(c) && c != '.' && c != '-' && c != '_') return "!";
+    }
+    return "?mesh=" + label;
+}
+
+/** A GET to whichever socket path answers, as status() reads. */
+std::string getFromDaemon(const std::string& target, const std::string& what)
+{
+    std::string body, err, firstErr;
+    for (const char* path : {kSocket, kLegacySocket}) {
+        if (httpGetUnix(path, target, body, err) == RequestOutcome::Ok) {
+            return body;
+        }
+        if (firstErr.empty()) firstErr = err;
+    }
+    return errorJson(what, withPermissionHint(firstErr));
+}
+
+} // namespace
+
+std::string ShroomsCoreImpl::servicesOf(const std::string& label)
+{
+    const std::string q = labelQuery(label);
+    if (q == "!") return errorJson("that is not a mesh label", label);
+    return getFromDaemon("/config/services" + q, "cannot read the configured services");
+}
+
+std::string ShroomsCoreImpl::setServicesOf(const std::string& label, const std::string& csv)
+{
+    return postToDaemon("/config/services", "{\"label\":" + jsonString(label) +
+                                                ",\"services\":" + servicesArray(csv) + "}");
+}
+
+std::string ShroomsCoreImpl::setAnnounceRevocations(const std::string& label, bool on)
+{
+    return postToDaemon("/config/announce-revocations", flagBody(label, on));
+}
+
+std::string ShroomsCoreImpl::blindRelays()
+{
+    return getFromDaemon("/config/blind-relays", "cannot read the blind relays");
+}
+
+std::string ShroomsCoreImpl::setBlindRelays(const std::string& label, const std::string& relays)
+{
+    return postToDaemon("/config/blind-relays",
+                        "{\"label\":" + jsonString(label) + ",\"relays\":" + jsonString(relays) + "}");
+}
+
+std::string ShroomsCoreImpl::setBlindRelaysWithToken(const std::string& label, const std::string& relays,
+                                                     const std::string& token)
+{
+    return postToDaemon("/config/blind-relays",
+                        "{\"label\":" + jsonString(label) + ",\"relays\":" + jsonString(relays) +
+                            ",\"token\":" + jsonString(token) + "}");
+}
+
+// --- joining, off the view's thread -------------------------------------------
+//
+// A join waits for the far side — up to two minutes by the daemon's default —
+// and every other call here gives up after two seconds, because the view calls
+// them on its own thread and a blocked call is a frozen Basecamp. So a join
+// called the ordinary way reported a timeout every time, including the times
+// it went on to succeed. This runs it on a thread of its own, with a deadline
+// that fits it, and the view asks how it is going.
+
+namespace {
+
+struct JoinState {
+    std::mutex mu;
+    bool running = false;
+    std::string result;   // the last join's answer, JSON
+    unsigned serial = 0;  // which join that answer belongs to
+};
+
+JoinState& joinState()
+{
+    static JoinState s;
+    return s;
+}
+
+// The daemon's own wait is two minutes; this is that and room to answer.
+constexpr int kJoinTimeoutS = 150;
+
+} // namespace
+
+std::string ShroomsCoreImpl::joinWithInviteStart(const std::string& token, const std::string& name,
+                                                 const std::string& label)
+{
+    JoinState& st = joinState();
+    unsigned serial;
+    {
+        std::lock_guard<std::mutex> lock(st.mu);
+        if (st.running) {
+            return errorJson("a join is already running", "wait for it to finish");
+        }
+        st.running = true;
+        st.result.clear();
+        serial = ++st.serial;
+    }
+    const std::string body = "{\"token\":" + jsonString(token) + ",\"name\":" + jsonString(name) +
+                             ",\"label\":" + jsonString(label) + "}";
+    std::thread([body, serial]() {
+        std::string out, err, firstErr;
+        RequestOutcome outcome = RequestOutcome::Unreachable;
+        // Not retried on the legacy path once anything answered: a daemon that
+        // heard the request may have joined, and joining twice spends the
+        // invite.
+        for (const char* path : {kSocket, kLegacySocket}) {
+            outcome = httpRequestUnix(path, "POST", "/join", "application/json", body, out, err,
+                                      kJoinTimeoutS);
+            if (outcome != RequestOutcome::Unreachable) break;
+            if (firstErr.empty()) firstErr = err;
+        }
+        std::string result = writeResult(outcome, out,
+                                         outcome == RequestOutcome::Unreachable ? firstErr : err);
+        JoinState& st = joinState();
+        std::lock_guard<std::mutex> lock(st.mu);
+        if (st.serial == serial) {
+            st.running = false;
+            st.result = result;
+        }
+    }).detach();
+    return "{\"started\":true,\"serial\":" + std::to_string(serial) + "}";
+}
+
+std::string ShroomsCoreImpl::joinProgress()
+{
+    JoinState& st = joinState();
+    std::lock_guard<std::mutex> lock(st.mu);
+    if (st.running) {
+        return "{\"running\":true,\"serial\":" + std::to_string(st.serial) + "}";
+    }
+    if (st.result.empty()) {
+        return "{\"idle\":true}";
+    }
+    return "{\"done\":true,\"serial\":" + std::to_string(st.serial) + ",\"result\":" + st.result + "}";
 }
 
 // --- agents ------------------------------------------------------------------

@@ -27,12 +27,12 @@ user's session, and the daemon has never held it. That separation is what makes
 handing the control socket to a group a bounded grant rather than a way to admit
 anybody ([ADR-025](adr/025-control-from-a-desktop-app.md)).
 
-**And Basecamp cannot even hold the invite.** `/invite/hold` and `/invite/reply`
-are both `requireRoot` (`cmd/shrooms/daemon.go`). Basecamp reaches the socket in
-the *group* tier, so it is refused before signing ever comes up.
-
-A card changes the first and not the second, which is why the second needs
-deciding rather than building.
+**Basecamp could not even hold the invite** while `/invite/hold` and
+`/invite/reply` were `requireRoot`. They now require only an identified caller,
+and a reply from the socket group has to carry a credential an admin key signed
+([ADR-033](adr/033-the-card-is-the-admin-not-the-uid.md)), so
+Basecamp can hold the exchange. What it still lacks is the signature: see
+[ADR-050](adr/050-basecamp-at-parity-with-the-phone.md).
 
 ## What is already portable, and what is not
 

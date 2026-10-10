@@ -394,9 +394,10 @@ model given the binary and no history, and a person who has never used it,
 watched rather than asked: where they stop, what they type that does not exist,
 what they assume undoes what.
 
-**Basecamp's UI** has not been touched in weeks while the CLI and the app both
-moved. Parity between the desktop module and the Android app is a stated goal;
-nobody has checked lately whether it still holds.
+**Basecamp's UI** was checked against the Android app on 2026-10-10
+([ADR-050](adr/050-basecamp-at-parity-with-the-phone.md)): three bugs fixed and
+the gaps closed, except admitting a device with a Keycard, which is designed
+and not yet built.
 
 ## Open, not urgent
 

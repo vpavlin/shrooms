@@ -170,33 +170,24 @@ peers=$(echo "$out" | sed -n 's/.*PEERS=\([0-9]*\).*/\1/p' | head -1)
 [ "${peers:-0}" -gt 0 ] || { echo "FAIL: did not fall back to the absolute path"; echo "$out" | head -20; exit 1; }
 rm -f "$work/absolute.json"
 
-echo "==> falls back to the endpoint when no file can be read"
-# Served under the name the harness points the view at, which is deliberately
-# not "status.json" — that is the sibling file source 0 tries, and serving it
-# here would mean the endpoint was never actually exercised.
-cp "$FIXTURE" "$work/endpoint.json"
-
-# The port is baked into the view, so it cannot simply be moved. Anything
-# already holding it will answer instead of us and the test would report a
-# false failure — so say what is wrong rather than testing the wrong server.
-if (exec 3<>/dev/tcp/127.0.0.1/8787) 2>/dev/null; then
-    exec 3<&-
-    echo "FAIL: something already listens on 127.0.0.1:8787; it would answer instead of this test"
-    ss -lntp 2>/dev/null | grep ':8787' || true
-    exit 1
-fi
-
-( cd "$work" && exec python3 -m http.server 8787 --bind 127.0.0.1 >/dev/null 2>&1 ) &
-srv=$!
-sleep 1
+echo "==> says why when nothing can be read"
+# No file, and no core to ask: the view must name the problem rather than
+# draw an empty mesh as if it were one.
 out=$(run "$QML" -I "$work" "$work/Harness.qml" "$work/missing.json")
 echo "$out" | grep -E "^qml: PEERS" || true
-echo "$out" | grep -q "FILEBLOCKED=true" || { echo "FAIL: did not escalate to the endpoint"; exit 1; }
-peers=$(echo "$out" | sed -n 's/.*PEERS=\([0-9]*\).*/\1/p' | head -1)
-[ "${peers:-0}" -gt 0 ] || { echo "FAIL: fallback read no peers"; exit 1; }
+echo "$out" | grep -q "PROBLEM=\[no status" || { echo "FAIL: an unreadable status was not named"; echo "$out" | head; exit 1; }
+
+echo "==> drives the settings through a stand-in core"
+cp basecamp/test/CoreHarness.qml "$work/"
+cp "$FIXTURE" "$work/core-status.json"
+out=$(QML_XHR_ALLOW_FILE_READ=1 run "$QML" -I "$work" "$work/CoreHarness.qml" "$work/core-status.json")
+echo "$out" | grep -E "^qml: (CALL|CHECK|FAIL)" || true
+echo "$out" | grep -E "Error|TypeError|ReferenceError" | grep -v "^qml: CALL" && { echo "FAIL: script errors"; exit 1; }
+echo "$out" | grep -q "^qml: FAIL" && { echo "FAIL: see above"; exit 1; }
+echo "$out" | grep -q "^qml: CHECKS DONE" || { echo "FAIL: the core harness did not finish"; echo "$out" | tail -20; exit 1; }
 
 echo
-echo "both transports OK"
+echo "status and settings OK"
 
 # Shrooms Agents (docs/agents.md), against a stand-in core: it only runs
 # inside Basecamp, so this is the one place it is exercised before a person

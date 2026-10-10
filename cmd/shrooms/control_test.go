@@ -496,3 +496,82 @@ func TestServicesGoToAMeshWhenThereIsNoTopLevelOne(t *testing.T) {
 		t.Errorf("reading mesh test back: %d %s", w.Code, w.Body)
 	}
 }
+
+func TestBlindRelaysDeviceWideAndPerMesh(t *testing.T) {
+	mux, path := controlFixture(t)
+	if w := post(t, mux, "/config/blind-relays", `{"relays":"203.0.113.10:31760, 198.51.100.2:31760","token":"sekrit"}`); w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	cfg := reload(t, path)
+	if len(cfg.RelayBlind) != 2 || cfg.RelayBlind[1] != "198.51.100.2:31760" || cfg.RelayToken != "sekrit" {
+		t.Fatalf("device-wide relays not written: %v %q", cfg.RelayBlind, cfg.RelayToken)
+	}
+
+	// A list changed without a token keeps the token.
+	if w := post(t, mux, "/config/blind-relays", `{"relays":"203.0.113.10:31760"}`); w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	if cfg = reload(t, path); cfg.RelayToken != "sekrit" || len(cfg.RelayBlind) != 1 {
+		t.Fatalf("token lost or list unchanged: %v %q", cfg.RelayBlind, cfg.RelayToken)
+	}
+
+	// Per mesh: only that mesh, and "none" clears its token.
+	if w := post(t, mux, "/config/blind-relays", `{"label":"test","relays":"none"}`); w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	cfg = reload(t, path)
+	if !cfg.MeshSet["test"].RelayNone || cfg.RelayNone {
+		t.Fatalf("none landed in the wrong place: mesh %v device %v", cfg.MeshSet["test"].RelayNone, cfg.RelayNone)
+	}
+
+	// Read back: the token is reported as present, never its value.
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/config/blind-relays", nil))
+	if w.Code != 200 || strings.Contains(w.Body.String(), "sekrit") {
+		t.Fatalf("read leaked the token or failed: %d %s", w.Code, w.Body)
+	}
+	var got struct {
+		Relays   []string `json:"relays"`
+		TokenSet bool     `json:"token_set"`
+		Meshes   map[string]struct {
+			None bool `json:"none"`
+		} `json:"meshes"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Relays) != 1 || !got.TokenSet || !got.Meshes["test"].None {
+		t.Fatalf("read back %+v", got)
+	}
+}
+
+func TestBlindRelaysRefuseWhatIsNotAnAddress(t *testing.T) {
+	mux, path := controlFixture(t)
+	if w := post(t, mux, "/config/blind-relays", `{"relays":"relay.example.com"}`); w.Code != 400 {
+		t.Fatalf("a hostname was taken: %d %s", w.Code, w.Body)
+	}
+	if w := post(t, mux, "/config/blind-relays", `{"label":"nope","relays":""}`); w.Code != 400 {
+		t.Fatalf("an unknown mesh was taken: %d %s", w.Code, w.Body)
+	}
+	if len(reload(t, path).RelayBlind) != 0 {
+		t.Fatal("a refused write changed the config")
+	}
+}
+
+// A waiting daemon lets the socket group redeem an invite — what Basecamp's
+// join form sends — and keeps a bare network key for root (ADR-050).
+func TestFirstJoinNeedsRootOnlyWithoutAnInvite(t *testing.T) {
+	for _, c := range []struct {
+		token, key string
+		root       bool
+	}{
+		{"tok", "", false},
+		{"", "key", true},
+		{"tok", "key", true},
+		{"", "", true},
+	} {
+		if got := firstJoinNeedsRoot(c.token, c.key); got != c.root {
+			t.Errorf("token %q key %q: needs root %v, want %v", c.token, c.key, got, c.root)
+		}
+	}
+}

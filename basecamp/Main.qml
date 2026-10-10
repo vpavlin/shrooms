@@ -2,15 +2,13 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-// A monitoring view for logos-vpn.
+// The Shrooms view for Basecamp: the mesh as this device sees it, and the
+// settings the daemon can change by itself (ADR-025).
 //
-// Read-only by design: the daemon owns the mesh, this only watches it. Nothing
-// here can change the network, so nothing here can break it.
-//
-// It reads the status file the daemon writes (`status_file` in config.toml)
-// rather than talking to the control socket, because QML can read a file and
-// cannot open a unix socket. The file is written atomically, so a partial
-// document is never observed.
+// Everything goes through shrooms_core, which talks to the daemon's control
+// socket: QML cannot open a unix socket, and Basecamp's sandbox blocks every
+// file and network read a view would otherwise make. Outside Basecamp — the
+// offscreen check, a plain qml runtime — it reads the status file instead.
 //
 // Deliberately plain QtQuick rather than Logos.Controls: the bundled design
 // system varies between Basecamp versions — qaku's own view documents controls
@@ -48,14 +46,6 @@ Item {
     property var peers: []
     property string problem: ""
 
-    // Two ways in, tried in order.
-    //
-    // The file is preferred: no port is opened and access is decided by file
-    // permissions. But QML refuses file:// reads through XMLHttpRequest unless
-    // the host sets QML_XHR_ALLOW_FILE_READ, which is Basecamp's environment
-    // and not ours to choose — so when that is off, the daemon's loopback
-    // endpoint is the only thing left. Found by running this offscreen rather
-    // than by reading the documentation.
     // Where the status comes from, in order of what actually works.
     //
     // Inside Basecamp the only route is the core module. A ui_qml app is
@@ -70,21 +60,21 @@ Item {
     // control socket. That is what Basecamp's own spec prescribes: UI apps
     // reach the outside indirectly, through Logos Modules.
     //
-    // The file and endpoint remain for running this outside Basecamp — the
-    // offscreen check, or a plain qml runtime — where the sandbox does not
-    // apply and the core module does not exist.
+    // The files remain for running this outside Basecamp — the offscreen
+    // check, or a plain qml runtime — where the sandbox does not apply and the
+    // core module does not exist. There was a third, the daemon's loopback
+    // HTTP port; the daemon stopped serving one (ADR-025's amendment), so it
+    // only ever added a wrong address to the error.
     property string statusPath: "/run/shrooms/status.json"
-    property string statusUrl: "http://127.0.0.1:8787/status"
     property var sources: [
         { url: "status.json", file: true },              // beside Main.qml
         { url: "file://" + statusPath, file: true },     // an absolute path
-        { url: statusUrl, file: false },                 // the daemon's endpoint
     ]
     property int source: 0
     property bool everLoaded: false
     property int attempts: 0
 
-    readonly property bool fileBlocked: !sources[source].file
+    property bool fileBlocked: false
 
     /** True when the core module is present, which is the Basecamp case. */
     // Basecamp's bridge to the core module. A property, so a test harness can
@@ -210,9 +200,8 @@ Item {
     // And an adjustment on top, because no formula knows how far away the
     // screen is. Nudged from the panel, applied everywhere at once.
     //
-    // Not persisted: there is nowhere to put it that survives a restart
-    // without inventing settings storage for one number. It resets to the
-    // automatic value, which should be close enough that nobody has to.
+    // Kept as a view preference by the core module (see below), so it
+    // survives a restart.
     property real uiNudge: 0
 
     // --- preferences --------------------------------------------------------
@@ -428,6 +417,13 @@ Item {
         if (!everLoaded && attempts > 2 * (source + 1) && source < sources.length - 1) {
             source++
         }
+        // Nowhere left to go: say so rather than draw an empty mesh. A refused
+        // read never calls back, so this is decided here, by count.
+        if (!everLoaded && source === sources.length - 1 && attempts > 2 * (sources.length + 1)) {
+            root.fileBlocked = true
+            root.problem = "no status: nothing readable at " + root.statusPath
+                         + ", and no shrooms_core module to ask the daemon"
+        }
         var s = sources[source]
         fetch(s.url, s.file)
     }
@@ -437,13 +433,7 @@ Item {
         xhr.onreadystatechange = function() {
             if (xhr.readyState !== XMLHttpRequest.DONE) return
 
-            if (!xhr.responseText) {
-                if (isFile) return          // let the escalation above handle it
-                root.problem = "no status from " + root.statusPath
-                            + "\nnor from " + root.statusUrl
-                root.peers = []
-                return
-            }
+            if (!xhr.responseText) return  // the escalation in reload() moves on
             try {
                 var d = JSON.parse(xhr.responseText)
                 root.st = d
@@ -477,6 +467,7 @@ Item {
         onTriggered: {
             root.reload()
             root.pumpLogs()
+            root.pollJoin()
         }
     }
 
@@ -846,6 +837,329 @@ Item {
     onWholeMeshChanged: if (prefsLoaded) savePref("whole_mesh", wholeMesh ? "1" : "0")
     onUiNudgeChanged: if (prefsLoaded) savePref("ui_nudge", uiNudge.toFixed(2))
 
+    // --- reading the core's answers -----------------------------------------
+
+    /** A core answer as an object: unwrapped from the bridge's quoting, or null. */
+    function coreJson(method, args) {
+        var t = String(callCore(method, args) || "").trim()
+        for (var i = 0; i < 2 && t.charAt(0) === '"'; i++) {
+            try { t = String(JSON.parse(t)).trim() } catch (e) { break }
+        }
+        if (t.charAt(0) !== "{") return null
+        try { return JSON.parse(t) } catch (e) { return null }
+    }
+
+    // --- services, per mesh ------------------------------------------------
+    //
+    // What each mesh is configured to publish, read from the config rather
+    // than from status. The form used to start from status — the services
+    // RUNNING on the first mesh — and writing that back deleted every service
+    // that was configured and not up at the time, as the ordinary result of
+    // adding an unrelated one. It also sent no mesh, which a node on several
+    // is right to refuse.
+    //
+    // Keyed by the label status gives each mesh; "" is a node whose status
+    // lists none, where the top level is the only place services can go.
+    property var configuredServices: ({})
+
+    function servicesCsv(list) {
+        var out = []
+        for (var i = 0; i < (list || []).length; i++) {
+            var v = list[i]
+            out.push(typeof v === "string" ? v : (v.name + ":" + v.port))
+        }
+        return out.join(", ")
+    }
+
+    function loadServices() {
+        if (!haveCore) return
+        var labels = []
+        var ms = root.switchableMeshes
+        for (var i = 0; i < ms.length; i++) if (ms[i].label) labels.push(ms[i].label)
+        if (!labels.length) labels.push("")
+        var out = {}
+        for (var j = 0; j < labels.length; j++) {
+            var d = coreJson("servicesOf", [labels[j]])
+            // An older core has no servicesOf; its services() reads the top
+            // level, which is right exactly when there is only that.
+            if (d === null && labels.length === 1) d = coreJson("services", [])
+            out[labels[j]] = (d && !d.error) ? servicesCsv(d.services) : null
+        }
+        root.configuredServices = out
+    }
+
+    function saveServices(label, text) {
+        callWrite("setServicesOf", [label, text])
+        loadServices()
+    }
+
+    // --- joining -------------------------------------------------------------
+    //
+    // Started on the core's own thread and watched from here: the daemon waits
+    // up to two minutes for the device that made the invite, and every other
+    // call gives up after two seconds. Called the old way, a join always said
+    // "timeout" — including the ones that went on to work.
+    property bool joining: false
+
+    function startJoin(token, label, name) {
+        if (!haveCore) return
+        token = String(token || "").trim()
+        if (token === "") {
+            root.said = "paste the invite token first"
+            root.saidBad = true
+            return
+        }
+        var who = String(name || "").trim() || root.st.name || ""
+        var d = coreJson("joinWithInviteStart", [token, who, String(label || "").trim()])
+        if (d === null) {
+            // An older core: the blocking call, which reports a timeout the
+            // view cannot tell from a failure. Said, so it is not believed.
+            callWrite("joinWithInvite", [token, who, String(label || "").trim()])
+            root.said += "\n(this shrooms_core reports a timeout while the other device is "
+                       + "still answering — look at the meshes list in a minute)"
+            return
+        }
+        if (d.error) {
+            root.said = d.error + (d.detail ? " — " + d.detail : "")
+            root.saidBad = true
+            return
+        }
+        root.joining = true
+        root.said = "joining — waiting for the device that made the invite to answer "
+                  + "(up to two minutes; keep its invite screen open)"
+        root.saidBad = false
+    }
+
+    function pollJoin() {
+        if (!joining) return
+        var d = coreJson("joinProgress", [])
+        if (!d || d.running) return
+        root.joining = false
+        var r = d.result || {}
+        if (r.error) {
+            root.said = "join failed: " + r.error + (r.detail ? " — " + r.detail : "")
+            root.saidBad = true
+        } else if (r.result) {
+            // A running daemon: the mesh is in the config, and starts when
+            // the daemon does.
+            root.said = r.result + " — restart to start it"
+            root.saidBad = false
+        } else {
+            // A daemon that was waiting for its first mesh restarts itself
+            // into it; there is nothing to apply.
+            root.said = "joined " + (r.mesh || "the mesh") + (r.overlay ? " as " + r.overlay : "")
+                      + " — the daemon is starting it now"
+            root.saidBad = false
+        }
+        reload()
+    }
+
+    /**
+     * A daemon with no mesh yet: it holds the socket and waits to be told
+     * which mesh this is. The phone opens on a join screen in that state; this
+     * opened on an empty graph that said "no peers yet", which is true and
+     * says nothing about what to do.
+     */
+    readonly property bool waitingForMesh: root.st && root.st.waiting === true
+
+    // --- the domain names answer under (ADR-032) -----------------------------
+    property var suffixInfo: ({})
+    function loadSuffix() {
+        if (!haveCore) return
+        var d = coreJson("hostsSuffix", [])
+        root.suffixInfo = (d && !d.error) ? d : ({})
+    }
+
+    // --- blind relays (docs/blind-relays.md) ----------------------------------
+    //
+    // The phone has had this since it first met carrier-grade NAT. A desktop
+    // behind one needs it as much, and the only way to set it was the config.
+    property var relayInfo: null
+    function loadRelays() {
+        if (!haveCore) return
+        var d = coreJson("blindRelays", [])
+        root.relayInfo = (d && !d.error) ? d : null
+    }
+    function saveRelays(list, token, tokenTouched) {
+        if (tokenTouched) callWrite("setBlindRelaysWithToken", ["", list, token])
+        else callWrite("setBlindRelays", ["", list])
+        loadRelays()
+    }
+    function relaysText(r) {
+        if (!r) return ""
+        if (r.none) return "none"
+        return (r.relays || []).join(", ")
+    }
+
+    /** Everything the settings section reads besides status, read when it opens. */
+    function loadSettings() {
+        loadServices()
+        loadSuffix()
+        loadRelays()
+    }
+    onSettingsOpenChanged: if (settingsOpen) loadSettings()
+
+    // --- the agents ---------------------------------------------------------
+    //
+    // The phone's home screen has a way to the agents; this had none, though
+    // the two are installed together. Basecamp opens another app through an
+    // intent (basecamp.apps.launch), which older hosts do not have — there the
+    // link is not drawn rather than drawn and dead.
+    readonly property bool canLaunch: !!bridge && typeof bridge.request === "function"
+    function openAgents() {
+        if (!canLaunch) return
+        try {
+            bridge.request("basecamp.apps.launch", { app: "shrooms_agents" }, function (res) {
+                if (!res || !res.ok) {
+                    root.said = "could not open Shrooms Agents" + (res && res.error ? ": " + res.error : "")
+                    root.saidBad = true
+                }
+            })
+        } catch (e) {
+            root.said = "this Basecamp cannot open another app: " + e
+            root.saidBad = true
+        }
+    }
+
+    // --- one peer, picked on the graph ---------------------------------------
+    //
+    // A node on the graph is a peer you want to know more about, and the roster
+    // is where that is. Clicking one scrolls to its card and lights it for a
+    // moment, rather than opening a second copy of the card over the drawing.
+    property string focused: ""
+    function peerKey(mesh, name) { return (mesh || "") + "/" + (name || "") }
+    function focusPeer(mesh, name) {
+        var k = peerKey(mesh, name)
+        for (var i = 0; i < root.rows.length; i++) {
+            var r = root.rows[i]
+            if (r.header !== true && peerKey(r.mesh, r.name) === k) {
+                root.focused = k
+                focusTimer.restart()
+                root.focusRow(i)
+                return true
+            }
+        }
+        return false
+    }
+    // Set by the roster, which owns the ListView.
+    property var focusRow: function (i) {}
+    Timer { id: focusTimer; interval: 2500; onTriggered: root.focused = "" }
+
+    /** What one peer listens on (ADR-026), as addresses to paste. */
+    function boundAddrs(p) {
+        var b = p ? p.bound : undefined
+        if (!b || !b.length) return []
+        var host = p.dns_name || p.name || ""
+        var out = []
+        for (var i = 0; i < b.length; i++) {
+            var parts = String(b[i]).split(":")
+            var port = parts.length > 1 ? parts[parts.length - 1] : ""
+            out.push({ label: parts[0], addr: host + (port ? ":" + port : "") })
+        }
+        return out
+    }
+
+    // --- membership that needs renewing ---------------------------------------
+    //
+    // The daemon lists every credential due within the renewal window, its own
+    // and its peers', with the command that renews it. The phone shows that
+    // command; this showed only the days left, which says something is wrong
+    // and not what to do about it.
+    readonly property var due: (root.st && root.st.due) ? root.st.due : []
+    readonly property var dueSelf: {
+        var out = []
+        for (var i = 0; i < root.due.length; i++) if (root.due[i].self) out.push(root.due[i])
+        return out
+    }
+
+    // --- diagnostics ---------------------------------------------------------
+    //
+    // What somebody helping would ask for first, as one block of text to paste:
+    // the phone shares the same thing. Built from what this view already holds
+    // — status and the log — so there is nothing new to ask the daemon and
+    // nothing in it the socket group could not already read. No keys: status
+    // carries none.
+    function diagnosticsText() {
+        var st = root.st || {}, out = []
+        out.push("shrooms diagnostics · " + new Date().toISOString())
+        out.push("device " + (st.name || "?") + " · daemon " + (st.version || "?")
+                 + " · mode " + (st.mode_running || st.mode || "?"))
+        if (root.problem) out.push("PROBLEM " + root.problem)
+        var rz = st.rendezvous || {}
+        out.push("rendezvous " + (rz.status || "?") + (rz.ok === false ? " · " + (rz.problem || "not ok") : ""))
+        var dns = st.dns || {}
+        out.push("dns " + (dns.registered ? "registered" : (dns.serving ? "serving" : "off"))
+                 + (dns.suffix ? " ." + dns.suffix : "") + (dns.err ? " · " + dns.err : ""))
+        var ms = st.meshes || []
+        for (var i = 0; i < ms.length; i++) {
+            var m = ms[i]
+            out.push("mesh " + m.label + " · " + (m.overlay || "-") + " · port " + (m.port || "-")
+                     + " · peers " + (m.peers || 0) + " · relays " + (m.relays || 0)
+                     + (m.relay_using ? " · via " + m.relay_using : "")
+                     + (m.disabled ? " · off" : "") + (m.not_running ? " · not running" : "")
+                     + (m.unenrolled ? " · UNENROLLED" : "")
+                     + (m.expires ? " · ends " + new Date(m.expires * 1000).toISOString().slice(0, 10) : "")
+                     + (m.announced && m.announced.length ? " · announced " + m.announced.join(" ") : ""))
+        }
+        for (var j = 0; j < root.peers.length; j++) {
+            var p = root.peers[j]
+            out.push("peer " + (p.mesh ? p.mesh + "/" : "") + p.name + " · " + root.reachOf(p)
+                     + (p.live ? (p.relayed ? " relayed" : " direct") : "")
+                     + (p.rtt_ms ? " " + p.rtt_ms + "ms" : "")
+                     + (p.handshake_age_s ? " · handshake " + root.since(p.handshake_age_s) + " ago" : "")
+                     + (p.endpoint ? " · " + p.endpoint : ""))
+        }
+        for (var k = 0; k < root.due.length; k++) {
+            var d = root.due[k]
+            out.push("due " + d.mesh + "/" + d.name + (d.expired ? " EXPIRED " : " ") + d.not_after)
+        }
+        if (root.logLines.length) {
+            out.push("--- log, last " + root.logLines.length + " lines")
+            for (var l = 0; l < root.logLines.length; l++) out.push(logLineText(root.logLines[l]))
+        } else {
+            out.push("--- no log lines held (open the log pane first to include them)")
+        }
+        return out.join("\n")
+    }
+
+    // --- the log, filtered ------------------------------------------------------
+    //
+    // A pane of two hundred lines is mostly INFO, and the one line that says
+    // why is a WARN somewhere in the middle. Filtering keeps it; "copy" takes
+    // what is shown, for pasting somewhere it can be read whole.
+    property string logLevel: "all"   // all · warn · error
+    function logShown(l) {
+        if (logLevel === "error") return l.level === "ERROR"
+        if (logLevel === "warn") return l.level === "ERROR" || l.level === "WARN"
+        return true
+    }
+    readonly property var shownLog: {
+        var out = []
+        for (var i = 0; i < root.logLines.length; i++) if (logShown(root.logLines[i])) out.push(root.logLines[i])
+        return out
+    }
+    function logLineText(l) {
+        return new Date(l.t).toISOString() + " " + (l.level || "") + " " + (l.msg || "")
+               + (l.attrs ? " " + l.attrs : "")
+    }
+    function copyLog() {
+        var out = []
+        for (var i = 0; i < root.shownLog.length; i++) out.push(logLineText(root.shownLog[i]))
+        clipboard.text = out.join("\n")
+        clipboard.selectAll()
+        clipboard.copy()
+        root.said = "copied " + out.length + " log line(s)"
+        root.saidBad = false
+    }
+    function copyDiagnostics() {
+        var t = diagnosticsText()
+        clipboard.text = t
+        clipboard.selectAll()
+        clipboard.copy()
+        root.said = "copied the diagnostics (" + t.split("\n").length + " lines) — paste them to whoever is helping"
+        root.saidBad = false
+    }
+
     // A 32-bit string hash, the same one Java's String.hashCode computes, so a
     // node wanders the same way here as it does on the phone.
     function hashOf(s) {
@@ -924,6 +1238,20 @@ Item {
                             color: cAsh
                             font.family: "monospace"; font.pixelSize: root.fs(11)
                         }
+                        Text {
+                            visible: root.canLaunch
+                            text: "agents ↗"
+                            color: agentsMouse.containsMouse ? cPhosphor : cViolet
+                            font.family: "monospace"; font.pixelSize: root.fs(11)
+                            font.underline: agentsMouse.containsMouse
+                            MouseArea {
+                                id: agentsMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.openAgents()
+                            }
+                        }
                     }
 
                     // This device's address, one click from the clipboard. The
@@ -970,16 +1298,129 @@ Item {
                         color: root.problem !== "" ? cRust : cAmber
                         font.family: "monospace"; font.pixelSize: root.fs(11)
                         text: {
+                            // The core's error already says what to do (a
+                            // permission hint, a socket that is not there).
+                            // Only the file reader needs the extra line: it
+                            // reads a file the daemon writes only if told to.
                             if (root.problem !== "")
-                                return root.problem
-                                     + "\n\nSet `status_file = \"" + root.statusPath
-                                     + "\"` in /etc/logos-vpn/config.toml and restart the daemon."
+                                return root.problem + (root.haveCore ? ""
+                                     : "\n\nSet `status_file = \"" + root.statusPath
+                                       + "\"` in /etc/shrooms/config.toml and restart the daemon.")
                             // Discovery being down is not peers being offline. They
                             // look identical and have different causes.
                             var r = parent.rz
                             if (r === undefined) return ""
                             return "discovery: " + (r.problem || "unavailable")
                                  + "\nestablished tunnels are unaffected"
+                        }
+                    }
+                }
+
+                // --- first mesh ---------------------------------------------------
+                Rectangle {
+                    visible: root.waitingForMesh && root.haveCore
+                    Layout.fillWidth: true
+                    Layout.preferredWidth: 0
+                    implicitHeight: firstCol.implicitHeight + root.sz(28)
+                    color: cPanel
+                    radius: 10
+                    border.color: cPhosphor
+                    border.width: 1
+
+                    ColumnLayout {
+                        id: firstCol
+                        anchors.fill: parent
+                        anchors.margins: root.sz(14)
+                        spacing: root.sz(8)
+                        Text {
+                            text: "This device is not on a mesh yet"
+                            color: cBone
+                            font.family: "monospace"; font.pixelSize: root.fs(14)
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: 0
+                            wrapMode: Text.WordWrap
+                            color: cAsh
+                            font.family: "monospace"; font.pixelSize: root.fs(10)
+                            text: "Ask somebody on the mesh for an invite — the Shrooms app's "
+                                  + "\"invite a device\", or `shrooms invite` — and paste it here "
+                                  + "while their invite is still open. One invite admits one device, "
+                                  + "for fifteen minutes."
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: root.sz(8)
+                            Rectangle {
+                                Layout.fillWidth: true
+                                height: root.sz(28)
+                                color: cVoid
+                                border.color: cLine
+                                TextInput {
+                                    id: firstToken
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 6
+                                    verticalAlignment: TextInput.AlignVCenter
+                                    color: cBone
+                                    font.family: "monospace"; font.pixelSize: root.fs(11)
+                                    selectByMouse: true
+                                    clip: true
+                                }
+                                Text {
+                                    visible: firstToken.text === ""
+                                    anchors.left: parent.left
+                                    anchors.leftMargin: 6
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: "invite"
+                                    color: cAsh
+                                    font.family: "monospace"; font.pixelSize: root.fs(11)
+                                }
+                            }
+                            Rectangle {
+                                Layout.preferredWidth: root.sz(160)
+                                height: root.sz(28)
+                                color: cVoid
+                                border.color: cLine
+                                TextInput {
+                                    id: firstName
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 6
+                                    verticalAlignment: TextInput.AlignVCenter
+                                    color: cBone
+                                    font.family: "monospace"; font.pixelSize: root.fs(11)
+                                    selectByMouse: true
+                                    clip: true
+                                }
+                                Text {
+                                    visible: firstName.text === ""
+                                    anchors.left: parent.left
+                                    anchors.leftMargin: 6
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: "this device's name"
+                                    color: cAsh
+                                    font.family: "monospace"; font.pixelSize: root.fs(11)
+                                }
+                            }
+                            Text {
+                                text: root.joining ? "joining…" : "join"
+                                color: root.joining ? cAmber : cPhosphor
+                                font.family: "monospace"; font.pixelSize: root.fs(12)
+                                MouseArea {
+                                    anchors.fill: parent
+                                    enabled: !root.joining
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.startJoin(firstToken.text, "", firstName.text)
+                                }
+                            }
+                        }
+                        Text {
+                            visible: root.joining
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: 0
+                            wrapMode: Text.WordWrap
+                            color: cAmber
+                            font.family: "monospace"; font.pixelSize: root.fs(10)
+                            text: "waiting for the other device to admit this one — keep its invite open"
                         }
                     }
                 }
@@ -1004,6 +1445,9 @@ Item {
 
                         // Where the wander is in its cycle, in radians.
                         property real drift: 0
+
+                        // Where each node was drawn last frame, for clicks.
+                        property var hits: []
 
                         // Repaint the moment the mesh changes shape, rather than
                         // waiting up to a frame for the timer below: a peer coming
@@ -1106,6 +1550,11 @@ Item {
                             // different WireGuard device — so bending the line
                             // through one drew a path that cannot exist, and the
                             // whole point of the graph is which path traffic takes.
+                            var hit = []
+                            for (i = 0; i < n; i++) hit.push({ x: at[i].x, y: at[i].y,
+                                                               mesh: ps[i].mesh || "", name: ps[i].name || "" })
+                            graph.hits = hit
+
                             var relayOf = ({})
                             for (i = 0; i < n; i++) {
                                 var mk = ps[i].mesh || ""
@@ -1239,6 +1688,28 @@ Item {
                         }
                     }
 
+                    // A node is a peer you want to know more about: clicking one
+                    // scrolls the roster to its card. Hovering one is said by
+                    // the cursor, so the drawing does not look inert.
+                    MouseArea {
+                        anchors.fill: graph
+                        hoverEnabled: true
+                        function nodeAt(x, y) {
+                            var best = null, bestD = root.sz(26)
+                            for (var i = 0; i < graph.hits.length; i++) {
+                                var h = graph.hits[i]
+                                var d = Math.sqrt((h.x - x) * (h.x - x) + (h.y - y) * (h.y - y))
+                                if (d < bestD) { bestD = d; best = h }
+                            }
+                            return best
+                        }
+                        cursorShape: nodeAt(mouseX, mouseY) ? Qt.PointingHandCursor : Qt.ArrowCursor
+                        onClicked: function (mouse) {
+                            var h = nodeAt(mouse.x, mouse.y)
+                            if (h) root.focusPeer(h.mesh, h.name)
+                        }
+                    }
+
                     // Only the whole-mesh picture is labelled, and only to disown
                     // the extra links: they are inferred from what peers report, so
                     // an unmarked drawing of them would pass off a guess as a
@@ -1334,6 +1805,16 @@ Item {
                             font.family: "monospace"; font.pixelSize: root.fs(10)
                         }
                         Text {
+                            // Which relay is carrying this mesh's traffic now,
+                            // when one is: the difference between "slow" and
+                            // "slow because it goes through somebody else's box".
+                            visible: !!modelData.relay_using
+                            text: "via " + (modelData.relay_using || "")
+                                  + (modelData.relay_using_blind ? " (blind)" : "")
+                            color: cViolet
+                            font.family: "monospace"; font.pixelSize: root.fs(10)
+                        }
+                        Text {
                             // Said out loud because zero relays is a configuration
                             // rather than a fault, and it stays invisible until
                             // somebody is on mobile data and reaches nobody.
@@ -1345,7 +1826,8 @@ Item {
                         Text {
                             // Ten days is enough warning to find whoever holds the
                             // admin key, and short enough that it is not on screen
-                            // permanently. Renewal is not a thing this view can do.
+                            // permanently. The command that renews it is under
+                            // membership.
                             visible: root.endsIn(modelData) <= 10
                             text: root.endsIn(modelData) < 0
                                   ? "membership has ended"
@@ -1358,6 +1840,10 @@ Item {
 
                 // --- list -------------------------------------------------------
                 ListView {
+                    id: roster
+                    Component.onCompleted: root.focusRow = function (i) {
+                        roster.positionViewAtIndex(i, ListView.Contain)
+                    }
                     Layout.fillWidth: true
                     Layout.preferredWidth: 0
                     Layout.fillHeight: true
@@ -1406,6 +1892,10 @@ Item {
                             implicitHeight: row.implicitHeight + 20
                             color: cPanel
                             radius: 8
+                            // Lit for a moment when its node is clicked on the
+                            // graph, so the eye lands on the right card.
+                            border.width: root.focused !== "" && root.focused === root.peerKey(modelData.mesh, modelData.name) ? 2 : 0
+                            border.color: cPhosphor
 
                             ColumnLayout {
                                 id: row
@@ -1484,6 +1974,47 @@ Layout.preferredWidth: 0
                                     }
                                 }
 
+                                // The IPv4 alias (ADR-021), for whatever will not
+                                // take an IPv6 address, and the one command that
+                                // answers "can I reach it from here".
+                                RowLayout {
+                                    spacing: root.sz(10)
+                                    Layout.fillWidth: true
+                                    Layout.preferredWidth: 0
+                                    Text {
+                                        visible: !!p.overlay_v4
+                                        text: p.overlay_v4 || ""
+                                        color: v4Mouse.containsMouse ? cPhosphor : cAsh
+                                        font.family: "monospace"; font.pixelSize: root.fs(10)
+                                        font.underline: v4Mouse.containsMouse
+                                        MouseArea {
+                                            id: v4Mouse
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: root.copyText(parent.text)
+                                        }
+                                    }
+                                    Text {
+                                        readonly property string cmd: "ping6 -c3 " + (p.dns_name || p.overlay || "")
+                                        visible: !!(p.dns_name || p.overlay)
+                                        text: cmd
+                                        color: pingMouse.containsMouse ? cPhosphor : cAsh
+                                        font.family: "monospace"; font.pixelSize: root.fs(9)
+                                        font.underline: pingMouse.containsMouse
+                                        elide: Text.ElideRight
+                                        Layout.fillWidth: true
+                                        Layout.preferredWidth: 0
+                                        MouseArea {
+                                            id: pingMouse
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: root.copyText(parent.cmd)
+                                        }
+                                    }
+                                }
+
                                 // What this peer says it offers, as addresses. Read
                                 // only, selectable, and on one line: these are a
                                 // claim the peer repeats rather than a health
@@ -1504,6 +2035,71 @@ Layout.preferredWidth: 0
                                     wrapMode: TextEdit.Wrap
                                     Layout.fillWidth: true
                                     Layout.preferredWidth: 0
+                                }
+
+                                // What it listens on, when it says (ADR-026): a host
+                                // and a port each, copied on click. Not opened — no
+                                // scheme is assumed for a port.
+                                Flow {
+                                    visible: root.boundAddrs(p).length > 0
+                                    Layout.fillWidth: true
+                                    Layout.preferredWidth: 0
+                                    spacing: root.sz(12)
+                                    Repeater {
+                                        model: root.boundAddrs(p)
+                                        delegate: Text {
+                                            text: modelData.label + " " + modelData.addr
+                                            color: bAddrMouse.containsMouse ? cPhosphor
+                                                 : (p.live === true ? cBone : cAsh)
+                                            font.family: "monospace"; font.pixelSize: root.fs(10)
+                                            font.underline: bAddrMouse.containsMouse
+                                            MouseArea {
+                                                id: bAddrMouse
+                                                anchors.fill: parent
+                                                hoverEnabled: true
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: root.copyText(modelData.addr)
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // The last few minutes of traffic, which a pair of
+                                // rates cannot show: whether that 2 MB/s is a
+                                // transfer finishing or one just starting. Drawn
+                                // from what the daemon already sends.
+                                Canvas {
+                                    id: spark
+                                    visible: p.live === true && ((p.rx_history || []).length > 1
+                                                                 || (p.tx_history || []).length > 1)
+                                    Layout.fillWidth: true
+                                    Layout.preferredWidth: 0
+                                    Layout.preferredHeight: root.sz(18)
+                                    property string shape: JSON.stringify([p.rx_history || [], p.tx_history || []])
+                                    onShapeChanged: requestPaint()
+                                    onWidthChanged: requestPaint()
+                                    onPaint: {
+                                        var ctx = getContext("2d")
+                                        ctx.reset()
+                                        var rx = p.rx_history || [], tx = p.tx_history || []
+                                        var max = 1
+                                        for (var i = 0; i < rx.length; i++) max = Math.max(max, rx[i])
+                                        for (var j = 0; j < tx.length; j++) max = Math.max(max, tx[j])
+                                        function line(h, col) {
+                                            if (h.length < 2) return
+                                            ctx.strokeStyle = col
+                                            ctx.lineWidth = 1.2
+                                            ctx.beginPath()
+                                            for (var k = 0; k < h.length; k++) {
+                                                var x = width * k / (h.length - 1)
+                                                var y = height - 1 - (height - 2) * h[k] / max
+                                                if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
+                                            }
+                                            ctx.stroke()
+                                        }
+                                        line(tx, root.cViolet)
+                                        line(rx, p.relayed ? root.cViolet : root.cPhosphor)
+                                    }
                                 }
 
                                 RowLayout {
@@ -1767,10 +2363,15 @@ Layout.preferredWidth: 0
                             // separated. Shown in the form that is stored so that what
                             // is typed here and what ends up in the file are the same
                             // string.
+                            //
+                            // Here only for a daemon that lists no meshes; otherwise
+                            // each mesh has its own row below, because each mesh has
+                            // its own list.
                             RowLayout {
+                                visible: root.switchableMeshes.length === 0
                                 spacing: 8
                                 Layout.fillWidth: true
-Layout.preferredWidth: 0
+                                Layout.preferredWidth: 0
                                 Text {
                                     text: "services"
                                     color: cAsh
@@ -1790,14 +2391,10 @@ Layout.preferredWidth: 0
                                         color: cBone
                                         font.family: "monospace"; font.pixelSize: root.fs(11)
                                         selectByMouse: true
-                                        text: {
-                                            var out = []
-                                            var svcs = root.st.services || []
-                                            for (var i = 0; i < svcs.length; i++)
-                                                out.push(svcs[i].name + ":" + svcs[i].port)
-                                            return out.join(", ")
-                                        }
-                                        onAccepted: root.callWrite("setServices", [text])
+                                        // The configured list, never the running one:
+                                        // see configuredServices.
+                                        text: root.configuredServices[""] || ""
+                                        onAccepted: root.saveServices("", text)
                                     }
                                 }
                                 Text {
@@ -1807,7 +2404,7 @@ Layout.preferredWidth: 0
                                     MouseArea {
                                         anchors.fill: parent
                                         cursorShape: Qt.PointingHandCursor
-                                        onClicked: root.callWrite("setServices", [servicesField.text])
+                                        onClicked: root.saveServices("", servicesField.text)
                                     }
                                 }
                             }
@@ -2084,7 +2681,84 @@ Layout.preferredWidth: 0
                                                                               [modelData.label, modelData.relay !== true])
                                                 }
                                             }
+                                            Text {
+                                                // Repeating revocations, so a peer that was
+                                                // offline when somebody was removed still
+                                                // learns it. On unless switched off; shown
+                                                // only by a daemon that reports it.
+                                                visible: modelData.label !== undefined && root.st.version !== undefined
+                                                text: "revocations"
+                                                color: root.pick(modelData.quiet_revocations !== true)
+                                                font.family: "monospace"; font.pixelSize: root.fs(10)
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: root.callWrite("setAnnounceRevocations",
+                                                                              [modelData.label, modelData.quiet_revocations === true])
+                                                }
+                                            }
                                             Item { Layout.fillWidth: true }
+                                        }
+
+                                        // What this mesh publishes (ADR-023), as the
+                                        // config has it. Per mesh: telling your own
+                                        // machines and somebody else's what you run
+                                        // are different lists.
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            Layout.leftMargin: root.sz(17)
+                                            spacing: root.sz(8)
+                                            readonly property var configured: root.configuredServices[modelData.label]
+                                            Text {
+                                                text: "publishes"
+                                                color: cAsh
+                                                font.family: "monospace"; font.pixelSize: root.fs(9)
+                                            }
+                                            Rectangle {
+                                                Layout.fillWidth: true
+                                                height: root.sz(22)
+                                                color: cPanel
+                                                border.color: cLine
+                                                TextInput {
+                                                    id: meshSvcField
+                                                    anchors.fill: parent
+                                                    anchors.leftMargin: 6
+                                                    verticalAlignment: TextInput.AlignVCenter
+                                                    color: cBone
+                                                    font.family: "monospace"; font.pixelSize: root.fs(10)
+                                                    selectByMouse: true
+                                                    clip: true
+                                                    // Not editable until the configured
+                                                    // list has been read: saving a field
+                                                    // that never held it would replace
+                                                    // the list with whatever was typed.
+                                                    readOnly: parent.parent.configured === undefined
+                                                              || parent.parent.configured === null
+                                                    text: parent.parent.configured || ""
+                                                    onAccepted: root.saveServices(modelData.label, text)
+                                                }
+                                                Text {
+                                                    visible: meshSvcField.text === ""
+                                                    anchors.left: parent.left
+                                                    anchors.leftMargin: 6
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                    text: meshSvcField.readOnly ? "could not read the configured list"
+                                                                                : "name:port, …"
+                                                    color: cAsh
+                                                    font.family: "monospace"; font.pixelSize: root.fs(10)
+                                                }
+                                            }
+                                            Text {
+                                                visible: !meshSvcField.readOnly
+                                                text: "set"
+                                                color: cPhosphor
+                                                font.family: "monospace"; font.pixelSize: root.fs(10)
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: root.saveServices(modelData.label, meshSvcField.text)
+                                                }
+                                            }
                                         }
 
                                         // What "ports" would disclose, under the switch that discloses
@@ -2217,6 +2891,179 @@ Layout.preferredWidth: 0
                                 }
                             }
 
+                            // The domain names are answered under (ADR-032), for a
+                            // machine that is also on a network that uses .internal.
+                            // The core has been able to set it since the ADR; nothing
+                            // offered it.
+                            RowLayout {
+                                spacing: 8
+                                Layout.fillWidth: true
+                                visible: root.suffixInfo.hosts_suffix !== undefined
+                                Text {
+                                    text: "domain"
+                                    color: cAsh
+                                    font.family: "monospace"; font.pixelSize: root.fs(11)
+                                    Layout.preferredWidth: root.sz(70)
+                                }
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    height: root.sz(26)
+                                    color: cPanel
+                                    border.color: cLine
+                                    TextInput {
+                                        id: suffixField
+                                        anchors.fill: parent
+                                        anchors.leftMargin: 6
+                                        verticalAlignment: TextInput.AlignVCenter
+                                        color: cBone
+                                        font.family: "monospace"; font.pixelSize: root.fs(11)
+                                        selectByMouse: true
+                                        text: root.suffixInfo.hosts_suffix || ""
+                                        onAccepted: { root.callWrite("setHostsSuffix", [text]); root.loadSuffix() }
+                                    }
+                                }
+                                Text {
+                                    text: "set"
+                                    color: cPhosphor
+                                    font.family: "monospace"; font.pixelSize: root.fs(11)
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: { root.callWrite("setHostsSuffix", [suffixField.text]); root.loadSuffix() }
+                                    }
+                                }
+                                Text {
+                                    visible: !!root.suffixInfo.default
+                                             && root.suffixInfo.hosts_suffix !== root.suffixInfo.default
+                                    text: "default"
+                                    color: cAsh
+                                    font.family: "monospace"; font.pixelSize: root.fs(10)
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: { root.callWrite("setHostsSuffix", [root.suffixInfo.default]); root.loadSuffix() }
+                                    }
+                                }
+                            }
+
+                            // Blind relays: relays somebody else runs, for a device
+                            // behind carrier-grade NAT that no member of the mesh can
+                            // reach (docs/blind-relays.md). For every mesh; a mesh
+                            // that overrides it is named underneath.
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 4
+                                id: relaysBlock
+                                visible: root.relayInfo !== null
+                                property bool tokenTouched: false
+                                RowLayout {
+                                    spacing: 8
+                                    Layout.fillWidth: true
+                                    Text {
+                                        text: "relays"
+                                        color: cAsh
+                                        font.family: "monospace"; font.pixelSize: root.fs(11)
+                                        Layout.preferredWidth: root.sz(70)
+                                    }
+                                    Rectangle {
+                                        Layout.fillWidth: true
+                                        height: root.sz(26)
+                                        color: cPanel
+                                        border.color: cLine
+                                        TextInput {
+                                            id: relaysField
+                                            anchors.fill: parent
+                                            anchors.leftMargin: 6
+                                            verticalAlignment: TextInput.AlignVCenter
+                                            color: cBone
+                                            font.family: "monospace"; font.pixelSize: root.fs(11)
+                                            selectByMouse: true
+                                            clip: true
+                                            text: root.relaysText(root.relayInfo)
+                                        }
+                                        Text {
+                                            visible: relaysField.text === ""
+                                            anchors.left: parent.left
+                                            anchors.leftMargin: 6
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            text: "the admin's, if any · ADDR:PORT, … · none"
+                                            color: cAsh
+                                            font.family: "monospace"; font.pixelSize: root.fs(10)
+                                        }
+                                    }
+                                }
+                                RowLayout {
+                                    spacing: 8
+                                    Layout.fillWidth: true
+                                    Layout.leftMargin: root.sz(78)
+                                    Rectangle {
+                                        Layout.fillWidth: true
+                                        height: root.sz(24)
+                                        color: cPanel
+                                        border.color: cLine
+                                        TextInput {
+                                            id: relayTokenField
+                                            anchors.fill: parent
+                                            anchors.leftMargin: 6
+                                            verticalAlignment: TextInput.AlignVCenter
+                                            color: cBone
+                                            font.family: "monospace"; font.pixelSize: root.fs(10)
+                                            echoMode: TextInput.Password
+                                            selectByMouse: true
+                                            clip: true
+                                            onTextEdited: relaysBlock.tokenTouched = true
+                                        }
+                                        Text {
+                                            visible: relayTokenField.text === ""
+                                            anchors.left: parent.left
+                                            anchors.leftMargin: 6
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            // The token is never read back, only
+                                            // whether there is one: left empty, it
+                                            // stays as it is.
+                                            text: root.relayInfo && root.relayInfo.token_set
+                                                  ? "operator token set — type to replace"
+                                                  : "operator token, if the relay wants one"
+                                            color: cAsh
+                                            font.family: "monospace"; font.pixelSize: root.fs(10)
+                                        }
+                                    }
+                                    Text {
+                                        text: "save"
+                                        color: cPhosphor
+                                        font.family: "monospace"; font.pixelSize: root.fs(11)
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: {
+                                                root.saveRelays(relaysField.text, relayTokenField.text,
+                                                                relaysBlock.tokenTouched)
+                                                relayTokenField.text = ""
+                                                relaysBlock.tokenTouched = false
+                                            }
+                                        }
+                                    }
+                                }
+                                Text {
+                                    // A mesh with its own relays does not use the
+                                    // ones above; said, so the field is not mistaken
+                                    // for the whole story.
+                                    readonly property var over: {
+                                        var out = [], m = (root.relayInfo && root.relayInfo.meshes) || {}
+                                        for (var k in m) out.push(k + ": " + (m[k].none ? "none" : (m[k].relays || []).join(", ")))
+                                        return out
+                                    }
+                                    visible: over.length > 0
+                                    Layout.fillWidth: true
+                                    Layout.preferredWidth: 0
+                                    Layout.leftMargin: root.sz(78)
+                                    wrapMode: Text.WordWrap
+                                    text: "its own: " + over.join(" · ")
+                                    color: cAsh
+                                    font.family: "monospace"; font.pixelSize: root.fs(9)
+                                }
+                            }
+
                             RowLayout {
                                 spacing: 12
                                 Layout.fillWidth: true
@@ -2260,6 +3107,19 @@ Layout.preferredWidth: 0
                                     }
                                 }
                                 Item { Layout.fillWidth: true }
+                                Text {
+                                    text: "copy diagnostics"
+                                    color: diagMouse.containsMouse ? cPhosphor : cAsh
+                                    font.family: "monospace"; font.pixelSize: root.fs(10)
+                                    font.underline: diagMouse.containsMouse
+                                    MouseArea {
+                                        id: diagMouse
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: root.copyDiagnostics()
+                                    }
+                                }
                             }
 
 
@@ -2551,6 +3411,51 @@ Layout.preferredWidth: 0
                                 }
                             }
 
+                            // What renews what is due, as the daemon words it: one
+                            // command per mesh, run where the admin key is (a card,
+                            // or the admin's machine). Copied on click.
+                            Text {
+                                visible: root.due.length > 0
+                                text: "due for renewal"
+                                color: cAmber
+                                font.family: "monospace"; font.pixelSize: root.fs(10)
+                                Layout.topMargin: root.sz(6)
+                            }
+                            Repeater {
+                                model: root.due
+                                delegate: RowLayout {
+                                    Layout.fillWidth: true
+                                    Layout.preferredWidth: 0
+                                    Layout.leftMargin: root.sz(12)
+                                    spacing: root.sz(10)
+                                    Text {
+                                        text: (modelData.self ? "this device" : modelData.name)
+                                              + (root.multiMesh || modelData.mesh !== "default" ? " · " + modelData.mesh : "")
+                                              + (modelData.expired ? " · ended" : "")
+                                        color: modelData.expired ? cRust : cAmber
+                                        font.family: "monospace"; font.pixelSize: root.fs(10)
+                                        Layout.preferredWidth: root.sz(150)
+                                        elide: Text.ElideRight
+                                    }
+                                    Text {
+                                        text: modelData.fix || ""
+                                        color: fixMouse.containsMouse ? cPhosphor : cBone
+                                        font.family: "monospace"; font.pixelSize: root.fs(10)
+                                        font.underline: fixMouse.containsMouse
+                                        elide: Text.ElideRight
+                                        Layout.fillWidth: true
+                                        Layout.preferredWidth: 0
+                                        MouseArea {
+                                            id: fixMouse
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: root.copyText(modelData.fix)
+                                        }
+                                    }
+                                }
+                            }
+
                             // Joining another mesh. The token comes from whoever is
                             // running `shrooms invite` at the far end, right now — the
                             // exchange is live, so this waits for them and can take a
@@ -2621,20 +3526,14 @@ Layout.preferredWidth: 0
                                     }
                                 }
                                 Text {
-                                    text: "join"
-                                    color: cPhosphor
+                                    text: root.joining ? "joining…" : "join"
+                                    color: root.joining ? cAmber : cPhosphor
                                     font.family: "monospace"; font.pixelSize: root.fs(11)
                                     MouseArea {
                                         anchors.fill: parent
+                                        enabled: !root.joining
                                         cursorShape: Qt.PointingHandCursor
-                                        onClicked: {
-                                            root.said = "redeeming — the far side has to be "
-                                                      + "running `shrooms invite` right now"
-                                            root.saidBad = false
-                                            root.callWrite("joinWithInvite",
-                                                           [tokenField.text, root.st.name || "",
-                                                            labelField.text])
-                                        }
+                                        onClicked: root.startJoin(tokenField.text, labelField.text, "")
                                     }
                                 }
                             }
@@ -2705,19 +3604,66 @@ Layout.preferredWidth: 0
 
 
 
-                Text {
-                    text: root.logsOpen ? "log ▾" : "log ▸"
-                    color: cPhosphor
-                    font.family: "monospace"; font.pixelSize: root.fs(11)
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            root.logsOpen = !root.logsOpen
-                            // Fetched immediately on opening rather than at the
-                            // next tick: two seconds of an empty box reads as
-                            // "there is no log".
-                            if (root.logsOpen) root.pumpLogs()
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: root.sz(12)
+                    Text {
+                        text: root.logsOpen ? "log ▾" : "log ▸"
+                        color: cPhosphor
+                        font.family: "monospace"; font.pixelSize: root.fs(11)
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                root.logsOpen = !root.logsOpen
+                                // Fetched immediately on opening rather than at the
+                                // next tick: two seconds of an empty box reads as
+                                // "there is no log".
+                                if (root.logsOpen) root.pumpLogs()
+                            }
+                        }
+                    }
+                    Repeater {
+                        model: root.logsOpen ? ["all", "warn", "error"] : []
+                        delegate: Text {
+                            text: modelData
+                            color: root.logLevel === modelData
+                                   ? (modelData === "error" ? cRust : (modelData === "warn" ? cAmber : cBone))
+                                   : cAsh
+                            font.family: "monospace"; font.pixelSize: root.fs(10)
+                            font.underline: root.logLevel === modelData
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.logLevel = modelData
+                            }
+                        }
+                    }
+                    Item { Layout.fillWidth: true }
+                    Text {
+                        visible: root.logsOpen && root.shownLog.length > 0
+                        text: "copy"
+                        color: logCopyMouse.containsMouse ? cPhosphor : cAsh
+                        font.family: "monospace"; font.pixelSize: root.fs(10)
+                        MouseArea {
+                            id: logCopyMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.copyLog()
+                        }
+                    }
+                    Text {
+                        visible: root.logsOpen
+                        text: "copy diagnostics"
+                        color: logDiagMouse.containsMouse ? cPhosphor : cAsh
+                        font.family: "monospace"; font.pixelSize: root.fs(10)
+                        MouseArea {
+                            id: logDiagMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.copyDiagnostics()
                         }
                     }
                 }
@@ -2736,7 +3682,7 @@ Layout.preferredWidth: 0
                         anchors.margins: 8
                         clip: true
                         spacing: 2
-                        model: root.logLines
+                        model: root.shownLog
 
                         // Follow the tail, but only while the reader is already
                         // at the bottom: yanking the view down under somebody
@@ -2779,14 +3725,16 @@ Layout.preferredWidth: 0
 
 
                     Text {
-                        visible: root.logLines.length === 0
+                        visible: root.shownLog.length === 0
                         anchors.fill: parent
                         anchors.margins: 16
                         horizontalAlignment: Text.AlignHCenter
                         verticalAlignment: Text.AlignVCenter
                         wrapMode: Text.WordWrap
                         text: root.logProblem !== "" ? root.logProblem
-                                                     : "nothing logged since this pane was opened"
+                             : (root.logLines.length > 0 ? "nothing at this level among the last "
+                                                           + root.logLines.length + " lines"
+                                                         : "nothing logged since this pane was opened")
                         color: root.logProblem !== "" ? cAmber : cAsh
                         font.family: "monospace"; font.pixelSize: root.fs(10)
                     }
