@@ -56,6 +56,8 @@ data class AgentSession(
     val acceptFilesFrom: List<String> = emptyList(),
     /** Senders refused lately, for the app to offer to allow. */
     val fileRequests: List<FileRequest> = emptyList(),
+    /** The meshes it is there for, by its machine's labels; empty is every one (ADR-049). */
+    val meshes: List<String> = emptyList(),
 )
 
 /** A sender a session refused files from, and what it tried to send. */
@@ -198,6 +200,7 @@ class AgentClient(private val address: String) {
                 limited = Limited.parse(s.optJSONObject("limited")),
                 acceptCaged = s.optBoolean("accept_caged"),
                 acceptFilesFrom = s.optJSONArray("accept_files_from")?.let { a -> (0 until a.length()).map { a.getString(it) } }.orEmpty(),
+                meshes = s.optJSONArray("meshes")?.let { a -> (0 until a.length()).map { a.getString(it) } }.orEmpty(),
                 fileRequests = s.optJSONArray("file_requests")?.let { a ->
                     (0 until a.length()).map { val f = a.getJSONObject(it); FileRequest(f.optString("from"), f.optString("name"), f.optLong("size")) }
                 }.orEmpty(),
@@ -272,6 +275,17 @@ class AgentClient(private val address: String) {
     fun setAcceptFiles(session: String, from: List<String>) {
         request("POST", "/v1/sessions/${enc(session)}/settings",
             JSONObject().put("accept_files_from", org.json.JSONArray(from)).toString())
+    }
+
+    /** The machine's meshes, by its labels: what a session may be limited to. */
+    fun meshes(): List<String> {
+        val a = JSONObject(request("GET", "/v1/meshes", null)).optJSONArray("meshes") ?: return emptyList()
+        return (0 until a.length()).map { a.getString(it) }
+    }
+
+    /** The meshes a session is there for; empty is every one. */
+    fun setMeshes(session: String, meshes: List<String>) {
+        request("POST", "/v1/sessions/${enc(session)}/settings", JSONObject().put("meshes", org.json.JSONArray(meshes)).toString())
     }
 
     /** Sets a refused sender's request aside, without allowing it. */

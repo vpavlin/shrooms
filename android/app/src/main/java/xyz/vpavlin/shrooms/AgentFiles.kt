@@ -141,3 +141,48 @@ fun FilesDialog(client: AgentClient, session: String, start: AgentSession?, onCh
         },
     )
 }
+
+/**
+ * Which of its machine's meshes a session is there for (ADR-049): from any
+ * other it does not exist. None ticked is every mesh.
+ */
+@Composable
+fun MeshesDialog(client: AgentClient, session: String, start: List<String>, onSaved: (List<String>) -> Unit, onClose: () -> Unit) {
+    var all by remember { mutableStateOf<List<String>?>(null) }
+    var picked by remember { mutableStateOf(start.toSet()) }
+    var said by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(Unit) {
+        all = withContext(Dispatchers.IO) { runCatching { client.meshes() }.getOrNull() } ?: emptyList()
+    }
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text("Meshes · $session") },
+        dismissButton = { TextButton(onClick = onClose) { Text("Cancel") } },
+        confirmButton = {
+            TextButton(onClick = {
+                val list = all.orEmpty().filter { it in picked }
+                scope.launch {
+                    withContext(Dispatchers.IO) { runCatching { client.setMeshes(session, list) } }
+                        .onSuccess { onSaved(list); onClose() }
+                        .onFailure { said = "could not save: ${it.message}" }
+                }
+            }) { Text("Save") }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("From a mesh not ticked, this session does not exist: not listed, opened, asked or sent files. " +
+                    "None ticked is every mesh.", style = MaterialTheme.typography.bodySmall, color = Palette.Ash)
+                if (said.isNotEmpty()) Text(said, color = Palette.Rust, style = MaterialTheme.typography.labelSmall)
+                val ms = all
+                if (ms == null) Text("…", color = Palette.Ash)
+                else for (m in ms) Row(verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().clickable { picked = if (m in picked) picked - m else picked + m }) {
+                    androidx.compose.material3.Checkbox(checked = m in picked, onCheckedChange = { picked = if (it) picked + m else picked - m })
+                    Text(m, style = MaterialTheme.typography.bodyMedium, color = Palette.Bone)
+                }
+            }
+        },
+    )
+}
+
