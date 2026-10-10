@@ -985,9 +985,12 @@ Item {
                 // somebody asked for this message.
                 var at = i
                 root.chatStick = false
+                // Read BEFORE clearing: asking isQuietJump after `jumpTo = 0` is asking
+                // about 0, and the quiet branch could never be taken at all.
+                var wasQuiet = isQuietJump(root.jumpTo)
                 root.jumpTo = 0
-                if (root.jumpQuiet) {
-                    root.jumpQuiet = false
+                if (wasQuiet) {
+                    root.jumpQuietFor = 0
                     Qt.callLater(function() { chatList.positionViewAtIndex(at, ListView.End) })
                     return
                 }
@@ -1043,9 +1046,14 @@ Item {
     function isJumpRow(r, id) { return !!r && !r.earlier && id !== "" && r.pid === id }
     // The search fallback fires only once the session is caught up, so it cannot race
     // a message that is still arriving - the view already tracks that as agentCaughtUp.
-    // A jump back to where the reader was, after loading more: not lit, and
-    // the event at the bottom of the view with what was loaded above it.
-    property bool jumpQuiet: false
+    // The seq a QUIET jump was armed for: "load them" keeps the reader where they
+    // were, not lit. A plain flag was not enough - "load them" set it, its own jump
+    // never matched, and the flag stayed set, so the NEXT jump (tapping a task) took
+    // the quiet branch and lit nothing and moved nothing. The reviewer's live pass:
+    // "nothing is lit, nothing moves" (2026-10-10). Keyed to its seq, a stale one
+    // cannot swallow a different jump. Pure, so the harness pins it.
+    property real jumpQuietFor: 0
+    function isQuietJump(seq) { return root.jumpQuietFor !== 0 && root.jumpQuietFor === seq }
     property real agentLit: 0
     property var reading: null
     function runSearch(q) {
@@ -1084,7 +1092,7 @@ Item {
         var first = evs[0].seq, last = evs[evs.length - 1].seq
         var h = { address: agentOpen.address, name: agentOpen.name, mesh: agentOpen.mesh }
         openSession(h, agentOpen.session, first - 1 <= moreEvents ? 0 : moreTail(first, last))
-        root.jumpQuiet = true
+        root.jumpQuietFor = first
         root.jumpTo = first
     }
     function tailReaching(current, lastSeq, seq) {

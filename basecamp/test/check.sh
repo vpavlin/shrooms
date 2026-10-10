@@ -270,6 +270,7 @@ expect "TASKWATCH fd00::1 shrooms 300" "tapping a task opens its session with on
 expect "LIVELINK n=1 pair=laptop/shrooms>laptop/jimmy count=1 tone=input-required" "the live-shaped link is not built from a real task"
 expect "LIVEFILTER laptop/jimmy>laptop/shrooms n=1" "tapping that link's badge would show an EMPTY panel"
 expect "PAIRKEY a/y>b/x|a/y>b/x|a/y>a/y|" "a link in the other direction is not the same link"
+expect "DEEPJUMP litMax=20 want=20 has20=true" "the jump to a task OUTSIDE the loaded tail never lights - the reviewer's live pass: nothing lit, nothing moves"
 expect "BESTHIT 5,3,true" "the jump lands on a later mention of the task instead of its arrival"
 expect "PAIR laptop/review>pi5/jimmy,,1,1,0,2" "a link tap does not filter the panel to its own pair"
 expect "BADGEAT a>b,,a>b,a>b,,," "a press is taken over a card that is not on a badge"

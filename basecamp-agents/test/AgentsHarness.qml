@@ -54,6 +54,10 @@ Item {
     property string lastDelete: ""
     property string lastMoveKept: ""
     property string lastWatch: ""
+    // A windowed core, for the jump that has to reach OUTSIDE the loaded tail.
+    property bool windowed: false
+    property int watchTail: 0
+    property var windowEvents: []
     property string lastSearch: ""
     property bool findNone: false
     property string lastOpen: ""
@@ -100,6 +104,36 @@ Item {
         bridge: QtObject {
             function callModule(module, method, args) {
                 top.calls.push(method)
+                if (method === "agentWatch") {
+                    top.lastWatch = args.join(" ")
+                    // The LIVE SHAPE: the real core answers with the LAST `tail` events, so a
+                    // session deeper than the tail has no older events loaded, and a jump to a
+                    // task that arrived before the window has to reach back.
+                    if (top.windowed) top.watchTail = Number(args[2])
+                    return JSON.stringify({ ok: true })
+                }
+                // THE LIVE SHAPE. The real core answers with the LAST `tail` events, so a
+                // session deeper than the tail does not have its older events loaded - and
+                // a jump to a task that arrived before the window has to reach back. This
+                if (method === "agentEvents" && top.windowed) {
+                    var wafter = Number(args[0])
+                    var wbase = Math.max(0, top.windowEvents.length - top.watchTail)
+                    var wfrom = Math.max(wafter, wbase)
+                    var wupto = Math.min(top.windowEvents.length, wfrom + 4)
+                    return JSON.stringify({ next: wupto, more: wupto < top.windowEvents.length,
+                                            connected: true, error: "", kept: 0, epoch: 9,
+                                            events: wfrom >= top.windowEvents.length ? []
+                                                    : top.windowEvents.slice(wfrom, wupto) })
+                }
+                if (method === "agentSearch" && top.windowed) { top.lastSearch = args.join(" "); return JSON.stringify({ search: 1 }) }
+                if (method === "agentSearched" && top.windowed)
+                    return JSON.stringify({ id: 1, done: true, error: "", found: [
+                        { seq: 20, time: "2026-10-09T10:00:00Z", role: "user",
+                          snippet: "[shrooms task jimmy:deep-1 from laptop.default (laptop/shrooms)] the arrival" },
+                        { seq: 390, time: "2026-10-09T11:00:00Z", role: "user",
+                          snippet: "[shrooms task jimmy:deep-1 \u2014 more from laptop.default (laptop/shrooms)]" } ] })
+
+
                 if (method === "status") return JSON.stringify({ name: "desk",
                     meshes: [ { label: "office", overlay: "fdb0:9afc:a5ef:1111:2222:3333:4444:5555" } ], peers: [
                     { name: "laptop", mesh: "office", overlay: "fdb0:9afc:a5ef:388c:8264:7716:36fc:64eb", online: true } ] })
@@ -153,7 +187,6 @@ Item {
                     if (args[0] === "stop") top.speakingNow = false
                     return JSON.stringify(args[0] === "state" ? { speaking: top.speakingNow, engine: "spd-say" } : { ok: true })
                 }
-                if (method === "agentWatch") { top.lastWatch = args.join(" "); return JSON.stringify({ ok: true }) }
                 if (method === "agentEvents" && top.keptPhase === 1) return JSON.stringify({ next: 3, more: false, connected: false,
                     error: "connect: no route to host", kept: 1759500000000, epoch: 4, events: Number(args[0]) >= 3 ? [] : top.events.slice(0, 3) })
                 // A copy of a session since made again: numbers above its own.
@@ -782,6 +815,51 @@ Item {
           // A machine named a little otherwise in the claim.
           tasks: { tasks: [ task("review:m5", "review", "pi5 (pi5.home/jimmy)", "TASK_STATE_WORKING") ] } } ]
     Timer { id: escTimer; interval: 600; property var report: null; onTriggered: report() }
+
+    // The jump that has to reach OUTSIDE the loaded tail: 400 events, the default
+    // 300-event tail (so the window starts at seq 101), and a task that arrived at
+    // seq 20. The reviewer's live pass found this path has never worked; the harness
+    // could not see it because its core answered from the beginning every time.
+    property int deepTick: 0
+    // litTimer clears agentLit after 4s, and this test runs longer than that: the
+    // highest value seen is the answer, not the value at the end.
+    property real deepLitMax: 0
+    function startDeepJump() {
+        var evs = []
+        for (var i = 1; i <= 400; i++)
+            evs.push({ seq: i, id: "m" + i, time: "2026-10-09T10:00:00Z", kind: "message",
+                       data: { type: "assistant", text: "event " + i } })
+        top.windowEvents = evs
+        top.windowed = true
+        // A stale "load them" quiet jump: armed for a seq nobody jumps to, and left set.
+        // It used to swallow the NEXT jump - lit nothing, moved nothing (2026-10-10).
+        view.jumpQuietFor = 999
+        console.error("DEEPJUMP quietFor=" + view.jumpQuietFor + " isQuietFor20=" + view.isQuietJump(20))
+        var h = view.agentHosts[0]
+        console.error("DEEPJUMP hosts=" + view.agentHosts.map(function(x) { return x.name }).join(",")
+                      + " sessions=" + (h ? h.sessions.map(function(x) { return x.name }).join(",") : "none"))
+        view.openTaskRow({ kind: "task", id: "jimmy:deep-1", machine: h.name,
+                           session: h.sessions[0].name, address: h.address })
+        deepTimer.start()
+    }
+    Timer {
+        id: deepTimer
+        interval: 300; repeat: true
+        onTriggered: {
+            top.deepTick++
+            if (view.agentLit > top.deepLitMax) top.deepLitMax = view.agentLit
+            if (top.deepTick >= 30) {
+                var evs = view.agentEventsList
+                var has = false
+                for (var i = 0; i < evs.length; i++) if (evs[i].seq === 20) has = true
+                console.error("DEEPJUMP litMax=" + top.deepLitMax + " want=20 has20=" + has
+                              + " evs=" + evs.length + " tail=" + top.watchTail + " jumpTo=" + view.jumpTo
+                              + " quietFor=" + view.jumpQuietFor)
+                deepTimer.stop()
+                Qt.quit()
+            }
+        }
+    }
     Timer {
         id: boardTimer
         interval: 400
@@ -874,7 +952,7 @@ Item {
                         var escBack = view.escToBoard()
                         Qt.callLater(function() {
                             console.error("BOARDOPEN open=" + opened + " withlist=" + shown + " esc=" + escHeld + "," + escBack + " back=" + (view.agentOpen === null) + "," + top.findByName(view, "boardFlow").visible + "," + !top.findByName(view, "agentList").visible + "," + back.visible)
-                            Qt.quit()
+                            top.startDeepJump()
                         })
                     }
                     escTimer.start()
