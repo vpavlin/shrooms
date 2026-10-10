@@ -267,14 +267,27 @@ expect "UNACKED a,d" "a bulk ack would sweep up a task that is still running or 
 expect "STABLE false,true,quiet 1h|quiet 2h" "a task row changes with the clock, so the panel moves under the cursor"
 expect "BADGEHIT n=3 bad=0" "the link badges were not drawn where they can be tapped"
 expect "TASKWATCH fd00::1 shrooms 300" "tapping a task opens its session with one event instead of the tail"
-expect "PAIR pi5/jimmy>laptop/review,,1,1,0,2" "a link tap does not filter the panel to its own pair"
+expect "LIVELINK n=1 pair=laptop/shrooms>laptop/jimmy count=1 tone=input-required" "the live-shaped link is not built from a real task"
+expect "LIVEFILTER laptop/jimmy>laptop/shrooms n=1" "tapping that link's badge would show an EMPTY panel"
+expect "PAIRKEY a/y>b/x|a/y>b/x|a/y>a/y|" "a link in the other direction is not the same link"
+expect "BESTHIT 5,3,true" "the jump lands on a later mention of the task instead of its arrival"
+expect "PAIR laptop/review>pi5/jimmy,,1,1,0,2" "a link tap does not filter the panel to its own pair"
 expect "BADGEAT a>b,,a>b,a>b,,," "a press is taken over a card that is not on a badge"
-expect "PAIRLABEL a → b,nocolon," "the filtered panel shows raw keys instead of names"
+expect "PAIRLABEL a ↔ b,nocolon," "the filtered panel shows raw keys instead of names"
 # The ack path: /a2a/ is not forwarded by the core, so an ack could never work
 # from Basecamp at all. The path itself is pinned above (ACKPATH); this says the
 # call uses it.
 grep -q 'ackPath(row.id)' basecamp-agents/Main.qml \
     || { echo "FAIL: an ack does not go to the /v1/ path the core forwards"; exit 1; }
+
+# A badge must carry the key the panel filters on. The tap cannot be driven here (a
+# harness cannot click through layers), and this is the line that was wrong: the
+# badge built its own "from>to" while the panel sorted its pair, so a tap filtered
+# to a pair no row had and the panel came out empty.
+grep -q 'pair: pairKeyOf(lb.from, lb.to)' basecamp-agents/Main.qml \
+    || { echo "FAIL: a badge does not carry the pair the panel filters on"; exit 1; }
+grep -q 'pair: lb.from + ">"' basecamp-agents/Main.qml \
+    && { echo "FAIL: a badge builds its own unsorted pair again"; exit 1; }
 
 # The clear control and the badge hit target are STATIC checks, and I am saying so:
 # the panel is only instantiated when it has rows or a filter, and this harness's

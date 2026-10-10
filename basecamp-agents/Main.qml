@@ -1065,8 +1065,8 @@ Item {
         root.searchFound = r.found || []
         if (root.jumpViaSearch) {
             root.jumpViaSearch = false
-            var hits = root.searchFound
-            if (hits && hits.length > 0) root.openFound(hits[0])
+            var hit = bestHit(root.searchFound, root.jumpRef)
+            if (hit) root.openFound(hit)
             else { root.said = "no message found for " + root.jumpRef; root.saidBad = true }
         }
     }
@@ -1099,6 +1099,16 @@ Item {
         root.jumpViaSearch = true
         root.searchOpen = true
         runSearch(taskSearchQuery(root.jumpRef))
+    }
+    // The hit that IS the task arriving, not a later mention of it: the agent's own
+    // message starts "[shrooms task <id> from". The live pass landed on the newest
+    // follow-up instead (2026-10-10). Falls back to the first hit, as before. Pure.
+    function bestHit(hits, ref) {
+        var want = "[shrooms task " + String(ref || "") + " from"
+        for (var i = 0; i < (hits || []).length; i++) {
+            if (String((hits[i] && hits[i].snippet) || "").indexOf(want) === 0) return hits[i]
+        }
+        return (hits && hits.length > 0) ? hits[0] : null
     }
     function openFound(f) {
         if (!f.seq) { root.reading = f; readingDialog.open(); return }
@@ -1701,7 +1711,9 @@ Item {
                 var to = boardKey(hosts[i], md["shrooms/session"] || "")
                 var from = askerKey(md["shrooms/from"], keys)
                 if (!keys[to] || from === "" || from === to) continue
-                var pair = from + ">" + to
+                // Both directions are ONE link, so their tasks share a badge.
+                var pair = pairKeyOf(from, to)
+                if (pair === "") continue
                 if (!byPair[pair]) {
                     byPair[pair] = { from: from, to: to, count: 0, needsYou: 0, stalled: 0, working: 0,
                                      tasks: [], tone: "working" }
@@ -1944,12 +1956,29 @@ Item {
         if (i < 0) return s
         var a = s.slice(0, i), b = s.slice(i + 1)
         var j = a.lastIndexOf("/"), k = b.lastIndexOf("/")
-        return (j >= 0 ? a.slice(j + 1) : a) + " \u2192 " + (k >= 0 ? b.slice(k + 1) : b)
+        // Both ways round, because the filter shows the link in both directions.
+        return (j >= 0 ? a.slice(j + 1) : a) + " \u2194 " + (k >= 0 ? b.slice(k + 1) : b)
+    }
+    // A link is between TWO cards, and a task may run either way along it. One arc, one
+    // badge, one filter: the key SORTS the two, so a->b and b->a are the same link. Two
+    // directions used to make two badges at the same midpoint, and a tap returned the
+    // first - the hidden one - so the live pass filtered to the opposite direction and
+    // the panel came out empty (2026-10-10). Pure, so the harness pins it.
+    function pairKeyOf(a, b) {
+        a = String(a || "")
+        b = String(b || "")
+        if (a === "" || b === "") return ""
+        return a < b ? a + ">" + b : b + ">" + a
     }
     // The link a row belongs to, written the way a link is: "asker>worker". Pure.
+    // A group HEADER is not a row: it has no machine/session, and "undefined/undefined"
+    // would be a pair no task has. A plain task row is accepted with or without the
+    // `kind` that taskPanelRows adds - requiring it made this answer "" for a row from
+    // taskRows, which is the same empty panel by another route (2026-10-10).
     function panelPair(row) {
-        if (!row || row.kind !== "task") return ""
-        return (row.askerKey || "") + ">" + row.machine + "/" + row.session
+        if (!row || row.kind === "header") return ""
+        if (!row.machine || !row.session) return ""
+        return pairKeyOf(row.askerKey, row.machine + "/" + row.session)
     }
     // Tapping a link filters the panel to that pair rather than opening a second list.
     // An empty pair is every task, which is what "x all tasks" clears back to.
@@ -3133,7 +3162,11 @@ Item {
                             // to that pair. Recorded here because this is the only place
                             // that knows where the badge ended up.
                             hits.push({ x: mx - bw / 2, y: my - root.sz(7), w: bw, h: root.sz(14),
-                                        pair: lb.from + ">" + lb.to })
+                                        // The SAME key the panel filters on (both
+                                        // directions are one link), or the tap filters to a
+                                        // pair no row has and the panel comes out empty - which
+                                        // is exactly what the live pass saw (2026-10-10).
+                                        pair: pairKeyOf(lb.from, lb.to) })
                         }
                         root.badgeHit = hits
                     }

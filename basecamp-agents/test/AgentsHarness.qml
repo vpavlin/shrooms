@@ -361,9 +361,13 @@ Item {
             // Tapping a link filters the panel to that pair; "x all tasks" clears it.
             var fr = [{ kind: "task", askerKey: "pi5/jimmy", machine: "laptop", session: "review" },
                       { kind: "task", askerKey: "laptop/shrooms", machine: "laptop", session: "review" }]
+            // Filtering by a row's OWN pair must find it - that is the whole bug class: the
+            // badge and the row used to build the pair differently, so the filter came out
+            // empty. Both directions of one link are the same pair, so either row's key
+            // finds both rows on it.
             console.error("PAIR " + [view.panelPair(fr[0]), view.panelPair({ kind: "header" }),
-                view.linkFiltered(fr, "pi5/jimmy>laptop/review").length,
-                view.linkFiltered(fr, "laptop/shrooms>laptop/review").length,
+                view.linkFiltered(fr, view.panelPair(fr[0])).length,
+                view.linkFiltered(fr, view.panelPair(fr[1])).length,
                 view.linkFiltered(fr, "nobody>x").length,
                 view.linkFiltered(fr, "").length].join(","))
             // The badge hit test. The canvas sits on top of the cards, so a press that is not
@@ -819,6 +823,34 @@ Item {
             var st = view.taskRows(top.taskHosts)[0]
             console.error("STABLE " + ("age" in st) + "," + (st.at !== undefined) + ","
                           + view.ageLabel(st, t0) + "|" + view.ageLabel(st, t0 + 3600000))
+            // LIVE-SHAPED: the one open task on the jimmy<->shrooms arc runs shrooms ->
+            // jimmy, and the agent's host name for that machine is "laptop". Tapping that
+            // arc's badge must FIND the task: the live pass filtered to the opposite
+            // direction (two badges at one midpoint, the hidden one returned) and the panel
+            // came out empty.
+            var liveHosts = [{ name: "laptop", address: "fd00::7",
+                sessions: [{ name: "shrooms" }, { name: "jimmy" }],
+                tasks: [{ id: "jimmy:cli-20261009T183346-04a4f81dbc3a0c9e",
+                          status: { state: "TASK_STATE_INPUT_REQUIRED", timestamp: "2026-10-09T11:00:00Z" },
+                          metadata: { "shrooms/session": "jimmy",
+                                       "shrooms/from": "laptop.default (laptop/shrooms)" } }] }]
+            var ll = view.boardLinkList(liveHosts)
+            var liveRows = view.taskPanelRows(liveHosts)
+            console.error("LIVELINK n=" + ll.length + " pair=" + (ll[0] ? ll[0].from + ">" + ll[0].to : "none")
+                + " count=" + (ll[0] ? ll[0].count : 0) + " tone=" + (ll[0] ? ll[0].tone : ""))
+            // The first TASK row, not the first row: the panel starts with a group header.
+            var liveTask = view.taskRows(liveHosts)[0]
+            console.error("LIVEFILTER " + view.panelPair(liveTask) + " n="
+                + view.linkFiltered(liveRows, view.panelPair(liveTask)).length)
+            console.error("PAIRKEY " + [view.pairKeyOf("b/x", "a/y"), view.pairKeyOf("a/y", "b/x"),
+                view.pairKeyOf("a/y", "a/y"), view.pairKeyOf("", "a/y")].join("|"))
+            // The jump must land on the task ARRIVING, not the newest mention of it.
+            var hits = [{ seq: 9, snippet: "[shrooms task jimmy:m1 \u2014 more from laptop.default (laptop/shrooms)]" },
+                        { seq: 5, snippet: "[shrooms task jimmy:m1 from laptop.default (laptop/shrooms)] the arrival" }]
+            var bh1 = view.bestHit(hits, "jimmy:m1")
+            var bh2 = view.bestHit([{ seq: 3, snippet: "nothing to do with it" }], "jimmy:m1")
+            console.error("BESTHIT " + (bh1 ? bh1.seq : "none") + "," + (bh2 ? bh2.seq : "none") + ","
+                + (view.bestHit([], "jimmy:m1") === null))
             console.error("BOARD cards=" + view.boardCardList.map(function(c) { return c.key }).join(",")
                           + " edges=" + view.boardEdgeList.map(function(e) { return e.from + ">" + e.to + ":" + e.state }).join(",")
                           + " drawn=" + (links ? links.drawn : -1)
