@@ -586,7 +586,10 @@ Item {
                 // A jump that is still armed was waiting for exactly this: rebuildChat only
                 // fires on new events, and an idle session sends none, so the search fallback
                 // never ran (2026-10-10).
-                if (root.jumpRef !== "") Qt.callLater(root.rebuildChat)
+                // Anything armed - a search fallback, a seq jump, a task-id jump - has
+                // to be settled now that the replay has finished.
+                if (root.jumpRef !== "" || root.jumpTo > 0 || root.jumpToId !== "")
+                    Qt.callLater(root.rebuildChat)
             }
             fetchEarlier()
             return
@@ -978,45 +981,77 @@ Item {
             i = 0
         }
         for (; i < items.length; i++) chatModel.append(row(items[i]))
+        // A jump is not DONE until the session has caught up. The core replays a widened
+        // tail in batches, and a rebuild during the replay either clears and re-appends the
+        // model or scrolls to the end - so a position set mid-replay is thrown away and the
+        // reader lands at the bottom. It worked about half the time live (2026-10-10).
+        // While the replay runs, the row is lit and the jump stays ARMED; the final
+        // position and the clear happen once agentCaughtUp turns true.
         if (root.jumpTo > 0) {
+            var at = -1
             for (i = 0; i < chatModel.count; i++) {
                 if (chatModel.get(i).earlier || chatModel.get(i).seq !== root.jumpTo) continue
-                // The one scroll done in code that is not following the end:
-                // somebody asked for this message.
-                var at = i
+                at = i
+                break
+            }
+            if (at >= 0) {
+                // The one scroll done in code that is not following the end: somebody
+                // asked for this message.
                 root.chatStick = false
+                root.agentLit = chatModel.get(at).seq
+                litTimer.restart()
+                if (!root.agentCaughtUp) {
+                    root.jumpPending = true
+                    Qt.callLater(function() { chatList.positionViewAtIndex(at, ListView.Center) })
+                    return
+                }
                 // Read BEFORE clearing: asking isQuietJump after `jumpTo = 0` is asking
                 // about 0, and the quiet branch could never be taken at all.
                 var wasQuiet = isQuietJump(root.jumpTo)
+                var settled = chatModel.get(at).seq
+                root.jumpQuietFor = 0
                 root.jumpTo = 0
-                if (wasQuiet) {
-                    root.jumpQuietFor = 0
-                    Qt.callLater(function() { chatList.positionViewAtIndex(at, ListView.End) })
-                    return
-                }
-                root.agentLit = chatModel.get(i).seq
-                Qt.callLater(function() { chatList.positionViewAtIndex(at, ListView.Center) })
-                litTimer.restart()
+                root.jumpPending = false
+                root.jumpSettled = settled
+                root.jumpSettledCaught = root.agentCaughtUp
+                Qt.callLater(function() {
+                    chatList.positionViewAtIndex(at, wasQuiet ? ListView.End : ListView.Center) })
                 return
             }
         }
         if (root.jumpToId !== "") {
+            var jat = -1
             for (i = 0; i < chatModel.count; i++) {
                 if (!isJumpRow(chatModel.get(i), root.jumpToId)) continue
-                var jat = i
+                jat = i
+                break
+            }
+            if (jat >= 0) {
                 root.chatStick = false
+                root.agentLit = chatModel.get(jat).seq
+                litTimer.restart()
+                if (!root.agentCaughtUp) {
+                    root.jumpPending = true
+                    Qt.callLater(function() { chatList.positionViewAtIndex(jat, ListView.Center) })
+                    return
+                }
+                var settledId = chatModel.get(jat).seq
                 root.jumpToId = ""
                 root.jumpRef = ""
-                root.agentLit = chatModel.get(i).seq
+                root.jumpPending = false
+                root.jumpSettled = settledId
+                root.jumpSettledCaught = root.agentCaughtUp
                 Qt.callLater(function() { chatList.positionViewAtIndex(jat, ListView.Center) })
-                litTimer.restart()
                 return
             }
             // Not in the tail, and the session is not still arriving: reach back with
             // the search the view already has, rather than a second jump path.
             if (root.jumpRef !== "" && root.agentCaughtUp) jumpToTaskMessage()
         }
-        if (root.chatStick) Qt.callLater(function() { chatList.positionViewAtEnd() })
+        // Never follow the end while a jump is still settling: THAT is what put the reader
+        // at the bottom during the replay.
+        if (root.chatStick && !root.jumpPending && root.jumpTo === 0 && root.jumpToId === "")
+            Qt.callLater(function() { chatList.positionViewAtEnd() })
     }
 
     // Search: the whole conversation, on the agent's machine; the core does it
@@ -1053,6 +1088,12 @@ Item {
     // "nothing is lit, nothing moves" (2026-10-10). Keyed to its seq, a stale one
     // cannot swallow a different jump. Pure, so the harness pins it.
     property real jumpQuietFor: 0
+    // The race, made visible: a jump is PENDING while the core is still replaying, and
+    // what it settled to - with whether the session had caught up when it did. A settle
+    // mid-replay is the bug.
+    property bool jumpPending: false
+    property real jumpSettled: 0
+    property bool jumpSettledCaught: false
     function isQuietJump(seq) { return root.jumpQuietFor !== 0 && root.jumpQuietFor === seq }
     property real agentLit: 0
     property var reading: null

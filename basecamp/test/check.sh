@@ -275,6 +275,10 @@ expect "DEEPJUMP litMax=20 want=20 has20=true evs=400 tail=401" "the jump to a t
 # session and ignores a larger POSITIVE tail, so the widening did nothing and jumpTo
 # wanted a seq that was never loaded. The stub models that; this is the negative tail.
 expect "fresh=true tails=300/-401" "the widened tail was asked for with the kept copy still in front of it"
+# The race: the match fires while the core is still REPLAYING the widened tail, and
+# every rebuild during the replay throws the position away - so the reader lands
+# at the bottom. About half the live runs. The settle must wait for caught-up.
+expect "settled=20 settledCaught=true" "the jump settled while the replay was still running, so the reader lands at the end"
 expect "BESTHIT 5,3,true" "the jump lands on a later mention of the task instead of its arrival"
 expect "PAIR laptop/review>pi5/jimmy,,1,1,0,2" "a link tap does not filter the panel to its own pair"
 expect "BADGEAT a>b,,a>b,a>b,,," "a press is taken over a card that is not on a badge"

@@ -840,6 +840,7 @@ Item {
     // litTimer clears agentLit after 4s, and this test runs longer than that: the
     // highest value seen is the answer, not the value at the end.
     property real deepLitMax: 0
+    property bool deepPending: false
     function startDeepJump() {
         var evs = []
         for (var i = 1; i <= 400; i++)
@@ -864,6 +865,7 @@ Item {
         onTriggered: {
             top.deepTick++
             if (view.agentLit > top.deepLitMax) top.deepLitMax = view.agentLit
+            if (view.jumpPending) top.deepPending = true
             if (top.deepTick >= 30) {
                 var evs = view.agentEventsList
                 var has = false
@@ -873,7 +875,9 @@ Item {
                 console.error("DEEPJUMP litMax=" + top.deepLitMax + " want=20 has20=" + has
                               + " evs=" + evs.length + " tail=" + top.watchTail + " jumpTo=" + view.jumpTo
                               + " quietFor=" + view.jumpQuietFor + " fresh=" + fresh
-                              + " tails=" + top.watchTails.join("/"))
+                              + " tails=" + top.watchTails.join("/")
+                              + " settled=" + view.jumpSettled + " settledCaught=" + view.jumpSettledCaught
+                              + " pendingSeen=" + top.deepPending)
                 deepTimer.stop()
                 Qt.quit()
             }
