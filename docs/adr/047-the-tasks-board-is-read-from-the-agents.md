@@ -71,5 +71,7 @@ tasks in hand all along as `host.tasks`.
   for anything but their own tasks, and it does not write task state from the
   board except by an explicit ACK — the same rule as ADR-042, where a task is
   open until the worker finishes it and the asker's ack closes it for them.
-- **The phone keeps its list** (ADR-039's division): the same grouping and ACK
-  belong there too, as its own change.
+- **The phone keeps its list** (ADR-039's division), and has the same tasks
+  on a tasks screen: the same grouping, names, ACK and jump, read from the
+  agents the same way (AgentTasks.kt, 2026-10-10). The board itself stays on
+  the desktop.

@@ -81,6 +81,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -173,7 +174,8 @@ fun withStar(hosts: List<AgentHost>, host: String, session: String, on: Boolean)
     hosts.map { h -> if (h.name != host) h else h.copy(sessions = h.sessions.map { if (it.name == session) it.copy(starred = on) else it }) }
 
 /** A session to open straight away — from a notification. */
-data class OpenSession(val address: String, val host: String, val mesh: String, val session: String)
+/** A session to open; [jump] is a task id whose arrival it opens at (AgentTasks). */
+data class OpenSession(val address: String, val host: String, val mesh: String, val session: String, val jump: String = "")
 
 /**
  * Finds every agent among the peers: one probe per online device on each of
@@ -359,6 +361,10 @@ fun AgentsScreen(peers: List<Peer>, onClose: () -> Unit, initial: OpenSession? =
     var addingMachine by remember { mutableStateOf(false) }
     var voiceOpen by remember { mutableStateOf(false) }
     var usageOpen by remember { mutableStateOf(false) }
+    // The tasks between agents (AgentTasks): open, opened from, and how many wait on a person.
+    var tasksOpen by remember { mutableStateOf(false) }
+    var fromTasks by remember { mutableStateOf(false) }
+    var needsYou by remember { mutableStateOf(0) }
     if (voiceOpen) VoiceDialog { voiceOpen = false }
     // A session awaiting confirmation that it should be deleted.
     var deleting by remember { mutableStateOf<Pair<AgentHost, AgentSession>?>(null) }
@@ -376,6 +382,9 @@ fun AgentsScreen(peers: List<Peer>, onClose: () -> Unit, initial: OpenSession? =
             cachePrefs.edit().putString("cache", HostCache.encode(merged)).apply()
             // The watcher keeps asking a machine that missed a round, too.
             if (merged.isNotEmpty()) AgentHosts.save(ctx, merged.map { AgentHosts.Host(it.name, it.mesh, it.address) })
+            val now = System.currentTimeMillis()
+            needsYou = AgentTasks.rows(fetchTasks(merged.filter { HostCache.reachable(it, now) }))
+                .count { it.group == AgentTasks.NEEDS_YOU }
             delay(10_000)
         }
     }
@@ -389,8 +398,20 @@ fun AgentsScreen(peers: List<Peer>, onClose: () -> Unit, initial: OpenSession? =
         }
         val o = open
         if (o != null) {
-            BackHandler { open = null }
-            SessionScreen(o, onBack = { open = null; refresh++ }, onRenamed = { n -> open = o.copy(session = n) })
+            // A session opened from the tasks goes back to them.
+            fun back() { open = null; if (fromTasks) { fromTasks = false; tasksOpen = true }; refresh++ }
+            BackHandler { back() }
+            SessionScreen(o, onBack = { back() }, onRenamed = { n -> open = o.copy(session = n) })
+            return@Box
+        }
+        if (tasksOpen) {
+            BackHandler { tasksOpen = false }
+            TasksScreen(hosts.orEmpty(), onOpen = { r ->
+                tasksOpen = false
+                fromTasks = true
+                // A queued task has not arrived yet: its session opens at the end.
+                open = OpenSession(r.address, r.host, r.mesh, r.task.session, jump = if (r.task.queued) "" else r.task.id)
+            }) { tasksOpen = false; refresh++ }
             return@Box
         }
         BackHandler { if (creatingOn != null) creatingOn = null else onClose() }
@@ -419,6 +440,8 @@ fun AgentsScreen(peers: List<Peer>, onClose: () -> Unit, initial: OpenSession? =
                     live[h.address]?.copy(machines = listOf(h.name)) }))
                 Link(glance?.let { "usage ${it.first}%" } ?: "usage",
                     when (glance?.second) { 2 -> Palette.Rust; 1 -> Palette.Amber; else -> Palette.Ash }) { usageOpen = true }
+                // Amber with a count while a task waits on a person.
+                Link(if (needsYou > 0) "tasks · $needsYou" else "tasks", if (needsYou > 0) Palette.Amber else Palette.Ash) { tasksOpen = true }
                 Link("voice", Palette.Ash) { voiceOpen = true }
                 Link("close", Palette.Ash) { onClose() }
             }
@@ -1136,6 +1159,17 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String
             tail = AgentChat.tailReaching(tail, lastSeq, f.seq)
         }
         jumpTo = f.seq
+    }
+    // Opened at a task: its arrival found by the session's own search, then
+    // jumped to as a search result is, which reaches back as far as it is.
+    LaunchedEffect(o) {
+        if (o.jump.isEmpty()) return@LaunchedEffect
+        // How far back to reach is counted from the newest event, so the
+        // session's own events come first (open() reads them).
+        withTimeoutOrNull(30_000) { while (events.isEmpty() && info == null) delay(200) }
+        val hits = withContext(Dispatchers.IO) { runCatching { client.search(o.session, "[shrooms task ${o.jump}") }.getOrNull() }
+        val hit = hits?.let { AgentTasks.arrival(it, o.jump) }
+        if (hit != null) open(hit) else actionError = "could not find where task ${o.jump} arrived"
     }
     fun runSearch() {
         val q = query.trim()

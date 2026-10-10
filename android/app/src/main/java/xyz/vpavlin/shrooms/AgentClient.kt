@@ -280,6 +280,17 @@ class AgentClient(private val address: String) {
         }
     }
 
+    /** The A2A tasks this machine's sessions were given (AgentTasks). */
+    fun tasks(timeoutMs: Int = 4000): List<AgentTask> {
+        val a = JSONObject(request("GET", "/v1/tasks", null, timeoutMs)).optJSONArray("tasks") ?: return emptyList()
+        return (0 until a.length()).map { AgentTasks.parse(a.getJSONObject(it)) }
+    }
+
+    /** The asker has what it needed: AckTask, over the agent's /v1 door. */
+    fun ack(id: String) {
+        request("POST", "/v1/tasks/${enc(id).replace("%3A", ":")}/ack", "")
+    }
+
     fun remove(name: String) {
         request("DELETE", "/v1/sessions/${enc(name)}", null)
     }

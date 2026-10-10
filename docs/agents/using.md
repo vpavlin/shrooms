@@ -349,14 +349,27 @@ worker's conversation you see:
   three problems: …", "blocked", "failed", "stalled", "expired".
 
 On the list and the board, "n tasks" and the stalled warning, as above; on the
-board, the links between cards. The apps cannot cancel a task yet; how to do
-it from a shell is in [Agents together](together.md).
+board, the links between cards, each with a count of its open tasks.
+
+**Every task in one place:** the board's tasks panel in Basecamp, and the
+**tasks** link on the phone (amber, with a count, while one waits on you).
+Tasks are grouped as **Needs you**, **Working**, **Stalled** and **Done,
+unacked**. Each one shows what was asked, who asked whom and how long it has
+been quiet. A queued task, waiting for its session to be free, says
+"queued". **ACK** (or **ACK all**) tells the worker's agent you have seen a
+result; acknowledged tasks leave the list. Tap a task to open the worker's
+session at the message where it arrived. In Basecamp, tap a link's count to
+see only the tasks between those two sessions.
+
+The apps cannot cancel a task yet; how to do it from a shell is in
+[Agents together](together.md).
 
 ## Where the phone and Basecamp differ
 
 | | Phone | Basecamp |
 |---|---|---|
 | Layout | the list | the list, or the board |
+| Tasks | the **tasks** screen | the board's tasks panel, and link filters |
 | Notifications | yes, in the background | none |
 | Delete a session | long press in the list, or "delete" | "delete" in the header |
 | Attach a file | 📎 | 📎, drop on the conversation, or paste an image |
