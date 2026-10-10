@@ -119,6 +119,8 @@ func proxyAllowed(method, path, rpc string) bool {
 		}
 	case method == http.MethodPost && isTaskUpdate(path):
 		return true // its own machine and session only (cageProxy)
+	case method == http.MethodPost && isDrop(path):
+		return true // a file to another session, named as this one's (drop.go)
 	}
 	return false
 }
@@ -129,6 +131,13 @@ func proxyAllowed(method, path, rpc string) bool {
 func isTaskUpdate(path string) bool {
 	id, ok := strings.CutPrefix(path, "/v1/tasks/")
 	return ok && id != "" && !strings.Contains(id, "/")
+}
+
+// isDrop is a file sent to a session: /v1/sessions/{name}/drop.
+func isDrop(path string) bool {
+	rest, ok := strings.CutPrefix(path, "/v1/sessions/")
+	name, tail, _ := strings.Cut(rest, "/")
+	return ok && name != "" && tail == "drop"
 }
 
 // cageProxy is a caged session's socket.
@@ -149,7 +158,11 @@ func (m *Manager) cageProxy(s *Session) http.Handler {
 			return
 		}
 		path := "/" + r.PathValue("path")
-		body, err := io.ReadAll(io.LimitReader(r.Body, 16<<20))
+		limit := int64(16 << 20)
+		if isDrop(path) {
+			limit = MaxDrop + 1
+		}
+		body, err := io.ReadAll(io.LimitReader(r.Body, limit))
 		if err != nil {
 			fail(w, http.StatusBadRequest, err)
 			return
@@ -230,6 +243,9 @@ func (m *Manager) forward(w http.ResponseWriter, r *http.Request, addr netip.Add
 	ctx, cancel := context.WithTimeout(r.Context(), 11*time.Minute) // a blocking send is held for at most 10
 	defer cancel()
 	u := m.agentURL(addr) + path
+	if r.URL.RawQuery != "" {
+		u += "?" + r.URL.RawQuery // a file's name and note (drop.go)
+	}
 	req, err := http.NewRequestWithContext(ctx, r.Method, u, bytes.NewReader(body))
 	if err != nil {
 		fail(w, http.StatusBadRequest, err)

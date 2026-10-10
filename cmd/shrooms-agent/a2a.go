@@ -20,6 +20,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -33,6 +34,8 @@ const a2aUsage = `usage:
   shrooms-agent a2a send [--wait] [--title T] MACHINE/SESSION TEXT
                                                          ask a session; --wait prints its reply, --title
                                                          names the task in lists
+  shrooms-agent a2a send-file [--note N] MACHINE/SESSION FILE
+                                                         push a file to a session that takes files from this one
   shrooms-agent a2a get  MACHINE/TASK-ID                 where a task stands, and its reply
   shrooms-agent a2a cancel MACHINE/TASK-ID               interrupt it
   shrooms-agent a2a ack MACHINE/TASK-ID                  you have seen its result: it is closed for you
@@ -111,6 +114,7 @@ func a2aMain(args []string) error {
 	fs := flag.NewFlagSet("a2a "+args[0], flag.ContinueOnError)
 	wait := fs.Bool("wait", false, "wait for the turn to end and print the reply")
 	title := fs.String("title", "", "send: a few words saying what you ask, for lists of tasks")
+	note := fs.String("note", "", "send-file: what the file is and what to do with it")
 	sock := fs.String("socket", "/run/shrooms/shrooms.sock", "the shrooms daemon's control socket, to find machines by name")
 	if err := fs.Parse(flagsFirst(args[1:], "wait")); err != nil {
 		return err
@@ -129,6 +133,13 @@ func a2aMain(args []string) error {
 		return nil
 	case args[0] == "send" && len(rest) >= 2:
 		t, err = c.send(rest[0], strings.Join(rest[1:], " "), *title, *wait)
+	case args[0] == "send-file" && len(rest) == 2:
+		at, err := c.sendFile(rest[0], rest[1], *note, true)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("sent %s to %s, kept there at %s\n", filepath.Base(rest[1]), rest[0], at)
+		return nil
 	case args[0] == "get" && len(rest) == 1:
 		t, err = c.task(rest[0], "GetTask")
 	case args[0] == "cancel" && len(rest) == 1:

@@ -3,10 +3,13 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"github.com/vpavlin/shrooms/internal/agent"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -19,7 +22,15 @@ func TestMCPServesTheMeshsAgents(t *testing.T) {
 	var updated map[string]string
 	var updatedPath string
 	var methods []string
+	var dropped, droppedFrom, droppedBody string
 	agentSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/drop") {
+			b, _ := io.ReadAll(r.Body)
+			dropped, droppedFrom, droppedBody = r.URL.Path+"?"+r.URL.RawQuery, r.Header.Get(agent.FromSessionHeader), string(b)
+			w.WriteHeader(http.StatusCreated)
+			io.WriteString(w, `{"path":"/state/uploads/proteus/drop/from-laptop_jimmy/notes.txt"}`)
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/v1/tasks/") {
 			updatedPath = r.URL.Path
 			json.NewDecoder(r.Body).Decode(&updated)
@@ -54,6 +65,8 @@ func TestMCPServesTheMeshsAgents(t *testing.T) {
 		peers: func() ([]machine, error) { return []machine{{"proteus", netip.MustParseAddr("fd00::2")}}, nil },
 	}
 	t.Setenv("SHROOMS_AGENT_SESSION", "jimmy")
+	file := filepath.Join(t.TempDir(), "notes.txt")
+	os.WriteFile(file, []byte("the notes"), 0o600)
 
 	in := strings.Join([]string{
 		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{}}}`,
@@ -66,6 +79,7 @@ func TestMCPServesTheMeshsAgents(t *testing.T) {
 		`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"task_update","arguments":{"task":"proteus:m1","state":"done","summary":"probe written"}}}`,
 		`{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"task_ack","arguments":{"task":"proteus/proteus:m1"}}}`,
 		`{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"ask_agent","arguments":{"task":"proteus/proteus:m1","text":"use master"}}}`,
+		`{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"send_file","arguments":{"to":"proteus/proteus","path":"` + file + `","note":"read it"}}}`,
 	}, "\n") + "\n"
 	pr, pw := io.Pipe()
 	go func() { serveMCP(strings.NewReader(in), pw, c); pw.Close() }()
@@ -79,7 +93,7 @@ func TestMCPServesTheMeshsAgents(t *testing.T) {
 		json.Unmarshal(sc.Bytes(), &r)
 		got[r.ID] = r.Result
 	}
-	if len(got) != 9 {
+	if len(got) != 10 {
 		t.Fatalf("answers: %d (a notification answered?)", len(got))
 	}
 	var init struct {
@@ -92,7 +106,7 @@ func TestMCPServesTheMeshsAgents(t *testing.T) {
 	}
 	var list struct{ Tools []struct{ Name string } }
 	json.Unmarshal(got[2], &list)
-	if len(list.Tools) != 5 || list.Tools[1].Name != "ask_agent" || list.Tools[3].Name != "task_update" {
+	if len(list.Tools) != 6 || list.Tools[1].Name != "ask_agent" || list.Tools[3].Name != "task_update" || list.Tools[4].Name != "send_file" {
 		t.Errorf("tools: %s", got[2])
 	}
 	text := func(id float64) (string, bool) {
@@ -122,6 +136,13 @@ func TestMCPServesTheMeshsAgents(t *testing.T) {
 	}
 	if s, _ := text(5); !strings.Contains(s, "completed") {
 		t.Errorf("task_status: %q", s)
+	}
+	// send_file: the file, its name and note, and the sending session, to the receiver's drop.
+	if s, e := text(10); e || !strings.Contains(s, "kept there at /state/uploads/proteus/drop/from-laptop_jimmy/notes.txt") {
+		t.Errorf("send_file: %q %v", s, e)
+	}
+	if dropped != "/v1/sessions/proteus/drop?name=notes.txt&note=read+it" || droppedFrom != "jimmy" || droppedBody != "the notes" {
+		t.Errorf("dropped %q from %q: %q", dropped, droppedFrom, droppedBody)
 	}
 	if s, e := text(6); !e || !strings.Contains(s, "needs to and text") {
 		t.Errorf("a bad call: %q %v", s, e)

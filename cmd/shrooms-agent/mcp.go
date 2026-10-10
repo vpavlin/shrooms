@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -57,6 +58,17 @@ var mcpTools = []map[string]any{
 			"task":    map[string]any{"type": "string", "description": "The task id from the message: SESSION:MESSAGE-ID"},
 			"state":   map[string]any{"type": "string", "enum": []string{"done", "blocked", "failed"}},
 			"summary": map[string]any{"type": "string", "description": "The result; for blocked, the question for the asker; for failed, why — what the asker reads."},
+		}},
+	},
+	{
+		"name": "send_file",
+		"description": "Send a file to another agent session (MACHINE/SESSION). It keeps it in a folder for files from you, " +
+			"and is told where, with your note; only if it takes files from you — if not, the refusal says how to allow it. " +
+			"At most 100 MB a file.",
+		"inputSchema": map[string]any{"type": "object", "required": []string{"to", "path"}, "properties": map[string]any{
+			"to":   map[string]any{"type": "string", "description": "MACHINE/SESSION, e.g. laptop/reviewer"},
+			"path": map[string]any{"type": "string", "description": "the file on this machine"},
+			"note": map[string]any{"type": "string", "description": "What it is and what to do with it: the receiver reads this with the file's place."},
 		}},
 	},
 	{
@@ -140,6 +152,8 @@ type mcpArgs struct {
 	To      string `json:"to"`
 	Text    string `json:"text"`
 	Title   string `json:"title"`
+	Path    string `json:"path"`
+	Note    string `json:"note"`
 	Wait    *bool  `json:"wait"`
 	Task    string `json:"task"`
 	State   string `json:"state"`
@@ -171,6 +185,15 @@ func (c a2aClient) call(tool string, a mcpArgs) (string, error) {
 		name, _, _ := strings.Cut(a.To, "/")
 		t.ID = name + "/" + t.ID
 		return t.String(), nil
+	case "send_file":
+		if a.To == "" || a.Path == "" {
+			return "", fmt.Errorf("send_file needs to and path")
+		}
+		at, err := c.sendFile(a.To, a.Path, a.Note, true)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("sent %s to %s, kept there at %s", filepath.Base(a.Path), a.To, at), nil
 	case "task_status", "task_ack":
 		method := "GetTask"
 		if tool == "task_ack" {

@@ -51,6 +51,8 @@ func Handler(log *slog.Logger, m *Manager, who Who) http.Handler {
 	mux.HandleFunc("GET /v1/sessions/{name}/history", h.history)
 	mux.HandleFunc("GET /v1/sessions/{name}/search", h.search)
 	mux.HandleFunc("POST /v1/sessions/{name}/files", h.upload)
+	// A file from another agent's session, if this one takes them (drop.go).
+	mux.HandleFunc("POST /v1/sessions/{name}/drop", h.drop)
 	mux.HandleFunc("POST /v1/sessions/{name}/transcribe", h.transcribe)
 	mux.HandleFunc("POST /v1/sessions/{name}/voice", h.voice)
 	mux.HandleFunc("POST /v1/sessions/{name}/voice/{id}/retry", h.retryVoice)
@@ -200,6 +202,8 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 		Starred     *bool `json:"starred"`
 		KeepRunning *bool `json:"keep_running"`
 		AcceptCaged *bool `json:"accept_caged"`
+		// Who it takes files from, the whole list (drop.go).
+		AcceptFilesFrom *[]string `json:"accept_files_from"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		fail(w, http.StatusBadRequest, err)
@@ -211,6 +215,13 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get(cagedHeader) != "" {
 		fail(w, http.StatusForbidden, errors.New("a caged agent cannot change a session's settings"))
 		return
+	}
+	if req.AcceptFilesFrom != nil {
+		if err := s.SetAcceptFiles(*req.AcceptFilesFrom, h.caller(r)); err != nil {
+			fail(w, http.StatusBadRequest, err)
+			return
+		}
+		h.log.Info("files accepted from", "session", s.Name(), "from", *req.AcceptFilesFrom, "by", h.caller(r))
 	}
 	if req.AcceptCaged != nil {
 		if err := s.SetAcceptCaged(*req.AcceptCaged, h.caller(r)); err != nil {

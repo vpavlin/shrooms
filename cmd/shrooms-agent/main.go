@@ -42,6 +42,9 @@ func run() error {
 	if len(os.Args) > 1 && os.Args[1] == "a2a" {
 		return a2aMain(os.Args[2:])
 	}
+	if len(os.Args) > 1 && os.Args[1] == "files" {
+		return filesMain(os.Args[2:])
+	}
 	if len(os.Args) > 1 && os.Args[1] == "mcp" {
 		return mcpMain(os.Args[2:])
 	}

@@ -90,6 +90,11 @@ type Info struct {
 	Limited *Limited `json:"limited,omitempty"`
 	// AcceptCaged: it takes tasks from caged agents (ADR-044).
 	AcceptCaged bool `json:"accept_caged"`
+	// AcceptFilesFrom: the agents it takes files from, MACHINE/SESSION or
+	// MACHINE/*; FileRequests, those refused lately, for the apps to offer
+	// (drop.go).
+	AcceptFilesFrom []string  `json:"accept_files_from,omitempty"`
+	FileRequests    []FileAsk `json:"file_requests,omitempty"`
 	// Cage is set for a session that runs in a container of its own, with
 	// the image it is made from (cage.go).
 	Cage *CageInfo `json:"cage,omitempty"`
@@ -129,6 +134,8 @@ type Session struct {
 	// default, which is yes for a caged session and no for one outside
 	// (ADR-044).
 	acceptCaged *bool
+	acceptFiles []string  // who it takes files from (drop.go)
+	fileAsks    []FileAsk // senders refused lately
 	turns       uint64
 	// ids are the device-made ids of messages and voice notes already taken,
 	// so a device that sends again — it did not hear the answer, the
@@ -225,12 +232,13 @@ type record struct {
 	Harness string `json:"harness,omitempty"`
 	// ConvID is the harness's conversation id. Named for Claude Code, the
 	// only harness when the registry was first written.
-	ConvID      string `json:"claude_id,omitempty"`
-	AutoApprove bool   `json:"auto_approve,omitempty"`
-	Starred     bool   `json:"starred,omitempty"`
-	KeepRunning bool   `json:"keep_running,omitempty"`
-	Cage        *Cage  `json:"cage,omitempty"`
-	AcceptCaged *bool  `json:"accept_caged,omitempty"`
+	ConvID      string   `json:"claude_id,omitempty"`
+	AutoApprove bool     `json:"auto_approve,omitempty"`
+	Starred     bool     `json:"starred,omitempty"`
+	KeepRunning bool     `json:"keep_running,omitempty"`
+	Cage        *Cage    `json:"cage,omitempty"`
+	AcceptCaged *bool    `json:"accept_caged,omitempty"`
+	AcceptFiles []string `json:"accept_files_from,omitempty"`
 }
 
 // NewManager loads the sessions kept in stateDir.
@@ -270,6 +278,7 @@ func NewManager(ctx context.Context, log *slog.Logger, stateDir, claudeBin strin
 			s.keepRunning = r.KeepRunning
 			s.cage = r.Cage
 			s.acceptCaged = r.AcceptCaged
+			s.acceptFiles = r.AcceptFiles
 			s.loadEvents()
 			m.sessions[r.Name] = s
 		}
@@ -385,7 +394,7 @@ func (m *Manager) save() error {
 	for _, s := range m.sessions {
 		s.mu.Lock()
 		r := record{Name: s.Name(), Dir: s.dir, ConvID: s.convID, AutoApprove: s.autoApprove, Starred: s.starred,
-			KeepRunning: s.keepRunning, Cage: s.cage, AcceptCaged: s.acceptCaged}
+			KeepRunning: s.keepRunning, Cage: s.cage, AcceptCaged: s.acceptCaged, AcceptFiles: s.acceptFiles}
 		if s.harness.Name() != "claude" {
 			r.Harness = s.harness.Name()
 		}
@@ -609,7 +618,8 @@ func (s *Session) Info() Info {
 		Running: s.proc != nil, LastSeq: s.seq, AutoApprove: s.autoApprove,
 		ContextUsed: s.ctxUsed, ContextWindow: s.ctxWindow, Preview: s.preview, Model: s.model,
 		Harness: s.harness.Name(), Caps: s.harness.Caps(), Starred: s.starred, Turns: s.turns,
-		KeepRunning: s.keepRunning, AcceptCaged: s.acceptsCaged()}
+		KeepRunning: s.keepRunning, AcceptCaged: s.acceptsCaged(),
+		AcceptFilesFrom: append([]string(nil), s.acceptFiles...), FileRequests: append([]FileAsk(nil), s.fileAsks...)}
 	if s.cage != nil {
 		in.Cage = &CageInfo{Image: s.cage.Image, Nix: s.cage.Nix, GitHub: s.cage.GitHub, Sealed: s.cage.Sealed, Outbox: s.cage.Outbox}
 		if in.Cage.Image == "" && s.m.Cages != nil {
