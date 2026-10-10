@@ -136,6 +136,31 @@ func run() error {
 		}
 		return out, nil
 	}
+	// This machine's meshes, by label and address: which mesh a request came
+	// over, and what a session may be limited to (meshes.go).
+	// Asked of the daemon at most every ten seconds: a local request checks it.
+	var meshMu sync.Mutex
+	var meshAt time.Time
+	var meshKept []agent.MeshInfo
+	m.Meshes = func() []agent.MeshInfo {
+		meshMu.Lock()
+		defer meshMu.Unlock()
+		if time.Since(meshAt) < 10*time.Second {
+			return meshKept
+		}
+		st, err := fetchStatus(*sock)
+		if err != nil {
+			return meshKept
+		}
+		var out []agent.MeshInfo
+		for _, x := range st.Meshes {
+			if a, err := netip.ParseAddr(x.Overlay); err == nil {
+				out = append(out, agent.MeshInfo{Label: x.Label, Addr: a})
+			}
+		}
+		meshKept, meshAt = out, time.Now()
+		return out
+	}
 	if *cages {
 		if m.Cages = agent.NewCages(*cageImage); m.Cages != nil {
 			m.Cages.Socket = *sock

@@ -31,6 +31,7 @@ func Handler(log *slog.Logger, m *Manager, who Who) http.Handler {
 	h := &handler{log: log, m: m, who: who}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/sessions", h.list)
+	mux.HandleFunc("GET /v1/meshes", h.meshList)
 	// What the model did, turn by turn, by day, session, the device that asked
 	// and model (usage.go); ?since=2006-01-02 limits it.
 	mux.HandleFunc("GET /v1/usage", func(w http.ResponseWriter, r *http.Request) {
@@ -115,7 +116,7 @@ func fail(w http.ResponseWriter, code int, err error) {
 }
 
 func (h *handler) session(w http.ResponseWriter, r *http.Request) (*Session, bool) {
-	s, ok := h.m.Get(r.PathValue("name"))
+	s, ok := h.get(r, r.PathValue("name"))
 	if !ok {
 		fail(w, http.StatusNotFound, fmt.Errorf("no session called %q", r.PathValue("name")))
 	}
@@ -125,7 +126,13 @@ func (h *handler) session(w http.ResponseWriter, r *http.Request) (*Session, boo
 func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 	// With where the subscription stands, so an app shows it at a glance
 	// without asking for usage (Limits).
-	list := h.m.List()
+	// Only the sessions there for the mesh the request came from (meshes.go).
+	var list []Info
+	for _, in := range h.m.List() {
+		if h.visible(r, in.Name) {
+			list = append(list, in)
+		}
+	}
 	if n, err := strconv.Atoi(r.URL.Query().Get("tail")); err == nil && n > 0 {
 		for i := range list {
 			if s, ok := h.m.Get(list[i].Name); ok {
@@ -185,6 +192,9 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) remove(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.session(w, r); !ok {
+		return
+	}
 	if err := h.m.Remove(r.PathValue("name")); err != nil {
 		fail(w, http.StatusNotFound, err)
 		return
@@ -206,6 +216,8 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 		AcceptCaged *bool `json:"accept_caged"`
 		// Who it takes files from, the whole list (drop.go).
 		AcceptFilesFrom *[]string `json:"accept_files_from"`
+		// The meshes it is there for, the whole list; empty is all (meshes.go).
+		Meshes *[]string `json:"meshes"`
 		// A refused sender's request, set aside without allowing it.
 		IgnoreFileRequest *string `json:"ignore_file_request"`
 	}
@@ -219,6 +231,13 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get(cagedHeader) != "" {
 		fail(w, http.StatusForbidden, errors.New("a caged agent cannot change a session's settings"))
 		return
+	}
+	if req.Meshes != nil {
+		if err := s.SetMeshes(*req.Meshes, h.m.meshes(), h.caller(r)); err != nil {
+			fail(w, http.StatusBadRequest, err)
+			return
+		}
+		h.log.Info("meshes changed", "session", s.Name(), "meshes", *req.Meshes, "by", h.caller(r))
 	}
 	if req.IgnoreFileRequest != nil {
 		s.IgnoreFileAsk(*req.IgnoreFileRequest)
@@ -515,6 +534,9 @@ func (h *handler) interrupt(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) rename(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.session(w, r); !ok {
+		return
+	}
 	var req struct {
 		Name string `json:"name"`
 	}
@@ -656,6 +678,9 @@ func (h *handler) cage(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		fail(w, http.StatusBadRequest, err)
+		return
+	}
+	if _, ok := h.session(w, r); !ok {
 		return
 	}
 	in, err := h.m.SetCage(r.PathValue("name"), req.Cage, h.caller(r))

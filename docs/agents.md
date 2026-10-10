@@ -90,6 +90,27 @@ Another local user on the same machine can also connect to the overlay
 address. That machine is already theirs to run code on, so it is not a new
 exposure.
 
+### Sessions per mesh
+
+A machine on several meshes serves its agent on all of them, and every
+session used to be visible on every one. Now a session can be **limited to
+some of its machine's meshes**: the `meshes` setting, by this machine's labels
+for them (`GET /v1/meshes` lists them). Empty means every mesh, which is how
+existing sessions stay. Decided in
+[ADR-049](adr/049-sessions-per-mesh.md).
+
+From a mesh not on the list, the session does not exist. It is not listed,
+can't be opened, renamed, caged or deleted, isn't on the machine's A2A card,
+can't be asked or sent files, and its tasks are hidden. Every such route
+answers as it would for a session that isn't there. The caller's mesh is
+part of the name the daemon gives it (`phone.home`). This machine itself
+(loopback, or one of its own mesh addresses) always sees every session. An
+address the agent can't name is no one, on no mesh.
+
+**Moving a session between meshes** is changing that list. For example, a
+session for the household goes on `home` alone, and one for work on `office`
+alone.
+
 One route is narrower: `POST /v1/tasks/{id}`, a worker finishing its task, is
 refused (403) to any caller the mesh names, so only this machine's own
 sessions can say their tasks are done.
@@ -138,7 +159,7 @@ On each machine's overlay addresses, port 7387. Bodies are JSON; an error is
 | `POST /v1/sessions` | `{name, dir, harness?, auto_approve?, keep_running?, cage?}` | 201, the new session's Info. Claude Code unless `harness` names another (`GET /v1/harnesses`). `dir` (`~` is the agent user's home) is made if it does not exist, once the request is otherwise accepted, and refused if it is a file. `cage: {}` runs it in a container of its own; `{"image": …, "nix": true, "github": true}` for another image, the machine's nix, the owner's gh login; `{"sealed": true}` a sealed cage (ADR-045: internet only, the machine's sealed token, asks nothing, results in `~/shrooms-outbox/<session>`; Claude Code only; refused without the token). Info's `cage` then carries `sealed` and `outbox` |
 | `POST /v1/sessions` | `{name, resume, dir?, harness?, cage?}` | 201: continue an existing conversation — Claude Code's, or with `harness: "pi"` pi's — by its id, in the directory it ran in (read from its transcript when `dir` is not given). Refused for one whose directory is not on this machine: a `~/.claude` copied from another machine brings its transcripts along, and those cannot be continued here, nor is their directory made |
 | `DELETE /v1/sessions/{name}` | | 204: stop and forget it (its event log goes too) |
-| `PATCH /v1/sessions/{name}`, `POST /v1/sessions/{name}/settings` | `{auto_approve?, starred?, keep_running?, accept_caged?, accept_files_from?}` | 200, Info. 403 to a request carrying `X-Shrooms-Caged`. `accept_caged`: whether the session takes tasks from caged agents (ADR-044; default yes for a caged session, no otherwise). `accept_files_from`: who the session takes files from, the whole list; `ignore_file_request`: a refused sender's request set aside (docs/agents-files.md). POST is for clients that cannot send PATCH (Android's HttpURLConnection). A star is kept on the agent, so every device lists starred sessions first, above each machine's others. `keep_running`: for an agent that works on its own (a heartbeat, a chat bridge in its extensions), Jimmy on pi5 being the first. Auto-approve and keep-running changes are recorded as `setting` events |
+| `PATCH /v1/sessions/{name}`, `POST /v1/sessions/{name}/settings` | `{auto_approve?, starred?, keep_running?, accept_caged?, accept_files_from?}` | 200, Info. 403 to a request carrying `X-Shrooms-Caged`. `accept_caged`: whether the session takes tasks from caged agents (ADR-044; default yes for a caged session, no otherwise). `meshes`: the meshes it is there for, the whole list, empty for all (Sessions per mesh); `accept_files_from`: who the session takes files from, the whole list; `ignore_file_request`: a refused sender's request set aside (docs/agents-files.md). POST is for clients that cannot send PATCH (Android's HttpURLConnection). A star is kept on the agent, so every device lists starred sessions first, above each machine's others. `keep_running`: for an agent that works on its own (a heartbeat, a chat bridge in its extensions), Jimmy on pi5 being the first. Auto-approve and keep-running changes are recorded as `setting` events |
 | `POST /v1/sessions/{name}/rename` | `{name}` | 200, Info; 409 if the name is taken or not valid, 404 if there is no such session. The event log moves with it; files sent to it stay where they were kept, since its messages name them by path; its process goes on undisturbed. Recorded as a `renamed` event, on which every app following it moves what it keeps under the name (the copy, unread, auto-play, the outbox) |
 | `POST /v1/sessions/{name}/restart` | | 204: end the session's process at once — killed, since a request hanging on a dropped connection (`API Error: Connection dropped (ECONNRESET)`) answers neither an interrupt nor the end of its input — and start it again on the same conversation. The turn in progress is lost; turns queued behind it go on. Only this session's process: the others on the machine, which a restart of shrooms-agent would end too, are untouched. A `restarted` event |
 | `POST /v1/sessions/{name}/cage` | `{"cage": {image?, nix?, github?}}` or `{"cage": null}` | 200, Info; 409 unless the session is idle with no prompt waiting, or when the machine has no podman. Moves a session into a cage, changes its cage, or takes it out. Its process is stopped and the conversation resumes where it now runs with the next message; a cage changed or left is deleted, with what was installed in it. A `caged` event |
@@ -195,6 +216,7 @@ and docs/agents-together.md ("On the wire: A2A").
 | `GET /v1/tasks` | `?session=NAME` | `{tasks: [Task]}`: the tasks on this machine as A2A shows them (below), for the apps — Basecamp's board draws a line from asker to worker from it |
 | `POST /v1/tasks/{id}` | `{state, summary, session?}` | 200, the Task: the worker's word on a task given to its session — `state` `done`, `blocked` or `failed` (also `completed`, `input-required`). Only from this machine (403 for a caller the mesh names, or when `session` is not the task's); 404 for no such task; 409 for one already closed or another state. A `task` event. What `task_update` and `shrooms-agent a2a update` call |
 | `POST /v1/sessions/{name}/drop` | `?name=&note=&tell=0`, the file as the body, `X-Shrooms-From-Session` | 201, `{path, size}`: a file from another agent's session, kept in its own folder (docs/agents-files.md). 403 when the session does not take files from that sender (the request is kept for the apps), 400 over the limits |
+| `GET /v1/meshes` | | `{meshes: [label]}`: this machine's meshes, by its labels, which a session may be limited to |
 | `GET /v1/sessions/{name}/drop` | | `{files: [{from, name, path, size, time}]}`: the files other agents sent the session, newest first |
 | `DELETE /v1/sessions/{name}/drop` | `?from=&file=` | 204: deletes one. 403 from a cage |
 | `POST /v1/tasks/{id}/ack` | | 200, `{task}`: the asker has what it needed — A2A's `AckTask`, for apps whose only way to an agent is `/v1` (Basecamp's core forwards nothing else). From any caller, as `AckTask` is; 404 for no such task |
@@ -285,7 +307,7 @@ data?}`; `by` is the device that caused it, as the mesh names it.
 | `answer` | `{prompt, allow, message, answers?}` | a permission prompt or question answered |
 | `stopped` | `{reason}` | the process ended (`finished`, or why); its waiting prompts are dropped |
 | `partial` | `{text}` | reply text as it is written. Live only — never kept or numbered (its `seq` is the last real event's) — since the whole message follows as a `claude` event |
-| `setting` | `{auto_approve}`, `{keep_running}`, `{accept_caged}` or `{accept_files_from}` | a setting changed |
+| `setting` | `{auto_approve}`, `{keep_running}`, `{accept_caged}`, `{accept_files_from}` or `{meshes}` | a setting changed |
 | `file` | `{from, name, path, size}` | a file from another agent's session was kept (docs/agents-files.md) |
 | `file-request` | `{from, name, size, at}` | a sender the session does not take files from tried; the apps offer to allow it |
 | `restarted` | `{}` | the process was restarted on request |

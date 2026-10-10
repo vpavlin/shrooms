@@ -58,3 +58,4 @@ number appears, its source is named.
 | [046](046-metrics-on-the-mesh-addresses.md) | Metrics on the mesh addresses | accepted; built — tunnels, delivery and interfaces per node; Prometheus + Grafana via deploy/metrics |
 | [047](047-the-tasks-board-is-read-from-the-agents.md) | The tasks board lives in the agents' own view, read from the agents | accepted; being built — links carry their tasks, cards carry their load, a panel grouped as a person needs it, ACK to the worker's agent |
 | [048](048-files-between-agents.md) | Files between agents | accepted; built — push into per-sender folders, allow list empty by default, sealed cages receive only |
+| [049](049-sessions-per-mesh.md) | Sessions per mesh | accepted; built — a session limited to some of its machine's meshes is absent from the others; an unnamed caller is no one |

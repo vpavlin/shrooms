@@ -93,8 +93,11 @@ type Info struct {
 	// AcceptFilesFrom: the agents it takes files from, MACHINE/SESSION or
 	// MACHINE/*; FileRequests, those refused lately, for the apps to offer
 	// (drop.go).
-	AcceptFilesFrom []string  `json:"accept_files_from,omitempty"`
-	FileRequests    []FileAsk `json:"file_requests,omitempty"`
+	AcceptFilesFrom []string `json:"accept_files_from,omitempty"`
+	// Meshes: the meshes it is there for, by this machine's labels; none is
+	// all of them (meshes.go).
+	Meshes       []string  `json:"meshes,omitempty"`
+	FileRequests []FileAsk `json:"file_requests,omitempty"`
 	// Cage is set for a session that runs in a container of its own, with
 	// the image it is made from (cage.go).
 	Cage *CageInfo `json:"cage,omitempty"`
@@ -136,6 +139,7 @@ type Session struct {
 	acceptCaged *bool
 	acceptFiles []string  // who it takes files from (drop.go)
 	fileAsks    []FileAsk // senders refused lately
+	meshes      []string  // the meshes it is there for; none is all (meshes.go)
 	turns       uint64
 	// ids are the device-made ids of messages and voice notes already taken,
 	// so a device that sends again — it did not hear the answer, the
@@ -211,6 +215,8 @@ type Manager struct {
 	proxies  cageProxies
 	Machines func() ([]Machine, error)
 	agentAt  func(netip.Addr) string // tests: where an agent is
+	// Meshes are this machine's meshes, by label and address (meshes.go).
+	Meshes func() []MeshInfo
 	// Tasks an asker is waiting on right now (a blocking send), by id: it gets
 	// the result as the reply, and is not sent a note of it too (asker.go).
 	waiting sync.Map
@@ -239,6 +245,7 @@ type record struct {
 	Cage        *Cage    `json:"cage,omitempty"`
 	AcceptCaged *bool    `json:"accept_caged,omitempty"`
 	AcceptFiles []string `json:"accept_files_from,omitempty"`
+	Meshes      []string `json:"meshes,omitempty"`
 }
 
 // NewManager loads the sessions kept in stateDir.
@@ -279,6 +286,7 @@ func NewManager(ctx context.Context, log *slog.Logger, stateDir, claudeBin strin
 			s.cage = r.Cage
 			s.acceptCaged = r.AcceptCaged
 			s.acceptFiles = r.AcceptFiles
+			s.meshes = r.Meshes
 			s.loadEvents()
 			m.sessions[r.Name] = s
 		}
@@ -394,7 +402,7 @@ func (m *Manager) save() error {
 	for _, s := range m.sessions {
 		s.mu.Lock()
 		r := record{Name: s.Name(), Dir: s.dir, ConvID: s.convID, AutoApprove: s.autoApprove, Starred: s.starred,
-			KeepRunning: s.keepRunning, Cage: s.cage, AcceptCaged: s.acceptCaged, AcceptFiles: s.acceptFiles}
+			KeepRunning: s.keepRunning, Cage: s.cage, AcceptCaged: s.acceptCaged, AcceptFiles: s.acceptFiles, Meshes: s.meshes}
 		if s.harness.Name() != "claude" {
 			r.Harness = s.harness.Name()
 		}
@@ -619,7 +627,8 @@ func (s *Session) Info() Info {
 		ContextUsed: s.ctxUsed, ContextWindow: s.ctxWindow, Preview: s.preview, Model: s.model,
 		Harness: s.harness.Name(), Caps: s.harness.Caps(), Starred: s.starred, Turns: s.turns,
 		KeepRunning: s.keepRunning, AcceptCaged: s.acceptsCaged(),
-		AcceptFilesFrom: append([]string(nil), s.acceptFiles...), FileRequests: append([]FileAsk(nil), s.fileAsks...)}
+		AcceptFilesFrom: append([]string(nil), s.acceptFiles...), FileRequests: append([]FileAsk(nil), s.fileAsks...),
+		Meshes: append([]string(nil), s.meshes...)}
 	if s.cage != nil {
 		in.Cage = &CageInfo{Image: s.cage.Image, Nix: s.cage.Nix, GitHub: s.cage.GitHub, Sealed: s.cage.Sealed, Outbox: s.cage.Outbox}
 		if in.Cage.Image == "" && s.m.Cages != nil {

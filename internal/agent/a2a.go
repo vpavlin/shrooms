@@ -178,6 +178,9 @@ func (h *handler) machineCard(w http.ResponseWriter, r *http.Request) {
 	host, _ := os.Hostname()
 	var skills []map[string]any
 	for _, in := range h.m.List() {
+		if !h.visible(r, in.Name) {
+			continue
+		}
 		skills = append(skills, map[string]any{"id": in.Name, "name": in.Name,
 			"description": fmt.Sprintf("%s session in %s; its card: %s%s/.well-known/agent-card.json",
 				harnessTitle(h.m, in.Harness), in.Dir, h.cardBase(r), in.Name),
@@ -305,7 +308,7 @@ func (h *handler) a2a(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name, _, _ = strings.Cut(p.ID, ":")
 	}
-	s, ok := h.m.Get(name)
+	s, ok := h.get(r, name)
 	if !ok {
 		rpcReply(w, req.ID, nil, &rpcError{rpcInvalidParams, fmt.Sprintf("no session called %q", name)})
 		return
@@ -509,8 +512,22 @@ func statusText(v a2aTask) string {
 // taskUpdate is the worker's word on a task (POST /v1/tasks/{id}): from this
 // machine only — its own sessions, through the shrooms MCP tool — never from
 // another device, which could otherwise close work it was not given.
+// taskVisible answers 404 for a task whose session is not there for the
+// caller's mesh (meshes.go), as for one that does not exist.
+func (h *handler) taskVisible(w http.ResponseWriter, r *http.Request) bool {
+	id := r.PathValue("id")
+	if t, ok := h.m.tasks.get(id); ok && !h.visible(r, t.Session) {
+		fail(w, http.StatusNotFound, fmt.Errorf("no task %s", id))
+		return false
+	}
+	return true
+}
+
 // taskAck is AckTask over REST: whoever may ask may acknowledge.
 func (h *handler) taskAck(w http.ResponseWriter, r *http.Request) {
+	if !h.taskVisible(w, r) {
+		return
+	}
 	t, err := h.m.Ack(r.PathValue("id"))
 	if err != nil {
 		fail(w, http.StatusNotFound, err)
@@ -522,6 +539,9 @@ func (h *handler) taskAck(w http.ResponseWriter, r *http.Request) {
 // taskAnswer is more for a task's worker, from whoever answers in the
 // asker's place: a person in an app, usually. Said as theirs, in the text.
 func (h *handler) taskAnswer(w http.ResponseWriter, r *http.Request) {
+	if !h.taskVisible(w, r) {
+		return
+	}
 	var req struct{ Text string }
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil || strings.TrimSpace(req.Text) == "" {
 		fail(w, http.StatusBadRequest, fmt.Errorf("an answer needs text"))
@@ -552,6 +572,9 @@ func (h *handler) taskAnswer(w http.ResponseWriter, r *http.Request) {
 
 // taskNudge tells the task's asker again where its task stands.
 func (h *handler) taskNudge(w http.ResponseWriter, r *http.Request) {
+	if !h.taskVisible(w, r) {
+		return
+	}
 	id := r.PathValue("id")
 	t, ok := h.m.tasks.get(id)
 	if !ok {
@@ -567,6 +590,9 @@ func (h *handler) taskNudge(w http.ResponseWriter, r *http.Request) {
 
 // taskCancel is CancelTask over /v1, for the apps.
 func (h *handler) taskCancel(w http.ResponseWriter, r *http.Request) {
+	if !h.taskVisible(w, r) {
+		return
+	}
 	by := h.caller(r)
 	if by == "" {
 		by = "this machine"
@@ -609,7 +635,9 @@ func (h *handler) taskUpdate(w http.ResponseWriter, r *http.Request) {
 func (h *handler) tasksList(w http.ResponseWriter, r *http.Request) {
 	var out []a2aTask
 	for _, t := range h.m.Tasks(r.URL.Query().Get("session")) {
-		out = append(out, h.view(t))
+		if h.visible(r, t.Session) {
+			out = append(out, h.view(t))
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tasks": out})
 }
