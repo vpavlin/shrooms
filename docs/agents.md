@@ -194,6 +194,7 @@ and docs/agents-together.md ("On the wire: A2A").
 | `POST /a2a` | JSON-RPC 2.0 | The same, the session found from the message's `metadata["shrooms/session"]`, its `taskId`, or the `id` param (`SESSION:MESSAGE-ID`) |
 | `GET /v1/tasks` | `?session=NAME` | `{tasks: [Task]}`: the tasks on this machine as A2A shows them (below), for the apps — Basecamp's board draws a line from asker to worker from it |
 | `POST /v1/tasks/{id}` | `{state, summary, session?}` | 200, the Task: the worker's word on a task given to its session — `state` `done`, `blocked` or `failed` (also `completed`, `input-required`). Only from this machine (403 for a caller the mesh names, or when `session` is not the task's); 404 for no such task; 409 for one already closed or another state. A `task` event. What `task_update` and `shrooms-agent a2a update` call |
+| `POST /v1/tasks/{id}/ack` | | 200, `{task}`: the asker has what it needed — A2A's `AckTask`, for apps whose only way to an agent is `/v1` (Basecamp's core forwards nothing else). From any caller, as `AckTask` is; 404 for no such task |
 
 The JSON-RPC methods:
 

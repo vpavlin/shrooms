@@ -428,3 +428,27 @@ func TestA2ATaskKeepsTheAskersTitle(t *testing.T) {
 		t.Errorf("not cut: %d runes", len([]rune(long)))
 	}
 }
+
+// Basecamp reaches agents only through /v1 (its core forwards nothing else),
+// so acknowledging has a /v1 door too, the same as AckTask.
+func TestATaskIsAcknowledgedOverREST(t *testing.T) {
+	r := newA2A(t)
+	call(t, r.remote.URL+"/a2a/proj", "SendMessage", send("m-ack", "hello", false))
+	resp, err := http.Post(r.remote.URL+"/v1/tasks/proj:m-ack/ack", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out struct{ Task a2aTask }
+	json.NewDecoder(resp.Body).Decode(&out)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || out.Task.Metadata["shrooms/acknowledged"] != true {
+		t.Fatalf("ack: %d %+v", resp.StatusCode, out.Task.Metadata)
+	}
+	if ts := r.m.Tasks("proj"); len(ts) != 1 || !ts[0].Acked {
+		t.Errorf("not recorded: %+v", ts)
+	}
+	resp, _ = http.Post(r.remote.URL+"/v1/tasks/proj:nope/ack", "application/json", nil)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("acked a task that does not exist: %d", resp.StatusCode)
+	}
+}

@@ -501,6 +501,16 @@ func statusText(v a2aTask) string {
 // taskUpdate is the worker's word on a task (POST /v1/tasks/{id}): from this
 // machine only — its own sessions, through the shrooms MCP tool — never from
 // another device, which could otherwise close work it was not given.
+// taskAck is AckTask over REST: whoever may ask may acknowledge.
+func (h *handler) taskAck(w http.ResponseWriter, r *http.Request) {
+	t, err := h.m.Ack(r.PathValue("id"))
+	if err != nil {
+		fail(w, http.StatusNotFound, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"task": h.view(t)})
+}
+
 func (h *handler) taskUpdate(w http.ResponseWriter, r *http.Request) {
 	if h.caller(r) != "" {
 		fail(w, http.StatusForbidden, fmt.Errorf("only this machine's sessions update their tasks"))
