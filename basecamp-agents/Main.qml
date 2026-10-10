@@ -1050,7 +1050,7 @@ Item {
         }
         // Never follow the end while a jump is still settling: THAT is what put the reader
         // at the bottom during the replay.
-        if (root.chatStick && !root.jumpPending && root.jumpTo === 0 && root.jumpToId === "")
+        if (root.followingEnd(root.chatStick))
             Qt.callLater(function() { chatList.positionViewAtEnd() })
     }
 
@@ -1092,6 +1092,15 @@ Item {
     // what it settled to - with whether the session had caught up when it did. A settle
     // mid-replay is the bug.
     property bool jumpPending: false
+    // May the view follow the end? `stick` is the caller's own intent. NOT while a jump is
+    // armed or pending: the replay appends rows, every one grows contentHeight, the list
+    // touches its end, atYEnd turns chatStick back on - and the reader is carried to the
+    // bottom. That is the second half of the race and it is in the LISTVIEW, not in
+    // rebuildChat (2026-10-10). ONE place, so there is one thing to pin, and the harness
+    // pins it because it has no real list geometry.
+    function followingEnd(stick) {
+        return !!stick && !root.jumpPending && root.jumpTo === 0 && root.jumpToId === ""
+    }
     property real jumpSettled: 0
     property bool jumpSettledCaught: false
     function isQuietJump(seq) { return root.jumpQuietFor !== 0 && root.jumpQuietFor === seq }
@@ -1116,7 +1125,8 @@ Item {
             root.jumpViaSearch = false
             var hit = bestHit(root.searchFound, root.jumpRef)
             if (hit) root.openFound(hit)
-            else { root.said = "no message found for " + root.jumpRef; root.saidBad = true }
+            else { root.said = "no message found for " + root.jumpRef; root.saidBad = true
+                   root.jumpPending = false }
         }
     }
     // What tailReaching does on the phone (AgentChat.kt).
@@ -1168,6 +1178,9 @@ Item {
         root.searchOpen = false
         var evs = agentEventsList
         var first = evs.length > 0 ? evs[0].seq : Infinity
+        // Pending BEFORE the reopen: between openSession and `jumpTo = f.seq` the list is
+        // already growing, and nothing may follow the end in that window either.
+        root.jumpPending = true
         if (f.seq < first) {
             var lastSeq = Math.max(agentInfo ? (agentInfo.last_seq || 0) : 0, evs.length > 0 ? evs[evs.length - 1].seq : 0)
             var h = { address: agentOpen.address, name: agentOpen.name, mesh: agentOpen.mesh }
@@ -3868,9 +3881,9 @@ Item {
                     // Messages measure themselves after they are added, so
                     // the height keeps growing after a scroll to the end: it
                     // is followed for as long as the reader is down there.
-                    onContentHeightChanged: if (root.chatStick) Qt.callLater(chatList.positionViewAtEnd)
-                    onMovementEnded: root.chatStick = chatList.atYEnd
-                    onAtYEndChanged: if (atYEnd) root.chatStick = true
+                    onContentHeightChanged: if (root.followingEnd(root.chatStick)) Qt.callLater(chatList.positionViewAtEnd)
+                    onMovementEnded: root.chatStick = root.followingEnd(chatList.atYEnd)
+                    onAtYEndChanged: if (atYEnd && root.followingEnd(root.chatStick)) root.chatStick = true
                     // Scrolling up by any means — the wheel included, which
                     // reports no movement — stops the following. Content
                     // growing never moves the view up, so this is the reader.

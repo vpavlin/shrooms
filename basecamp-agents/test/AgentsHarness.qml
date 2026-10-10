@@ -426,6 +426,15 @@ Item {
             console.error("BADGEAT " + [view.badgeAt(bh, 15, 15), view.badgeAt(bh, 5, 5),
                 view.badgeAt(bh, 10, 10), view.badgeAt(bh, 30, 20), view.badgeAt(bh, 31, 15),
                 view.badgeAt([], 15, 15), view.badgeAt(null, 1, 1)].join(","))
+            // May the view follow the end? Not while a jump is armed or pending: the replay
+            // grows contentHeight with every row it appends, the list touches its end, and
+            // the reader is carried to the bottom - the second half of the race, and it is
+            // in the ListView, where a harness has no geometry. The DECISION is pure.
+            var fe = [view.followingEnd(true), view.followingEnd(false)]
+            view.jumpPending = true; fe.push(view.followingEnd(true)); view.jumpPending = false
+            view.jumpTo = 5; fe.push(view.followingEnd(true)); view.jumpTo = 0
+            view.jumpToId = "x"; fe.push(view.followingEnd(true)); view.jumpToId = ""
+            console.error("FOLLOWING " + fe.join(","))
             console.error("PAIRLABEL " + [view.pairLabel("laptop/a>pi5/b"), view.pairLabel("nocolon"),
                 view.pairLabel("")].join(","))
 

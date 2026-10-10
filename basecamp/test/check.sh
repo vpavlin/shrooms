@@ -283,6 +283,15 @@ expect "BESTHIT 5,3,true" "the jump lands on a later mention of the task instead
 expect "PAIR laptop/review>pi5/jimmy,,1,1,0,2" "a link tap does not filter the panel to its own pair"
 expect "BADGEAT a>b,,a>b,a>b,,," "a press is taken over a card that is not on a badge"
 expect "PAIRLABEL a ↔ b,nocolon," "the filtered panel shows raw keys instead of names"
+expect "FOLLOWING true,false,false,false,false" "the view follows the end while a jump is armed or pending"
+# The automatic followers go through it. The harness has no real list geometry, so
+# this is STATIC, and it is the half of the race that is in the ListView itself.
+grep -q 'onContentHeightChanged: if (root.followingEnd(root.chatStick))' basecamp-agents/Main.qml \
+    || { echo "FAIL: the list follows content growth without asking about a pending jump"; exit 1; }
+grep -q 'onAtYEndChanged: if (atYEnd && root.followingEnd(root.chatStick))' basecamp-agents/Main.qml \
+    || { echo "FAIL: the list re-sticks itself at its end while a jump is pending"; exit 1; }
+grep -q 'onMovementEnded: root.chatStick = root.followingEnd(chatList.atYEnd)' basecamp-agents/Main.qml \
+    || { echo "FAIL: a movement re-sticks without asking about a pending jump"; exit 1; }
 # The ack path: /a2a/ is not forwarded by the core, so an ack could never work
 # from Basecamp at all. The path itself is pinned above (ACKPATH); this says the
 # call uses it.
