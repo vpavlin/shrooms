@@ -30,13 +30,18 @@ type Task struct {
 	Request   string `json:"request"`
 	// Title is the asker's few words for what it asks (shrooms/title), for
 	// lists of tasks; empty when it gave none.
-	Title   string    `json:"title,omitempty"`
-	Refs    []string  `json:"refs,omitempty"` // tasks this one follows on from (A2A referenceTaskIds)
-	Created time.Time `json:"created"`
-	Started time.Time `json:"started,omitempty"` // sent to the session; zero while queued
-	Updated time.Time `json:"updated"`
-	State   string    `json:"state"`             // an A2A task state
-	Summary string    `json:"summary,omitempty"` // the worker's: what was done, or what it needs
+	Title string `json:"title,omitempty"`
+	// Where the asker is, when it is an agent's session: its machine's mesh
+	// address and the session it said it is. Notes about the task go there
+	// (asker.go); empty for a person asking from an app.
+	AskerAddr    string    `json:"asker_addr,omitempty"`
+	AskerSession string    `json:"asker_session,omitempty"`
+	Refs         []string  `json:"refs,omitempty"` // tasks this one follows on from (A2A referenceTaskIds)
+	Created      time.Time `json:"created"`
+	Started      time.Time `json:"started,omitempty"` // sent to the session; zero while queued
+	Updated      time.Time `json:"updated"`
+	State        string    `json:"state"`             // an A2A task state
+	Summary      string    `json:"summary,omitempty"` // the worker's: what was done, or what it needs
 	// More messages from the asker for this task (answers to "blocked"),
 	// waiting for the session to be free.
 	FollowUps []string `json:"follow_ups,omitempty"`
@@ -150,8 +155,9 @@ func (st *taskStore) list(session string) []Task {
 func taskHeader(t Task) string {
 	return fmt.Sprintf("[shrooms task %s from %s]\n%s\n\n"+
 		"[This is a task: it stays open until you finish it. When it is done, call the shrooms tool task_update "+
-		"with task %q, state \"done\" and a short summary of the result. If you cannot go on without something, "+
-		"call it with state \"blocked\" saying what you need. If you stop before either, you will be reminded.]",
+		"with task %q, state \"done\" and a short summary of the result. If you need an answer from the asker to go on, "+
+		"call it with state \"blocked\" and your question; if you cannot or will not do it, state \"failed\" and why. "+
+		"If you stop before any of these, you will be reminded.]",
 		t.ID, t.From, t.Request, t.ID)
 }
 
@@ -279,6 +285,11 @@ func (m *Manager) Update(id, state, summary string) (Task, error) {
 			s.record("task", "", map[string]string{"id": t.ID, "state": stateWord(t.State), "summary": t.Summary})
 			s.mu.Unlock()
 			m.dispatch(s)
+		}
+		// The asker is told: always when it has to answer, and of the result
+		// unless it is waiting for it right now (asker.go).
+		if to == taskInputRequired || !m.awaited(t.ID) {
+			go m.tellAsker(t)
 		}
 	}
 	return t, err

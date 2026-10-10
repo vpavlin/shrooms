@@ -50,12 +50,13 @@ var mcpTools = []map[string]any{
 	{
 		"name": "task_update",
 		"description": "Finish a task another agent gave you (a message beginning \"[shrooms task ID …]\"): state \"done\" with a summary " +
-			"of the result, \"blocked\" with what you need from the asker, or \"failed\" with why. Until you do, the task stays open " +
-			"and you are reminded if you go quiet.",
+			"of the result; \"blocked\" only to ask the asker a question you need answered to go on (it is sent to them, and the " +
+			"task waits for their answer); \"failed\" with why when you cannot or will not do it — never \"blocked\" to give up. " +
+			"Until you do, the task stays open and you are reminded if you go quiet.",
 		"inputSchema": map[string]any{"type": "object", "required": []string{"task", "state", "summary"}, "properties": map[string]any{
 			"task":    map[string]any{"type": "string", "description": "The task id from the message: SESSION:MESSAGE-ID"},
 			"state":   map[string]any{"type": "string", "enum": []string{"done", "blocked", "failed"}},
-			"summary": map[string]any{"type": "string", "description": "The result, what you need, or why it failed — what the asker reads."},
+			"summary": map[string]any{"type": "string", "description": "The result; for blocked, the question for the asker; for failed, why — what the asker reads."},
 		}},
 	},
 	{

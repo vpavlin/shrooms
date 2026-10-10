@@ -74,6 +74,11 @@ func Handler(log *slog.Logger, m *Manager, who Who) http.Handler {
 	// The asker's acknowledgement, as A2A's AckTask, for apps whose way to an
 	// agent is the /v1 API (Basecamp's core forwards nothing else).
 	mux.HandleFunc("POST /v1/tasks/{id}/ack", h.taskAck)
+	// What the apps do about a task waiting on its asker (asker.go): answer
+	// it in the asker's place, remind the asker, or call it off.
+	mux.HandleFunc("POST /v1/tasks/{id}/answer", h.taskAnswer)
+	mux.HandleFunc("POST /v1/tasks/{id}/nudge", h.taskNudge)
+	mux.HandleFunc("POST /v1/tasks/{id}/cancel", h.taskCancel)
 	return mux
 }
 

@@ -117,10 +117,18 @@ func proxyAllowed(method, path, rpc string) bool {
 		case "SendMessage", "SendStreamingMessage", "GetTask", "AckTask":
 			return true
 		}
-	case method == http.MethodPost && strings.HasPrefix(path, "/v1/tasks/"):
+	case method == http.MethodPost && isTaskUpdate(path):
 		return true // its own machine and session only (cageProxy)
 	}
 	return false
+}
+
+// isTaskUpdate is task_update's path, /v1/tasks/{id}, and nothing under it:
+// a cage finishes its own session's tasks, and does not answer, cancel or
+// acknowledge anyone's (/answer, /cancel, /ack, /nudge).
+func isTaskUpdate(path string) bool {
+	id, ok := strings.CutPrefix(path, "/v1/tasks/")
+	return ok && id != "" && !strings.Contains(id, "/")
 }
 
 // cageProxy is a caged session's socket.
@@ -157,7 +165,7 @@ func (m *Manager) cageProxy(s *Session) http.Handler {
 		// A sealed cage answers and asks nothing (ADR-045): it finishes its
 		// own tasks, and a review poisoned by what it read cannot instruct
 		// the owner's other agents.
-		if sealed && !(r.Method == http.MethodPost && strings.HasPrefix(path, "/v1/tasks/")) {
+		if sealed && !(r.Method == http.MethodPost && isTaskUpdate(path)) {
 			fail(w, http.StatusForbidden, fmt.Errorf("not from a sealed cage: %s %s %s", r.Method, path, rpc.Method))
 			return
 		}
@@ -172,7 +180,7 @@ func (m *Manager) cageProxy(s *Session) http.Handler {
 		}
 		self := ms[0]
 		switch {
-		case strings.HasPrefix(path, "/v1/tasks/"):
+		case isTaskUpdate(path):
 			// task_update: on this machine, for this session's tasks.
 			if addr != self.Addr {
 				fail(w, http.StatusForbidden, errors.New("a cage updates only its own session's tasks, on its own machine"))

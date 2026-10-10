@@ -67,6 +67,36 @@ about $1; the usage dashboard shows it under "shrooms" as who asked.
 Cost follows open obligations, not the clock: a session with no open task is
 never woken.
 
+## The asker is told
+
+When a task needs its asker's answer (the worker said **blocked**), the
+worker's agent sends the asking session a note, as a turn: "[shrooms task
+MACHINE/ID needs your answer]", the question, and how to answer (`ask_agent`
+with that task). It does the same with the result when the task completes or
+fails, unless the asker is waiting for it right then (a blocking send), which
+already gets it as the reply. Notes go only to an asking *session*: the
+address it called from and the session it named in `shrooms/from`. A person
+asking from an app is not sent notes.
+
+Before this, an asker learned only by asking again, and tasks sat blocked on
+agents that never looked (2026-10-10).
+
+**Blocked is a question, not a way out.** A worker that cannot or will not
+do a task says **failed**, with why. The tool's description and the task's
+header both say so.
+
+**When the asker does not answer**, the apps offer three things, over `/v1`
+(Basecamp's core forwards nothing else):
+
+- `POST /v1/tasks/{id}/answer` `{text}`: answer in the asker's place. The
+  worker gets it as more on the task, marked "(answered by DEVICE, in place
+  of the asker)".
+- `POST /v1/tasks/{id}/nudge`: send the asker its note again.
+- `POST /v1/tasks/{id}/cancel`: call the task off (CancelTask).
+
+A cage can use none of them: through its proxy it may only finish its own
+session's tasks (`POST /v1/tasks/{id}`).
+
 ## Acknowledgement
 
 `AckTask` (the extension's method; `task_ack` in MCP, `a2a ack` in the CLI) is

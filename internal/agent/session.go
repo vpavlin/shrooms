@@ -204,6 +204,9 @@ type Manager struct {
 	proxies  cageProxies
 	Machines func() ([]Machine, error)
 	agentAt  func(netip.Addr) string // tests: where an agent is
+	// Tasks an asker is waiting on right now (a blocking send), by id: it gets
+	// the result as the reply, and is not sent a note of it too (asker.go).
+	waiting sync.Map
 
 	// STT transcribes voice notes; nil when this machine has no model.
 	STT *Transcriber

@@ -195,6 +195,9 @@ and docs/agents-together.md ("On the wire: A2A").
 | `GET /v1/tasks` | `?session=NAME` | `{tasks: [Task]}`: the tasks on this machine as A2A shows them (below), for the apps — Basecamp's board draws a line from asker to worker from it |
 | `POST /v1/tasks/{id}` | `{state, summary, session?}` | 200, the Task: the worker's word on a task given to its session — `state` `done`, `blocked` or `failed` (also `completed`, `input-required`). Only from this machine (403 for a caller the mesh names, or when `session` is not the task's); 404 for no such task; 409 for one already closed or another state. A `task` event. What `task_update` and `shrooms-agent a2a update` call |
 | `POST /v1/tasks/{id}/ack` | | 200, `{task}`: the asker has what it needed — A2A's `AckTask`, for apps whose only way to an agent is `/v1` (Basecamp's core forwards nothing else). From any caller, as `AckTask` is; 404 for no such task |
+| `POST /v1/tasks/{id}/answer` | `{text}` | 200, `{task}`: answers a task waiting on its asker, in the asker's place; the worker gets it as more on the task, marked as whose it is (docs/a2a-tasks.md). 400 without text, 404 for no such task, 409 for one already closed |
+| `POST /v1/tasks/{id}/nudge` | | 200, `{task}`: sends the task's asker its note again ("needs your answer", or the result). 409 when the task was not asked by an agent's session, or its machine did not take the note |
+| `POST /v1/tasks/{id}/cancel` | | 200, `{task}`: CancelTask, for apps on `/v1`. 409 for a task already closed |
 
 The JSON-RPC methods:
 

@@ -9,6 +9,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -416,6 +417,9 @@ func (h *handler) a2aSend(w http.ResponseWriter, r *http.Request, req rpcRequest
 		}
 		title, _ := m.Metadata["shrooms/title"].(string)
 		t, err = h.m.Submit(s, m.MessageID, by, strings.Join(text, "\n\n"), taskTitle(title), params.ReferenceTaskIDs)
+		if err == nil {
+			t = h.m.noteAsker(t, r, m.Metadata)
+		}
 	}
 	if err != nil {
 		rpcReply(w, req.ID, nil, &rpcError{rpcInvalidParams, err.Error()})
@@ -437,6 +441,10 @@ func settled(state string) bool { return terminal(state) || state == taskInputRe
 
 // awaitTask is the task now, or, when wait, once it is settled (or a2aWait).
 func (h *handler) awaitTask(r *http.Request, id string, wait bool) a2aTask {
+	if wait {
+		release := h.m.await(id)
+		defer release()
+	}
 	deadline := time.After(a2aWait)
 	for {
 		t, _ := h.m.tasks.get(id)
@@ -506,6 +514,66 @@ func (h *handler) taskAck(w http.ResponseWriter, r *http.Request) {
 	t, err := h.m.Ack(r.PathValue("id"))
 	if err != nil {
 		fail(w, http.StatusNotFound, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"task": h.view(t)})
+}
+
+// taskAnswer is more for a task's worker, from whoever answers in the
+// asker's place: a person in an app, usually. Said as theirs, in the text.
+func (h *handler) taskAnswer(w http.ResponseWriter, r *http.Request) {
+	var req struct{ Text string }
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil || strings.TrimSpace(req.Text) == "" {
+		fail(w, http.StatusBadRequest, fmt.Errorf("an answer needs text"))
+		return
+	}
+	id := r.PathValue("id")
+	t, ok := h.m.tasks.get(id)
+	if !ok {
+		fail(w, http.StatusNotFound, fmt.Errorf("no task %s", id))
+		return
+	}
+	s, ok := h.m.Get(t.Session)
+	if !ok {
+		fail(w, http.StatusNotFound, fmt.Errorf("no session %s", t.Session))
+		return
+	}
+	by := h.caller(r)
+	if by == "" {
+		by = "this machine"
+	}
+	t, err := h.m.FollowUp(s, id, "(answered by "+by+", in place of the asker) "+req.Text)
+	if err != nil {
+		fail(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"task": h.view(t)})
+}
+
+// taskNudge tells the task's asker again where its task stands.
+func (h *handler) taskNudge(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	t, ok := h.m.tasks.get(id)
+	if !ok {
+		fail(w, http.StatusNotFound, fmt.Errorf("no task %s", id))
+		return
+	}
+	if err := h.m.tellAsker(t); err != nil {
+		fail(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"task": h.view(t)})
+}
+
+// taskCancel is CancelTask over /v1, for the apps.
+func (h *handler) taskCancel(w http.ResponseWriter, r *http.Request) {
+	by := h.caller(r)
+	if by == "" {
+		by = "this machine"
+	}
+	t, err := h.m.Cancel(r.PathValue("id"), by)
+	if err != nil {
+		fail(w, http.StatusConflict, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"task": h.view(t)})
