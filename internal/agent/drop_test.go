@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -60,6 +61,13 @@ func TestFilesComeOnlyFromAllowedSenders(t *testing.T) {
 		t.Errorf("the refused sender is not offered: %+v", in.FileRequests)
 	}
 
+	// Ignored, the request goes and nothing is allowed; asked again, it is back.
+	http.Post(r.local.URL+"/v1/sessions/proj/settings", "application/json", strings.NewReader(`{"ignore_file_request":"pi5/jimmy"}`))
+	if in := s.Info(); len(in.FileRequests) != 0 || len(in.AcceptFilesFrom) != 0 {
+		t.Errorf("after ignoring: %+v %+v", in.FileRequests, in.AcceptFilesFrom)
+	}
+	dropFile(t, r.remote.URL, "jimmy", "notes.txt", "hello", "", nil)
+
 	allowFiles(t, r.local.URL, "pi5/jimmy")
 	if in := s.Info(); len(in.FileRequests) != 0 || len(in.AcceptFilesFrom) != 1 {
 		t.Errorf("after allowing: %+v %+v", in.FileRequests, in.AcceptFilesFrom)
@@ -72,7 +80,9 @@ func TestFilesComeOnlyFromAllowedSenders(t *testing.T) {
 	if got, err := os.ReadFile(want); err != nil || string(got) != "hello" {
 		t.Fatalf("kept at %s: %q %v", want, got, err)
 	}
-	ev := waitFor(t, s, 0, func(e Event) bool { return e.Kind == "message" && strings.Contains(string(e.Data), "shrooms file from pi5/jimmy") })
+	ev := waitFor(t, s, 0, func(e Event) bool {
+		return e.Kind == "message" && strings.Contains(string(e.Data), "shrooms file from pi5/jimmy")
+	})
 	if !strings.Contains(string(ev.Data), want) || !strings.Contains(string(ev.Data), "read this") {
 		t.Errorf("the note: %s", ev.Data)
 	}
@@ -143,5 +153,43 @@ func TestACagedSenderNeedsAcceptCaged(t *testing.T) {
 	}
 	if !proxyAllowed(http.MethodPost, "/v1/sessions/x/drop", "") || proxyAllowed(http.MethodPost, "/v1/sessions/x/settings", "") {
 		t.Error("the proxy's rule for files")
+	}
+}
+
+// The apps list what a session was sent, and clear it.
+func TestDroppedFilesAreListedAndCleared(t *testing.T) {
+	r := newA2A(t)
+	allowFiles(t, r.local.URL, "pi5/jimmy")
+	dropFile(t, r.remote.URL, "jimmy", "a.txt", "aaa", "&tell=0", nil)
+	resp, err := http.Get(r.remote.URL + "/v1/sessions/proj/drop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct{ Files []Dropped }
+	json.NewDecoder(resp.Body).Decode(&got)
+	resp.Body.Close()
+	if len(got.Files) != 1 || got.Files[0].From != "pi5/jimmy" || got.Files[0].Name != "a.txt" || got.Files[0].Size != 3 {
+		t.Fatalf("listed: %+v", got.Files)
+	}
+	del := func(hdr string) int {
+		req, _ := http.NewRequest(http.MethodDelete, r.remote.URL+"/v1/sessions/proj/drop?from=pi5/jimmy&file=a.txt", nil)
+		if hdr != "" {
+			req.Header.Set(cagedHeader, hdr)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	if code := del("boxed"); code != http.StatusForbidden {
+		t.Errorf("a cage deleted a file: %d", code)
+	}
+	if code := del(""); code != http.StatusNoContent {
+		t.Errorf("delete: %d", code)
+	}
+	if fs := r.m.sessions["proj"].Dropped(); len(fs) != 0 {
+		t.Errorf("still there: %+v", fs)
 	}
 }

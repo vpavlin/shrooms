@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -95,6 +96,19 @@ func (s *Session) noteFileAsk(a FileAsk) {
 	}
 	s.fileAsks = out
 	s.record("file-request", a.From, a)
+}
+
+// IgnoreFileAsk sets a refused sender's request aside, without allowing it.
+func (s *Session) IgnoreFileAsk(from string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	kept := s.fileAsks[:0]
+	for _, a := range s.fileAsks {
+		if a.From != from {
+			kept = append(kept, a)
+		}
+	}
+	s.fileAsks = kept
 }
 
 // dropDir is where a sender's files to the session are kept.
@@ -255,4 +269,75 @@ func (h *handler) drop(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"path": path, "size": n})
+}
+
+// Dropped is a file kept for a session, as the apps list it.
+type Dropped struct {
+	From string    `json:"from"`
+	Name string    `json:"name"`
+	Path string    `json:"path"`
+	Size int64     `json:"size"`
+	Time time.Time `json:"time"`
+}
+
+// Dropped lists the files kept for the session, newest first.
+func (s *Session) Dropped() []Dropped {
+	root := filepath.Join(s.m.dir, "uploads", s.Name(), "drop")
+	out := []Dropped{}
+	senders, _ := os.ReadDir(root)
+	for _, d := range senders {
+		from, ok := strings.CutPrefix(d.Name(), "from-")
+		if !d.IsDir() || !ok {
+			continue
+		}
+		from = strings.Replace(from, "_", "/", 1)
+		files, _ := os.ReadDir(filepath.Join(root, d.Name()))
+		for _, f := range files {
+			fi, err := f.Info()
+			if err != nil || f.IsDir() {
+				continue
+			}
+			out = append(out, Dropped{From: from, Name: f.Name(), Path: filepath.Join(root, d.Name(), f.Name()),
+				Size: fi.Size(), Time: fi.ModTime()})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Time.After(out[j].Time) })
+	return out
+}
+
+// RemoveDropped deletes one kept file, named as Dropped lists it.
+func (s *Session) RemoveDropped(from, name string) error {
+	for _, d := range s.Dropped() {
+		if d.From == from && d.Name == name {
+			return os.Remove(d.Path)
+		}
+	}
+	return fmt.Errorf("no file %s from %s", name, from)
+}
+
+// dropped lists a session's files: GET /v1/sessions/{name}/drop.
+func (h *handler) dropped(w http.ResponseWriter, r *http.Request) {
+	s, ok := h.session(w, r)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"files": s.Dropped()})
+}
+
+// removeDropped deletes one: DELETE /v1/sessions/{name}/drop?from=&file=.
+// Not from a cage: what a session was sent is its owner's to clear.
+func (h *handler) removeDropped(w http.ResponseWriter, r *http.Request) {
+	s, ok := h.session(w, r)
+	if !ok {
+		return
+	}
+	if r.Header.Get(cagedHeader) != "" {
+		fail(w, http.StatusForbidden, errors.New("a caged agent cannot delete a session's files"))
+		return
+	}
+	if err := s.RemoveDropped(r.URL.Query().Get("from"), r.URL.Query().Get("file")); err != nil {
+		fail(w, http.StatusNotFound, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
