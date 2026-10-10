@@ -91,3 +91,16 @@ func TestMachinesAreEachListedOnce(t *testing.T) {
 		t.Fatalf("machines %v", got)
 	}
 }
+
+// A flag after the message is still a flag: `--title` written last went into
+// the text of a real task (2026-10-10).
+func TestA2AFlagsAfterTheWords(t *testing.T) {
+	got := strings.Join(flagsFirst([]string{"pi5/jimmy", "the text", "--title", "A title", "--wait"}, "wait"), "|")
+	if got != "--title|A title|--wait|pi5/jimmy|the text" {
+		t.Errorf("got %q", got)
+	}
+	got = strings.Join(flagsFirst([]string{"pi5/jimmy", "--", "--title", "is text here"}, "wait"), "|")
+	if got != "pi5/jimmy|--title|is text here" {
+		t.Errorf("after --: %q", got)
+	}
+}

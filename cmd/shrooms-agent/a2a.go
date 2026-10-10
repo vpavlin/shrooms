@@ -112,7 +112,7 @@ func a2aMain(args []string) error {
 	wait := fs.Bool("wait", false, "wait for the turn to end and print the reply")
 	title := fs.String("title", "", "send: a few words saying what you ask, for lists of tasks")
 	sock := fs.String("socket", "/run/shrooms/shrooms.sock", "the shrooms daemon's control socket, to find machines by name")
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := fs.Parse(flagsFirst(args[1:], "wait")); err != nil {
 		return err
 	}
 	c := newA2AClient(*sock)
@@ -422,4 +422,40 @@ func newProxiedClient(path string) a2aClient {
 		return out, nil
 	}
 	return c
+}
+
+// flagsFirst moves this command's flags ahead of its words, wherever they
+// were written: `a2a send pi5/jimmy "the text" --title "…"` put the title in
+// the message, because Go's flags stop at the first word. Only names that
+// start with "--" or "-" and are followed by a value move, except the
+// booleans named, which take none; after "--" nothing moves.
+func flagsFirst(args []string, booleans ...string) []string {
+	isBool := func(name string) bool {
+		for _, b := range booleans {
+			if name == b {
+				return true
+			}
+		}
+		return false
+	}
+	var flags, words []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			words = append(words, args[i+1:]...)
+			break
+		}
+		if !strings.HasPrefix(a, "-") || a == "-" {
+			words = append(words, a)
+			continue
+		}
+		name := strings.TrimLeft(a, "-")
+		if strings.Contains(name, "=") || isBool(name) || i+1 >= len(args) {
+			flags = append(flags, a)
+			continue
+		}
+		flags = append(flags, a, args[i+1])
+		i++
+	}
+	return append(flags, words...)
 }
