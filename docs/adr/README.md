@@ -60,3 +60,4 @@ number appears, its source is named.
 | [048](048-files-between-agents.md) | Files between agents | accepted; built — push into per-sender folders, allow list empty by default, sealed cages receive only |
 | [049](049-sessions-per-mesh.md) | Sessions per mesh | accepted; built — a session limited to some of its machine's meshes is absent from the others; an unnamed caller is no one |
 | [050](050-basecamp-at-parity-with-the-phone.md) | Basecamp at parity with the phone | accepted; built — services per mesh, joins off the view's thread, a first join by invite open to the socket group, blind relays with the token never read back; Keycard invites through keycard-basecamp (a real-card run still owed) |
+| [051](051-a-card-lets-the-socket-group-renew-and-revoke.md) | A card lets the socket group renew and revoke | accepted; built — drafts the card signs, finished and verified by the daemon; card-only meshes only; members carry sealing keys |

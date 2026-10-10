@@ -1021,6 +1021,43 @@ std::string ShroomsCoreImpl::inviteReply(const std::string& token, const std::st
     return postToDaemon("/invite/reply", body + "}");
 }
 
+// --- renewing and revoking with a card (ADR-051) ------------------------------
+
+std::string ShroomsCoreImpl::renewDraft(const std::string& mesh, bool all)
+{
+    return postToDaemon("/renew/draft", "{\"mesh\":" + jsonString(mesh) +
+                                            ",\"all\":" + (all ? "true" : "false") + "}");
+}
+
+std::string ShroomsCoreImpl::revokeDraft(const std::string& mesh, const std::string& devicePub)
+{
+    return postToDaemon("/revoke/draft", "{\"mesh\":" + jsonString(mesh) +
+                                             ",\"device_pub\":" + jsonString(devicePub) + "}");
+}
+
+namespace {
+std::string signedPost(const std::string& path, const std::string& mesh, const std::string& draft,
+                       const std::string& signature)
+{
+    const std::string q = labelQuery(mesh);
+    if (q == "!") return errorJson("that is not a mesh label", mesh);
+    return postToDaemon(path + q, "{\"draft\":" + jsonString(draft) +
+                                      ",\"signature\":" + jsonString(signature) + "}");
+}
+} // namespace
+
+std::string ShroomsCoreImpl::grantSigned(const std::string& mesh, const std::string& draft,
+                                         const std::string& signature)
+{
+    return signedPost("/grant", mesh, draft, signature);
+}
+
+std::string ShroomsCoreImpl::revokeSigned(const std::string& mesh, const std::string& draft,
+                                          const std::string& signature)
+{
+    return signedPost("/revoke", mesh, draft, signature);
+}
+
 namespace {
 
 /** The digits after "account": in an admin file, or -1 when it says none. */

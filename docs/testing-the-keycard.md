@@ -189,6 +189,11 @@ back, so it can be driven by a card without the desktop knowing what a card is.
 Worth doing because revocation is the operation whose failure is silent: a
 revocation that does not verify is simply ignored by every peer.
 
+From Basecamp (ADR-051): Membership → revoke on the device's row → approve in
+Keycard. The same check as above: the device drops off every roster. Renewing
+is "renew <mesh> with the card" under "due for renewal", one approval per
+member.
+
 ## Stage 5 — inviting from Basecamp, through keycard-basecamp
 
 [ADR-033](adr/033-the-card-is-the-admin-not-the-uid.md) lets Basecamp complete

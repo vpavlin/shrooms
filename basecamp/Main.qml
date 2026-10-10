@@ -469,6 +469,7 @@ Item {
             root.pumpLogs()
             root.pollJoin()
             root.pollInvite()
+            root.pollCardJob()
         }
     }
 
@@ -1098,6 +1099,116 @@ Item {
         if (st === "open" || st === "joiner") callCore("inviteHoldCancel", [])
         if (st === "card" && root.invite.signId) moduleJson("keycard", "rejectSign", [root.invite.signId])
         root.invite = { step: "idle" }
+    }
+
+    // --- renewing and revoking with a card (ADR-051) ---------------------------
+    //
+    // The same shape as an invite: the daemon drafts, the card signs in the
+    // Keycard module, the daemon checks and publishes. A renewal is one
+    // signature per member that is due, so this is a queue: each is asked for
+    // in turn, and each approved in Keycard.
+    property var cardJob: ({ step: "idle" })
+
+    function cardJobSet(fields) {
+        var o = {}
+        for (var k in root.cardJob) o[k] = root.cardJob[k]
+        for (var f in fields) o[f] = fields[f]
+        root.cardJob = o
+    }
+
+    /** Asks the Keycard module to sign a digest; the request id, or an error string. */
+    function cardRequest(digest, path) {
+        var req = moduleJson("keycard", "requestSign", [JSON.stringify({
+            domain: "shrooms_admin", payloadHash: digest, caller: "shrooms", scheme: "ecdsa",
+            bip32_path: path || "m/64265'/0'/0'" })])
+        if (!req) return { error: "no Keycard module answered — install keycard from Basecamp's catalog, "
+                                  + "or use `shrooms admin` on the command line" }
+        if (req.error || !req.signId) return { error: "the Keycard module refused: " + (req.error || "no request id") }
+        return { signId: req.signId }
+    }
+
+    function startCardJob(kind, mesh, items, d) {
+        if (!d.card_only) {
+            root.cardJob = { step: "failed", kind: kind, error: "this mesh's admin key is a file, not a card — "
+                             + "use `shrooms admin " + (kind === "renew" ? "renew" : "revoke") + "` on the machine that holds it" }
+            return
+        }
+        var path = coreJson("cardPath", [(d.admin_keys || []).join(",")]) || {}
+        root.cardJob = { step: "signing", kind: kind, mesh: mesh, items: items, i: 0, ok: 0, errors: [],
+                         path: path.bip32_path, pathKnown: path.known === true }
+        nextCardItem()
+        root.membersOpen = true
+    }
+
+    function nextCardItem() {
+        var j = root.cardJob
+        if (j.i >= j.items.length) { cardJobSet({ step: "done", signId: "" }); return }
+        var it = j.items[j.i]
+        var r = cardRequest(it.digest, j.path)
+        if (r.error) { cardJobSet({ step: "failed", error: r.error }); return }
+        cardJobSet({ signId: r.signId })
+    }
+
+    function pollCardJob() {
+        var j = root.cardJob
+        if (j.step !== "signing" || !j.signId) return
+        var c = moduleJson("keycard", "checkSignStatus", [j.signId])
+        if (!c) return
+        var it = j.items[j.i]
+        if (c.status === "complete" && c.signature) {
+            var method = j.kind === "renew" ? "grantSigned" : "revokeSigned"
+            var res = coreJson(method, [j.mesh, it.draft, c.signature])
+            var errs = j.errors.slice()
+            var ok = j.ok
+            if (!res || res.error) errs.push(it.label + ": " + (res ? res.error + (res.detail ? " — " + res.detail : "") : "no answer"))
+            else ok++
+            cardJobSet({ i: j.i + 1, ok: ok, errors: errs, signId: "" })
+            nextCardItem()
+            reload()
+        } else if (c.status === "rejected" || c.status === "declined") {
+            cardJobSet({ step: "failed", error: "declined on the Keycard at " + it.label
+                         + (j.ok ? " (" + j.ok + " done before that)" : "") })
+        } else if (c.error && c.status !== "pending") {
+            cardJobSet({ step: "failed", error: "the Keycard module said: " + c.error })
+        }
+    }
+
+    function startRenew(mesh) {
+        var d = coreJson("renewDraft", [mesh, false])
+        if (!d || d.error) {
+            root.cardJob = { step: "failed", kind: "renew", error: "renewing: " + (d ? d.error + (d.detail ? " — " + d.detail : "")
+                                                                                  : "this shrooms_core cannot renew yet") }
+            return
+        }
+        var items = []
+        for (var i = 0; i < (d.drafts || []).length; i++)
+            items.push({ label: d.drafts[i].name || d.drafts[i].device_pub.slice(0, 12),
+                         draft: d.drafts[i].draft, digest: d.drafts[i].digest })
+        if (!items.length) { root.said = "nothing on " + (mesh || "this mesh") + " is due for renewal"; root.saidBad = false; return }
+        startCardJob("renew", mesh, items, d)
+    }
+
+    function startRevoke(mesh, device, name) {
+        if (!device) { root.said = "this daemon does not say " + name + "'s key; update it"; root.saidBad = true; return }
+        var d = coreJson("revokeDraft", [mesh, device])
+        if (!d || d.error) {
+            root.cardJob = { step: "failed", kind: "revoke", error: "revoking: " + (d ? d.error + (d.detail ? " — " + d.detail : "")
+                                                                                    : "this shrooms_core cannot revoke yet") }
+            return
+        }
+        startCardJob("revoke", mesh, [{ label: name, draft: d.draft, digest: d.digest }], d)
+    }
+
+    function closeCardJob() {
+        if (root.cardJob.step === "signing" && root.cardJob.signId) moduleJson("keycard", "rejectSign", [root.cardJob.signId])
+        root.cardJob = { step: "idle" }
+    }
+
+    /** The meshes something is due on, each once. */
+    readonly property var dueMeshes: {
+        var out = []
+        for (var i = 0; i < root.due.length; i++) if (out.indexOf(root.due[i].mesh) < 0) out.push(root.due[i].mesh)
+        return out
     }
 
     function openKeycard() {
@@ -3551,6 +3662,25 @@ Layout.preferredWidth: 0
                                         font.family: "monospace"; font.pixelSize: root.fs(11)
                                     }
                                     Item { Layout.fillWidth: true }
+                                    Text {
+                                        // Removing a device, with the card (ADR-051).
+                                        // Armed by a first click: it cannot be undone
+                                        // short of a new invite.
+                                        property bool armed: false
+                                        visible: root.cardJob.step === "idle" && !!modelData.device
+                                        text: armed ? "revoke?" : "revoke"
+                                        color: armed ? cAmber : cLine
+                                        font.family: "monospace"; font.pixelSize: root.fs(9)
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: {
+                                                if (!parent.armed) { parent.armed = true; return }
+                                                parent.armed = false
+                                                root.startRevoke(modelData.mesh || "", modelData.device, modelData.name || "?")
+                                            }
+                                        }
+                                    }
                                 }
                             }
 
@@ -3595,6 +3725,74 @@ Layout.preferredWidth: 0
                                             cursorShape: Qt.PointingHandCursor
                                             onClicked: root.copyText(modelData.fix)
                                         }
+                                    }
+                                }
+                            }
+
+                            // Renewing with the card, a mesh at a time.
+                            RowLayout {
+                                visible: root.dueMeshes.length > 0 && root.cardJob.step === "idle"
+                                Layout.leftMargin: root.sz(12)
+                                spacing: root.sz(12)
+                                Repeater {
+                                    model: root.dueMeshes
+                                    delegate: Text {
+                                        text: "renew " + modelData + " with the card"
+                                        color: cPhosphor
+                                        font.family: "monospace"; font.pixelSize: root.fs(10)
+                                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.startRenew(modelData) }
+                                    }
+                                }
+                            }
+
+                            // A renewal or a revocation, being signed.
+                            ColumnLayout {
+                                visible: root.cardJob.step !== "idle"
+                                Layout.fillWidth: true
+                                spacing: root.sz(6)
+                                Text {
+                                    Layout.fillWidth: true
+                                    Layout.preferredWidth: 0
+                                    wrapMode: Text.WordWrap
+                                    font.family: "monospace"; font.pixelSize: root.fs(11)
+                                    readonly property var j: root.cardJob
+                                    color: j.step === "failed" ? cRust : (j.step === "done" ? cPhosphor : cAmber)
+                                    text: {
+                                        if (j.step === "failed") return j.error || "failed"
+                                        if (j.step === "done")
+                                            return (j.kind === "renew" ? "renewed " + j.ok + " of " + j.items.length
+                                                                       : "revoked " + (j.items[0] || {}).label)
+                                                   + (j.errors && j.errors.length ? " — " + j.errors.join("; ") : "")
+                                        var it = (j.items || [])[j.i] || {}
+                                        return (j.kind === "renew" ? "renewing " + it.label + " (" + (j.i + 1) + " of " + j.items.length + ")"
+                                                                   : "revoking " + it.label)
+                                               + " — approve it in Keycard: card on the reader, PIN there"
+                                    }
+                                }
+                                Text {
+                                    visible: root.cardJob.step === "signing" && root.cardJob.pathKnown !== true
+                                    Layout.fillWidth: true
+                                    Layout.preferredWidth: 0
+                                    wrapMode: Text.WordWrap
+                                    color: cAsh
+                                    font.family: "monospace"; font.pixelSize: root.fs(9)
+                                    text: "no admin file here names this mesh's card account; asking for "
+                                          + (root.cardJob.path || "the first") + "."
+                                }
+                                RowLayout {
+                                    spacing: root.sz(14)
+                                    Text {
+                                        visible: root.cardJob.step === "signing" && root.canLaunch
+                                        text: "open Keycard ↗"
+                                        color: cViolet
+                                        font.family: "monospace"; font.pixelSize: root.fs(10)
+                                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.openKeycard() }
+                                    }
+                                    Text {
+                                        text: root.cardJob.step === "signing" ? "stop" : "close"
+                                        color: root.cardJob.step === "signing" ? cRust : cAsh
+                                        font.family: "monospace"; font.pixelSize: root.fs(10)
+                                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.closeCardJob() }
                                     }
                                 }
                             }

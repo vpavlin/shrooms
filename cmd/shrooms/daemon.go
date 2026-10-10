@@ -1852,6 +1852,12 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 		return nil
 	}
 	inviteHandlers(mux, rl.cfgPath, pickHolder)
+	cardAdminHandlers(mux, func(label string) adminTarget {
+		if m := pickMesh(label); m != nil {
+			return m
+		}
+		return nil
+	})
 	inviteDraftHandlers(mux, rl.cfgPath, pickHolder, func() string {
 		if rt == nil || rt.st == nil {
 			return ""
@@ -1869,19 +1875,27 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 	// The socket's permissions decide who may ask; the signature inside decides
 	// whether it is honoured. A caller who can reach this socket can already
 	// read every peer's endpoints, and cannot forge a revocation with it.
-	mux.HandleFunc("/revoke", requireRoot(func(w http.ResponseWriter, r *http.Request) {
+	//
+	// Root, or the socket group with a draft from /revoke/draft that the
+	// mesh's card signed (ADR-051).
+	mux.HandleFunc("/revoke", requireIdentified(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "POST a revocation", http.StatusMethodNotAllowed)
 			return
 		}
-		raw, err := io.ReadAll(io.LimitReader(r.Body, 4096))
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+		pre := pickMesh(r.URL.Query().Get("mesh"))
+		if pre == nil {
+			http.Error(w, "no such mesh is running here", http.StatusNotFound)
 			return
 		}
-		blob, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(raw)))
+		blob, code, err := readAdminBody(r, pre.Authority(), func(d, sig []byte) ([]byte, error) {
+			if pre.Authority() == nil {
+				return nil, errors.New("this mesh has no admin keys")
+			}
+			return cred.FinishRevocation(pre.Authority(), d, sig)
+		})
 		if err != nil {
-			http.Error(w, "revocation is not base64: "+err.Error(), http.StatusBadRequest)
+			http.Error(w, "revocation: "+err.Error(), code)
 			return
 		}
 		// The mesh named, not whichever happens to be first. A node may hold
@@ -1986,24 +2000,27 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 	// than a withdrawal, and the mesh verifies the admin signature on arrival
 	// exactly as every other node will — a caller who can reach this socket
 	// cannot mint membership with it.
-	mux.HandleFunc("/grant", requireRoot(func(w http.ResponseWriter, r *http.Request) {
+	//
+	// Root, or the socket group with a draft from /renew/draft that the mesh's
+	// card signed (ADR-051).
+	mux.HandleFunc("/grant", requireIdentified(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "POST a credential", http.StatusMethodNotAllowed)
-			return
-		}
-		raw, err := io.ReadAll(io.LimitReader(r.Body, 4096))
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		blob, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(raw)))
-		if err != nil {
-			http.Error(w, "credential is not base64: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 		target := pickMesh(r.URL.Query().Get("mesh"))
 		if target == nil {
 			http.Error(w, "no such mesh", http.StatusNotFound)
+			return
+		}
+		blob, code, err := readAdminBody(r, target.Authority(), func(d, sig []byte) ([]byte, error) {
+			if target.Authority() == nil {
+				return nil, errors.New("this mesh has no admin keys")
+			}
+			return cred.Finish(target.Authority(), d, sig, time.Now())
+		})
+		if err != nil {
+			http.Error(w, "credential: "+err.Error(), code)
 			return
 		}
 		if err := target.Grant(blob); err != nil {
@@ -2019,10 +2036,14 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 	//
 	// Not part of /status, which is a display: this is keys, and a renewal
 	// sweep is the only thing that wants them.
-	mux.HandleFunc("/members", requireRoot(func(w http.ResponseWriter, r *http.Request) {
+	//
+	// Root, or the socket group on a card-only mesh, where renewing from an
+	// app starts here (ADR-051).
+	mux.HandleFunc("/members", requireIdentified(func(w http.ResponseWriter, r *http.Request) {
 		type member struct {
 			DevicePub string `json:"device_pub"`
 			WGPub     string `json:"wg_pub"`
+			SealPub   string `json:"seal_pub,omitempty"`
 			Name      string `json:"name"`
 			NotAfter  int64  `json:"not_after,omitempty"`
 		}
@@ -2031,11 +2052,16 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 			http.Error(w, "no such mesh", http.StatusNotFound)
 			return
 		}
+		if err := mayReadMembers(r, target.Authority()); err != nil {
+			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
 		out := []member{}
 		for _, mem := range target.Members() {
 			e := member{
 				DevicePub: hex.EncodeToString(mem.DevicePub),
 				WGPub:     hex.EncodeToString(mem.WGPub),
+				SealPub:   hex.EncodeToString(mem.SealPub),
 				Name:      mem.Name,
 			}
 			if !mem.NotAfter.IsZero() {

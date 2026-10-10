@@ -1,8 +1,9 @@
 # 025. Control from a desktop app, and what the socket group may do
 
 **Status:** accepted; settings, mesh on/off, joining and leaving are built
-(joining a first mesh by invite too, ADR-050). Issuing a credential from the
-socket is not — see "What is deliberately still manual".
+(joining a first mesh by invite too, ADR-050). Signing is never done by the
+socket. On a card-only mesh the group may carry what a card signed: invites
+(ADR-033, ADR-050), renewals and revocations (ADR-051).
 
 ## Context
 

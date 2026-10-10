@@ -69,3 +69,31 @@ func TestDueComesFromTheMeshItself(t *testing.T) {
 		t.Fatalf("due from the mesh = %+v, want the peer named vps", got)
 	}
 }
+
+// A renewal reissues what Members reports, so a sealing key missing here is a
+// sealing key missing from every renewed credential: the device is downgraded
+// to version 1 and cannot be sent the next announce generation.
+func TestMembersCarryTheirSealingKeys(t *testing.T) {
+	f := newRelayFixture(t)
+	f.m.cfg.Name = "laptop"
+	f.m.st = newAdviceFixture(t, f.m.cfg).m.st
+	seal := make([]byte, 32)
+	seal[0] = 9
+	f.m.mu.Lock()
+	f.m.sealPubs = map[string][]byte{f.relayID: seal}
+	f.m.mu.Unlock()
+
+	ms := f.m.Members()
+	if len(ms[0].SealPub) != 32 {
+		t.Fatalf("this device's own sealing key is missing: %x", ms[0].SealPub)
+	}
+	var found bool
+	for _, m := range ms[1:] {
+		if len(m.SealPub) == 32 && m.SealPub[0] == 9 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("a peer's sealing key, known from its credential, is missing")
+	}
+}

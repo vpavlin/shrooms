@@ -160,3 +160,59 @@ func IsDraft(b []byte) bool {
 	}
 	return true
 }
+
+// DraftRevocation is the withdrawal `shrooms admin revoke` would sign,
+// unsigned, and its digest. keep is how long peers hold it (zero: forever).
+func DraftRevocation(auth *Authority, devPub []byte, serial uint64, now time.Time, keep time.Duration) (*Revocation, [32]byte, error) {
+	if auth == nil {
+		return nil, [32]byte{}, errors.New("no authority to revoke for")
+	}
+	if len(devPub) != 32 {
+		return nil, [32]byte{}, errors.New("a device key is 32 bytes")
+	}
+	if serial == 0 {
+		serial = uint64(now.Unix())
+	}
+	r := &Revocation{MeshID: auth.ID(), DevicePub: append([]byte(nil), devPub...), Serial: serial,
+		Issued: now.Unix()}
+	if keep > 0 {
+		r.NotAfter = now.Add(keep).Unix()
+	}
+	d, err := r.Digest()
+	if err != nil {
+		return nil, [32]byte{}, err
+	}
+	r.Sig = make([]byte, sigLen)
+	return r, d, nil
+}
+
+// FinishRevocation signs a drafted revocation with a signature made
+// elsewhere, as Finish does a credential.
+func FinishRevocation(auth *Authority, draft []byte, sig []byte) ([]byte, error) {
+	r, err := UnmarshalRevocation(draft)
+	if err != nil {
+		return nil, err
+	}
+	if r.MeshID != auth.ID() {
+		return nil, errors.New("that draft is for another mesh")
+	}
+	d, err := r.Digest()
+	if err != nil {
+		return nil, err
+	}
+	compact, err := SignatureFrom(sig)
+	if err != nil {
+		return nil, err
+	}
+	r.Sig = compact
+	for _, k := range auth.Keys {
+		if fixed, ok := RepairCardSignature(k, d, compact); ok {
+			r.Sig = fixed
+			break
+		}
+	}
+	if err := VerifyRevocationBy(auth, r); err != nil {
+		return nil, fmt.Errorf("the signature is not one this mesh accepts: %w", err)
+	}
+	return r.MarshalBinary()
+}

@@ -927,6 +927,12 @@ type Member struct {
 	WGPub     []byte
 	Name      string
 	NotAfter  time.Time // zero when this mesh has no authority
+	// SealPub is the member's sealing key, from its admin-signed credential.
+	// Without it a renewal issued a version 1 credential, and the renewed
+	// device could no longer be sent a new announce generation after a
+	// revocation — it fell off the control plane one rotation later, with
+	// nothing to say why. Empty for a member whose credential has none.
+	SealPub []byte
 }
 
 // Members reports every device this node knows to be on the mesh, itself
@@ -941,6 +947,10 @@ func (m *Mesh) Members() []Member {
 	for k, v := range m.expiry {
 		exp[k] = v
 	}
+	seals := make(map[string][]byte, len(m.sealPubs))
+	for k, v := range m.sealPubs {
+		seals[k] = v
+	}
 	m.mu.Unlock()
 
 	out := []Member{{
@@ -949,8 +959,12 @@ func (m *Mesh) Members() []Member {
 		Name:      m.cfg.Name,
 		NotAfter:  m.SelfExpiry(),
 	}}
+	if m.st.Identity.SealPub != (identity.WGKey{}) {
+		out[0].SealPub = append([]byte(nil), m.st.Identity.SealPub[:]...)
+	}
 	for _, p := range m.roster.Peers() {
-		mem := Member{DevicePub: p.DevicePub, WGPub: p.WGPub[:], Name: p.Name}
+		mem := Member{DevicePub: p.DevicePub, WGPub: p.WGPub[:], Name: p.Name,
+			SealPub: seals[hex.EncodeToString(p.DevicePub)]}
 		if t, ok := exp[p.ID()]; ok {
 			mem.NotAfter = time.Unix(t, 0)
 		}

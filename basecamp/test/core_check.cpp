@@ -94,6 +94,16 @@ int main()
     CHECK(has(r, "/invite/reply") && !has(r, "credential") && !has(r, "signature"),
           "a mesh with no authority replies with nothing to verify: %s", r.c_str());
 
+    // Renewing and revoking with a card (ADR-051).
+    r = core.renewDraft("office", false);
+    CHECK(has(r, "/renew/draft") && has(r, R"({\"mesh\":\"office\",\"all\":false})"), "%s", r.c_str());
+    r = core.revokeDraft("office", "abcd");
+    CHECK(has(r, "/revoke/draft") && has(r, R"(\"device_pub\":\"abcd\")"), "%s", r.c_str());
+    r = core.grantSigned("office", "RFJBRlQ=", "3045");
+    CHECK(has(r, "\"path\": \"/grant?mesh=office\"") && has(r, R"({\"draft\":\"RFJBRlQ=\",\"signature\":\"3045\"})"), "%s", r.c_str());
+    r = core.revokeSigned("of fice", "x", "y");
+    CHECK(has(r, "\"error\"") && !has(r, "\"path\""), "a label that is not one reached the daemon: %s", r.c_str());
+
     // The card's account for a mesh, from the admin files, matched by key.
     {
         char tmpl[] = "/tmp/core_check_XXXXXX";

@@ -135,3 +135,31 @@ func TestSignatureFromRefusesWhatItCannotRead(t *testing.T) {
 		}
 	}
 }
+
+func TestRevocationSignedElsewhere(t *testing.T) {
+	priv, auth, _, _, now := cardDraft(t)
+	dev := bytes.Repeat([]byte{5}, 32)
+	r, d, err := DraftRevocation(auth, dev, 0, now, 31*24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft, err := r.MarshalBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := FinishRevocation(auth, draft, ecdsa.Sign(priv, d[:]).Serialize())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := UnmarshalRevocation(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyRevocationBy(auth, got); err != nil || !bytes.Equal(got.DevicePub, dev) || got.NotAfter == 0 {
+		t.Fatalf("finished revocation wrong: %v %+v", err, got)
+	}
+	other, _ := secp256k1.GeneratePrivateKey()
+	if _, err := FinishRevocation(auth, draft, rs(ecdsa.Sign(other, d[:]))); err == nil {
+		t.Fatal("a revocation signed by a stranger was finished")
+	}
+}

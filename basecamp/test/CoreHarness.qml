@@ -48,6 +48,12 @@ Item {
                                                     admin_keys: ["AKEY1", "AKEY2"], card_only: true })
         case "cardPath": return JSON.stringify({ bip32_path: "m/64265'/3'/0'", account: 3, known: true })
         case "inviteReply": return JSON.stringify({ ok: true })
+        case "renewDraft": return JSON.stringify({ card_only: true, admin_keys: ["AKEY1"], drafts: [
+            { name: "vps", device_pub: "aa", draft: "D1", digest: "11".repeat(32) },
+            { name: "nothing", device_pub: "bb", draft: "D2", digest: "22".repeat(32) }] })
+        case "revokeDraft": return JSON.stringify({ card_only: true, admin_keys: ["AKEY1"], draft: "RV", digest: "33".repeat(32) })
+        case "grantSigned": return JSON.stringify({ ok: true })
+        case "revokeSigned": return JSON.stringify({ ok: true })
         case "status": return statusDoc
         case "getPref": return ""
         case "servicesOf": return JSON.stringify({ services: ["svc-" + args[0] + ":80"] })
@@ -211,6 +217,35 @@ Item {
             check(view.invite.step === "failed" && view.invite.error.indexOf("Keycard module") >= 0,
                   "a missing Keycard module is named: " + view.invite.error)
             keycardInstalled = true
+
+            // Renewing with the card: one signature per member that is due,
+            // each delivered as it comes back.
+            view.invite = { step: "idle" }
+            check(view.dueMeshes.length === 1 && view.dueMeshes[0] === "default", "renewal offered per mesh: " + view.dueMeshes)
+            signPolls = 0
+            view.startRenew("default")
+            check(view.cardJob.step === "signing" && view.cardJob.items.length === 2, "two renewals queued: " + JSON.stringify(view.cardJob))
+            check(lastCall("requestSign").indexOf("11111111") > 0, "the first digest went to the card")
+            view.pollCardJob()   // pending
+            view.pollCardJob()   // complete → grant, next
+            check(lastCall("grantSigned") === 'grantSigned ["default","D1","3045ab"]', "the first delivered: " + lastCall("grantSigned"))
+            check(lastCall("requestSign").indexOf("22222222") > 0, "then the second asked for")
+            view.pollCardJob()   // complete (signPolls already past) → grant, done
+            check(view.cardJob.step === "done" && view.cardJob.ok === 2, "both renewed: " + JSON.stringify(view.cardJob))
+            view.closeCardJob()
+
+            // Revoking one device.
+            view.startRevoke("test", "0101", "jimmy-crib")
+            check(lastCall("revokeDraft") === 'revokeDraft ["test","0101"]', "drafted for that device: " + lastCall("revokeDraft"))
+            view.pollCardJob()
+            check(view.cardJob.step === "done" && lastCall("revokeSigned") === 'revokeSigned ["test","RV","3045ab"]',
+                  "revoked with the card's signature: " + lastCall("revokeSigned"))
+            view.closeCardJob()
+
+            // A file-key mesh: said, not attempted.
+            view.startCardJob("renew", "x", [{ label: "a", draft: "d", digest: "e" }], { card_only: false })
+            check(view.cardJob.step === "failed" && view.cardJob.error.indexOf("shrooms admin renew") > 0, "a file-key mesh points at the CLI")
+            view.closeCardJob()
 
             // A daemon with no mesh yet: the view offers the first join, and
             // the daemon's answer (no "result", it restarts itself) is read.

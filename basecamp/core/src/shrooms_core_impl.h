@@ -426,6 +426,27 @@ public:
                             const std::string& draft, const std::string& signature);
 
     /**
+     * @brief Renewed credentials for a mesh's members, unsigned:
+     * `{"drafts":[{"name","device_pub","not_after","draft","digest"}],"admin_keys",…}`.
+     * Those due within the renewal window, or every member with `all`.
+     */
+    std::string renewDraft(const std::string& mesh, bool all);
+
+    /** @brief A revocation of one device, unsigned: `{"draft","digest","admin_keys"}`. */
+    std::string revokeDraft(const std::string& mesh, const std::string& devicePub);
+
+    /**
+     * @brief Delivers a renewed credential: the draft and the card's
+     * signature over its digest, checked by the daemon first.
+     */
+    std::string grantSigned(const std::string& mesh, const std::string& draft,
+                            const std::string& signature);
+
+    /** @brief Publishes a revocation: the draft and the card's signature. */
+    std::string revokeSigned(const std::string& mesh, const std::string& draft,
+                             const std::string& signature);
+
+    /**
      * @brief Which derivation path on the card signs for a mesh, found from
      * the admin files `shrooms admin init --keycard` wrote:
      * `{"bip32_path":"m/64265'/N'/0'","account":N,"known":bool}`.
