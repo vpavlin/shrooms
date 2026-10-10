@@ -49,6 +49,15 @@ tasks in hand all along as `host.tasks`.
 - **A tap opens the worker's session**, not the asker's: that is where the task
   arrived.
 
+- **A task row is a door, not a label**: tapping it opens the worker's session
+  and jumps to the message the task arrived in. No new data is needed — the
+  task's message event already carries the task's message id as its `pid`, so
+  the match is on the id, not on a sequence, and the view's own search is the
+  fallback for a message outside the loaded tail. One jump path, not two.
+- **A link badge is a filter, not a second list**: tapping the count between two
+  sessions filters the panel to that pair, with an explicit way to clear it. The
+  panel already had the tasks, so nothing is fetched to answer it.
+
 ## Consequences
 
 - **No lag and one authority.** What the panel shows is what the agent's own
