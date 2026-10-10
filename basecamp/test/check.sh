@@ -220,7 +220,12 @@ expect() { echo "$out" | grep -qF "$1" || { echo "FAIL: $2"
 # module the runner lacks (QtQuick.Dialogs, 2026-10-03) prints nothing else.
 echo "$out" | grep -qF "HOSTS=" || { echo "$out" | head -20; echo "FAIL: the view did not load"; exit 1; }
 # A script error in the view prints a warning and carries on; here it fails.
-if echo "$out" | grep -E "Main.qml:[0-9]+:.*(TypeError|ReferenceError|is not a function|Cannot (read|assign))"; then
+# SYNTAX errors too, and this is not theoretical: a missing `;` after a binding
+# (2026-10-10) was reported as "Expected token `;`" and the view RECOVERED - it
+# dropped that one binding, kept printing HOSTS=, and every assertion below
+# passed. On the reviewer's Qt the same line failed the whole document to load.
+# A parse error must fail here whichever way the runtime reacts to it.
+if echo "$out" | grep -E "Main\.qml:[0-9]+:.*(TypeError|ReferenceError|is not a function|Cannot (read|assign)|Expected token|Unexpected token|SyntaxError|Expected a qualified name)"; then
     echo "FAIL: the view hit a script error"; exit 1
 fi
 expect "HOSTS=1 SESSIONS=2" "the agents were not listed"
@@ -239,6 +244,7 @@ expect "ACKERR no such task | null | no reply" "an ACK the agent refused is not 
 expect "PANEL [Needs you 2] m1 m6 [Working 2] m2 m7 [Stalled 1] m3 [Done, unacked 1] m4" "the panel does not head each non-empty group, or a task that is both blocked and stalled is not in Needs you"
 expect "LINKS pi5/jimmy>laptop/review:2:input-required:2 · needs you,laptop/shrooms>laptop/review:2:stalled:2 · stalled" "a link does not carry the tasks on it, the most urgent tone does not win, or a CAGED asker's link silently vanished"
 expect "LOAD laptop/review=5 owed,laptop/shrooms=2 asked,pi5/jimmy=2 asked" "a card does not show what it owes and what it is waiting for"
+expect "NEEDSYOU true,false,false,false,false,false,false" "a card is amber without a needs-you task, or is not amber with one"
 # This device first: an agent on the machine Basecamp runs on is no peer of it.
 expect "PROBED=desk|office|fdb0:9afc:a5ef:1111:2222:3333:4444:5555;laptop|office|fdb0:9afc:a5ef:388c" "this device's own agent is not looked for"
 # History before the conversation, the conversation's rows in order, the

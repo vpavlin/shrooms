@@ -659,6 +659,21 @@ Item {
             console.error("LINKS " + links.map(function(e) { return e.from + ">" + e.to + ":" + e.count + ":" + e.tone + ":" + view.linkLabel(e) }).join(","))
             var load = view.cardLoad(top.taskHosts)
             console.error("LOAD " + Object.keys(load).sort().map(function(k) { return k + "=" + view.loadLabel(load[k]) }).join(","))
+            // Amber means "a person is needed", so the card load must only be amber for a
+            // card whose task is actually in needs-you. Pure, so it can be pinned.
+            var nyKeys = prows.filter(function(r) { return r.group === "needs-you" })
+                .map(function(r) { return r.machine + "/" + r.session })
+            // A card is amber only when one of ITS tasks is in needs-you. Built by hand: the
+            // fixture puts every task on one host/session, so a key alone cannot tell the
+            // groups apart - and a check that cannot fail is worse than none.
+            function nyRow(g) { return { kind: "task", group: g, machine: "x", session: "y" } }
+            console.error("NEEDSYOU " + [view.cardNeedsYou("x/y", [nyRow("needs-you")]),
+                view.cardNeedsYou("x/y", [nyRow("working")]),
+                view.cardNeedsYou("x/y", [nyRow("stalled")]),
+                view.cardNeedsYou("x/y", [nyRow("unacked")]),
+                view.cardNeedsYou("x/y", [{ kind: "header", label: "Needs you", count: 1 }]),
+                view.cardNeedsYou("x/y", []),
+                view.cardNeedsYou("other/z", [nyRow("needs-you")])].join(","))
             console.error("TASKROW1 " + (trows[0] ? trows[0].title + " | from=" + trows[0].asker + " to=" + trows[0].worker
                           + " | latest=" + trows[0].latest + " | " + view.ageLabel(trows[0])
                           + " | hasref=" + (trows[0].ref !== undefined) : "none"))

@@ -1757,8 +1757,10 @@ Item {
     }
 
     // Does this card have a task waiting on a person? That is what amber is for.
-    function cardNeedsYou(key) {
-        var rows = root.taskPanelList
+    // The rows are a parameter so it can be pinned against a fixture: reading
+    // root.taskPanelList directly is untestable, because that reads the live hosts.
+    function cardNeedsYou(key, rows) {
+        rows = rows || root.taskPanelList
         for (var i = 0; i < rows.length; i++) {
             if (rows[i].kind === "task" && rows[i].group === "needs-you"
                 && (rows[i].machine + "/" + rows[i].session) === key) return true
@@ -2772,7 +2774,8 @@ Item {
                 width: parent.width; elide: Text.ElideRight
                 visible: text !== ""
                 text: root.loadLabel(root.cardLoadData[bcard.cardKey])
-                color: root.cardNeedsYou(bcard.cardKey) ? cAmber : cAsh font.family: "monospace"; font.pixelSize: root.fs(9)
+                color: root.cardNeedsYou(bcard.cardKey) ? cAmber : cAsh
+                font.family: "monospace"; font.pixelSize: root.fs(9)
             }
             RowLayout {
                 width: parent.width
