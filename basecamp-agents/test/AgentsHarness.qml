@@ -58,6 +58,8 @@ Item {
     property bool windowed: false
     property int watchTail: 0
     property var windowEvents: []
+    // Every watch tail asked for, raw: a negative one is a FRESH open (no kept copy).
+    property var watchTails: []
     property string lastSearch: ""
     property bool findNone: false
     property string lastOpen: ""
@@ -109,7 +111,21 @@ Item {
                     // The LIVE SHAPE: the real core answers with the LAST `tail` events, so a
                     // session deeper than the tail has no older events loaded, and a jump to a
                     // task that arrived before the window has to reach back.
-                    if (top.windowed) top.watchTail = Number(args[2])
+                    // The core's Hub::watch IGNORES a larger positive tail while it keeps a
+                    // copy of a session, and only a NEGATIVE one ("without the copy") makes
+                    // it replay a wider window. Modelled here: the tail is recorded raw, and
+                    // the window uses its size. A widening that stays positive is the bug
+                    // the reviewer traced live (205 rebuilds wanting a seq never loaded).
+                    if (top.windowed) {
+                        var wt = Number(args[2])
+                        top.watchTails = top.watchTails.concat([wt])
+                        // Faithful to Hub::watch: while it keeps a copy of a session, a
+                        // larger POSITIVE tail is ignored; only a NEGATIVE one ("without the
+                        // copy") makes it replay a wider window.
+                        if (wt < 0) top.watchTail = -wt
+                        else if (top.watchTail === 0) top.watchTail = wt
+                        else top.watchTail = Math.min(top.watchTail, wt)
+                    }
                     return JSON.stringify({ ok: true })
                 }
                 // THE LIVE SHAPE. The real core answers with the LAST `tail` events, so a
@@ -852,9 +868,12 @@ Item {
                 var evs = view.agentEventsList
                 var has = false
                 for (var i = 0; i < evs.length; i++) if (evs[i].seq === 20) has = true
+                var fresh = false
+                for (var k = 0; k < top.watchTails.length; k++) if (top.watchTails[k] < 0) fresh = true
                 console.error("DEEPJUMP litMax=" + top.deepLitMax + " want=20 has20=" + has
                               + " evs=" + evs.length + " tail=" + top.watchTail + " jumpTo=" + view.jumpTo
-                              + " quietFor=" + view.jumpQuietFor)
+                              + " quietFor=" + view.jumpQuietFor + " fresh=" + fresh
+                              + " tails=" + top.watchTails.join("/"))
                 deepTimer.stop()
                 Qt.quit()
             }

@@ -1091,7 +1091,11 @@ Item {
         if (!agentOpen || evs.length === 0) return
         var first = evs[0].seq, last = evs[evs.length - 1].seq
         var h = { address: agentOpen.address, name: agentOpen.name, mesh: agentOpen.mesh }
-        openSession(h, agentOpen.session, first - 1 <= moreEvents ? 0 : moreTail(first, last))
+        // FRESH for the same reason as openFound: "load them" widens the tail, and a wider
+        // POSITIVE tail is ignored while the core keeps a copy - so the earlier events never
+        // arrived and the button looked like it did nothing. A tail of 0 ("all") is already
+        // absolute and stays positive.
+        openSession(h, agentOpen.session, first - 1 <= moreEvents ? 0 : moreTail(first, last), true)
         root.jumpQuietFor = first
         root.jumpTo = first
     }
@@ -1126,7 +1130,14 @@ Item {
         if (f.seq < first) {
             var lastSeq = Math.max(agentInfo ? (agentInfo.last_seq || 0) : 0, evs.length > 0 ? evs[evs.length - 1].seq : 0)
             var h = { address: agentOpen.address, name: agentOpen.name, mesh: agentOpen.mesh }
-            openSession(h, agentOpen.session, tailReaching(agentTailNow, lastSeq, f.seq))
+            // FRESH, and it is the whole fix: the core's Hub::watch shows the KEPT copy of a
+            // session and only asks for events after it, so a LARGER POSITIVE tail is ignored
+            // while a copy is kept - the widening did nothing, the window came back the same,
+            // and jumpTo wanted a seq that was never loaded (205 rebuilds on the reviewer's
+            // live trace). A negative tail says "without the copy": the core forgets it and
+            // replays the tail. Verified live - the tap then opened centred and lit on the
+            // arrival message, ~950 events back.
+            openSession(h, agentOpen.session, tailReaching(agentTailNow, lastSeq, f.seq), true)
         }
         root.jumpTo = f.seq
         rebuildChat()
