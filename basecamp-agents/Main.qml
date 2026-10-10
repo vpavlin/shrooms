@@ -2103,7 +2103,7 @@ Item {
     //   "nothing.default" / "pi5.office"        -> no: a device only, so a PERSON asked
     // This is the split between "Needs you" and "Blocked", so it is pure and pinned.
     function askerHasSession(from) {
-        return true
+        return /\(([^)\/]+)\/([^),]+)(,\s*[^)]*)?\)\s*$/.test(String(from || ""))
     }
 
     // A row's second line. Blocked names whom it waits on - the reader needs to know it is
