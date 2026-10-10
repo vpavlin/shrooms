@@ -1034,7 +1034,7 @@ Item {
     function taskSearchQuery(ref) { return ref ? "[shrooms task " + ref : "" }
     // Is this model row the task's message? Pure, so the harness pins it: the async
     // load around the jump is not something the harness can wait for.
-    function isJumpRow(r, id) { return true }
+    function isJumpRow(r, id) { return !!r && !r.earlier && id !== "" && r.pid === id }
     // The search fallback fires only once the session is caught up, so it cannot race
     // a message that is still arriving - the view already tracks that as agentCaughtUp.
     // A jump back to where the reader was, after loading more: not lit, and
