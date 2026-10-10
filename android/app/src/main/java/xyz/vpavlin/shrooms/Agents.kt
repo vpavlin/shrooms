@@ -850,6 +850,7 @@ private fun Field(label: String, value: String, onChange: (String) -> Unit) {
 private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String) -> Unit = {}) {
     var askDelete by remember { mutableStateOf(false) }
     var askRestart by remember { mutableStateOf(false) }
+    var filesOpen by remember { mutableStateOf(false) }
     // The cage dialog: the machine's offer, asked when it opens, and the options chosen.
     var cageAsk by remember { mutableStateOf(false) }
     var cageOffer by remember { mutableStateOf<CageOffer?>(null) }
@@ -1134,6 +1135,7 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String
         val seq = id.removePrefix(prefix).toLongOrNull() ?: return@LaunchedEffect
         AgentChat.listIndexOf(items, seq)?.let { list.animateScrollToItem(it) }
     }
+    if (filesOpen) FilesDialog(client, o.session, info, onChanged = { info = it }) { filesOpen = false }
     // Ends the turn running now, as Esc does in Claude Code's terminal; the
     // session stays and takes the next message.
     fun stopTurn() { scope.launch(Dispatchers.IO) { runCatching { client.interrupt(o.session) } } }
@@ -1363,6 +1365,9 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String
                             .onFailure { actionError = it.message ?: "could not change it" }
                     }
                 }
+                // Files from other agents (ADR-048): amber while someone asks to send some.
+                val asking = info?.fileRequests?.size ?: 0
+                Link(if (asking > 0) "files · $asking asking" else "files", if (asking > 0) Palette.Amber else Palette.Ash) { filesOpen = true }
                 Link(if (info?.cage != null) "caged" else "cage", if (info?.cage != null) Palette.Phosphor else Palette.Ash) {
                     cageOpts = info?.cage ?: SessionCage("")
                     cageOffer = null

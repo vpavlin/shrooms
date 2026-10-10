@@ -52,7 +52,17 @@ data class AgentSession(
     val limited: Limited? = null,
     /** Whether it takes tasks from caged agents (ADR-044). */
     val acceptCaged: Boolean = false,
+    /** Who it takes files from: MACHINE/SESSION, or a whole machine (ADR-048). */
+    val acceptFilesFrom: List<String> = emptyList(),
+    /** Senders refused lately, for the app to offer to allow. */
+    val fileRequests: List<FileRequest> = emptyList(),
 )
+
+/** A sender a session refused files from, and what it tried to send. */
+data class FileRequest(val from: String, val name: String, val size: Long)
+
+/** A file another agent sent a session (ADR-048). */
+data class DroppedFile(val from: String, val name: String, val path: String, val size: Long, val time: Long)
 
 /** A session out of quota: the plan's limit reached, or its key's allowance spent (the agent's `limited`). */
 data class Limited(val reason: String, val until: Long = 0) {
@@ -187,6 +197,10 @@ class AgentClient(private val address: String) {
                 cage = SessionCage.parse(s.optJSONObject("cage")),
                 limited = Limited.parse(s.optJSONObject("limited")),
                 acceptCaged = s.optBoolean("accept_caged"),
+                acceptFilesFrom = s.optJSONArray("accept_files_from")?.let { a -> (0 until a.length()).map { a.getString(it) } }.orEmpty(),
+                fileRequests = s.optJSONArray("file_requests")?.let { a ->
+                    (0 until a.length()).map { val f = a.getJSONObject(it); FileRequest(f.optString("from"), f.optString("name"), f.optLong("size")) }
+                }.orEmpty(),
             )
         }
     }
@@ -252,6 +266,30 @@ class AgentClient(private val address: String) {
     /** Whether the session takes tasks from caged agents. */
     fun setAcceptCaged(session: String, on: Boolean) {
         request("POST", "/v1/sessions/${enc(session)}/settings", JSONObject().put("accept_caged", on).toString())
+    }
+
+    /** Who the session takes files from: the whole list. */
+    fun setAcceptFiles(session: String, from: List<String>) {
+        request("POST", "/v1/sessions/${enc(session)}/settings",
+            JSONObject().put("accept_files_from", org.json.JSONArray(from)).toString())
+    }
+
+    /** Sets a refused sender's request aside, without allowing it. */
+    fun ignoreFileRequest(session: String, from: String) {
+        request("POST", "/v1/sessions/${enc(session)}/settings", JSONObject().put("ignore_file_request", from).toString())
+    }
+
+    /** The files other agents sent the session, newest first. */
+    fun dropped(session: String): List<DroppedFile> {
+        val a = JSONObject(request("GET", "/v1/sessions/${enc(session)}/drop", null)).optJSONArray("files") ?: return emptyList()
+        return (0 until a.length()).map {
+            val f = a.getJSONObject(it)
+            DroppedFile(f.optString("from"), f.optString("name"), f.optString("path"), f.optLong("size"), parseTime(f.optString("time")))
+        }
+    }
+
+    fun removeDropped(session: String, from: String, file: String) {
+        request("DELETE", "/v1/sessions/${enc(session)}/drop?from=${enc(from)}&file=${enc(file)}", null)
     }
 
     fun setAutoApprove(session: String, on: Boolean) {
