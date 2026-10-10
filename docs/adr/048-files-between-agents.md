@@ -38,3 +38,7 @@ receiver always knows what arrived and from whom.
 - A file costs the receiver a turn when it arrives. A sender that will say
   what to do with the file in a task anyway can skip that (`tell=0` on the
   API).
+- **Amended 2026-10-10:** a sealed session's results are carried out of its
+  outbox by its machine's agent, to the task's asker or by hand, packed
+  without following links. The cage still sends nothing (docs/agents-files.md,
+  "From a sealed cage").

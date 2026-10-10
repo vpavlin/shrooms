@@ -23,7 +23,9 @@ import (
 const filesUsage = `usage:
   shrooms-agent files list  SESSION                      who SESSION takes files from, and who was refused
   shrooms-agent files allow SESSION MACHINE/SESSION      take files from that session (MACHINE/* for all of a machine's)
-  shrooms-agent files deny  SESSION MACHINE/SESSION      stop taking them`
+  shrooms-agent files deny  SESSION MACHINE/SESSION      stop taking them
+
+  shrooms-agent outbox send SESSION MACHINE/SESSION      send a sealed session's whole outbox there, packed`
 
 // sendFile pushes the file at path to MACHINE/SESSION. Where it was kept.
 func (c a2aClient) sendFile(to, path, note string, tell bool) (string, error) {
@@ -158,4 +160,40 @@ func orNone(s string) string {
 		return "nobody"
 	}
 	return s
+}
+
+// outboxMain is `shrooms-agent outbox send SESSION MACHINE/SESSION`: a sealed
+// session's outbox, packed by this machine's agent and sent as the session.
+func outboxMain(args []string) error {
+	fs := flag.NewFlagSet("outbox", flag.ContinueOnError)
+	sock := fs.String("socket", "/run/shrooms/shrooms.sock", "the shrooms daemon's control socket")
+	if len(args) < 1 || args[0] != "send" {
+		return errors.New(filesUsage)
+	}
+	if err := fs.Parse(flagsFirst(args[1:])); err != nil {
+		return err
+	}
+	rest := fs.Args()
+	if len(rest) != 2 {
+		return errors.New(filesUsage)
+	}
+	c := newA2AClient(*sock)
+	ms, err := c.peers()
+	if err != nil || len(ms) == 0 {
+		return fmt.Errorf("this machine's agent: %v", err)
+	}
+	body, _ := json.Marshal(map[string]string{"to": rest[1]})
+	resp, err := c.http(6*time.Minute).Post(c.base(ms[0].Addr)+"/v1/sessions/"+url.PathEscape(rest[0])+"/outbox/send",
+		"application/json", strings.NewReader(string(body)))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	var out struct{ Result, Error string }
+	json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&out)
+	if resp.StatusCode/100 != 2 {
+		return errors.New(out.Error)
+	}
+	fmt.Println(out.Result)
+	return nil
 }

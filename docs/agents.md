@@ -218,6 +218,7 @@ and docs/agents-together.md ("On the wire: A2A").
 | `POST /v1/sessions/{name}/drop` | `?name=&note=&tell=0`, the file as the body, `X-Shrooms-From-Session` | 201, `{path, size}`: a file from another agent's session, kept in its own folder (docs/agents-files.md). 403 when the session does not take files from that sender (the request is kept for the apps), 400 over the limits |
 | `GET /v1/meshes` | | `{meshes: [label]}`: this machine's meshes, by its labels, which a session may be limited to |
 | `GET /v1/sessions/{name}/drop` | | `{files: [{from, name, path, size, time}]}`: the files other agents sent the session, newest first |
+| `POST /v1/sessions/{name}/outbox/send` | `{to}` (MACHINE/SESSION) | 200, `{result}`: a sealed session's whole outbox, packed without following links and sent as the session (docs/agents-files.md, "From a sealed cage"). 403 from a cage; 502 when the receiver refused it |
 | `DELETE /v1/sessions/{name}/drop` | `?from=&file=` | 204: deletes one. 403 from a cage |
 | `POST /v1/tasks/{id}/ack` | | 200, `{task}`: the asker has what it needed — A2A's `AckTask`, for apps whose only way to an agent is `/v1` (Basecamp's core forwards nothing else). From any caller, as `AckTask` is; 404 for no such task |
 | `POST /v1/tasks/{id}/answer` | `{text}` | 200, `{task}`: answers a task waiting on its asker, in the asker's place; the worker gets it as more on the task, marked as whose it is (docs/a2a-tasks.md). 400 without text, 404 for no such task, 409 for one already closed |

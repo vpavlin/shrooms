@@ -55,6 +55,8 @@ func Handler(log *slog.Logger, m *Manager, who Who) http.Handler {
 	// A file from another agent's session, if this one takes them (drop.go).
 	mux.HandleFunc("POST /v1/sessions/{name}/drop", h.drop)
 	mux.HandleFunc("GET /v1/sessions/{name}/drop", h.dropped)
+	// A sealed session's outbox, sent on by hand (sealedoutbox.go).
+	mux.HandleFunc("POST /v1/sessions/{name}/outbox/send", h.outboxSend)
 	mux.HandleFunc("DELETE /v1/sessions/{name}/drop", h.removeDropped)
 	mux.HandleFunc("POST /v1/sessions/{name}/transcribe", h.transcribe)
 	mux.HandleFunc("POST /v1/sessions/{name}/voice", h.voice)

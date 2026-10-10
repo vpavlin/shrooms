@@ -287,10 +287,19 @@ func (m *Manager) Update(id, state, summary string) (Task, error) {
 			m.dispatch(s)
 		}
 		// The asker is told: always when it has to answer, and of the result
-		// unless it is waiting for it right now (asker.go).
-		if to == taskInputRequired || !m.awaited(t.ID) {
-			go m.tellAsker(t)
-		}
+		// unless it is waiting for it right now (asker.go). A sealed
+		// session's results go with it first, out of its outbox (sealedoutbox.go).
+		go func() {
+			extra := ""
+			if to != taskInputRequired && m.sealed(t.Session) {
+				if s, ok := m.Get(t.Session); ok {
+					extra = m.deliverOutbox(s, t)
+				}
+			}
+			if to == taskInputRequired || extra != "" || !m.awaited(t.ID) {
+				m.tellAskerWith(t, extra)
+			}
+		}()
 	}
 	return t, err
 }

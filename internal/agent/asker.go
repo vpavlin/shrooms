@@ -75,7 +75,11 @@ func askerNote(t Task, machine string) string {
 
 // tellAsker sends the asker its note. An error when the task has no agent
 // asker, or its machine did not take the note.
-func (m *Manager) tellAsker(t Task) error {
+func (m *Manager) tellAsker(t Task) error { return m.tellAskerWith(t, "") }
+
+// tellAskerWith sends the note with a line more: where a sealed session's
+// results went.
+func (m *Manager) tellAskerWith(t Task, extra string) error {
 	if t.AskerAddr == "" || t.AskerSession == "" {
 		return fmt.Errorf("task %s was not asked by an agent's session", t.ID)
 	}
@@ -88,7 +92,7 @@ func (m *Manager) tellAsker(t Task) error {
 		machine = ms[0].Name
 	}
 	body, _ := json.Marshal(map[string]string{
-		"text": askerNote(t, machine),
+		"text": strings.TrimSpace(askerNote(t, machine) + "\n" + extra),
 		// One note per change of the task; a nudge is a new one.
 		"id": fmt.Sprintf("tasknote-%s-%s-%d", t.ID, stateWord(t.State), time.Now().UnixNano()),
 	})

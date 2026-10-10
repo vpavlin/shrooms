@@ -32,6 +32,29 @@ frequencies.lgx, 2.1 MB, kept at …]`, followed by the sender's note.
 cage mounts read-only at the same path, sealed cages included. So a sealed
 reviewer is handed code without being able to reach for it.
 
+## From a sealed cage
+
+A sealed session can't send anything (ADR-045). Its results go to its outbox,
+`~/shrooms-outbox/<session>` on its machine. **This machine's agent carries
+them out**, never the cage:
+
+- **When a task finishes:** if an agent's session asked for it, the agent
+  packs what the task wrote to the outbox while it ran into
+  `<session>-<task>.tar.gz`, and sends it to the asker as
+  `MACHINE/<sealed session>`. The asker's allow list decides, as for any
+  sender. The asker's note about the task says where the results went, or why
+  they didn't.
+- **By hand:** `shrooms-agent outbox send reviewer jimmy-crib/vpavlin` on the
+  sealed session's machine, or the outbox's **send to…** in the apps' files
+  dialog, sends the whole outbox.
+
+The outbox is the cage's to fill, so nothing in it is trusted, including what
+it *points at*. A link in it could name this machine's keys. The packer opens
+every name relative to the folder it found it in and never follows a link, so
+a name swapped for a link mid-walk is refused rather than read. It takes
+regular files only, at most 2,000 files and 100 MB. What it left out, and
+why, is listed in the package's `README-UNTRUSTED.txt`.
+
 ## Who may send
 
 Each session has an allow list, `accept_files_from`. It starts empty: nobody
