@@ -722,6 +722,25 @@ Item {
             // and their tasks.
             // The tasks panel's rows, from the machines' own answers.
             var tnow = Date.parse("2026-10-09T12:00:00Z")
+            // Who is waiting: a session claim means an AGENT, a device means a PERSON.
+            console.error("ASKERSESSION " + [view.askerHasSession("laptop.default (laptop/SPEL)"),
+                view.askerHasSession("laptop (laptop/shrooms, in a cage)"), view.askerHasSession("nothing.default"),
+                view.askerHasSession("pi5.office"), view.askerHasSession("")].join(",") + "|END")
+            var bRow = { group: "blocked", asker: "shrooms", worker: "review", at: "2026-10-09T11:00:00Z", quiet: true }
+            var wRow = { group: "working", asker: "jimmy", worker: "review", at: "2026-10-09T11:30:00Z", quiet: true }
+            console.error("ROW2 " + [view.rowSecondLine(bRow, tnow), view.rowSecondLine(wRow, tnow)].join(" || ") + "|END")
+            var qRow = { group: "needs-you", latest: "should I take the offer?" }
+            var qBRow = { group: "blocked", latest: "which of the two?" }
+            console.error("QUESTION " + [view.rowQuestion(qRow), view.rowQuestion(qBRow),
+                view.rowQuestion({ group: "working", latest: "reading it now" }),
+                view.rowQuestion({ group: "blocked", latest: "" })].join(" || ") + "|END")
+            console.error("ACTS " + [view.canAnswer(qRow), view.canAnswer(qBRow), view.canAnswer(wRow),
+                view.canNudge(qRow), view.canNudge(qBRow), view.canCancel(qRow), view.canCancel(qBRow),
+                view.canCancel(wRow)].join(",") + "|END")
+            console.error("APATHS " + [view.answerPath("a:m1"), view.nudgePath("a:m1"),
+                view.cancelPath("a:m1")].join(" ") + "|END")
+            console.error("ABODY " + [view.answerBody("yes, take it"), view.answerIsEmpty("   "),
+                view.answerIsEmpty("no"), view.answerBody("")].join(" | ") + "|END")
             var trows = view.taskRows(top.taskHosts)
             console.error("TASKROWS " + trows.map(function(r) { return r.group + ":" + r.id.split(":")[1] + ":" + view.ageLabel(r, tnow) }).join(","))
             console.error("TASKORDER " + view.taskGroupOrder.join(",") + " labels=" + view.taskGroupOrder.map(view.taskGroupLabel).join("/"))
@@ -741,10 +760,10 @@ Item {
                                     view.ageOf("2026-10-09T02:00:00Z", tnow), view.ageOf("nonsense", tnow)].join(","))
             // The panel's rows, with a header per non-empty group.
             var prows = view.taskPanelRows(top.taskHosts)
-            console.error("PANEL " + prows.map(function(r) { return r.kind === "header" ? "[" + r.label + " " + r.count + "]" : r.id.split(":")[1] }).join(" "))
+            console.error("PANEL " + prows.map(function(r) { return r.kind === "header" ? "[" + view.headerText(r) + "]" : r.id.split(":")[1] }).join(" "))
             // Folded, Done keeps its header and count but not its rows.
             var folded = view.taskPanelRows(top.taskHosts, "", false)
-            console.error("PANELFOLDED " + folded.map(function(r) { return r.kind === "header" ? "[" + r.label + " " + r.count + "]" : r.id.split(":")[1] }).join(" ") + " |")
+            console.error("PANELFOLDED " + folded.map(function(r) { return r.kind === "header" ? "[" + view.headerText(r) + "]" : r.id.split(":")[1] }).join(" ") + " |")
             // Who a session takes files from (ADR-048): an entry is MACHINE/SESSION or a whole machine.
             console.error("FILESALLOW " + [view.filesValid("jimmy-crib/vpavlin"), view.filesValid(" pi5/* "), view.filesValid("jimmy-crib"),
                 view.filesValid("a/b/c"), view.filesAllow(["pi5/jimmy"], "pi5/jimmy").join("+"), view.filesAllow(["pi5/jimmy"], "nonsense").join("+"),
@@ -757,10 +776,16 @@ Item {
             view.markAcked(["review:m4"], true)
             var afterAck = view.taskRows(top.taskHosts).map(function(r) { return r.id.split(":")[1] }).join(",")
             view.markAcked(["review:m4"], false)
-            console.error("ACKEDHERE " + afterAck + " | " + view.taskRows(top.taskHosts).map(function(r) { return r.id.split(":")[1] }).join(","))
-            // The links carrying their tasks, and the load on each card.
+            console.error("ACKEDHERE " + afterAck + " | " + view.taskRows(top.taskHosts).map(function(r) { return r.id.split(":")[1] }).join(","))            // The links carrying their tasks, and the load on each card.
             var links = view.boardLinkList(top.taskHosts)
             console.error("LINKS " + links.map(function(e) { return e.from + ">" + e.to + ":" + e.count + ":" + e.tone + ":" + view.linkLabel(e) }).join(","))
+            // A needs-you task comes from a DEVICE, and a link runs between two SESSIONS:
+            // askerKey finds no session and the task makes no link at all. That is why a link's
+            // tone can never be "needs you" - and why its count is not one either.
+            console.error("LINKASKER " + [view.askerKey("nothing.default", { "laptop/review": true }),
+                                      view.askerKey("laptop.default (laptop/shrooms)", { "laptop/shrooms": true }),
+                                      view.askerHasSession("nothing.default"),
+                                      view.askerHasSession("laptop.default (laptop/shrooms)")].join(",") + " |")
             var load = view.cardLoad(top.taskHosts)
             console.error("LOAD " + Object.keys(load).sort().map(function(k) { return k + "=" + view.loadLabel(load[k]) }).join(","))
             // Amber means "a person is needed", so the card load must only be amber for a
@@ -796,10 +821,10 @@ Item {
             // An ACK the agent refused must not read as success. The DECISION is pure
             // (ackRefusal), because calling ackTask() starts an async refresh a test cannot
             // wait on - the first version of this case hung the whole suite exactly that way.
-            console.error("ACKERR " + view.ackRefusal(JSON.stringify(
+            console.error("ACKERR " + view.replyRefusal(JSON.stringify(
                 { jsonrpc: "2.0", id: "ack-review:m1", error: { code: -32001, message: "no such task" } }))
-                + " | " + view.ackRefusal(JSON.stringify({ ok: true }))
-                + " | " + view.ackRefusal(null))
+                + " | " + view.replyRefusal(JSON.stringify({ ok: true }))
+                + " | " + view.replyRefusal(null))
             top.boardFind = top.boardHosts
             view.refreshAgents()
             view.setBoard(true)
@@ -825,6 +850,12 @@ Item {
             { id: "review:m6", status: { state: "TASK_STATE_INPUT_REQUIRED", timestamp: "2026-10-09T11:45:00Z" },
               metadata: { "shrooms/session": "review", "shrooms/from": "laptop (laptop/shrooms, in a cage)",
                           "shrooms/stalled": true } },
+            // input-required from a DEVICE only (no session claim): a PERSON asked and is
+            // waiting, so this is "Needs you" - the one urgent group. m1 (a session) and m6
+            // (a caged session) are the other half: those wait on an AGENT.
+            { id: "review:m8", status: { state: "TASK_STATE_INPUT_REQUIRED", timestamp: "2026-10-09T11:55:00Z",
+                                         message: { parts: [{ text: "should I take the offer?" }] } },
+              metadata: { "shrooms/session": "review", "shrooms/from": "nothing.default" } },
             // the session in the id is the OLD name after a rename; shrooms/session is the new one
             { id: "oldname:m7", status: { state: "TASK_STATE_WORKING", timestamp: "2026-10-09T11:50:00Z" },
               metadata: { "shrooms/session": "review", "shrooms/from": "pi5.office" } },

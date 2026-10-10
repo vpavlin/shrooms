@@ -48,6 +48,14 @@ Item {
     // The daemon's status, for this device's addresses and its peers: where
     // agents may be.
     property var st: ({})
+    // What this view has already sent, so a row can say so before the fleet catches up.
+    // answer MARKS the row (the agent decides when the task leaves input-required);
+    // cancel removes it at once, because the person asked for exactly that. It also
+    // remembers which row is being answered and which is armed for a second tap.
+    property var answeredLocal: ({})
+    property var cancelledLocal: ({})
+    property string answerFor: ""
+    property string cancelArm: ""
     property var peers: []
     property string problem: ""
     function reload() {
@@ -1708,7 +1716,9 @@ Item {
         // session renamed away). Pure, so the harness pins it - the call itself starts an
         // async path a test cannot wait on, which is why a direct ackTask() case hangs.
         // Returns the reason to show, or null when the ack really was accepted.
-        function ackRefusal(reply) {
+        // Used by every action that writes to the machine side - ack, answer, nudge,
+        // cancel. Same shape of reply, same mistake available in each.
+        function replyRefusal(reply) {
             if (reply === null || reply === undefined) return "no reply"
             try {
                 var o = (typeof reply === "string") ? JSON.parse(reply) : reply
@@ -1716,6 +1726,72 @@ Item {
             } catch (e) { return "unreadable reply" }
             return null
         }
+
+    // Where each action is sent. Pure, so the harness pins them: /v1/, not the A2A route,
+    // because the core forwards only /v1/ paths - an agentPost to /a2a/<session> came back
+    // an error while the panel said it had worked (2026-10-10).
+    function answerPath(id) { return "/v1/tasks/" + String(id || "") + "/answer" }
+    function nudgePath(id) { return "/v1/tasks/" + String(id || "") + "/nudge" }
+    function cancelPath(id) { return "/v1/tasks/" + String(id || "") + "/cancel" }
+    // The body for an answer. Pure, so the harness pins it: a field that sent the wrong
+    // key would look like it worked and answer nothing.
+    function answerBody(text) { return JSON.stringify({ text: String(text || "") }) }
+    function answerIsEmpty(text) { return String(text || "").trim() === "" }
+
+    // Answer in the asker's place. The agent marks it "(answered by DEVICE, in place of
+    // the asker)", so this is a person speaking for an agent that is not here.
+    function answerTask(row, text) {
+        if (!canAnswer(row)) return false
+        if (answerIsEmpty(text)) {
+            root.said = "nothing to send"; root.saidBad = true; return false
+        }
+        var refusal = replyRefusal(agentCall("agentPost",
+            [row.address, answerPath(row.id), answerBody(text)]))
+        if (refusal !== null) {
+            root.said = "could not answer " + row.id + (refusal === "no reply" ? "" : ": " + refusal)
+            root.saidBad = true
+            return false
+        }
+        // MARKED, not moved: the task is still input-required until the worker's agent
+        // says otherwise, and moving it locally would lie about what the fleet knows.
+        root.answeredLocal[row.id] = true
+        root.said = "answered " + (row.title || row.id)
+        root.saidBad = false
+        refreshAgents()
+        return true
+    }
+
+    // Send the asker its note again. Blocked only: the agent answers 409 when the asker is
+    // not an agent session, and there is nothing to nudge a person with.
+    function nudgeTask(row) {
+        if (!canNudge(row)) return false
+        var refusal = replyRefusal(agentCall("agentPost", [row.address, nudgePath(row.id), ""]))
+        if (refusal !== null) {
+            root.said = "could not nudge " + (row.asker || row.id)
+                     + (refusal === "no reply" ? "" : ": " + refusal)
+            root.saidBad = true
+            return false
+        }
+        root.said = "nudged " + (row.asker || row.id)
+        root.saidBad = false
+        return true
+    }
+
+    // Cancel. The row leaves at once, because the person asked for it to; the fleet follows.
+    function cancelTask(row) {
+        if (!canCancel(row)) return false
+        var refusal = replyRefusal(agentCall("agentPost", [row.address, cancelPath(row.id), ""]))
+        if (refusal !== null) {
+            root.said = "could not cancel " + row.id + (refusal === "no reply" ? "" : ": " + refusal)
+            root.saidBad = true
+            return false
+        }
+        root.cancelledLocal[row.id] = true
+        root.said = "cancelled " + (row.title || row.id)
+        root.saidBad = false
+        refreshAgents()
+        return true
+    }
 
     // The rows an "ACK all" would send: the finished-but-unacked ones, and nothing else.
     // Pure, so the harness pins it - a bulk action must not sweep up a task that is still
@@ -1751,7 +1827,7 @@ Item {
         // could never work from Basecamp at all (2026-10-10). The agent grew
         // POST /v1/tasks/{id}/ack for this.
         markAcked([row.id], true)
-        var refusal = ackRefusal(agentCall("agentPost", [row.address, ackPath(row.id), ""]))
+        var refusal = replyRefusal(agentCall("agentPost", [row.address, ackPath(row.id), ""]))
         if (refusal !== null) {
             markAcked([row.id], false)
             root.said = "could not ack " + row.id + (refusal === "no reply" ? "" : ": " + refusal)
@@ -1864,17 +1940,24 @@ Item {
                 var pair = pairKeyOf(from, to)
                 if (pair === "") continue
                 if (!byPair[pair]) {
-                    byPair[pair] = { from: from, to: to, count: 0, needsYou: 0, stalled: 0, working: 0,
-                                     tasks: [], tone: "working" }
+                    byPair[pair] = { from: from, to: to, count: 0, needsYou: 0, blocked: 0,
+                                     stalled: 0, working: 0, tasks: [], tone: "working" }
                     out.push(byPair[pair])
                 }
                 var e = byPair[pair]
                 e.count++
                 e.tasks.push({ id: t.id, title: taskTitleOf(t), state: taskStalledOf(t) ? "stalled" : w })
-                if (taskStalledOf(t)) e.stalled++
-                else if (w === "input-required") e.needsYou++
+                // The GROUP, not the raw state: input-required now covers both Needs you and
+                // Blocked, and only the first is "a person is waiting". Counting the state
+                // made a link whose tasks are all Blocked say "needs you" - the very thing
+                // this change exists to stop (the reviewer, live pass).
+                var lg = taskGroup(t)
+                if (lg === "needs-you") e.needsYou++
+                else if (lg === "blocked") e.blocked++
+                else if (taskStalledOf(t)) e.stalled++
                 else e.working++
-                e.tone = e.needsYou > 0 ? "input-required" : e.stalled > 0 ? "stalled" : "working"
+                e.tone = e.needsYou > 0 ? "input-required"
+                       : e.blocked > 0 ? "blocked" : e.stalled > 0 ? "stalled" : "working"
             }
         }
         return out
@@ -1914,6 +1997,7 @@ Item {
     function linkLabel(e) {
         if (!e || e.count < 1) return ""
         if (e.needsYou > 0) return e.count + (e.needsYou === 1 ? " \u00b7 needs you" : " \u00b7 " + e.needsYou + " need you")
+        if (e.blocked > 0) return e.count + (e.blocked === 1 ? " \u00b7 blocked" : " \u00b7 " + e.blocked + " blocked")
         if (e.stalled > 0) return e.count + " \u00b7 stalled"
         return String(e.count)
     }
@@ -1967,15 +2051,23 @@ Item {
     // not listed at all - the list is what is still owed.
     function taskGroup(t) {
         var w = stateWordOf(t && t.status ? t.status.state : "")
-        // Needs you FIRST, even when it is also stalled: a task waiting on a person is the
-        // one that is urgent, and a stalled task that is also blocked on you is still blocked
-        // on you. (The reviewer: it should stay in Needs you.)
-        if (w === "input-required") return "needs-you"
+        // input-required SPLITS, and this is the whole point of the change: the state says
+        // the worker is waiting, not that it waits on YOU. If the asker claims a session,
+        // the worker is waiting on another AGENT ("Blocked"); if the asker is only a
+        // device, a person asked and is waiting ("Needs you", the one urgent group).
+        // Stalled does not outrank either: a task waiting on an answer is still waiting.
+        // input-required SPLITS: the state says the worker is waiting, not that it waits on
+        // YOU. A session claim means another AGENT is being waited on ("Blocked"); a device
+        // only means a PERSON asked and is waiting ("Needs you", the one urgent group).
+        // Stalled does not outrank either: a task waiting on an answer is still waiting.
+        if (w === "input-required") {
+            return askerHasSession(((t && t.metadata) || {})["shrooms/from"]) ? "blocked" : "needs-you"
+        }
         if (taskStalledOf(t)) return "stalled"
         if (/completed|failed|canceled|rejected|expired/.test(w)) return taskAckedOf(t) ? "done" : "unacked"
         return "working"
     }
-    readonly property var taskGroupOrder: ["needs-you", "working", "stalled", "unacked"]
+    readonly property var taskGroupOrder: ["needs-you", "blocked", "working", "stalled", "unacked"]
     // Where a link badge is drawn vertically, clamped into the canvas. The top row's links
     // arc ABOVE the cards, so an unclamped badge lands under the header and is cut in half -
     // and a badge half off the top reads as a rendering fault, which is worse than not
@@ -1985,8 +2077,69 @@ Item {
         return Math.max(p, Math.min(y, height - p))
     }
     function taskGroupLabel(g) {
-        return g === "needs-you" ? "Needs you" : g === "working" ? "Working"
-             : g === "stalled" ? "Stalled" : "Done, unacked"
+        return g === "needs-you" ? "Needs you" : g === "blocked" ? "Blocked"
+             : g === "working" ? "Working" : g === "stalled" ? "Stalled" : "Done, unacked"
+    }
+    // The header count is for Needs you only: it is the group where a number means "this
+    // many people are waiting on you". Blocked is ash and uncounted - it is a fact about
+    // the fleet, not a thing the reader owes.
+    // Every group header keeps its count (the reviewer, live pass): the count is a
+    // fact about the fleet. What stays Needs-you-only is the AMBER, and the board
+    // link's count - those are the "a person is waiting" signal.
+    function groupShowsCount(g) { return true }
+    // A header reads "Needs you  3" where a count means something, and just "Blocked"
+    // where it does not. Pure, so the harness pins it.
+    function headerText(row) {
+        if (!row || row.kind !== "header") return ""
+        return row.count > 0 ? row.label + "  " + row.count : row.label
+    }
+    // A two-step cancel: the link asks once, then sends. Pure, so the harness pins
+    // that the first tap can never be the one that cancels.
+    function cancelLabel(armed) { return armed ? "sure?" : "cancel" }
+
+    // Does the asker claim a SESSION? Three shapes reach us:
+    //   "laptop.default (laptop/SPEL)"          -> yes, an agent asked
+    //   "laptop (laptop/shrooms, in a cage)"    -> yes, a caged agent asked
+    //   "nothing.default" / "pi5.office"        -> no: a device only, so a PERSON asked
+    // This is the split between "Needs you" and "Blocked", so it is pure and pinned.
+    function askerHasSession(from) {
+        return /\(([^)\/]+)\/([^),]+)(,\s*[^)]*)?\)\s*$/.test(String(from || ""))
+    }
+
+    // A row's second line. Blocked names whom it waits on - the reader needs to know it is
+    // not them; everything else says who asked whom, as before.
+    function rowSecondLine(row, now) {
+        if (!row) return ""
+        if (row.group === "blocked") {
+            return "waiting on " + (row.asker || "?") + " \u00b7 " + ageLabel(row, now)
+        }
+        return (row.asker || "?") + " \u2192 " + (row.worker || "?")
+             + "  " + ageLabel(row, now)
+    }
+
+    // The question, on BOTH groups that are waiting for an answer. The status message is
+    // the question when a task is input-required, and a person should not have to open the
+    // session to read it.
+    function rowQuestion(row) {
+        if (!row || (row.group !== "needs-you" && row.group !== "blocked")) return ""
+        return row.latest ? "needs: " + row.latest : ""
+    }
+
+    // Which actions a row offers. Pure, so the harness pins the gating: nudge only makes
+    // sense where the asker is an agent (the agent answers 409 otherwise), and answering
+    // or cancelling a task that is still running would fight the worker.
+    function canAnswer(row) { return !!row && (row.group === "needs-you" || row.group === "blocked") }
+    function canNudge(row) { return !!row && row.group === "blocked" }
+    function canCancel(row) { return !!row && (row.group === "needs-you" || row.group === "blocked") }
+
+    // A row is as tall as it has content. A header is one line. A waiting row carries its
+    // title, its second line, the question (up to three lines) and its actions; anything
+    // else carries what it always did. Pure, so the harness pins it - a fixed height left
+    // either a gap or a clipped question.
+    function rowHeightFor(row) {
+        if (!row || row.kind === "header") return root.sz(26)
+        if (row.group === "needs-you" || row.group === "blocked") return root.sz(104)
+        return row.latest ? root.sz(58) : root.sz(42)
     }
     // The age, in the units a person reads.
     function ageOf(at, now) {
@@ -2060,6 +2213,9 @@ Item {
                 if (g === "done") continue
                 // Acked here and not yet reported so by its agent: gone at once.
                 if (root.ackedHere[t.id]) continue
+                // Cancelled here a moment ago: the row leaves at once rather than waiting
+                // for the fleet to come back with the new state.
+                if (root.cancelledLocal && root.cancelledLocal[t.id]) continue
                 var md = t.metadata || {}, who = md["shrooms/session"] || ""
                 var from = md["shrooms/from"] || ""
                 // A row is never a gap: a task from an older agent may have no title, no
@@ -2075,7 +2231,8 @@ Item {
                            // task has been QUIET, not how long since it was asked. Say which:
                            // a task asked three days ago that moved a minute ago is quiet 1m.
                            quiet: g !== "unacked",
-                           acked: taskAckedOf(t), stalled: taskStalledOf(t) })
+                           acked: taskAckedOf(t), stalled: taskStalledOf(t),
+                           answered: !!root.answeredLocal[t.id] })
             }
         }
         out.sort(function(a, b) {
@@ -2146,7 +2303,8 @@ Item {
             if (rows[i].group !== last) {
                 last = rows[i].group
                 out.push({ kind: "header", group: last, label: taskGroupLabel(last),
-                           count: rows.filter(function(r) { return r.group === last }).length })
+                           count: groupShowsCount(last)
+                                  ? rows.filter(function(r) { return r.group === last }).length : 0 })
             }
             if (showDone === false && rows[i].group === "unacked") continue
             out.push(Object.assign({ kind: "task" }, rows[i]))
@@ -3497,8 +3655,7 @@ Item {
                             id: trow
                             required property var modelData
                             width: taskPanel.width
-                            height: trow.modelData.kind === "header" ? root.sz(26)
-                  : (trow.modelData.latest ? root.sz(58) : root.sz(42))
+                            height: root.rowHeightFor(trow.modelData)
                             // 75 rows in Done, unacked is a wall nobody clears one tap at a
                             // time. The header offers it once; each ack still goes to the
                             // worker's agent, and only to tasks whose state says so.
@@ -3526,15 +3683,19 @@ Item {
                                 anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
                                 anchors.topMargin: root.sz(6)
                                 visible: trow.modelData.kind === "header"
-                                text: trow.modelData.kind === "header" ? trow.modelData.label + "  " + trow.modelData.count : ""
+                                text: root.headerText(trow.modelData)
                                 color: trow.modelData.kind === "header" && trow.modelData.group === "needs-you" ? cAmber : cAsh
                                 font.family: "monospace"; font.pixelSize: root.fs(10); font.bold: true
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                enabled: trow.modelData.kind === "task"
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: Qt.callLater(function() { root.openTaskRow(trow.modelData) })
                             }
                             Column {
                                 visible: trow.modelData.kind === "task"
                                 anchors.left: parent.left; anchors.top: parent.top
-                                // The ACK takes its width out of the text, rather than sitting
-                                // on top of the title (2026-10-10).
                                 anchors.right: ackLnk.visible ? ackLnk.left : parent.right
                                 anchors.rightMargin: ackLnk.visible ? root.sz(4) : 0
                                 Text {
@@ -3545,23 +3706,97 @@ Item {
                                 Text {
                                     width: parent.width; elide: Text.ElideRight
                                     text: trow.modelData.kind === "task"
-                                          ? (trow.modelData.asker || "?") + " \u2192 " + (trow.modelData.worker || "?")
-                                            + "  " + root.ageLabel(trow.modelData, root.nowMs)
-                                          : ""
+                                          ? root.rowSecondLine(trow.modelData, root.nowMs) : ""
                                     color: root.edgeTint(trow.modelData.kind === "task" ? trow.modelData.group : "")
                                     font.family: "monospace"; font.pixelSize: root.fs(9)
                                 }
+                                // The question, on both groups waiting for an answer: nobody
+                                // should have to open the session to read it. Three lines.
                                 Text {
-                                    width: parent.width; elide: Text.ElideRight
-                                    text: trow.modelData.kind === "task" ? trow.modelData.latest : ""
+                                    width: parent.width
+                                    visible: text !== ""
+                                    wrapMode: Text.Wrap
+                                    maximumLineCount: 3
+                                    elide: Text.ElideRight
+                                    text: trow.modelData.kind === "task" ? root.rowQuestion(trow.modelData) : ""
                                     color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(9)
                                 }
+                                // What the reader can DO about it. nudge is Blocked only: the
+                                // agent answers 409 when the asker is not an agent session.
+                                Row {
+                                    spacing: root.sz(10)
+                                    visible: trow.modelData.kind === "task"
+                                             && (root.canAnswer(trow.modelData) || root.canNudge(trow.modelData))
+                                    Lnk {
+                                        objectName: "answerLnk"
+                                        visible: root.canAnswer(trow.modelData) && !trow.modelData.answered
+                                        text: "answer"; base: cPhosphor; font.pixelSize: root.fs(9)
+                                        onClicked: Qt.callLater(function() {
+                                            root.cancelArm = ""
+                                            root.answerFor = (root.answerFor === trow.modelData.id ? "" : trow.modelData.id)
+                                        })
+                                    }
+                                    Text {
+                                        visible: !!trow.modelData.answered
+                                        text: "answered \u00b7 waiting for the agent"
+                                        color: cPhosphor; font.family: "monospace"; font.pixelSize: root.fs(9)
+                                    }
+                                    Lnk {
+                                        objectName: "nudgeLnk"
+                                        visible: root.canNudge(trow.modelData)
+                                        text: "nudge"; base: cAsh; font.pixelSize: root.fs(9)
+                                        onClicked: Qt.callLater(function() { root.nudgeTask(trow.modelData) })
+                                    }
+                                    Lnk {
+                                        objectName: "cancelLnk"
+                                        visible: root.canCancel(trow.modelData)
+                                        text: root.cancelLabel(root.cancelArm === trow.modelData.id)
+                                        base: cRust; font.pixelSize: root.fs(9)
+                                        onClicked: Qt.callLater(function() {
+                                            if (root.cancelArm === trow.modelData.id) {
+                                                root.cancelArm = ""
+                                                root.cancelTask(trow.modelData)
+                                            } else {
+                                                root.answerFor = ""
+                                                root.cancelArm = trow.modelData.id
+                                            }
+                                        })
+                                    }
+                                }
                             }
-                            MouseArea {
-                                anchors.fill: parent
-                                enabled: trow.modelData.kind === "task"
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: Qt.callLater(function() { root.openTaskRow(trow.modelData) })
+                            // The inline answer field, on the row being answered. Its text is
+                            // NOT bound to anything - SEND reads the field - so there is
+                            // nothing to loop.
+                            TextField {
+                                id: answerField
+                                objectName: "answerField"
+                                visible: trow.modelData.kind === "task" && root.answerFor === trow.modelData.id
+                                anchors.left: parent.left; anchors.right: parent.right
+                                anchors.rightMargin: root.sz(60)
+                                anchors.top: parent.top; anchors.topMargin: root.sz(74)
+                                height: root.sz(22)
+                                placeholderText: "answer in the asker's place"
+                                placeholderTextColor: cAsh; color: cBone
+                                font.family: "monospace"; font.pixelSize: root.fs(9)
+                                background: Rectangle {
+                                    color: cPanel; radius: root.sz(3); border.width: 1
+                                    border.color: answerField.activeFocus ? cPhosphor : cRust
+                                }
+                                onVisibleChanged: if (visible) text = ""
+                                Keys.onReturnPressed: function(ev) {
+                                    root.answerTask(trow.modelData, answerField.text)
+                                }
+                            }
+                            Lnk {
+                                objectName: "sendLnk"
+                                visible: trow.modelData.kind === "task" && root.answerFor === trow.modelData.id
+                                anchors.right: parent.right
+                                anchors.rightMargin: root.sz(14)
+                                anchors.top: parent.top; anchors.topMargin: root.sz(76)
+                                text: "SEND"; base: cPhosphor; font.pixelSize: root.fs(9)
+                                onClicked: Qt.callLater(function() {
+                                    root.answerTask(trow.modelData, answerField.text)
+                                })
                             }
                             // A finished task still owes an ack: that is the one thing a person
                             // must be able to say back, and only where it does something. On top

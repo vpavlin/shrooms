@@ -231,23 +231,62 @@ fi
 expect "HOSTS=1 SESSIONS=2" "the agents were not listed"
 # The tasks panel's rows: grouped Needs you / Working / Stalled / Done unacked, with the
 # acked one gone, the ages right, and each row carrying what a person needs to judge it.
-expect "TASKROWS needs-you:m1:quiet 1h,needs-you:m6:quiet 15m,working:m2:quiet 30m,working:m7:quiet 10m,stalled:m3:quiet 2h,unacked:m4:done 3h" "the task rows are not grouped and ordered as a person needs them: Needs you first, then oldest-first inside each group"
-expect "TASKORDER needs-you,working,stalled,unacked labels=Needs you/Working/Stalled/Done, unacked" "the task groups are not in the agreed order or named as agreed"
+expect "TASKROWS needs-you:m8:quiet 5m,blocked:m1:quiet 1h,blocked:m6:quiet 15m,working:m2:quiet 30m,working:m7:quiet 10m,stalled:m3:quiet 2h,unacked:m4:done 3h" "the task rows are not grouped and ordered as a person needs them: Needs you first, then oldest-first inside each group"
+expect "TASKORDER needs-you,blocked,working,stalled,unacked labels=Needs you/Blocked/Working/Stalled/Done, unacked" "the task groups are not in the agreed order or named as agreed"
 expect "TASKNAME named by the asker|From X: the request|the real ask|the worker's own summary|" "a task is not named by the asker's title, then the request's first line, then the summary"
 expect "ASKER SPEL,jimmy,shrooms,pi5.office," "the asker is not read as a session: a caged one, or one with no session at all"
 expect "AGE 30s,1h,10h," "the age is not in the units a person reads"
-expect "TASKROW1 From Jimmy: review the module | from=jimmy to=review | latest=which of the two? | quiet 1h | hasref=false" "a row does not carry its title, asker, worker, latest line, labelled age"
+expect "TASKROW1 review:m8 | from=nothing.default to=review | latest=should I take the offer? | quiet 5m | hasref=false" "a row does not carry its title, asker, worker, latest line, labelled age"
 expect "CAGED true,false" "a caged asker is not told apart from an uncaged one"
+# --- the split that this change is about -----------------------------------------
+# A session claim means an AGENT is being waited on ("Blocked"); a device means a PERSON
+# ("Needs you"). Every expectation below ends with |END: expect() is a substring match, so
+# an expected string that is a PREFIX of a wrong output cannot fail (the PANELFOLDED lesson).
+expect "ASKERSESSION true,true,false,false,false|END" "a session claim is not told apart from a device-only asker"
+expect "ROW2 waiting on shrooms · quiet 1h || jimmy → review  quiet 30m|END" "a blocked row does not say whom it waits on"
+expect "QUESTION needs: should I take the offer? || needs: which of the two? ||  || |END" "the question is not shown on both waiting groups, or is shown where nobody is waiting"
+expect "ACTS true,true,false,false,true,true,true,false|END" "an action is offered on a row it cannot work on"
+expect "APATHS /v1/tasks/a:m1/answer /v1/tasks/a:m1/nudge /v1/tasks/a:m1/cancel|END" "an action does not go to the /v1/ route the core forwards"
+expect "ABODY {\"text\":\"yes, take it\"} | true | false | {\"text\":\"\"}|END" "an answer is sent with the wrong key, or an empty one is sent as if it were an answer"
+
 expect "AGELABEL quiet 1h,done 2h," "the age is not labelled for what it measures"
 expect "BAREROW jimmy:no-title-1" "a task with no title leaves a gap instead of falling back to its id"
 expect "ACKERR no such task | null | no reply" "an ACK the agent refused is not told apart from one that was accepted"
-expect "PANEL [Needs you 2] m1 m6 [Working 2] m2 m7 [Stalled 1] m3 [Done, unacked 1] m4" "the panel does not head each non-empty group, or a task that is both blocked and stalled is not in Needs you"
-expect "PANELFOLDED [Needs you 2] m1 m6 [Working 2] m2 m7 [Stalled 1] m3 [Done, unacked 1] |" "folded, the panel still lists the finished tasks (or lost their header)"
+expect "PANEL [Needs you  1] m8 [Blocked  2] m1 m6 [Working  2] m2 m7 [Stalled  1] m3 [Done, unacked  1] m4" "the panel does not head each non-empty group, or a task that is both blocked and stalled is not in Needs you"
+expect "PANELFOLDED [Needs you  1] m8 [Blocked  2] m1 m6 [Working  2] m2 m7 [Stalled  1] m3 [Done, unacked  1] |" "folded, the panel still lists the finished tasks (or lost their header)"
 expect "FILESALLOW true,true,false,false,pi5/jimmy,pi5/jimmy,pi5/jimmy+atlas/*,atlas/* |" "who a session takes files from is not edited as MACHINE/SESSION or a whole machine, once each"
 expect "MESHTOGGLE home,default+office, |" "ticking a mesh does not turn it on and off, in the machine's order"
-expect "ACKEDHERE m1,m6,m2,m7,m3 | m1,m6,m2,m7,m3,m4" "an ACK does not take the row away at once, or an undone one does not come back"
-expect "LINKS pi5/jimmy>laptop/review:2:input-required:2 · needs you,laptop/shrooms>laptop/review:2:stalled:2 · stalled" "a link does not carry the tasks on it, the most urgent tone does not win, or a CAGED asker's link silently vanished"
-expect "LOAD laptop/review=5 owed,laptop/shrooms=2 asked,pi5/jimmy=2 asked" "a card does not show what it owes and what it is waiting for"
+expect "ACKEDHERE m8,m1,m6,m2,m7,m3 | m8,m1,m6,m2,m7,m3,m4" "an ACK does not take the row away at once, or an undone one does not come back"
+expect "LINKS pi5/jimmy>laptop/review:2:blocked:2 · blocked,laptop/shrooms>laptop/review:2:blocked:2 · blocked" "a link does not carry the tasks on it, the most urgent tone does not win, or a CAGED asker's link silently vanished"
+expect "LINKASKER ,laptop/shrooms,false,true |" "a device-only asker makes a board link, or a needs-you link is possible at all"
+
+# QML delivers a click to the LAST sibling that accepts it, so the action links must sit
+# ABOVE the row's MouseArea in document order - otherwise the MouseArea takes their click
+# and "answer" opens the session instead of answering. ACK was already above it; answer,
+# nudge and cancel were not, and the reviewer hit exactly that live on 2026-10-10.
+#
+# A source-order check, not a click test, and it says so: the harness has no delegate, so
+# a real click cannot be simulated here. It fails when the order is wrong, which is what
+# it is for.
+python3 - <<'ORDER' || exit 1
+import sys
+src = open("basecamp-agents/Main.qml").read()
+mi = src.index("root.openTaskRow(trow.modelData)")
+mstart = src.rindex("MouseArea {", 0, mi)
+bad = []
+for name in ("answerLnk", "nudgeLnk", "cancelLnk", "ackLnk"):
+    li = src.index('objectName: "' + name + '"') if 'objectName: "' + name + '"' in src else src.index("id: " + name)
+    ci = src.rindex("Column {", 0, li)
+    if not (mstart < ci):
+        bad.append(name)
+if bad:
+    print("FAIL: the row's MouseArea is not below the Column holding " + ", ".join(bad))
+    print("  QML gives the click to the last sibling that accepts it, so the MouseArea")
+    print("  wins and the action opens the session instead of running")
+    sys.exit(1)
+print("  agents panel: answer, nudge, cancel and ACK all sit above the row's MouseArea")
+ORDER
+expect "LOAD laptop/review=6 owed,laptop/shrooms=2 asked,pi5/jimmy=2 asked" "a card does not show what it owes and what it is waiting for"
 expect "NEEDSYOU true,false,false,false,false,false,false" "a card is amber without a needs-you task, or is not amber with one"
 # This device first: an agent on the machine Basecamp runs on is no peer of it.
 expect "PROBED=desk|office|fdb0:9afc:a5ef:1111:2222:3333:4444:5555;laptop|office|fdb0:9afc:a5ef:388c" "this device's own agent is not looked for"
@@ -268,10 +307,10 @@ expect "JUMPROW true,false,false,false,false" "a jump matches something that is 
 expect "JUMPQ [shrooms task laptop/review:m1" "the search fallback does not look for the task id"
 expect "ACKPATH /v1/tasks/jimmy:m1/ack,/v1/tasks//ack" "the ack path is not the one the core forwards"
 expect "UNACKED a,d" "a bulk ack would sweep up a task that is still running or already acked"
-expect "STABLE false,true,quiet 1h|quiet 2h" "a task row changes with the clock, so the panel moves under the cursor"
+expect "STABLE false,true,quiet 5m|quiet 1h" "a task row changes with the clock, so the panel moves under the cursor"
 expect "BADGEHIT n=3 bad=0" "the link badges were not drawn where they can be tapped"
 expect "TASKWATCH fd00::1 shrooms 300" "tapping a task opens its session with one event instead of the tail"
-expect "LIVELINK n=1 pair=laptop/shrooms>laptop/jimmy count=1 tone=input-required" "the live-shaped link is not built from a real task"
+expect "LIVELINK n=1 pair=laptop/shrooms>laptop/jimmy count=1 tone=blocked" "the live-shaped link is not built from a real task"
 expect "LIVEFILTER laptop/jimmy>laptop/shrooms n=1" "tapping that link's badge would show an EMPTY panel"
 expect "PAIRKEY a/y>b/x|a/y>b/x|a/y>a/y|" "a link in the other direction is not the same link"
 expect "DEEPJUMP litMax=20 want=20 has20=true evs=400 tail=401" "the jump to a task OUTSIDE the loaded tail never lights - the reviewer's live pass: nothing lit, nothing moves"
