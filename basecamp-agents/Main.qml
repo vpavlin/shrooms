@@ -1664,10 +1664,18 @@ Item {
         })
     }
     function ackAllUnacked() {
-        var rows = unackedRows(root.taskPanelList)
-        for (var i = 0; i < rows.length; i++) ackTask(rows[i], true)
-        if (rows.length > 0) { root.said = "acked " + rows.length + " tasks"; root.saidBad = false }
-        refreshAgents()
+        // Folded, the panel has no unacked rows to read: the tasks themselves are asked.
+        var rows = unackedRows(taskPanelRows(agentHosts, linkFilter, true))
+        // Gone from the panel first, then sent: each send waits for its agent, and
+        // the list should not sit there while dozens of them go out.
+        markAcked(rows.map(function(r) { return r.id }), true)
+        Qt.callLater(function() {
+            var failed = 0
+            for (var i = 0; i < rows.length; i++) if (!ackTask(rows[i], true)) failed++
+            root.said = failed ? "could not ack " + failed + " of " + rows.length : "acked " + rows.length + " tasks"
+            root.saidBad = failed > 0
+            refreshAgents()
+        })
         return rows.length
     }
     function ackTask(row, quiet) {
@@ -1676,8 +1684,10 @@ Item {
         // /a2a/<session> came back an error and the panel said "could not ack" - the ack
         // could never work from Basecamp at all (2026-10-10). The agent grew
         // POST /v1/tasks/{id}/ack for this.
+        markAcked([row.id], true)
         var refusal = ackRefusal(agentCall("agentPost", [row.address, ackPath(row.id), ""]))
         if (refusal !== null) {
+            markAcked([row.id], false)
             root.said = "could not ack " + row.id + (refusal === "no reply" ? "" : ": " + refusal)
             root.saidBad = true
             return false
@@ -1982,6 +1992,8 @@ Item {
             for (var j = 0; j < ts.length; j++) {
                 var t = ts[j], g = taskGroup(t)
                 if (g === "done") continue
+                // Acked here and not yet reported so by its agent: gone at once.
+                if (root.ackedHere[t.id]) continue
                 var md = t.metadata || {}, who = md["shrooms/session"] || ""
                 var from = md["shrooms/from"] || ""
                 // A row is never a gap: a task from an older agent may have no title, no
@@ -2059,7 +2071,10 @@ Item {
         if (!pair) return rows
         return rows.filter(function(r) { return panelPair(r) === pair })
     }
-    function taskPanelRows(hosts, pair) {
+    // showDone false folds "Done, unacked" into its header: the list is what needs a
+    // person and what is under way, not a pile of finished work (2026-10-10). Left out,
+    // everything is shown.
+    function taskPanelRows(hosts, pair, showDone) {
         var rows = linkFiltered(taskRows(hosts), pair), out = [], last = null
         for (var i = 0; i < rows.length; i++) {
             if (rows[i].group !== last) {
@@ -2067,16 +2082,26 @@ Item {
                 out.push({ kind: "header", group: last, label: taskGroupLabel(last),
                            count: rows.filter(function(r) { return r.group === last }).length })
             }
+            if (showDone === false && rows[i].group === "unacked") continue
             out.push(Object.assign({ kind: "task" }, rows[i]))
         }
         return out
+    }
+    property bool showDone: false
+    // Tasks acked from here, by id, until their agents report them so: an ACK takes
+    // the row away at once instead of after the next round of every agent.
+    property var ackedHere: ({})
+    function markAcked(ids, on) {
+        var next = Object.assign({}, root.ackedHere)
+        for (var i = 0; i < ids.length; i++) { if (on) next[ids[i]] = true; else delete next[ids[i]] }
+        root.ackedHere = next
     }
     // The pair a link tap filtered to, or  for all of them.
     property string linkFilter: ""
     // Where the link badges were drawn, so a tap on one can filter the panel to its
     // pair. Written by the canvas, read by the tap handler.
     property var badgeHit: []
-    readonly property var taskPanelList: taskPanelRows(agentHosts, linkFilter)
+    readonly property var taskPanelList: taskPanelRows(agentHosts, linkFilter, showDone)
 
     function edgeTint(state) {
         return state === "working" ? cPhosphor : state === "input-required" ? cAmber : state === "stalled" ? cRust : cAsh
@@ -3295,6 +3320,16 @@ Item {
                                 visible: trow.modelData.kind === "header" && trow.modelData.group === "unacked"
                                 text: "ACK all"; base: cAmber; font.pixelSize: root.fs(9)
                                 onClicked: Qt.callLater(root.ackAllUnacked)
+                            }
+                            Lnk {
+                                objectName: "showDone"
+                                anchors.right: parent.right
+                                anchors.rightMargin: root.sz(80)
+                                anchors.top: parent.top
+                                anchors.topMargin: root.sz(6)
+                                visible: trow.modelData.kind === "header" && trow.modelData.group === "unacked"
+                                text: root.showDone ? "hide" : "show"; base: cPhosphor; font.pixelSize: root.fs(9)
+                                onClicked: root.showDone = !root.showDone
                             }
                             Text {
                                 anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top

@@ -103,4 +103,23 @@ class AgentTasksTest {
         assertEquals(true, t.queued)
         assertEquals("queued", AgentTasks.age(AgentTasks.group(t), 5, 10, t.queued))
     }
+
+    // The list kept on the phone comes back as it was, so the screen opens with it.
+    @Test fun theKeptListComesBackAsItWas() {
+        val h = AgentHost("pi5", "office", "fd00::2", emptyList())
+        val rows = AgentTasks.rows(listOf(h to listOf(
+            task("a:1", "input-required", at = 5, asked = "named", request = "From X\nmore"),
+            AgentTask("a:2", "a", "pi5.office", "submitted", queued = true),
+        )))
+        assertEquals(rows, TaskCache.decode(TaskCache.encode(rows)))
+        assertEquals(emptyList<TaskRow>(), TaskCache.decode("not json"))
+    }
+
+    // ACK moves the row at once: acknowledged here, it leaves the list before the agent answers.
+    @Test fun anAckedTaskLeavesTheListAtOnce() {
+        val h = AgentHost("pi5", "office", "fd00::2", emptyList())
+        val per = listOf(h to listOf(task("a:1", "completed"), task("a:2", "completed")))
+        assertEquals(listOf("a:2"), AgentTasks.rows(AgentTasks.withAcked(per, setOf("a:1"))).map { it.task.id })
+        assertEquals(2, AgentTasks.rows(AgentTasks.withAcked(per, emptySet())).size)
+    }
 }

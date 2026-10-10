@@ -1,5 +1,6 @@
 package xyz.vpavlin.shrooms
 
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -122,6 +123,10 @@ object AgentTasks {
             .distinctBy { it.task.id + "|" + it.task.from }
             .sortedWith(compareBy<TaskRow>({ ORDER.indexOf(it.group) }, { it.task.at }))
 
+    /** The tasks with those acknowledged here marked so, until their agents say the same. */
+    fun withAcked(perHost: List<Pair<AgentHost, List<AgentTask>>>, ids: Set<String>): List<Pair<AgentHost, List<AgentTask>>> =
+        if (ids.isEmpty()) perHost else perHost.map { (h, ts) -> h to ts.map { if (it.id in ids) it.copy(acked = true) else it } }
+
     /**
      * Of a search for the task, the hit that IS its arrival: the agent's own
      * header starts "[shrooms task <id> from"; follow-ups say "— more from".
@@ -157,3 +162,31 @@ object AgentTasks {
         )
     }
 }
+
+/**
+ * The tasks list as last seen, kept on the phone so the screen opens with it
+ * at once and the agents' answers replace it as they come (as HostCache does
+ * for the session list).
+ */
+object TaskCache {
+    fun encode(rows: List<TaskRow>): String = JSONArray().apply {
+        for (r in rows) put(JSONObject()
+            .put("host", r.host).put("address", r.address).put("mesh", r.mesh)
+            .put("id", r.task.id).put("session", r.task.session).put("from", r.task.from)
+            .put("state", r.task.state).put("asked", r.task.asked).put("request", r.task.request.take(500))
+            .put("latest", r.task.latest.take(500)).put("at", r.task.at)
+            .put("acked", r.task.acked).put("stalled", r.task.stalled).put("queued", r.task.queued))
+    }.toString()
+
+    fun decode(s: String): List<TaskRow> = runCatching {
+        val a = JSONArray(s)
+        (0 until a.length()).map { i ->
+            val o = a.getJSONObject(i)
+            val t = AgentTask(o.optString("id"), o.optString("session"), o.optString("from"), o.optString("state"),
+                o.optString("asked"), o.optString("request"), o.optString("latest"), o.optLong("at"),
+                o.optBoolean("acked"), o.optBoolean("stalled"), o.optBoolean("queued"))
+            TaskRow(o.optString("host"), o.optString("address"), o.optString("mesh"), t, AgentTasks.group(t))
+        }
+    }.getOrDefault(emptyList())
+}
+

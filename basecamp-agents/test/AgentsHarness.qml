@@ -742,6 +742,14 @@ Item {
             // The panel's rows, with a header per non-empty group.
             var prows = view.taskPanelRows(top.taskHosts)
             console.error("PANEL " + prows.map(function(r) { return r.kind === "header" ? "[" + r.label + " " + r.count + "]" : r.id.split(":")[1] }).join(" "))
+            // Folded, Done keeps its header and count but not its rows.
+            var folded = view.taskPanelRows(top.taskHosts, "", false)
+            console.error("PANELFOLDED " + folded.map(function(r) { return r.kind === "header" ? "[" + r.label + " " + r.count + "]" : r.id.split(":")[1] }).join(" ") + " |")
+            // An ACK takes the row away at once, before its agent says so; undone, it is back.
+            view.markAcked(["review:m4"], true)
+            var afterAck = view.taskRows(top.taskHosts).map(function(r) { return r.id.split(":")[1] }).join(",")
+            view.markAcked(["review:m4"], false)
+            console.error("ACKEDHERE " + afterAck + " | " + view.taskRows(top.taskHosts).map(function(r) { return r.id.split(":")[1] }).join(","))
             // The links carrying their tasks, and the load on each card.
             var links = view.boardLinkList(top.taskHosts)
             console.error("LINKS " + links.map(function(e) { return e.from + ">" + e.to + ":" + e.count + ":" + e.tone + ":" + view.linkLabel(e) }).join(","))

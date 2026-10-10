@@ -45,6 +45,10 @@ suspend fun fetchTasks(hosts: List<AgentHost>): List<Pair<AgentHost, List<AgentT
     }.awaitAll().filterNotNull()
 }
 
+/** The machines worth asking: one per address, and only those the list has heard from lately. */
+fun taskTargets(hosts: List<AgentHost>, now: Long = System.currentTimeMillis()): List<AgentHost> =
+    hosts.filter { HostCache.reachable(it, now) }.distinctBy { it.address }
+
 /**
  * The tasks between agents, grouped by what a person has to do about them,
  * with ACK where a result waits to be seen and a tap that opens the worker's
@@ -52,30 +56,70 @@ suspend fun fetchTasks(hosts: List<AgentHost>): List<Pair<AgentHost, List<AgentT
  * panel; the board itself, a wide-screen layout, stays on the desktop.
  */
 @Composable
-fun TasksScreen(hosts: List<AgentHost>, onOpen: (TaskRow) -> Unit, onBack: () -> Unit) {
-    var rows by remember { mutableStateOf<List<TaskRow>?>(null) }
+fun TasksScreen(hosts: List<AgentHost>, initial: List<TaskRow>?, onRows: (List<TaskRow>) -> Unit,
+                onOpen: (TaskRow) -> Unit, onBack: () -> Unit) {
+    // What each machine said last, by address: seeded with the rows the
+    // Agents screen already had (or the phone kept), so the list is there at
+    // once; each machine's answer replaces its part as soon as it comes,
+    // without waiting for the slowest one.
+    var perHost by remember {
+        mutableStateOf(initial.orEmpty().groupBy { it.address }.mapValues { (_, rs) ->
+            AgentHost(rs[0].host, rs[0].mesh, rs[0].address, emptyList()) to rs.map { it.task }
+        })
+    }
+    var answered by remember { mutableStateOf(initial != null) }
+    var localAcked by remember { mutableStateOf(setOf<String>()) }
+    val rows = AgentTasks.rows(AgentTasks.withAcked(perHost.values.toList(), localAcked))
     var said by remember { mutableStateOf("") }
     var round by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
-    val targets = remember(hosts) { hosts.distinctBy { it.address } }
+    val targets = remember(hosts) { taskTargets(hosts) }
     LaunchedEffect(targets, round) {
         while (isActive) {
-            rows = AgentTasks.rows(fetchTasks(targets))
+            coroutineScope {
+                for (h in targets) launch {
+                    val ts = withContext(Dispatchers.IO) { runCatching { AgentClient(h.address).tasks() }.getOrNull() }
+                    if (ts != null) {
+                        perHost = perHost + (h.address to (h to ts))
+                        answered = true
+                    }
+                }
+            }
+            onRows(AgentTasks.rows(AgentTasks.withAcked(perHost.values.toList(), localAcked)))
             delay(10_000)
         }
     }
+    // Marks tasks acknowledged here, at once: the agents' answers come back
+    // the same, and waiting for every machine before the row moved made ACK
+    // look like it did nothing (2026-10-10).
+    // Kept as a set over whatever the agents say, so a refresh that started
+    // before the ACK cannot bring the row back for a round.
+    fun markAcked(ids: Set<String>, on: Boolean) {
+        localAcked = if (on) localAcked + ids else localAcked - ids
+        onRows(AgentTasks.rows(AgentTasks.withAcked(perHost.values.toList(), localAcked)))
+    }
     fun ack(rs: List<TaskRow>) {
+        if (rs.isEmpty()) return
+        markAcked(rs.map { it.task.id }.toSet(), true)
         scope.launch {
+            // All at once: ACK ALL on a long list one by one took a while.
             val failed = withContext(Dispatchers.IO) {
-                rs.mapNotNull { r -> runCatching { AgentClient(r.address).ack(r.task.id) }.exceptionOrNull()?.let { r to it } }
+                coroutineScope {
+                    rs.map { r -> async { runCatching { AgentClient(r.address).ack(r.task.id) }.exceptionOrNull()?.let { r to it } } }
+                        .awaitAll().filterNotNull()
+                }
             }
+            // What an agent refused comes back, with why.
+            if (failed.isNotEmpty()) markAcked(failed.map { it.first.task.id }.toSet(), false)
             said = when {
                 failed.isEmpty() -> if (rs.size == 1) "acked ${AgentTasks.title(rs[0].task)}" else "acked ${rs.size}"
                 else -> "could not ack ${failed.size}: ${failed[0].second.message}"
             }
-            round++
         }
     }
+    // Finished tasks are folded into one line: the list is what needs you
+    // and what is under way, not a pile of things already done.
+    var showDone by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().background(Palette.Void).padding(horizontal = 16.dp, vertical = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("‹", color = Palette.Phosphor, style = MaterialTheme.typography.titleLarge,
@@ -84,7 +128,7 @@ fun TasksScreen(hosts: List<AgentHost>, onOpen: (TaskRow) -> Unit, onBack: () ->
         }
         if (said.isNotEmpty()) Text(said, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
             color = if (said.startsWith("could not")) Palette.Rust else Palette.Ash, modifier = Modifier.padding(top = 6.dp))
-        val rs = rows
+        val rs = rows.takeIf { it.isNotEmpty() || answered }
         when {
             rs == null -> Text("asking the agents…", style = MaterialTheme.typography.bodySmall, color = Palette.Ash,
                 modifier = Modifier.padding(top = 16.dp))
@@ -100,11 +144,14 @@ fun TasksScreen(hosts: List<AgentHost>, onOpen: (TaskRow) -> Unit, onBack: () ->
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
                         Text("${AgentTasks.label(g).uppercase()}  ${inGroup.size}", style = MaterialTheme.typography.labelSmall,
                             color = if (g == AgentTasks.NEEDS_YOU) Palette.Amber else Palette.Ash)
+                        if (g == AgentTasks.UNACKED) Text(if (showDone) "hide" else "show", style = MaterialTheme.typography.labelSmall,
+                            color = Palette.Phosphor, modifier = Modifier.clickable { showDone = !showDone }.padding(start = 14.dp))
                         Spacer(Modifier.weight(1f))
                         if (g == AgentTasks.UNACKED) Text("ACK ALL", style = MaterialTheme.typography.labelSmall,
                             color = Palette.Amber, modifier = Modifier.clickable { ack(inGroup) }.padding(start = 12.dp))
                     }
                 }
+                if (g == AgentTasks.UNACKED && !showDone) continue
                 items(inGroup, key = { it.host + "/" + it.task.id }) { r -> TaskRowView(r, now, onOpen = { onOpen(r) }, onAck = { ack(listOf(r)) }) }
             }
         }

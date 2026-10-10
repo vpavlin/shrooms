@@ -242,6 +242,8 @@ expect "AGELABEL quiet 1h,done 2h," "the age is not labelled for what it measure
 expect "BAREROW jimmy:no-title-1" "a task with no title leaves a gap instead of falling back to its id"
 expect "ACKERR no such task | null | no reply" "an ACK the agent refused is not told apart from one that was accepted"
 expect "PANEL [Needs you 2] m1 m6 [Working 2] m2 m7 [Stalled 1] m3 [Done, unacked 1] m4" "the panel does not head each non-empty group, or a task that is both blocked and stalled is not in Needs you"
+expect "PANELFOLDED [Needs you 2] m1 m6 [Working 2] m2 m7 [Stalled 1] m3 [Done, unacked 1] |" "folded, the panel still lists the finished tasks (or lost their header)"
+expect "ACKEDHERE m1,m6,m2,m7,m3 | m1,m6,m2,m7,m3,m4" "an ACK does not take the row away at once, or an undone one does not come back"
 expect "LINKS pi5/jimmy>laptop/review:2:input-required:2 · needs you,laptop/shrooms>laptop/review:2:stalled:2 · stalled" "a link does not carry the tasks on it, the most urgent tone does not win, or a CAGED asker's link silently vanished"
 expect "LOAD laptop/review=5 owed,laptop/shrooms=2 asked,pi5/jimmy=2 asked" "a card does not show what it owes and what it is waiting for"
 expect "NEEDSYOU true,false,false,false,false,false,false" "a card is amber without a needs-you task, or is not amber with one"

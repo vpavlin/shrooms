@@ -364,7 +364,13 @@ fun AgentsScreen(peers: List<Peer>, onClose: () -> Unit, initial: OpenSession? =
     // The tasks between agents (AgentTasks): open, opened from, and how many wait on a person.
     var tasksOpen by remember { mutableStateOf(false) }
     var fromTasks by remember { mutableStateOf(false) }
-    var needsYou by remember { mutableStateOf(0) }
+    // The tasks as last fetched, kept on the phone: the tasks screen opens with them.
+    var taskRows by remember { mutableStateOf(cachePrefs.getString("tasks", null)?.let { TaskCache.decode(it) }) }
+    fun keepTasks(rows: List<TaskRow>) {
+        taskRows = rows
+        cachePrefs.edit().putString("tasks", TaskCache.encode(rows)).apply()
+    }
+    val needsYou = taskRows.orEmpty().count { it.group == AgentTasks.NEEDS_YOU }
     if (voiceOpen) VoiceDialog { voiceOpen = false }
     // A session awaiting confirmation that it should be deleted.
     var deleting by remember { mutableStateOf<Pair<AgentHost, AgentSession>?>(null) }
@@ -376,15 +382,18 @@ fun AgentsScreen(peers: List<Peer>, onClose: () -> Unit, initial: OpenSession? =
     LaunchedEffect(refresh, open, named) {
         if (open != null) return@LaunchedEffect
         while (isActive) {
+            // The tasks from the machines already known, alongside the search
+            // for machines rather than after it, which takes a while; not
+            // while the tasks screen is open, which asks for itself.
+            val tasks = if (tasksOpen) null else async { fetchTasks(taskTargets(hosts.orEmpty())) }
             val found = discoverAgents(peers, named, agentCandidates(AgentHosts.peers(ctx), hosts.orEmpty()))
             val merged = HostCache.merge(hosts.orEmpty(), found, System.currentTimeMillis())
             hosts = merged
             cachePrefs.edit().putString("cache", HostCache.encode(merged)).apply()
             // The watcher keeps asking a machine that missed a round, too.
             if (merged.isNotEmpty()) AgentHosts.save(ctx, merged.map { AgentHosts.Host(it.name, it.mesh, it.address) })
-            val now = System.currentTimeMillis()
-            needsYou = AgentTasks.rows(fetchTasks(merged.filter { HostCache.reachable(it, now) }))
-                .count { it.group == AgentTasks.NEEDS_YOU }
+            // Kept when some machine answered, so a round with none does not empty the list.
+            tasks?.await()?.let { if (it.isNotEmpty()) keepTasks(AgentTasks.rows(it)) }
             delay(10_000)
         }
     }
@@ -406,7 +415,7 @@ fun AgentsScreen(peers: List<Peer>, onClose: () -> Unit, initial: OpenSession? =
         }
         if (tasksOpen) {
             BackHandler { tasksOpen = false }
-            TasksScreen(hosts.orEmpty(), onOpen = { r ->
+            TasksScreen(hosts.orEmpty(), taskRows, onRows = { keepTasks(it) }, onOpen = { r ->
                 tasksOpen = false
                 fromTasks = true
                 // A queued task has not arrived yet: its session opens at the end.
