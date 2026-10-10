@@ -991,6 +991,22 @@ Item {
                 return
             }
         }
+        if (root.jumpToId !== "") {
+            for (i = 0; i < chatModel.count; i++) {
+                if (!isJumpRow(chatModel.get(i), root.jumpToId)) continue
+                var jat = i
+                root.chatStick = false
+                root.jumpToId = ""
+                root.jumpRef = ""
+                root.agentLit = chatModel.get(i).seq
+                Qt.callLater(function() { chatList.positionViewAtIndex(jat, ListView.Center) })
+                litTimer.restart()
+                return
+            }
+            // Not in the tail, and the session is not still arriving: reach back with
+            // the search the view already has, rather than a second jump path.
+            if (root.jumpRef !== "" && root.agentCaughtUp) jumpToTaskMessage()
+        }
         if (root.chatStick) Qt.callLater(function() { chatList.positionViewAtEnd() })
     }
 
@@ -1000,6 +1016,27 @@ Item {
     property bool searchBusy: false
     property var searchFound: null
     property real jumpTo: 0
+    // A jump to a TASK's message, which is a different thing from jumpTo: the task
+    // ref's second half is the message id, and the event that carried it has that id,
+    // so the match is on the id and not on a sequence.
+    property string jumpToId: ""
+    property string jumpRef: ""
+    property bool jumpViaSearch: false
+    // The message id out of a task ref ("machine/session:messageId"). A ref with no
+    // colon is not one, and the jump is then simply not armed.
+    function taskMessageId(ref) {
+        var s = String(ref || "")
+        var i = s.lastIndexOf(":")
+        return i > 0 ? s.slice(i + 1) : ""
+    }
+    // The query that reaches a message outside the loaded tail. The agent stores the
+    // task id in the message it sends, so this is the string it can be found by.
+    function taskSearchQuery(ref) { return ref ? "[shrooms task " + ref : "" }
+    // Is this model row the task's message? Pure, so the harness pins it: the async
+    // load around the jump is not something the harness can wait for.
+    function isJumpRow(r, id) { return !!r && !r.earlier && id !== "" && r.pid === id }
+    // The search fallback fires only once the session is caught up, so it cannot race
+    // a message that is still arriving - the view already tracks that as agentCaughtUp.
     // A jump back to where the reader was, after loading more: not lit, and
     // the event at the bottom of the view with what was loaded above it.
     property bool jumpQuiet: false
@@ -1020,6 +1057,12 @@ Item {
         root.searchBusy = false
         if (r.error) { root.said = "search: " + r.error; root.saidBad = true; return }
         root.searchFound = r.found || []
+        if (root.jumpViaSearch) {
+            root.jumpViaSearch = false
+            var hits = root.searchFound
+            if (hits && hits.length > 0) root.openFound(hits[0])
+            else { root.said = "no message found for " + root.jumpRef; root.saidBad = true }
+        }
     }
     // What tailReaching does on the phone (AgentChat.kt).
     // Earlier events loaded at a time, scrolled up to and asked for: the whole
@@ -1040,6 +1083,16 @@ Item {
     }
     function tailReaching(current, lastSeq, seq) {
         return current === 0 ? 0 : Math.max(current, lastSeq - seq + 1 + 20)
+    }
+    // The task's message was not in the loaded tail, so ask the agent for it. The
+    // first hit is opened with the search's own path (openFound), which widens the
+    // tail to reach it - one jump path, not two.
+    function jumpToTaskMessage() {
+        if (root.jumpRef === "") return
+        root.jumpToId = ""
+        root.jumpViaSearch = true
+        root.searchOpen = true
+        runSearch(taskSearchQuery(root.jumpRef))
     }
     function openFound(f) {
         if (!f.seq) { root.reading = f; readingDialog.open(); return }
@@ -1528,6 +1581,10 @@ Item {
         if (!row || row.kind !== "task") return
         for (var i = 0; i < agentHosts.length; i++) {
             if (agentHosts[i].name !== row.machine) continue
+            // Arm the jump BEFORE the session loads: rebuildChat matches on the id as
+            // soon as the events arrive, and falls back to the search if they never do.
+            root.jumpRef = String(row.id || "")
+            root.jumpToId = taskMessageId(row.id)
             openSession(agentHosts[i], row.session, true, true)
             return
         }
@@ -1789,6 +1846,13 @@ Item {
     // answers, straight through, grouped in the order a person needs them.
     function taskRows(hosts, now) {
         var out = []
+        // Every session key, so a row can name the asker the same way a link does
+        // (askerKey) - a link's pair is "asker>worker" and the panel filters on it.
+        var keys = {}
+        for (var k = 0; k < (hosts || []).length; k++) {
+            var ks = hosts[k].sessions || []
+            for (var q = 0; q < ks.length; q++) keys[boardKey(hosts[k], ks[q].name)] = true
+        }
         for (var i = 0; i < (hosts || []).length; i++) {
             var h = hosts[i], ts = h.tasks || []
             for (var j = 0; j < ts.length; j++) {
@@ -1803,6 +1867,7 @@ Item {
                 out.push({ id: t.id, group: g, title: title, latest: taskLatestOf(t),
                            from: from, asker: askerName(from), caged: askerCaged(from),
                            worker: who, machine: h.name, address: h.address, session: who,
+                           askerKey: askerKey(from, keys),
                            at: taskAtOf(t), age: ageOf(taskAtOf(t), now),
                            // `status.timestamp` is the last UPDATE, so this is how long the
                            // task has been QUIET, not how long since it was asked. Say which:
@@ -1822,8 +1887,19 @@ Item {
     // it. One flat list, because a QML Repeater cannot insert a header when a
     // value changes - and a group with nothing in it gets no header, so the
     // panel never shows an empty heading.
-    function taskPanelRows(hosts, now) {
-        var rows = taskRows(hosts, now), out = [], last = null
+    // The link a row belongs to, written the way a link is: "asker>worker". Pure.
+    function panelPair(row) {
+        if (!row || row.kind !== "task") return ""
+        return (row.askerKey || "") + ">" + row.machine + "/" + row.session
+    }
+    // Tapping a link filters the panel to that pair rather than opening a second list.
+    // An empty pair is every task, which is what "x all tasks" clears back to.
+    function linkFiltered(rows, pair) {
+        if (!pair) return rows
+        return rows.filter(function(r) { return panelPair(r) === pair })
+    }
+    function taskPanelRows(hosts, now, pair) {
+        var rows = linkFiltered(taskRows(hosts, now), pair), out = [], last = null
         for (var i = 0; i < rows.length; i++) {
             if (rows[i].group !== last) {
                 last = rows[i].group
@@ -1834,7 +1910,12 @@ Item {
         }
         return out
     }
-    readonly property var taskPanelList: taskPanelRows(agentHosts, nowMs)
+    // The pair a link tap filtered to, or  for all of them.
+    property string linkFilter: ""
+    // Where the link badges were drawn, so a tap on one can filter the panel to its
+    // pair. Written by the canvas, read by the tap handler.
+    property var badgeHit: []
+    readonly property var taskPanelList: taskPanelRows(agentHosts, nowMs, linkFilter)
 
     function edgeTint(state) {
         return state === "working" ? cPhosphor : state === "input-required" ? cAmber : state === "stalled" ? cRust : cAsh
@@ -2915,6 +2996,21 @@ Item {
                     // The dashes' offset: moving along a link being worked on.
                     property real march: 0
                     property int drawn: 0
+                    // A link badge is a hit target: tapping it filters the panel to that
+                    // pair, rather than opening a second list of that link's tasks.
+                    MouseArea {
+                        anchors.fill: parent
+                        onClicked: {
+                            for (var i = 0; i < root.badgeHit.length; i++) {
+                                var b = root.badgeHit[i]
+                                if (mouse.x >= b.x && mouse.x <= b.x + b.w
+                                    && mouse.y >= b.y && mouse.y <= b.y + b.h) {
+                                    root.linkFilter = b.pair
+                                    return
+                                }
+                            }
+                        }
+                    }
                     Connections { target: root; function onBoardEdgeListChanged() { links.requestPaint() } }
                     Timer {
                         interval: 90; repeat: true
@@ -2949,6 +3045,7 @@ Item {
                         // why it is coloured that way. A link that needs a person should say so
                         // where the person is looking.
                         var badges = root.boardLinkData
+                        var hits = []
                         for (var m = 0; m < badges.length; m++) {
                             var lb = badges[m]
                             var ra = rectOf(lb.from), rb = rectOf(lb.to)
@@ -2971,7 +3068,13 @@ Item {
                             ctx.textAlign = "center"
                             ctx.textBaseline = "middle"
                             ctx.fillText(label, mx, my)
+                            // Where this badge is, so a tap on it can filter the panel
+                            // to that pair. Recorded here because this is the only place
+                            // that knows where the badge ended up.
+                            hits.push({ x: mx - bw / 2, y: my - root.sz(7), w: bw, h: root.sz(14),
+                                        pair: lb.from + ">" + lb.to })
                         }
+                        root.badgeHit = hits
                     }
                 }
             }
@@ -2983,7 +3086,9 @@ Item {
         Rectangle {
             id: taskPanel
             objectName: "taskPanel"
-            visible: root.boardMode && root.taskPanelList.length > 0
+            // Also shown when a filter is on and matches nothing: otherwise filtering to a
+            // pair with no tasks left hides the panel AND the only way back to all tasks.
+            visible: root.boardMode && (root.taskPanelList.length > 0 || root.linkFilter !== "")
             Layout.preferredWidth: Math.min(root.sz(380), Math.max(root.sz(240), root.width * 0.32))
             Layout.fillHeight: true
             color: "transparent"
@@ -2994,6 +3099,15 @@ Item {
                 Column {
                     width: taskPanel.width
                     spacing: root.sz(2)
+                    // What the panel is filtered to, and the way back to everything.
+                    Lnk {
+                        objectName: "allTasks"
+                        visible: root.linkFilter !== ""
+                        text: "x all tasks  (" + root.linkFilter + ")"
+                        font.pixelSize: root.fs(10)
+                        base: cAmber
+                        onClicked: root.linkFilter = ""
+                    }
                     Repeater {
                         model: root.taskPanelList
                         delegate: Item {

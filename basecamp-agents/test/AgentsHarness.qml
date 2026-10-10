@@ -349,6 +349,23 @@ Item {
             console.error("JUMP lit=" + view.agentLit + " row=" + litRow + " kind=" + (litRow >= 0 ? view.chatModelAt(litRow).kind : "")
                           + " searchOpen=" + view.searchOpen + " stick=" + view.chatStick
                           + " reach=" + view.tailReaching(300, 1000, 500) + "," + view.tailReaching(0, 1000, 5))
+            // Tapping a task opens its session and arms a jump to the message that carried
+            // it. The id is the ref after the colon; the match is on the event id, not a
+            // sequence; and a message outside the tail is reached with the search.
+            console.error("JUMPID " + [view.taskMessageId("laptop/review:abc-123"),
+                view.taskMessageId("nocolon"), view.taskMessageId("")].join(","))
+            console.error("JUMPROW " + [view.isJumpRow({ pid: "x" }, "x"),
+                view.isJumpRow({ pid: "y" }, "x"), view.isJumpRow({ pid: "x", earlier: true }, "x"),
+                view.isJumpRow({ pid: "x" }, ""), view.isJumpRow(null, "x")].join(","))
+            console.error("JUMPQ " + view.taskSearchQuery("laptop/review:m1"))
+            // Tapping a link filters the panel to that pair; "x all tasks" clears it.
+            var fr = [{ kind: "task", askerKey: "pi5/jimmy", machine: "laptop", session: "review" },
+                      { kind: "task", askerKey: "laptop/shrooms", machine: "laptop", session: "review" }]
+            console.error("PAIR " + [view.panelPair(fr[0]), view.panelPair({ kind: "header" }),
+                view.linkFiltered(fr, "pi5/jimmy>laptop/review").length,
+                view.linkFiltered(fr, "laptop/shrooms>laptop/review").length,
+                view.linkFiltered(fr, "nobody>x").length,
+                view.linkFiltered(fr, "").length].join(","))
 
             // A question from the model: a card of its own, the options picked
             // (two of three, given in the order offered), and the answer sent.
