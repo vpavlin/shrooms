@@ -16,12 +16,38 @@ Item {
     // An older shrooms_core: no async join, no per-mesh services.
     property bool oldCore: false
     property bool firstJoinAnswer: false
+    property bool keycardInstalled: true
+    property int holdPolls: 0
+    property int signPolls: 0
 
     function fakeCall(module, method, args) {
         calls.push(method + " " + JSON.stringify(args))
         console.error("CALL " + method + " " + JSON.stringify(args))
         if (oldCore && (method === "joinWithInviteStart" || method === "servicesOf")) return ""
+        if (module === "keycard") {
+            if (!keycardInstalled) return ""
+            switch (method) {
+            case "requestSign": return JSON.stringify({ signId: "sig-1", status: "pending" })
+            case "checkSignStatus":
+                signPolls++
+                return signPolls < 2 ? JSON.stringify({ signId: "sig-1", status: "pending" })
+                                     : JSON.stringify({ signId: "sig-1", status: "complete", signature: "3045ab" })
+            }
+            return JSON.stringify({ ok: true })
+        }
         switch (method) {
+        case "inviteNew": return JSON.stringify({ token: "TOKEN", grouped: "TOK-EN", uri: "shrooms://enrol?token=TOKEN",
+                                                  qr: ["101", "010", "101"], ttl_s: 900 })
+        case "inviteHoldStart": return JSON.stringify({ started: true })
+        case "inviteHoldProgress":
+            holdPolls++
+            return holdPolls < 2 ? JSON.stringify({ running: true })
+                : JSON.stringify({ done: true, result: { device_pub: "dd", wg_pub: "ww", seal_pub: "ss",
+                                                         name: "kitchen-pi", eph_pub: "ee" } })
+        case "inviteDraft": return JSON.stringify({ draft: "RFJBRlQ=", digest: "ab".repeat(32),
+                                                    admin_keys: ["AKEY1", "AKEY2"], card_only: true })
+        case "cardPath": return JSON.stringify({ bip32_path: "m/64265'/3'/0'", account: 3, known: true })
+        case "inviteReply": return JSON.stringify({ ok: true })
         case "status": return statusDoc
         case "getPref": return ""
         case "servicesOf": return JSON.stringify({ services: ["svc-" + args[0] + ":80"] })
@@ -152,6 +178,39 @@ Item {
             view.startJoin("tok", "home")
             check(called("joinWithInvite ") && !view.joining && view.said.indexOf("timeout") >= 0,
                   "an older core joins the blocking way and says so: " + view.said)
+
+            // Inviting with a card: mint, hold, a device comes, the card signs
+            // through the Keycard module, the daemon admits.
+            view.startInvite("default")
+            check(view.invite.step === "open" && view.invite.grouped === "TOK-EN" && view.invite.qr.length === 3,
+                  "an invite opens with its token and QR: " + JSON.stringify(view.invite))
+            check(lastCall("inviteHoldStart") === 'inviteHoldStart ["TOKEN","default"]', "held on the right mesh: " + lastCall("inviteHoldStart"))
+            view.pollInvite()
+            check(view.invite.step === "open", "still open while the daemon holds it")
+            view.pollInvite()
+            check(view.invite.step === "joiner" && view.invite.joiner.name === "kitchen-pi", "the joining device is shown: " + view.invite.step)
+            view.admitInvite()
+            check(lastCall("inviteDraft") === 'inviteDraft ["default","dd","ww","ss","kitchen-pi"]', "drafted for that device: " + lastCall("inviteDraft"))
+            check(lastCall("cardPath") === 'cardPath ["AKEY1,AKEY2"]', "the account looked up by the mesh's keys")
+            var rs = lastCall("requestSign")
+            check(rs.indexOf("m/64265'/3'/0'") > 0 && rs.indexOf('"scheme\\":\\"ecdsa') > 0 && rs.indexOf("abababab") > 0,
+                  "the card asked to sign the digest at the mesh's path: " + rs)
+            check(view.invite.step === "card", "waiting on the card")
+            view.pollInvite()
+            check(view.invite.step === "card", "still waiting while the card is pending")
+            view.pollInvite()
+            check(view.invite.step === "done", "admitted once the card signed: " + view.invite.step + " " + (view.invite.error || ""))
+            check(lastCall("inviteReply") === 'inviteReply ["TOKEN","ee","kitchen-pi","default","RFJBRlQ=","3045ab"]',
+                  "the reply carries the draft and the card's signature: " + lastCall("inviteReply"))
+
+            // No Keycard module: said, not hung.
+            view.invite = { step: "idle" }
+            holdPolls = 0
+            keycardInstalled = false
+            view.startInvite("default"); view.pollInvite(); view.pollInvite(); view.admitInvite()
+            check(view.invite.step === "failed" && view.invite.error.indexOf("Keycard module") >= 0,
+                  "a missing Keycard module is named: " + view.invite.error)
+            keycardInstalled = true
 
             // A daemon with no mesh yet: the view offers the first join, and
             // the daemon's answer (no "result", it restarts itself) is read.

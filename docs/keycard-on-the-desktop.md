@@ -1,5 +1,10 @@
 # Inviting from Basecamp with a Keycard
 
+> **Update, 2026-10-10.** Built: [ADR-050](adr/050-basecamp-at-parity-with-the-phone.md)
+> has the shape it took (`/invite/new`, `/invite/draft`, a signature on
+> `/invite/reply`, and the view asking keycard-basecamp to sign). What follows is
+> the reasoning that led there.
+
 > **Update, 2026-08-26.** The first half of this is built: the card protocol
 > moved out of `mobile/` into `internal/keycard`, a PC/SC transport ships in
 > every build (it opens libpcsclite at first use rather than linking it, so it

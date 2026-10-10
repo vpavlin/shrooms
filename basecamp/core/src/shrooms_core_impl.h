@@ -390,6 +390,53 @@ public:
     std::string joinProgress();
 
     /**
+     * @brief Mints an invite for a mesh: `{"token","grouped","uri","ttl_s"}`.
+     *
+     * The token is random and the daemon makes it, as `shrooms invite` does;
+     * the URI is what the QR carries, with a peer to bootstrap from.
+     */
+    std::string inviteNew(const std::string& mesh);
+
+    /**
+     * @brief Holds an invite open, on a thread of its own, until a device
+     * redeems it or it expires. Poll inviteHoldProgress(); its result is the
+     * joining device's keys and name, or `{"ok":true}` when nobody came.
+     */
+    std::string inviteHoldStart(const std::string& token, const std::string& mesh);
+    std::string inviteHoldProgress();
+    /** @brief Stops waiting for the invite held last. */
+    std::string inviteHoldCancel();
+
+    /**
+     * @brief The credential to sign for a joining device, unsigned, and the
+     * digest the admin key has to sign: `{"draft","digest","admin_keys",…}`,
+     * or `{"no_authority":true}` for a mesh with no admin keys.
+     */
+    std::string inviteDraft(const std::string& mesh, const std::string& devicePub,
+                            const std::string& wgPub, const std::string& sealPub,
+                            const std::string& name);
+
+    /**
+     * @brief Admits the device: the draft and the signature made for it,
+     * which the daemon checks before publishing. Both empty for a mesh with
+     * no admin keys.
+     */
+    std::string inviteReply(const std::string& token, const std::string& ephPub,
+                            const std::string& name, const std::string& mesh,
+                            const std::string& draft, const std::string& signature);
+
+    /**
+     * @brief Which derivation path on the card signs for a mesh, found from
+     * the admin files `shrooms admin init --keycard` wrote:
+     * `{"bip32_path":"m/64265'/N'/0'","account":N,"known":bool}`.
+     *
+     * @param adminKeysCsv The mesh's admin keys, as /invite/draft lists them.
+     * Not known means account 0, which is every card mesh minted before
+     * accounts existed.
+     */
+    std::string cardPath(const std::string& adminKeysCsv);
+
+    /**
      * @brief Starts looking for agents (docs/agents.md) among the given peers,
      * in the background, and returns what has been found so far.
      *

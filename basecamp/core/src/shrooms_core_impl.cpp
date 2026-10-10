@@ -14,6 +14,7 @@
 #include <thread>
 #include <vector>
 
+#include <dirent.h>
 #include <sys/stat.h>
 
 #include <sys/socket.h>
@@ -851,86 +852,255 @@ std::string ShroomsCoreImpl::setBlindRelaysWithToken(const std::string& label, c
                             ",\"token\":" + jsonString(token) + "}");
 }
 
-// --- joining, off the view's thread -------------------------------------------
+// --- long calls, off the view's thread -----------------------------------------
 //
 // A join waits for the far side — up to two minutes by the daemon's default —
-// and every other call here gives up after two seconds, because the view calls
-// them on its own thread and a blocked call is a frozen Basecamp. So a join
-// called the ordinary way reported a timeout every time, including the times
-// it went on to succeed. This runs it on a thread of its own, with a deadline
-// that fits it, and the view asks how it is going.
+// and so does holding an invite open, for up to fifteen. Every other call here
+// gives up after two seconds, because the view calls them on its own thread and
+// a blocked call is a frozen Basecamp. So a join called the ordinary way
+// reported a timeout every time, including the times it went on to succeed.
+// These run on a thread of their own, with a deadline that fits, and the view
+// asks how they are going.
 
 namespace {
 
-struct JoinState {
-    std::mutex mu;
+struct LongCall {
     bool running = false;
-    std::string result;   // the last join's answer, JSON
-    unsigned serial = 0;  // which join that answer belongs to
+    std::string result;   // the last call's answer, JSON
+    unsigned serial = 0;  // which call that answer belongs to
 };
 
-JoinState& joinState()
+std::mutex& longMu()
 {
-    static JoinState s;
-    return s;
+    static std::mutex mu;
+    return mu;
+}
+
+std::map<std::string, LongCall>& longCalls()
+{
+    static std::map<std::string, LongCall> calls;
+    return calls;
 }
 
 // The daemon's own wait is two minutes; this is that and room to answer.
 constexpr int kJoinTimeoutS = 150;
+// An invite stays open fifteen minutes (invite.DefaultTTL).
+constexpr int kHoldTimeoutS = 16 * 60;
+
+/**
+ * Starts a POST on a thread and returns at once. A call already running under
+ * the same name is refused when `exclusive`, and otherwise superseded: its
+ * answer, when it comes, is dropped.
+ */
+std::string startLong(const std::string& name, const std::string& target, const std::string& body,
+                      int timeoutS, bool exclusive)
+{
+    unsigned serial;
+    {
+        std::lock_guard<std::mutex> lock(longMu());
+        LongCall& c = longCalls()[name];
+        if (c.running && exclusive) {
+            return errorJson("a " + name + " is already running", "wait for it to finish");
+        }
+        c.running = true;
+        c.result.clear();
+        serial = ++c.serial;
+    }
+    std::thread([name, target, body, timeoutS, serial]() {
+        std::string out, err, firstErr;
+        RequestOutcome outcome = RequestOutcome::Unreachable;
+        // Not retried on the legacy path once anything answered: a daemon that
+        // heard the request may have acted, and joining twice spends the
+        // invite.
+        for (const char* path : {kSocket, kLegacySocket}) {
+            outcome = httpRequestUnix(path, "POST", target, "application/json", body, out, err, timeoutS);
+            if (outcome != RequestOutcome::Unreachable) break;
+            if (firstErr.empty()) firstErr = err;
+        }
+        std::string result = writeResult(outcome, out,
+                                         outcome == RequestOutcome::Unreachable ? firstErr : err);
+        std::lock_guard<std::mutex> lock(longMu());
+        LongCall& c = longCalls()[name];
+        if (c.serial == serial) {
+            c.running = false;
+            c.result = result;
+        }
+    }).detach();
+    return "{\"started\":true,\"serial\":" + std::to_string(serial) + "}";
+}
+
+std::string longProgress(const std::string& name)
+{
+    std::lock_guard<std::mutex> lock(longMu());
+    auto it = longCalls().find(name);
+    if (it == longCalls().end() || (!it->second.running && it->second.result.empty())) {
+        return "{\"idle\":true}";
+    }
+    const LongCall& c = it->second;
+    if (c.running) {
+        return "{\"running\":true,\"serial\":" + std::to_string(c.serial) + "}";
+    }
+    return "{\"done\":true,\"serial\":" + std::to_string(c.serial) + ",\"result\":" + c.result + "}";
+}
+
+void forgetLong(const std::string& name)
+{
+    std::lock_guard<std::mutex> lock(longMu());
+    LongCall& c = longCalls()[name];
+    c.running = false;
+    c.result.clear();
+    ++c.serial;  // whatever is still in flight answers nobody
+}
 
 } // namespace
 
 std::string ShroomsCoreImpl::joinWithInviteStart(const std::string& token, const std::string& name,
                                                  const std::string& label)
 {
-    JoinState& st = joinState();
-    unsigned serial;
-    {
-        std::lock_guard<std::mutex> lock(st.mu);
-        if (st.running) {
-            return errorJson("a join is already running", "wait for it to finish");
-        }
-        st.running = true;
-        st.result.clear();
-        serial = ++st.serial;
-    }
-    const std::string body = "{\"token\":" + jsonString(token) + ",\"name\":" + jsonString(name) +
-                             ",\"label\":" + jsonString(label) + "}";
-    std::thread([body, serial]() {
-        std::string out, err, firstErr;
-        RequestOutcome outcome = RequestOutcome::Unreachable;
-        // Not retried on the legacy path once anything answered: a daemon that
-        // heard the request may have joined, and joining twice spends the
-        // invite.
-        for (const char* path : {kSocket, kLegacySocket}) {
-            outcome = httpRequestUnix(path, "POST", "/join", "application/json", body, out, err,
-                                      kJoinTimeoutS);
-            if (outcome != RequestOutcome::Unreachable) break;
-            if (firstErr.empty()) firstErr = err;
-        }
-        std::string result = writeResult(outcome, out,
-                                         outcome == RequestOutcome::Unreachable ? firstErr : err);
-        JoinState& st = joinState();
-        std::lock_guard<std::mutex> lock(st.mu);
-        if (st.serial == serial) {
-            st.running = false;
-            st.result = result;
-        }
-    }).detach();
-    return "{\"started\":true,\"serial\":" + std::to_string(serial) + "}";
+    return startLong("join", "/join",
+                     "{\"token\":" + jsonString(token) + ",\"name\":" + jsonString(name) +
+                         ",\"label\":" + jsonString(label) + "}",
+                     kJoinTimeoutS, true);
 }
 
 std::string ShroomsCoreImpl::joinProgress()
 {
-    JoinState& st = joinState();
-    std::lock_guard<std::mutex> lock(st.mu);
-    if (st.running) {
-        return "{\"running\":true,\"serial\":" + std::to_string(st.serial) + "}";
+    return longProgress("join");
+}
+
+// --- inviting, with a signature made elsewhere (ADR-050) ----------------------
+//
+// The daemon does every part that knows a format — the token, the credential,
+// checking the signature — and the card is another module's, which the view
+// asks itself. What is here is carrying requests, and finding which account on
+// the card is this mesh's.
+
+std::string ShroomsCoreImpl::inviteNew(const std::string& mesh)
+{
+    return postToDaemon("/invite/new", "{\"mesh\":" + jsonString(mesh) + "}");
+}
+
+std::string ShroomsCoreImpl::inviteHoldStart(const std::string& token, const std::string& mesh)
+{
+    // Superseding rather than refusing: a person who closes one invite and
+    // opens another means the second.
+    return startLong("hold", "/invite/hold",
+                     "{\"token\":" + jsonString(token) + ",\"mesh\":" + jsonString(mesh) + "}",
+                     kHoldTimeoutS, false);
+}
+
+std::string ShroomsCoreImpl::inviteHoldProgress()
+{
+    return longProgress("hold");
+}
+
+std::string ShroomsCoreImpl::inviteHoldCancel()
+{
+    forgetLong("hold");
+    return "{\"result\":\"stopped waiting\"}";
+}
+
+std::string ShroomsCoreImpl::inviteDraft(const std::string& mesh, const std::string& devicePub,
+                                         const std::string& wgPub, const std::string& sealPub,
+                                         const std::string& name)
+{
+    return postToDaemon("/invite/draft",
+                        "{\"mesh\":" + jsonString(mesh) + ",\"device_pub\":" + jsonString(devicePub) +
+                            ",\"wg_pub\":" + jsonString(wgPub) + ",\"seal_pub\":" + jsonString(sealPub) +
+                            ",\"name\":" + jsonString(name) + "}");
+}
+
+std::string ShroomsCoreImpl::inviteReply(const std::string& token, const std::string& ephPub,
+                                         const std::string& name, const std::string& mesh,
+                                         const std::string& draft, const std::string& signature)
+{
+    std::string body = "{\"token\":" + jsonString(token) + ",\"eph_pub\":" + jsonString(ephPub) +
+                       ",\"name\":" + jsonString(name) + ",\"mesh\":" + jsonString(mesh);
+    if (!draft.empty()) body += ",\"credential\":" + jsonString(draft);
+    if (!signature.empty()) body += ",\"signature\":" + jsonString(signature);
+    return postToDaemon("/invite/reply", body + "}");
+}
+
+namespace {
+
+/** The digits after "account": in an admin file, or -1 when it says none. */
+long accountIn(const std::string& doc)
+{
+    const auto at = doc.find("\"account\"");
+    if (at == std::string::npos) return -1;
+    size_t i = doc.find(':', at);
+    if (i == std::string::npos) return -1;
+    ++i;
+    while (i < doc.size() && std::isspace(static_cast<unsigned char>(doc[i]))) ++i;
+    long n = 0;
+    bool any = false;
+    while (i < doc.size() && std::isdigit(static_cast<unsigned char>(doc[i])) && n < 1000000) {
+        n = n * 10 + (doc[i] - '0');
+        ++i;
+        any = true;
     }
-    if (st.result.empty()) {
-        return "{\"idle\":true}";
+    return any ? n : -1;
+}
+
+/** Where `shrooms admin` keeps its files: the same directory as view.conf. */
+std::string adminDir()
+{
+    const std::string pref = prefPath();
+    const auto slash = pref.rfind('/');
+    return slash == std::string::npos ? std::string() : pref.substr(0, slash);
+}
+
+} // namespace
+
+std::string ShroomsCoreImpl::cardPath(const std::string& adminKeysCsv)
+{
+    // Which key on the card signs for this mesh is not on the card: it is the
+    // account `shrooms admin init --keycard` chose, recorded in the admin file
+    // beside the public keys (ADR-022). Found here by key rather than by label,
+    // because labels are local and the file may have been named for another.
+    std::vector<std::string> keys;
+    size_t pos = 0;
+    while (pos <= adminKeysCsv.size()) {
+        size_t comma = adminKeysCsv.find(',', pos);
+        if (comma == std::string::npos) comma = adminKeysCsv.size();
+        std::string k = adminKeysCsv.substr(pos, comma - pos);
+        bool ok = !k.empty() && k.size() <= 128;
+        for (unsigned char c : k) {
+            if (!std::isalnum(c)) ok = false;
+        }
+        if (ok) keys.push_back(k);
+        pos = comma + 1;
     }
-    return "{\"done\":true,\"serial\":" + std::to_string(st.serial) + ",\"result\":" + st.result + "}";
+    const std::string dir = adminDir();
+    long account = -1;
+    std::string from;
+    if (!dir.empty() && !keys.empty()) {
+        if (DIR* d = ::opendir(dir.c_str())) {
+            while (dirent* e = ::readdir(d)) {
+                const std::string n = e->d_name;
+                if (n.rfind("admin", 0) != 0 || n.size() < 10 || n.substr(n.size() - 5) != ".json") continue;
+                std::ifstream f(dir + "/" + n);
+                std::stringstream ss;
+                ss << f.rdbuf();
+                const std::string doc = ss.str();
+                bool mine = false;
+                for (const auto& k : keys) {
+                    if (doc.find("\"" + k + "\"") != std::string::npos) mine = true;
+                }
+                if (!mine) continue;
+                account = accountIn(doc);
+                if (account < 0) account = 0;  // absent means 0 (ADR-022)
+                from = n;
+                break;
+            }
+            ::closedir(d);
+        }
+    }
+    const bool known = account >= 0;
+    if (!known) account = 0;
+    return "{\"bip32_path\":\"m/64265'/" + std::to_string(account) + "'/0'\",\"account\":" +
+           std::to_string(account) + ",\"known\":" + (known ? "true" : "false") +
+           (from.empty() ? std::string() : ",\"from\":" + jsonString(from)) + "}";
 }
 
 // --- agents ------------------------------------------------------------------

@@ -468,6 +468,7 @@ Item {
             root.reload()
             root.pumpLogs()
             root.pollJoin()
+            root.pollInvite()
         }
     }
 
@@ -961,6 +962,148 @@ Item {
      * says nothing about what to do.
      */
     readonly property bool waitingForMesh: root.st && root.st.waiting === true
+
+    // --- inviting a device, with a Keycard (ADR-050) --------------------------
+    //
+    // What the phone's "invite a device" does, from here: the daemon mints the
+    // invite and holds it open, a QR goes on the screen, and when a device
+    // redeems it the daemon drafts its credential. The admin key is on a card,
+    // and the card belongs to another module — keycard-basecamp — so this asks
+    // it to sign, and the person approves there: card on the reader, PIN on
+    // its screen. The signature comes back here and goes to the daemon, which
+    // checks it against the mesh's admin keys before anything is published.
+    //
+    // Nothing on this side knows a token's format or a credential's. Those are
+    // the daemon's, and a second copy of either would be a second thing to get
+    // subtly wrong where it matters most.
+    property var invite: ({ step: "idle" })
+    property string inviteMesh: ""
+
+    /** The meshes an invite can admit to: the running ones. */
+    readonly property var invitableMeshes: {
+        var out = []
+        for (var i = 0; i < root.runningMeshes.length; i++) out.push(root.runningMeshes[i].label)
+        return out
+    }
+
+    /** A module's answer as an object, unwrapping the bridge's quoting. */
+    function moduleJson(module, method, args) {
+        if (!haveCore) return null
+        var t = ""
+        try { t = String(bridge.callModule(module, method, args || []) || "").trim() } catch (e) { return null }
+        for (var i = 0; i < 2 && t.charAt(0) === '"'; i++) {
+            try { t = String(JSON.parse(t)).trim() } catch (e2) { break }
+        }
+        if (t.charAt(0) !== "{") return null
+        try { return JSON.parse(t) } catch (e3) { return null }
+    }
+
+    function inviteSet(fields) {
+        var o = {}
+        for (var k in root.invite) o[k] = root.invite[k]
+        for (var f in fields) o[f] = fields[f]
+        root.invite = o
+    }
+    function inviteFail(why) { inviteSet({ step: "failed", error: why }) }
+
+    function startInvite(mesh) {
+        if (!haveCore) return
+        var m = mesh || (root.invitableMeshes.length === 1 ? root.invitableMeshes[0] : "")
+        if (!m && root.invitableMeshes.length > 1) {
+            root.said = "say which mesh the device is to join"
+            root.saidBad = true
+            return
+        }
+        var minted = coreJson("inviteNew", [m])
+        if (minted === null) { inviteFail("this shrooms_core cannot invite yet — update it, or run `shrooms invite`"); return }
+        if (minted.error) {
+            var d = String(minted.detail || "")
+            inviteFail(d.indexOf("404") >= 0 ? "this daemon cannot mint an invite yet — update it, or run `shrooms invite`"
+                                             : minted.error + (d ? " — " + d : ""))
+            return
+        }
+        var held = coreJson("inviteHoldStart", [minted.token, m])
+        if (!held || held.error) { inviteFail(held ? held.error : "could not hold the invite open"); return }
+        root.invite = { step: "open", mesh: m, token: minted.token, grouped: minted.grouped || minted.token,
+                        uri: minted.uri || "", qr: minted.qr || [], until: Date.now() + (minted.ttl_s || 900) * 1000 }
+        root.membersOpen = true
+    }
+
+    function pollInvite() {
+        var st = root.invite.step
+        if (st === "open") {
+            var p = coreJson("inviteHoldProgress", [])
+            if (!p || p.running || p.idle) return
+            var r = p.result || {}
+            if (r.error) { inviteFail("holding the invite: " + r.error + (r.detail ? " — " + r.detail : "")); return }
+            if (!r.device_pub) { inviteFail("the invite expired before anybody used it"); return }
+            inviteSet({ step: "joiner", joiner: r })
+        } else if (st === "card") {
+            var c = moduleJson("keycard", "checkSignStatus", [root.invite.signId])
+            if (!c) return
+            if (c.status === "complete" && c.signature) {
+                inviteSet({ step: "replying" })
+                finishInvite(c.signature)
+            } else if (c.status === "rejected" || c.status === "declined") {
+                inviteFail("declined on the Keycard — the device was not admitted")
+            } else if (c.error && c.status !== "pending") {
+                inviteFail("the Keycard module said: " + c.error)
+            }
+        }
+    }
+
+    /** The joining device is the one expected: draft its credential and have the card sign it. */
+    function admitInvite() {
+        var inv = root.invite, j = inv.joiner || {}
+        var d = coreJson("inviteDraft", [inv.mesh, j.device_pub || "", j.wg_pub || "", j.seal_pub || "", j.name || ""])
+        if (!d || d.error) { inviteFail("drafting the credential: " + (d ? d.error + (d.detail ? " — " + d.detail : "") : "no answer")); return }
+        if (d.no_authority) {
+            // A mesh with no admin keys: the network key alone admits.
+            inviteSet({ step: "replying" })
+            finishInvite("")
+            return
+        }
+        if (!d.card_only) {
+            inviteFail("this mesh's admin key is a file, not a card; admit with `shrooms invite` "
+                       + "on the machine that holds it")
+            return
+        }
+        var path = coreJson("cardPath", [(d.admin_keys || []).join(",")]) || {}
+        var req = moduleJson("keycard", "requestSign", [JSON.stringify({
+            domain: "shrooms_admin", payloadHash: d.digest, caller: "shrooms", scheme: "ecdsa",
+            bip32_path: path.bip32_path || "m/64265'/0'/0'" })])
+        if (!req) {
+            inviteFail("no Keycard module answered — install keycard from Basecamp's catalog, "
+                       + "or admit with `shrooms invite`")
+            return
+        }
+        if (req.error || !req.signId) { inviteFail("the Keycard module refused: " + (req.error || "no request id")); return }
+        inviteSet({ step: "card", draft: d.draft, signId: req.signId, path: path.bip32_path,
+                    pathKnown: path.known === true })
+    }
+
+    function finishInvite(signature) {
+        var inv = root.invite, j = inv.joiner || {}
+        var r = coreJson("inviteReply", [inv.token, j.eph_pub || "", j.name || "", inv.mesh,
+                                         signature ? inv.draft : "", signature || ""])
+        if (!r || r.error) {
+            inviteFail("admitting: " + (r ? r.error + (r.detail ? " — " + r.detail : "") : "no answer"))
+            return
+        }
+        inviteSet({ step: "done" })
+    }
+
+    function closeInvite() {
+        var st = root.invite.step
+        if (st === "open" || st === "joiner") callCore("inviteHoldCancel", [])
+        if (st === "card" && root.invite.signId) moduleJson("keycard", "rejectSign", [root.invite.signId])
+        root.invite = { step: "idle" }
+    }
+
+    function openKeycard() {
+        if (!canLaunch) return
+        try { bridge.request("basecamp.apps.launch", { app: "keycard-ui" }, function (res) {}) } catch (e) {}
+    }
 
     // --- the domain names answer under (ADR-032) -----------------------------
     property var suffixInfo: ({})
@@ -3549,38 +3692,230 @@ Layout.preferredWidth: 0
                                       + "the next restart."
                             }
 
-                            // The honest limit, stated where somebody would look for
-                            // the button. Issuing an invite means signing a credential
-                            // with the admin key, and the daemon has never held it —
-                            // that separation is what keeps handing out this socket a
-                            // bounded grant rather than a way to admit anybody.
+                            // --- invite a device ------------------------------------
                             Text {
+                                text: "invite a device"
+                                color: cAsh
+                                font.family: "monospace"; font.pixelSize: root.fs(10)
+                                Layout.topMargin: root.sz(8)
+                            }
+                            RowLayout {
+                                visible: root.invite.step === "idle"
+                                Layout.fillWidth: true
+                                spacing: root.sz(10)
+                                Repeater {
+                                    // One choice per running mesh; with one, it is
+                                    // the only one and needs no choosing.
+                                    model: root.invitableMeshes.length > 1 ? root.invitableMeshes : []
+                                    delegate: Text {
+                                        text: modelData
+                                        color: root.inviteMesh === modelData ? root.meshTint(modelData) : cAsh
+                                        font.family: "monospace"; font.pixelSize: root.fs(11)
+                                        font.underline: root.inviteMesh === modelData
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: root.inviteMesh = modelData
+                                        }
+                                    }
+                                }
+                                Text {
+                                    text: "invite"
+                                    color: (root.invitableMeshes.length === 1 || root.inviteMesh !== "") ? cPhosphor : cAsh
+                                    font.family: "monospace"; font.pixelSize: root.fs(11)
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: root.startInvite(root.inviteMesh)
+                                    }
+                                }
+                                Item { Layout.fillWidth: true }
+                            }
+                            Text {
+                                visible: root.invite.step === "idle"
                                 Layout.fillWidth: true
                                 Layout.preferredWidth: 0
                                 wrapMode: Text.WordWrap
                                 color: cAsh
-                                font.family: "monospace"; font.pixelSize: root.fs(10)
-                                text: "inviting somebody, and revoking them, needs the admin key, which "
-                                      + "this daemon deliberately does not hold:"
+                                font.family: "monospace"; font.pixelSize: root.fs(9)
+                                text: "for a mesh whose admin key is a Keycard: the card signs through the Keycard "
+                                      + "module, never here. A mesh with a key file admits with `shrooms invite` "
+                                      + "on the machine that holds it."
                             }
-                            // One click, like every other address here. A
-                            // command you have to retype is a command you
-                            // mistype, and this one ends in a name somebody is
-                            // going to edit anyway.
-                            Text {
+
+                            // The invite, open: what the joining device scans or types.
+                            ColumnLayout {
+                                visible: root.invite.step === "open"
                                 Layout.fillWidth: true
-                                Layout.preferredWidth: 0
-                                text: "shrooms invite --name their-laptop"
-                                color: inviteCopy.containsMouse ? cPhosphor : cBone
-                                font.family: "monospace"; font.pixelSize: root.fs(10)
-                                font.underline: inviteCopy.containsMouse
-                                elide: Text.ElideRight
-                                MouseArea {
-                                    id: inviteCopy
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: root.copyText(parent.text)
+                                spacing: root.sz(6)
+                                Canvas {
+                                    id: inviteQr
+                                    readonly property var rows: root.invite.qr || []
+                                    visible: rows.length > 0
+                                    Layout.preferredWidth: root.sz(200)
+                                    Layout.preferredHeight: root.sz(200)
+                                    onRowsChanged: requestPaint()
+                                    onPaint: {
+                                        var ctx = getContext("2d")
+                                        ctx.reset()
+                                        // Dark on light with a quiet zone: scanners
+                                        // read nothing else reliably.
+                                        ctx.fillStyle = "#ffffff"
+                                        ctx.fillRect(0, 0, width, height)
+                                        var n = rows.length
+                                        if (!n) return
+                                        var cell = Math.floor(Math.min(width, height) / (n + 8))
+                                        var off = Math.floor((Math.min(width, height) - cell * n) / 2)
+                                        ctx.fillStyle = "#000000"
+                                        for (var y = 0; y < n; y++)
+                                            for (var x = 0; x < n; x++)
+                                                if (rows[y].charAt(x) === "1") ctx.fillRect(off + x * cell, off + y * cell, cell, cell)
+                                    }
+                                }
+                                Text {
+                                    text: root.invite.grouped || ""
+                                    color: tokMouse.containsMouse ? cPhosphor : cBone
+                                    font.family: "monospace"; font.pixelSize: root.fs(11)
+                                    font.underline: tokMouse.containsMouse
+                                    Layout.fillWidth: true
+                                    Layout.preferredWidth: 0
+                                    wrapMode: Text.WrapAnywhere
+                                    MouseArea {
+                                        id: tokMouse
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: root.copyText(root.invite.grouped)
+                                    }
+                                }
+                                Text {
+                                    Layout.fillWidth: true
+                                    Layout.preferredWidth: 0
+                                    wrapMode: Text.WordWrap
+                                    color: cAmber
+                                    font.family: "monospace"; font.pixelSize: root.fs(10)
+                                    text: "waiting for a device to use it" + (root.invite.mesh ? " · " + root.invite.mesh : "")
+                                          + " — scan it in the Shrooms app, or paste it into a join. One device, fifteen minutes."
+                                }
+                                Text {
+                                    text: "cancel"
+                                    color: cRust
+                                    font.family: "monospace"; font.pixelSize: root.fs(10)
+                                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.closeInvite() }
+                                }
+                            }
+
+                            // Somebody used it: say who, and let the admin say yes.
+                            ColumnLayout {
+                                visible: root.invite.step === "joiner"
+                                Layout.fillWidth: true
+                                spacing: root.sz(6)
+                                Text {
+                                    text: ((root.invite.joiner || {}).name || "a device") + " wants to join"
+                                          + (root.invite.mesh ? " " + root.invite.mesh : "")
+                                    color: cBone
+                                    font.family: "monospace"; font.pixelSize: root.fs(12)
+                                }
+                                Text {
+                                    text: "device key " + String((root.invite.joiner || {}).device_pub || "").slice(0, 16) + "…"
+                                    color: cAsh
+                                    font.family: "monospace"; font.pixelSize: root.fs(9)
+                                }
+                                RowLayout {
+                                    spacing: root.sz(14)
+                                    Text {
+                                        text: "admit"
+                                        color: cPhosphor
+                                        font.family: "monospace"; font.pixelSize: root.fs(11)
+                                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.admitInvite() }
+                                    }
+                                    Text {
+                                        text: "decline"
+                                        color: cRust
+                                        font.family: "monospace"; font.pixelSize: root.fs(11)
+                                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.closeInvite() }
+                                    }
+                                }
+                            }
+
+                            // The card signs, in the Keycard module.
+                            ColumnLayout {
+                                visible: root.invite.step === "card" || root.invite.step === "replying"
+                                Layout.fillWidth: true
+                                spacing: root.sz(6)
+                                Text {
+                                    Layout.fillWidth: true
+                                    Layout.preferredWidth: 0
+                                    wrapMode: Text.WordWrap
+                                    color: cAmber
+                                    font.family: "monospace"; font.pixelSize: root.fs(11)
+                                    text: root.invite.step === "replying" ? "signed — admitting…"
+                                          : "approve it in Keycard: put the card on the reader and enter its PIN there. "
+                                            + "Shrooms never sees the PIN or the key."
+                                }
+                                Text {
+                                    visible: root.invite.step === "card" && root.invite.pathKnown !== true
+                                    Layout.fillWidth: true
+                                    Layout.preferredWidth: 0
+                                    wrapMode: Text.WordWrap
+                                    color: cAsh
+                                    font.family: "monospace"; font.pixelSize: root.fs(9)
+                                    text: "no admin file on this machine names this mesh's card account, so the first "
+                                          + "one is asked for (" + (root.invite.path || "") + "). A mesh minted on another "
+                                          + "machine may use another; the daemon refuses a signature from the wrong one."
+                                }
+                                RowLayout {
+                                    visible: root.invite.step === "card"
+                                    spacing: root.sz(14)
+                                    Text {
+                                        visible: root.canLaunch
+                                        text: "open Keycard ↗"
+                                        color: cViolet
+                                        font.family: "monospace"; font.pixelSize: root.fs(11)
+                                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.openKeycard() }
+                                    }
+                                    Text {
+                                        text: "cancel"
+                                        color: cRust
+                                        font.family: "monospace"; font.pixelSize: root.fs(11)
+                                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.closeInvite() }
+                                    }
+                                }
+                            }
+
+                            ColumnLayout {
+                                visible: root.invite.step === "done" || root.invite.step === "failed"
+                                Layout.fillWidth: true
+                                spacing: root.sz(6)
+                                Text {
+                                    Layout.fillWidth: true
+                                    Layout.preferredWidth: 0
+                                    wrapMode: Text.WordWrap
+                                    color: root.invite.step === "done" ? cPhosphor : cRust
+                                    font.family: "monospace"; font.pixelSize: root.fs(11)
+                                    text: root.invite.step === "done"
+                                          ? "admitted " + ((root.invite.joiner || {}).name || "the device")
+                                            + " — it appears on the roster once it connects"
+                                          : (root.invite.error || "")
+                                }
+                                RowLayout {
+                                    spacing: root.sz(14)
+                                    Text {
+                                        text: "invite another"
+                                        color: cPhosphor
+                                        font.family: "monospace"; font.pixelSize: root.fs(10)
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: { var m = root.invite.mesh; root.invite = { step: "idle" }; root.startInvite(m) }
+                                        }
+                                    }
+                                    Text {
+                                        text: "close"
+                                        color: cAsh
+                                        font.family: "monospace"; font.pixelSize: root.fs(10)
+                                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.invite = { step: "idle" } }
+                                    }
                                 }
                             }
                         }

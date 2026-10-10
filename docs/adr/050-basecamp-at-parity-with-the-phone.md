@@ -1,7 +1,8 @@
 # 050. Basecamp at parity with the phone
 
-**Status:** accepted 2026-10-10; built the same day, except inviting with a
-Keycard, which is designed below and built separately
+**Status:** accepted 2026-10-10; built the same day. Inviting with a Keycard is
+built and tested without hardware; a run with a real card is still owed
+(docs/testing-the-keycard.md, stage 5).
 
 ## Context
 
@@ -57,15 +58,35 @@ The status payload gained the per-mesh settings a form has to show:
 `quiet_revocations`, `blind_relays_configured` and `blind_relays_refused`
 (after inheriting the device's settings).
 
-## Keycard invites from Basecamp (designed; built separately)
+## Keycard invites from Basecamp
 
-The daemon side exists. `/invite/hold` and `/invite/reply` require an
+The daemon side already existed. `/invite/hold` and `/invite/reply` require an
 identified caller, and a reply from the group must carry a credential signed
-by an admin key (ADR-033). What is missing is the signature: `shrooms_core`
-has to ask keycard-basecamp to sign (`requestSign`/`checkSignStatus`, the card
-holding the key at `m/64265'/<acct>'/0'`), and the view needs the QR, the
-"wants to join" step and the PIN. Until that is built and tested with a real
-card, the membership section keeps printing `shrooms invite`.
+by an admin key on a card (ADR-033). The missing pieces were the token, the
+credential and the signature, and none of them belongs in a C++ module or a
+QML view:
+
+- **`/invite/new`** mints the token and returns the URI and the QR as rows,
+  for the view to draw. QML has no encoder, and a second encoder would be a
+  second thing to get wrong.
+- **`/invite/draft`** builds the credential `shrooms invite` would sign
+  (`cred.Draft`: the same defaults, serial and mesh id). It returns the digest
+  and the mesh's admin keys.
+- **`/invite/reply` takes `signature`** with the draft. The daemon finishes it
+  (`cred.Finish`), which reads r‖s, r‖s‖v or DER (keycard-qt hands over DER),
+  allows a high s, and verifies against admin_keys before anything is
+  published. An unsigned draft is refused outright.
+- **The view asks keycard-basecamp itself** (`requestSign`/`checkSignStatus`),
+  as any view may. That way shrooms_core takes no dependency on a module many
+  machines will not have. The person approves in keycard-ui: card, PIN, yes.
+  Shrooms never sees either.
+- **Which account on the card** is read from the admin files
+  `shrooms admin init --keycard` wrote, matched by key rather than by label
+  (`cardPath`). Labels are local; keys are not. Absent means account 0, and
+  the daemon refuses a signature from the wrong one.
+
+None of these admits anybody: a token is random, a draft is unsigned, and the
+signature comes off a card the daemon never sees.
 
 ## Consequences
 

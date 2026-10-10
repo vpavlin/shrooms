@@ -938,6 +938,11 @@ func inviteHandlers(mux *http.ServeMux, cfgPath string, pick func(string) invite
 			Name       string `json:"name"`
 			Credential string `json:"credential"`
 			Mesh       string `json:"mesh"`
+			// Signature, when present, says the credential is a draft from
+			// /invite/draft and this is the admin key's signature over it,
+			// made elsewhere — by a card in another Basecamp module (ADR-050).
+			// It is finished and verified here, before anything else looks.
+			Signature string `json:"signature"`
 		}
 		if err := json.NewDecoder(io.LimitReader(r.Body, 8192)).Decode(&in); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -963,6 +968,24 @@ func inviteHandlers(mux *http.ServeMux, cfgPath string, pick func(string) invite
 		m := pick(in.Mesh)
 		if m == nil {
 			http.Error(w, noSuchMesh(cfgPath, in.Mesh), http.StatusBadRequest)
+			return
+		}
+		if in.Signature != "" {
+			sig, err := hex.DecodeString(in.Signature)
+			if err != nil {
+				http.Error(w, "signature: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			if m.Authority() == nil {
+				http.Error(w, "this mesh has no admin keys, so there is nothing to sign", http.StatusBadRequest)
+				return
+			}
+			if credential, err = cred.Finish(m.Authority(), credential, sig, time.Now()); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+		} else if cred.IsDraft(credential) {
+			http.Error(w, "that credential is an unsigned draft; send the signature with it", http.StatusBadRequest)
 			return
 		}
 		if !callerIsRoot(r) {
@@ -1820,13 +1843,23 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 		return nil
 	}
 
-	inviteHandlers(mux, rl.cfgPath, func(label string) inviteHolder {
+	pickHolder := func(label string) inviteHolder {
 		for _, in := range instances {
 			if label == "" || in.label == label {
 				return in.mesh
 			}
 		}
 		return nil
+	}
+	inviteHandlers(mux, rl.cfgPath, pickHolder)
+	inviteDraftHandlers(mux, rl.cfgPath, pickHolder, func() string {
+		if rt == nil || rt.st == nil {
+			return ""
+		}
+		if peers := rt.st.BootPeers(time.Now()); len(peers) > 0 {
+			return peers[0]
+		}
+		return ""
 	})
 
 	// The way a revocation reaches the bus. The admin key signs offline — that

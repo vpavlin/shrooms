@@ -74,3 +74,25 @@ func showKeyQR(cfg state.Config) error {
 	fmt.Println()
 	return nil
 }
+
+// qrRows is the code as rows of '1' (dark) and '0', without a quiet zone, for
+// a front-end that draws it itself — Basecamp's view has no QR encoder, and
+// one in QML would be a second encoder to get wrong.
+func qrRows(text string) ([]string, error) {
+	code, err := qr.Encode(text, qr.M)
+	if err != nil {
+		return nil, fmt.Errorf("encode qr: %w", err)
+	}
+	rows := make([]string, code.Size)
+	for y := 0; y < code.Size; y++ {
+		b := make([]byte, code.Size)
+		for x := 0; x < code.Size; x++ {
+			b[x] = '0'
+			if code.Black(x, y) {
+				b[x] = '1'
+			}
+		}
+		rows[y] = string(b)
+	}
+	return rows, nil
+}

@@ -396,8 +396,8 @@ what they assume undoes what.
 
 **Basecamp's UI** was checked against the Android app on 2026-10-10
 ([ADR-050](adr/050-basecamp-at-parity-with-the-phone.md)): three bugs fixed and
-the gaps closed, except admitting a device with a Keycard, which is designed
-and not yet built.
+the gaps closed. Admitting a device with a Keycard is built and still wants one
+run with a real card.
 
 ## Open, not urgent
 

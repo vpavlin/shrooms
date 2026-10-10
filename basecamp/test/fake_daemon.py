@@ -13,6 +13,8 @@ class H(BaseHTTPRequestHandler):
         body = self.rfile.read(n).decode() if n else ""
         if self.path == "/join":
             time.sleep(3)
+        if self.path == "/invite/hold":
+            time.sleep(1)
         code = 400 if self.path.endswith("/refuse") else 200
         out = json.dumps({"method": self.command, "path": self.path, "body": body}).encode()
         if code != 200:

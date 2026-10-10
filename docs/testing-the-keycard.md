@@ -189,16 +189,32 @@ back, so it can be driven by a card without the desktop knowing what a card is.
 Worth doing because revocation is the operation whose failure is silent: a
 revocation that does not verify is simply ignored by every peer.
 
-## Stage 5 — the group-tier gate. **Not testable yet.**
+## Stage 5 — inviting from Basecamp, through keycard-basecamp
 
 [ADR-033](adr/033-the-card-is-the-admin-not-the-uid.md) lets Basecamp complete
-an invite the card signed. Its tests cover the gate with a software key of the
-right shape, which is honest as far as it goes: they prove the *decision*, not
-the card.
+an invite the card signed, and [ADR-050](adr/050-basecamp-at-parity-with-the-phone.md)
+wires it: the view asks the daemon for an invite (`/invite/new`), holds it,
+has the daemon draft the credential (`/invite/draft`), asks keycard-basecamp to
+sign the digest (`requestSign` at `m/64265'/<account>'/0'`), and replies with
+the draft and the signature, which the daemon finishes and verifies.
 
-Testing it end to end needs the desktop card path, which does not exist —
-`keycard-basecamp` has `requestSign`, and nothing in shrooms calls it yet. So
-this waits on that wiring rather than on hardware.
+Covered without hardware: `TestInviteWithASignatureMadeElsewhere` (a DER
+signature, as keycard-qt returns, through the real handlers) and the
+`internal/cred` draft tests (every signature form, a high s, the wrong key, a
+tampered draft). `CoreHarness.qml` drives the view's side with a stand-in
+Keycard module.
+
+**What only the card can show**, on a mesh minted with `admin init --keycard`:
+
+1. Basecamp with Shrooms 0.14+ and keycard-basecamp installed, the reader
+   plugged in, the user in the daemon's `socket_group`.
+2. Membership → invite a device → the QR appears.
+3. Redeem it from a phone or `shrooms join`; "<name> wants to join" appears.
+4. Admit → the Keycard module shows a pending signature for `shrooms`; tap the
+   card, enter the PIN, approve.
+5. The device joins and appears on the roster. If the daemon refuses the
+   signature, the message names the account: the admin file that records it
+   is on the machine that minted the mesh (`~/.config/shrooms/admin-*.json`).
 
 ## What this plan does not cover
 

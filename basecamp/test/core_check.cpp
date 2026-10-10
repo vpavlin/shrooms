@@ -6,6 +6,9 @@
 #include "../core/src/shrooms_core_impl.h"
 
 #include <chrono>
+#include <cstdlib>
+#include <fstream>
+#include <sys/stat.h>
 #include <cstdio>
 #include <string>
 #include <thread>
@@ -62,6 +65,52 @@ int main()
     // Past the two seconds everything else gives up after.
     took = std::chrono::steady_clock::now() - t0;
     CHECK(took > std::chrono::milliseconds(2900), "the join did not wait for the far side");
+
+    // Inviting with a card (ADR-050): the core carries requests; the daemon
+    // knows the formats.
+    r = core.inviteNew("office");
+    CHECK(has(r, "/invite/new") && has(r, R"({\"mesh\":\"office\"})"), "%s", r.c_str());
+    r = core.inviteHoldStart("tok", "office");
+    CHECK(has(r, "\"started\":true"), "%s", r.c_str());
+    r = core.inviteHoldProgress();
+    CHECK(has(r, "\"running\":true"), "%s", r.c_str());
+    // A second hold supersedes the first rather than being refused.
+    r = core.inviteHoldStart("tok2", "office");
+    CHECK(has(r, "\"started\":true"), "%s", r.c_str());
+    for (int i = 0; i < 40 && !has(r, "\"done\""); i++) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        r = core.inviteHoldProgress();
+    }
+    CHECK(has(r, "\"done\":true") && has(r, "tok2") && !has(r, "\"tok\""), "the superseded hold answered: %s", r.c_str());
+    core.inviteHoldCancel();
+    r = core.inviteHoldProgress();
+    CHECK(has(r, "\"idle\":true"), "%s", r.c_str());
+
+    r = core.inviteDraft("office", "aa", "bb", "cc", "kitchen \"pi\"");
+    CHECK(has(r, "/invite/draft") && has(r, R"(\"name\":\"kitchen \\\"pi\\\"\")"), "%s", r.c_str());
+    r = core.inviteReply("tok", "ee", "pi", "office", "RFJBRlQ=", "3045");
+    CHECK(has(r, "/invite/reply") && has(r, R"(\"credential\":\"RFJBRlQ=\",\"signature\":\"3045\")"), "%s", r.c_str());
+    r = core.inviteReply("tok", "ee", "pi", "office", "", "");
+    CHECK(has(r, "/invite/reply") && !has(r, "credential") && !has(r, "signature"),
+          "a mesh with no authority replies with nothing to verify: %s", r.c_str());
+
+    // The card's account for a mesh, from the admin files, matched by key.
+    {
+        char tmpl[] = "/tmp/core_check_XXXXXX";
+        std::string home = mkdtemp(tmpl);
+        setenv("XDG_CONFIG_HOME", home.c_str(), 1);
+        mkdir((home + "/shrooms").c_str(), 0700);
+        std::ofstream(home + "/shrooms/admin-office.json") << R"({"priv":"","keys":["AKEYOFFICE"],"account":3})";
+        std::ofstream(home + "/shrooms/admin-home.json") << R"({"priv":"x","keys":["AKEYHOME"]})";
+        r = core.cardPath("ZZZ,AKEYOFFICE");
+        CHECK(has(r, "m/64265'/3'/0'") && has(r, "\"known\":true"), "%s", r.c_str());
+        r = core.cardPath("AKEYHOME");
+        CHECK(has(r, "m/64265'/0'/0'") && has(r, "\"known\":true"), "an absent account is 0: %s", r.c_str());
+        r = core.cardPath("NOBODY");
+        CHECK(has(r, "m/64265'/0'/0'") && has(r, "\"known\":false"), "%s", r.c_str());
+        r = core.cardPath("\"account\":9");
+        CHECK(has(r, "\"known\":false"), "a key that is not one matched: %s", r.c_str());
+    }
 
     std::printf(fails ? "%d failed\n" : "all passed\n", fails);
     return fails ? 1 : 0;
