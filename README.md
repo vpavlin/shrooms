@@ -1179,38 +1179,44 @@ plane, too. Those have a daemon as well; it just does not work for you.
 ## Desktop monitoring and control
 
 A Basecamp view — the same graph and list as the phone, and the same things you
-can do from it. It reads the mesh, and it can change this device's own settings:
-name, light or relay node, published services and whether they are announced,
-which meshes run, joining a mesh with an invite token and leaving one
-([ADR-025](docs/adr/025-control-from-a-desktop-app.md)).
+can do from it ([ADR-025](docs/adr/025-control-from-a-desktop-app.md),
+[ADR-050](docs/adr/050-basecamp-at-parity-with-the-phone.md)). It reads the
+mesh, and it can change this device's own settings: name, edge or core node,
+services per mesh and whether they are announced, blind relays, the domain names
+answer under, which meshes run, joining a mesh with an invite (the first one
+too) and leaving one.
 
-Three things it gained so the two front-ends read as one product:
+What it shows besides the graph and the roster:
 
+- **Peer details**: names, IPv6 and IPv4 addresses, the ports a peer listens
+  on, a `ping6` to copy, and a sparkline of its traffic. Clicking a node on the
+  graph finds its card.
 - **A services list**, grouped by mesh: everything every peer offers, as the
   address you would actually type. Announced services (ADR-023) come out as
   `http://immich.jimmy-crib.mesh`; bound ports (ADR-026) as
   `jimmy-crib.mesh:22`, marked as such, because one is a URL and the other is a
   host and a port.
-- **A log pane**, the same tail the phone has always had. The daemon keeps its
-  last two hundred lines in memory and serves them over the socket — Basecamp
-  cannot read the journal, and "what is it doing" is the first question anybody
-  asks a mesh that has not come up.
+- **A log pane**, filtered by level and copied in one click, and **a
+  diagnostics report** to paste to whoever is helping.
 - **A restart button**, which is the other half of every setting whose result
   says "on the next restart". It refuses when nothing would start the daemon
   again, so it can never be a stop button by accident.
+- **A link to Shrooms Agents.**
 
-**Membership is shown, not managed.** Each mesh and each peer carries when its
-credential runs out, which is the one failure here that happens on a schedule —
-a known day, a device silently off the mesh, and nothing else on the page
-hinting at it. A credential this node has never seen reads as "unknown" rather
-than as expired, because those have opposite fixes.
+**Membership**: each mesh and each peer carries when its credential runs out,
+and what is due says the command that renews it. A credential this node has
+never seen reads as "unknown" rather than as expired, because those have
+opposite fixes.
 
-**What it cannot do is admit anybody**, and that is the line the design draws.
-On a mesh with `admin_keys`, membership is a credential signed by a key the
-daemon has never held — a passphrase-protected file in your home directory — so
-nothing reachable through this socket can make a device a member or remove one.
-Admission still runs through `shrooms invite` and a passphrase prompt, which is
-where the friction belongs.
+**Admitting, renewing and removing need the card.** On a mesh whose admin keys
+are on a Keycard, Basecamp invites a device (a QR on screen), renews what is
+due and revokes a device — the daemon drafts, the Keycard module signs after
+you tap the card and type the PIN there, and the daemon checks the signature
+before anything is published ([ADR-050](docs/adr/050-basecamp-at-parity-with-the-phone.md),
+[ADR-051](docs/adr/051-a-card-lets-the-socket-group-renew-and-revoke.md)). On a
+mesh whose admin key is a file, those stay with `shrooms invite` and
+`shrooms admin`, run where the key is: a file key proves nothing about who
+asked.
 
 > **Updating the core module needs Basecamp restarted; updating the view does
 > not.** `shrooms` is a QML view and reloads when Basecamp installs a new one.
