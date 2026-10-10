@@ -581,7 +581,16 @@ Item {
         }
         // Caught up with what the core has: the transcript, if it belongs.
         if (!r.events || r.events.length === 0) {
-            if (r.connected) root.agentCaughtUp = true
+            if (r.connected) {
+                root.agentCaughtUp = true
+                // A jump that is still armed was waiting for exactly this: rebuildChat only
+                // fires on new events, and an idle session sends none, so the search fallback
+                // never ran (2026-10-10).
+                // Anything armed - a search fallback, a seq jump, a task-id jump - has
+                // to be settled now that the replay has finished.
+                if (root.jumpRef !== "" || root.jumpTo > 0 || root.jumpToId !== "")
+                    Qt.callLater(root.rebuildChat)
+            }
             fetchEarlier()
             return
         }
@@ -972,26 +981,77 @@ Item {
             i = 0
         }
         for (; i < items.length; i++) chatModel.append(row(items[i]))
+        // A jump is not DONE until the session has caught up. The core replays a widened
+        // tail in batches, and a rebuild during the replay either clears and re-appends the
+        // model or scrolls to the end - so a position set mid-replay is thrown away and the
+        // reader lands at the bottom. It worked about half the time live (2026-10-10).
+        // While the replay runs, the row is lit and the jump stays ARMED; the final
+        // position and the clear happen once agentCaughtUp turns true.
         if (root.jumpTo > 0) {
+            var at = -1
             for (i = 0; i < chatModel.count; i++) {
                 if (chatModel.get(i).earlier || chatModel.get(i).seq !== root.jumpTo) continue
-                // The one scroll done in code that is not following the end:
-                // somebody asked for this message.
-                var at = i
+                at = i
+                break
+            }
+            if (at >= 0) {
+                // The one scroll done in code that is not following the end: somebody
+                // asked for this message.
                 root.chatStick = false
-                root.jumpTo = 0
-                if (root.jumpQuiet) {
-                    root.jumpQuiet = false
-                    Qt.callLater(function() { chatList.positionViewAtIndex(at, ListView.End) })
+                root.agentLit = chatModel.get(at).seq
+                litTimer.restart()
+                if (!root.agentCaughtUp) {
+                    root.jumpPending = true
+                    Qt.callLater(function() { chatList.positionViewAtIndex(at, ListView.Center) })
                     return
                 }
-                root.agentLit = chatModel.get(i).seq
-                Qt.callLater(function() { chatList.positionViewAtIndex(at, ListView.Center) })
-                litTimer.restart()
+                // Read BEFORE clearing: asking isQuietJump after `jumpTo = 0` is asking
+                // about 0, and the quiet branch could never be taken at all.
+                var wasQuiet = isQuietJump(root.jumpTo)
+                var settled = chatModel.get(at).seq
+                root.jumpQuietFor = 0
+                root.jumpTo = 0
+                root.jumpPending = false
+                root.jumpSettled = settled
+                root.jumpSettledCaught = root.agentCaughtUp
+                Qt.callLater(function() {
+                    chatList.positionViewAtIndex(at, wasQuiet ? ListView.End : ListView.Center) })
                 return
             }
         }
-        if (root.chatStick) Qt.callLater(function() { chatList.positionViewAtEnd() })
+        if (root.jumpToId !== "") {
+            var jat = -1
+            for (i = 0; i < chatModel.count; i++) {
+                if (!isJumpRow(chatModel.get(i), root.jumpToId)) continue
+                jat = i
+                break
+            }
+            if (jat >= 0) {
+                root.chatStick = false
+                root.agentLit = chatModel.get(jat).seq
+                litTimer.restart()
+                if (!root.agentCaughtUp) {
+                    root.jumpPending = true
+                    Qt.callLater(function() { chatList.positionViewAtIndex(jat, ListView.Center) })
+                    return
+                }
+                var settledId = chatModel.get(jat).seq
+                root.jumpToId = ""
+                root.jumpRef = ""
+                root.jumpPending = false
+                root.jumpSettled = settledId
+                root.jumpSettledCaught = root.agentCaughtUp
+                Qt.callLater(function() { chatList.positionViewAtIndex(jat, ListView.Center) })
+                return
+            }
+            // Not in the tail, and the session is not still arriving: reach back with
+            // the search the view already has, rather than a second jump path.
+            if (root.jumpRef !== "" && root.agentCaughtUp) jumpToTaskMessage()
+        }
+        // Never follow the end while a jump is still settling: THAT is what put the reader
+        // at the bottom during the replay.
+        if (root.followingEnd(root.chatStick))
+            Qt.callLater(function() { chatList.positionViewAtEnd() })
     }
 
     // Search: the whole conversation, on the agent's machine; the core does it
@@ -1000,9 +1060,50 @@ Item {
     property bool searchBusy: false
     property var searchFound: null
     property real jumpTo: 0
-    // A jump back to where the reader was, after loading more: not lit, and
-    // the event at the bottom of the view with what was loaded above it.
-    property bool jumpQuiet: false
+    // A jump to a TASK's message, which is a different thing from jumpTo: the task
+    // ref's second half is the message id, and the event that carried it has that id,
+    // so the match is on the id and not on a sequence.
+    property string jumpToId: ""
+    property string jumpRef: ""
+    property bool jumpViaSearch: false
+    // The message id out of a task ref ("machine/session:messageId"). A ref with no
+    // colon is not one, and the jump is then simply not armed.
+    function taskMessageId(ref) {
+        var s = String(ref || "")
+        var i = s.lastIndexOf(":")
+        return i > 0 ? s.slice(i + 1) : ""
+    }
+    // The query that reaches a message outside the loaded tail. The agent stores the
+    // task id in the message it sends, so this is the string it can be found by.
+    function taskSearchQuery(ref) { return ref ? "[shrooms task " + ref : "" }
+    // Is this model row the task's message? Pure, so the harness pins it: the async
+    // load around the jump is not something the harness can wait for.
+    function isJumpRow(r, id) { return !!r && !r.earlier && id !== "" && r.pid === id }
+    // The search fallback fires only once the session is caught up, so it cannot race
+    // a message that is still arriving - the view already tracks that as agentCaughtUp.
+    // The seq a QUIET jump was armed for: "load them" keeps the reader where they
+    // were, not lit. A plain flag was not enough - "load them" set it, its own jump
+    // never matched, and the flag stayed set, so the NEXT jump (tapping a task) took
+    // the quiet branch and lit nothing and moved nothing. The reviewer's live pass:
+    // "nothing is lit, nothing moves" (2026-10-10). Keyed to its seq, a stale one
+    // cannot swallow a different jump. Pure, so the harness pins it.
+    property real jumpQuietFor: 0
+    // The race, made visible: a jump is PENDING while the core is still replaying, and
+    // what it settled to - with whether the session had caught up when it did. A settle
+    // mid-replay is the bug.
+    property bool jumpPending: false
+    // May the view follow the end? `stick` is the caller's own intent. NOT while a jump is
+    // armed or pending: the replay appends rows, every one grows contentHeight, the list
+    // touches its end, atYEnd turns chatStick back on - and the reader is carried to the
+    // bottom. That is the second half of the race and it is in the LISTVIEW, not in
+    // rebuildChat (2026-10-10). ONE place, so there is one thing to pin, and the harness
+    // pins it because it has no real list geometry.
+    function followingEnd(stick) {
+        return !!stick && !root.jumpPending && root.jumpTo === 0 && root.jumpToId === ""
+    }
+    property real jumpSettled: 0
+    property bool jumpSettledCaught: false
+    function isQuietJump(seq) { return root.jumpQuietFor !== 0 && root.jumpQuietFor === seq }
     property real agentLit: 0
     property var reading: null
     function runSearch(q) {
@@ -1020,6 +1121,13 @@ Item {
         root.searchBusy = false
         if (r.error) { root.said = "search: " + r.error; root.saidBad = true; return }
         root.searchFound = r.found || []
+        if (root.jumpViaSearch) {
+            root.jumpViaSearch = false
+            var hit = bestHit(root.searchFound, root.jumpRef)
+            if (hit) root.openFound(hit)
+            else { root.said = "no message found for " + root.jumpRef; root.saidBad = true
+                   root.jumpPending = false }
+        }
     }
     // What tailReaching does on the phone (AgentChat.kt).
     // Earlier events loaded at a time, scrolled up to and asked for: the whole
@@ -1034,22 +1142,56 @@ Item {
         if (!agentOpen || evs.length === 0) return
         var first = evs[0].seq, last = evs[evs.length - 1].seq
         var h = { address: agentOpen.address, name: agentOpen.name, mesh: agentOpen.mesh }
-        openSession(h, agentOpen.session, first - 1 <= moreEvents ? 0 : moreTail(first, last))
-        root.jumpQuiet = true
+        // FRESH for the same reason as openFound: "load them" widens the tail, and a wider
+        // POSITIVE tail is ignored while the core keeps a copy - so the earlier events never
+        // arrived and the button looked like it did nothing. A tail of 0 ("all") is already
+        // absolute and stays positive.
+        openSession(h, agentOpen.session, first - 1 <= moreEvents ? 0 : moreTail(first, last), true)
+        root.jumpQuietFor = first
         root.jumpTo = first
     }
     function tailReaching(current, lastSeq, seq) {
         return current === 0 ? 0 : Math.max(current, lastSeq - seq + 1 + 20)
+    }
+    // The task's message was not in the loaded tail, so ask the agent for it. The
+    // first hit is opened with the search's own path (openFound), which widens the
+    // tail to reach it - one jump path, not two.
+    function jumpToTaskMessage() {
+        if (root.jumpRef === "") return
+        root.jumpToId = ""
+        root.jumpViaSearch = true
+        root.searchOpen = true
+        runSearch(taskSearchQuery(root.jumpRef))
+    }
+    // The hit that IS the task arriving, not a later mention of it: the agent's own
+    // message starts "[shrooms task <id> from". The live pass landed on the newest
+    // follow-up instead (2026-10-10). Falls back to the first hit, as before. Pure.
+    function bestHit(hits, ref) {
+        var want = "[shrooms task " + String(ref || "") + " from"
+        for (var i = 0; i < (hits || []).length; i++) {
+            if (String((hits[i] && hits[i].snippet) || "").indexOf(want) === 0) return hits[i]
+        }
+        return (hits && hits.length > 0) ? hits[0] : null
     }
     function openFound(f) {
         if (!f.seq) { root.reading = f; readingDialog.open(); return }
         root.searchOpen = false
         var evs = agentEventsList
         var first = evs.length > 0 ? evs[0].seq : Infinity
+        // Pending BEFORE the reopen: between openSession and `jumpTo = f.seq` the list is
+        // already growing, and nothing may follow the end in that window either.
+        root.jumpPending = true
         if (f.seq < first) {
             var lastSeq = Math.max(agentInfo ? (agentInfo.last_seq || 0) : 0, evs.length > 0 ? evs[evs.length - 1].seq : 0)
             var h = { address: agentOpen.address, name: agentOpen.name, mesh: agentOpen.mesh }
-            openSession(h, agentOpen.session, tailReaching(agentTailNow, lastSeq, f.seq))
+            // FRESH, and it is the whole fix: the core's Hub::watch shows the KEPT copy of a
+            // session and only asks for events after it, so a LARGER POSITIVE tail is ignored
+            // while a copy is kept - the widening did nothing, the window came back the same,
+            // and jumpTo wanted a seq that was never loaded (205 rebuilds on the reviewer's
+            // live trace). A negative tail says "without the copy": the core forgets it and
+            // replays the tail. Verified live - the tap then opened centred and lit on the
+            // arrival message, ~950 events back.
+            openSession(h, agentOpen.session, tailReaching(agentTailNow, lastSeq, f.seq), true)
         }
         root.jumpTo = f.seq
         rebuildChat()
@@ -1489,6 +1631,78 @@ Item {
         onActivated: Qt.callLater(root.escToBoard)
     }
     // The board, with no session open in front of it.
+    // A tap on a task row: open the session that is WORKING ON it. The task
+    // arrived in that session's conversation, which is where a person wants to
+    // be - not on the machine that asked.
+    // ACK a finished task: the asker has seen the result. It goes to the WORKER's
+    // agent (A2A AckTask at /a2a/<session>), because the task lives on the machine
+    // that ran it - the board is only the surface that shows it.
+        // What an ACK reply MEANS: a JSON-RPC error comes back as a BODY, not as a failure,
+        // so this used to say "acked ..." while the agent had refused (no such task, the
+        // session renamed away). Pure, so the harness pins it - the call itself starts an
+        // async path a test cannot wait on, which is why a direct ackTask() case hangs.
+        // Returns the reason to show, or null when the ack really was accepted.
+        function ackRefusal(reply) {
+            if (reply === null || reply === undefined) return "no reply"
+            try {
+                var o = (typeof reply === "string") ? JSON.parse(reply) : reply
+                if (o && o.error) return (o.error.message || "the agent refused")
+            } catch (e) { return "unreadable reply" }
+            return null
+        }
+
+    // The rows an "ACK all" would send: the finished-but-unacked ones, and nothing else.
+    // Pure, so the harness pins it - a bulk action must not sweep up a task that is still
+    // running or one that is already acked.
+    // Where an ack is sent. Pure, so the harness pins it: the path is what was wrong -
+    // /a2a/<session> is not forwarded by the core, so an ack from Basecamp could never
+    // work at all (2026-10-10). The agent serves POST /v1/tasks/{id}/ack.
+    function ackPath(id) { return "/v1/tasks/" + String(id || "") + "/ack" }
+    function unackedRows(rows) {
+        return (rows || []).filter(function(r) {
+            return r && r.kind === "task" && r.group === "unacked"
+        })
+    }
+    function ackAllUnacked() {
+        var rows = unackedRows(root.taskPanelList)
+        for (var i = 0; i < rows.length; i++) ackTask(rows[i], true)
+        if (rows.length > 0) { root.said = "acked " + rows.length + " tasks"; root.saidBad = false }
+        refreshAgents()
+        return rows.length
+    }
+    function ackTask(row, quiet) {
+        if (!row || row.kind !== "task") return false
+        // /v1/, not the A2A route: the core forwards only /v1/ paths, so an agentPost to
+        // /a2a/<session> came back an error and the panel said "could not ack" - the ack
+        // could never work from Basecamp at all (2026-10-10). The agent grew
+        // POST /v1/tasks/{id}/ack for this.
+        var refusal = ackRefusal(agentCall("agentPost", [row.address, ackPath(row.id), ""]))
+        if (refusal !== null) {
+            root.said = "could not ack " + row.id + (refusal === "no reply" ? "" : ": " + refusal)
+            root.saidBad = true
+            return false
+        }
+        root.said = "acked " + (row.title || row.id)
+        root.saidBad = false
+        if (!quiet) refreshAgents()
+        return true
+    }
+    function openTaskRow(row) {
+        if (!row || row.kind !== "task") return
+        for (var i = 0; i < agentHosts.length; i++) {
+            if (agentHosts[i].name !== row.machine) continue
+            // Arm the jump BEFORE the session loads: rebuildChat matches on the id as
+            // soon as the events arrive, and falls back to the search if they never do.
+            root.jumpRef = String(row.id || "")
+            root.jumpToId = taskMessageId(row.id)
+            // NO tail/fresh arguments: passing `true` for tail made the watch "-1" (fresh
+            // negates it), which is ONE event - the session opened with a single line and
+            // "N earlier events not loaded" (2026-10-10). The default tail is what opens a
+            // session the way the list does.
+            openSession(agentHosts[i], row.session)
+            return
+        }
+    }
     function showBoard() {
         root.agentCreating = false
         noteRead()
@@ -1516,7 +1730,10 @@ Item {
     // ("laptop" for "laptop.home") still finds it; an asker that is no
     // session (the CLI, an app) has no card.
     function askerKey(from, keys) {
-        var m = /\(([^)\/]+)\/([^)]+)\)\s*$/.exec(String(from || ""))
+        // The same two shapes askerName knows about. A CAGED sender is
+        // "laptop (laptop/shrooms, in a cage)": the old regex captured "shrooms, in a cage"
+        // as the session, found no such card, and the link silently vanished.
+        var m = /\(([^)\/]+)\/([^),]+)(,\s*[^)]*)?\)\s*$/.exec(String(from || ""))
         if (!m) return ""
         var want = m[1] + "/" + m[2]
         if (keys[want]) return want
@@ -1549,6 +1766,318 @@ Item {
         return out
     }
     function stateWordOf(st) { return String(st || "").replace(/^TASK_STATE_/, "").toLowerCase().replace(/_/g, "-") }
+    // The links, ONE ENTRY PER PAIR of sessions, carrying the tasks on it: how
+    // many are open and the tone of the most urgent. A task that needs a person
+    // is what someone must see from across the board, so it wins the link's
+    // colour; a stalled one is next; otherwise the link is working.
+    function boardLinkList(hosts) {
+        var keys = {}, out = [], byPair = {}
+        for (var i = 0; i < hosts.length; i++) {
+            var ss = hosts[i].sessions || []
+            for (var j = 0; j < ss.length; j++) keys[boardKey(hosts[i], ss[j].name)] = true
+        }
+        for (i = 0; i < hosts.length; i++) {
+            var ts = hosts[i].tasks || []
+            for (j = 0; j < ts.length; j++) {
+                var t = ts[j], md = t.metadata || {}, w = stateWordOf(t.status ? t.status.state : "")
+                if (/completed|failed|canceled|rejected|expired/.test(w)) continue
+                var to = boardKey(hosts[i], md["shrooms/session"] || "")
+                var from = askerKey(md["shrooms/from"], keys)
+                if (!keys[to] || from === "" || from === to) continue
+                // Both directions are ONE link, so their tasks share a badge.
+                var pair = pairKeyOf(from, to)
+                if (pair === "") continue
+                if (!byPair[pair]) {
+                    byPair[pair] = { from: from, to: to, count: 0, needsYou: 0, stalled: 0, working: 0,
+                                     tasks: [], tone: "working" }
+                    out.push(byPair[pair])
+                }
+                var e = byPair[pair]
+                e.count++
+                e.tasks.push({ id: t.id, title: taskTitleOf(t), state: taskStalledOf(t) ? "stalled" : w })
+                if (taskStalledOf(t)) e.stalled++
+                else if (w === "input-required") e.needsYou++
+                else e.working++
+                e.tone = e.needsYou > 0 ? "input-required" : e.stalled > 0 ? "stalled" : "working"
+            }
+        }
+        return out
+    }
+    readonly property var boardLinkData: boardLinkList(agentHosts)
+    // What a session OWES and what it is WAITING FOR: the tasks it is working on,
+    // and the tasks it asked others for. A card doing four things should say so.
+    function cardLoad(hosts) {
+        var keys = {}, out = {}
+        for (var i = 0; i < hosts.length; i++) {
+            var ss = hosts[i].sessions || []
+            for (var j = 0; j < ss.length; j++) keys[boardKey(hosts[i], ss[j].name)] = true
+        }
+        for (i = 0; i < hosts.length; i++) {
+            var ts = hosts[i].tasks || []
+            for (j = 0; j < ts.length; j++) {
+                var t = ts[j], md = t.metadata || {}, w = stateWordOf(t.status ? t.status.state : "")
+                if (/completed|failed|canceled|rejected|expired/.test(w)) continue
+                var mine = boardKey(hosts[i], md["shrooms/session"] || "")
+                if (keys[mine]) { out[mine] = out[mine] || { waiting: 0, asked: 0 }; out[mine].waiting++ }
+                var from = askerKey(md["shrooms/from"], keys)
+                if (from !== "" && keys[from]) { out[from] = out[from] || { waiting: 0, asked: 0 }; out[from].asked++ }
+            }
+        }
+        return out
+    }
+    readonly property var cardLoadData: cardLoad(agentHosts)
+    // A short label for a load count: "2 owed · 1 asked", and nothing when idle.
+    function loadLabel(l) {
+        if (!l) return ""
+        var bits = []
+        if (l.waiting > 0) bits.push(l.waiting + " owed")
+        if (l.asked > 0) bits.push(l.asked + " asked")
+        return bits.join(" \u00b7 ")
+    }
+    // A link's badge: the count, and the word when it is not simply working.
+    function linkLabel(e) {
+        if (!e || e.count < 1) return ""
+        if (e.needsYou > 0) return e.count + (e.needsYou === 1 ? " \u00b7 needs you" : " \u00b7 " + e.needsYou + " need you")
+        if (e.stalled > 0) return e.count + " \u00b7 stalled"
+        return String(e.count)
+    }
+
+    // ---- the tasks themselves, read live from the agents -------------------
+    // A link on the board IS a task, and so is a row in the tasks panel: the
+    // same objects, read from the machine that ran them. Nothing is copied to a
+    // hub, so there is no bridge lag and no second copy to disagree with.
+    //
+    // A task's NAME: the asker's title (shrooms/title), else the first line of
+    // the request (the A2A history's ROLE_USER message), else the worker's
+    // summary. Same precedence the hub board uses, so the two never disagree.
+    function taskTitleOf(t) {
+        var md = (t && t.metadata) || {}
+        var named = oneLine(md["shrooms/title"] || (t && t.title))
+        if (named !== "") return named
+        var h = (t && t.history) || []
+        for (var i = 0; i < h.length; i++) {
+            var m = h[i]
+            if (!m) continue
+            var role = String(m.role || "").toLowerCase()
+            if (role !== "" && role !== "role_user" && role !== "user") continue
+            var p = (m.parts && m.parts[0] && m.parts[0].text) || m.text || m.content || ""
+            var line = oneLine(firstLine(p))
+            if (line !== "") return line
+        }
+        return oneLine(t && t.summary)
+    }
+    // One line, whitespace collapsed. NOT cut: fitting a narrow card is the view's job
+    // (elide: Text.ElideRight), and a second number in the data would only drift from the
+    // store's 120. A wide panel can then show more of the same title.
+    function oneLine(s) {
+        return String(s === null || s === undefined ? "" : s).replace(/\s+/g, " ").trim()
+    }
+    // The first line only: a request is usually "From X..." and then the ask.
+    function firstLine(s) {
+        if (s === null || s === undefined) return ""
+        var parts = String(s).split("\n")
+        for (var i = 0; i < parts.length; i++) { var l = parts[i].trim(); if (l !== "") return l }
+        return ""
+    }
+    // What the task last said, for the line under the title.
+    function taskLatestOf(t) {
+        try { return oneLine(t.status.message.parts[0].text) } catch (e) { return "" }
+    }
+    function taskAtOf(t) { return (t && t.status && t.status.timestamp) || "" }
+    function taskAckedOf(t) { return !!((t && t.metadata) || {})["shrooms/acknowledged"] }
+    function taskStalledOf(t) { return !!((t && t.metadata) || {})["shrooms/stalled"] }
+    // Which group a row belongs to. "Needs you" first: a task waiting on a
+    // person is the only one that is urgent. Acked tasks are finished and are
+    // not listed at all - the list is what is still owed.
+    function taskGroup(t) {
+        var w = stateWordOf(t && t.status ? t.status.state : "")
+        // Needs you FIRST, even when it is also stalled: a task waiting on a person is the
+        // one that is urgent, and a stalled task that is also blocked on you is still blocked
+        // on you. (The reviewer: it should stay in Needs you.)
+        if (w === "input-required") return "needs-you"
+        if (taskStalledOf(t)) return "stalled"
+        if (/completed|failed|canceled|rejected|expired/.test(w)) return taskAckedOf(t) ? "done" : "unacked"
+        return "working"
+    }
+    readonly property var taskGroupOrder: ["needs-you", "working", "stalled", "unacked"]
+    // Where a link badge is drawn vertically, clamped into the canvas. The top row's links
+    // arc ABOVE the cards, so an unclamped badge lands under the header and is cut in half -
+    // and a badge half off the top reads as a rendering fault, which is worse than not
+    // drawing it. Pure, so the harness pins it and a mutation fails.
+    function badgeY(y, height, pad) {
+        var p = (pad === undefined) ? 9 : pad
+        return Math.max(p, Math.min(y, height - p))
+    }
+    function taskGroupLabel(g) {
+        return g === "needs-you" ? "Needs you" : g === "working" ? "Working"
+             : g === "stalled" ? "Stalled" : "Done, unacked"
+    }
+    // The age, in the units a person reads.
+    function ageOf(at, now) {
+        var ms = Date.parse(at)
+        if (isNaN(ms)) return ""
+        var s = Math.max(0, Math.floor(((now === undefined ? Date.now() : now) - ms) / 1000))
+        if (s < 60) return s + "s"
+        if (s < 3600) return Math.floor(s / 60) + "m"
+        if (s < 86400) return Math.floor(s / 3600) + "h"
+        return Math.floor(s / 86400) + "d"
+    }
+    // The age, labelled for what it is: "quiet 2h" while a task is open (how long since it
+    // last moved), "done 3h" once it is finished (how long since it finished).
+    // The clock is an ARGUMENT, so a row's age is a binding on nowMs and the row itself
+    // does not change with it. Pure, so the harness pins both halves: the row has no
+    // clock-derived field, and the label moves when the clock does.
+    function ageLabel(row, now) {
+        if (!row || !row.at) return ""
+        var a = ageOf(row.at, now)
+        return a === "" ? "" : (row.quiet ? "quiet " : "done ") + a
+    }
+
+    // Does this card have a task waiting on a person? That is what amber is for.
+    // The rows are a parameter so it can be pinned against a fixture: reading
+    // root.taskPanelList directly is untestable, because that reads the live hosts.
+    function cardNeedsYou(key, rows) {
+        rows = rows || root.taskPanelList
+        for (var i = 0; i < rows.length; i++) {
+            if (rows[i].kind === "task" && rows[i].group === "needs-you"
+                && (rows[i].machine + "/" + rows[i].session) === key) return true
+        }
+        return false
+    }
+
+    // The asker as a SESSION, not the device claim. Two shapes to know about:
+    //   "laptop.default (laptop/SPEL)"                 -> SPEL
+    //   "laptop (laptop/shrooms, in a cage)"           -> shrooms, and it IS caged
+    //   "pi5.office"                                   -> no session at all: a phone or
+    //                                                     Basecamp user. Someone asked, so
+    //                                                     show the DEVICE rather than nobody.
+    // The cage used to come through as part of the session ("shrooms, in a cage"), which then
+    // matched no card and silently dropped the link.
+    function askerName(from) {
+        var s = String(from || "")
+        var m = /\(([^)\/]+)\/([^),]+)(,\s*[^)]*)?\)\s*$/.exec(s)
+        if (m) return m[2].trim()
+        return s.trim()
+    }
+    function askerCaged(from) {
+        return /,\s*in a cage/.test(String(from || ""))
+    }
+    // Every task on every machine, as the panel's rows. The machines' own
+    // answers, straight through, grouped in the order a person needs them.
+    // NO clock argument: a row that depends on nowMs is rebuilt on every tick, the
+    // Repeater recreates every delegate, and the panel shifts under the cursor - a
+    // click then acked the row that had slid into place, not the one aimed at
+    // (2026-10-10). The row carries `at`; the AGE is a binding on nowMs in the view.
+    function taskRows(hosts) {
+        var out = []
+        // Every session key, so a row can name the asker the same way a link does
+        // (askerKey) - a link's pair is "asker>worker" and the panel filters on it.
+        var keys = {}
+        for (var k = 0; k < (hosts || []).length; k++) {
+            var ks = hosts[k].sessions || []
+            for (var q = 0; q < ks.length; q++) keys[boardKey(hosts[k], ks[q].name)] = true
+        }
+        for (var i = 0; i < (hosts || []).length; i++) {
+            var h = hosts[i], ts = h.tasks || []
+            for (var j = 0; j < ts.length; j++) {
+                var t = ts[j], g = taskGroup(t)
+                if (g === "done") continue
+                var md = t.metadata || {}, who = md["shrooms/session"] || ""
+                var from = md["shrooms/from"] || ""
+                // A row is never a gap: a task from an older agent may have no title, no
+                // request and no summary, and the id is still something a person can use.
+                var title = taskTitleOf(t)
+                if (title === "") title = String(t.id || "(no id)")
+                out.push({ id: t.id, group: g, title: title, latest: taskLatestOf(t),
+                           from: from, asker: askerName(from), caged: askerCaged(from),
+                           worker: who, machine: h.name, address: h.address, session: who,
+                           askerKey: askerKey(from, keys),
+                           at: taskAtOf(t),
+                           // `status.timestamp` is the last UPDATE, so this is how long the
+                           // task has been QUIET, not how long since it was asked. Say which:
+                           // a task asked three days ago that moved a minute ago is quiet 1m.
+                           quiet: g !== "unacked",
+                           acked: taskAckedOf(t), stalled: taskStalledOf(t) })
+            }
+        }
+        out.sort(function(a, b) {
+            var d = root.taskGroupOrder.indexOf(a.group) - root.taskGroupOrder.indexOf(b.group)
+            return d !== 0 ? d : (a.at < b.at ? -1 : a.at > b.at ? 1 : 0)
+        })
+        return out
+    }
+    readonly property var taskRowList: taskRows(agentHosts)
+    // The panel's rows INCLUDING a header before each group that has something in
+    // it. One flat list, because a QML Repeater cannot insert a header when a
+    // value changes - and a group with nothing in it gets no header, so the
+    // panel never shows an empty heading.
+    // Which link's badge is at this point, as its pair, or "" for none. Pure, so the
+    // harness pins it: a harness cannot click through layers, and that is exactly the
+    // behaviour that broke - a press off every badge must be handed to the card below.
+    function badgeAt(hits, x, y) {
+        for (var i = 0; i < (hits || []).length; i++) {
+            var b = hits[i]
+            if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) return b.pair
+        }
+        return ""
+    }
+    // A pair written the way a row writes it - the session names, not the raw keys:
+    // "laptop/a>pi5/b" reads "a -> b". Pure.
+    function pairLabel(pair) {
+        var s = String(pair || "")
+        var i = s.indexOf(">")
+        if (i < 0) return s
+        var a = s.slice(0, i), b = s.slice(i + 1)
+        var j = a.lastIndexOf("/"), k = b.lastIndexOf("/")
+        // Both ways round, because the filter shows the link in both directions.
+        return (j >= 0 ? a.slice(j + 1) : a) + " \u2194 " + (k >= 0 ? b.slice(k + 1) : b)
+    }
+    // A link is between TWO cards, and a task may run either way along it. One arc, one
+    // badge, one filter: the key SORTS the two, so a->b and b->a are the same link. Two
+    // directions used to make two badges at the same midpoint, and a tap returned the
+    // first - the hidden one - so the live pass filtered to the opposite direction and
+    // the panel came out empty (2026-10-10). Pure, so the harness pins it.
+    function pairKeyOf(a, b) {
+        a = String(a || "")
+        b = String(b || "")
+        if (a === "" || b === "") return ""
+        return a < b ? a + ">" + b : b + ">" + a
+    }
+    // The link a row belongs to, written the way a link is: "asker>worker". Pure.
+    // A group HEADER is not a row: it has no machine/session, and "undefined/undefined"
+    // would be a pair no task has. A plain task row is accepted with or without the
+    // `kind` that taskPanelRows adds - requiring it made this answer "" for a row from
+    // taskRows, which is the same empty panel by another route (2026-10-10).
+    function panelPair(row) {
+        if (!row || row.kind === "header") return ""
+        if (!row.machine || !row.session) return ""
+        return pairKeyOf(row.askerKey, row.machine + "/" + row.session)
+    }
+    // Tapping a link filters the panel to that pair rather than opening a second list.
+    // An empty pair is every task, which is what "x all tasks" clears back to.
+    function linkFiltered(rows, pair) {
+        if (!pair) return rows
+        return rows.filter(function(r) { return panelPair(r) === pair })
+    }
+    function taskPanelRows(hosts, pair) {
+        var rows = linkFiltered(taskRows(hosts), pair), out = [], last = null
+        for (var i = 0; i < rows.length; i++) {
+            if (rows[i].group !== last) {
+                last = rows[i].group
+                out.push({ kind: "header", group: last, label: taskGroupLabel(last),
+                           count: rows.filter(function(r) { return r.group === last }).length })
+            }
+            out.push(Object.assign({ kind: "task" }, rows[i]))
+        }
+        return out
+    }
+    // The pair a link tap filtered to, or  for all of them.
+    property string linkFilter: ""
+    // Where the link badges were drawn, so a tap on one can filter the panel to its
+    // pair. Written by the canvas, read by the tap handler.
+    property var badgeHit: []
+    readonly property var taskPanelList: taskPanelRows(agentHosts, linkFilter)
+
     function edgeTint(state) {
         return state === "working" ? cPhosphor : state === "input-required" ? cAmber : state === "stalled" ? cRust : cAsh
     }
@@ -2481,6 +3010,15 @@ Item {
             anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
             anchors.margins: root.sz(8)
             spacing: 3
+            // What this session OWES and what it is WAITING FOR. A card doing four
+            // things should say so rather than looking idle.
+            Text {
+                width: parent.width; elide: Text.ElideRight
+                visible: text !== ""
+                text: root.loadLabel(root.cardLoadData[bcard.cardKey])
+                color: root.cardNeedsYou(bcard.cardKey) ? cAmber : cAsh
+                font.family: "monospace"; font.pixelSize: root.fs(9)
+            }
             RowLayout {
                 width: parent.width
                 spacing: 6
@@ -2578,6 +3116,10 @@ Item {
             text: root.haveCore ? "Looking for agents among the reachable peers…" : "Agents need shrooms_core, which runs inside Basecamp."
             color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(11)
         }
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            spacing: root.sz(10)
         ScrollView {
             id: boardScroll
             Layout.fillWidth: true
@@ -2615,6 +3157,19 @@ Item {
                     // The dashes' offset: moving along a link being worked on.
                     property real march: 0
                     property int drawn: 0
+                    // A link badge is a hit target: tapping it filters the panel to that
+                    // pair. This canvas sits ON TOP of the cards, so the area must decide on
+                    // PRESS: a press that is not on a badge is not ours and is handed back,
+                    // and the press then falls through to the card underneath. Accepting
+                    // every press here killed every card tap on the board (2026-10-10).
+                    MouseArea {
+                        anchors.fill: parent
+                        onPressed: (mouse) => { mouse.accepted = root.badgeAt(root.badgeHit, mouse.x, mouse.y) !== "" }
+                        onClicked: (mouse) => {
+                            var pair = root.badgeAt(root.badgeHit, mouse.x, mouse.y)
+                            if (pair !== "") root.linkFilter = pair
+                        }
+                    }
                     Connections { target: root; function onBoardEdgeListChanged() { links.requestPaint() } }
                     Timer {
                         interval: 90; repeat: true
@@ -2644,9 +3199,165 @@ Item {
                             n++
                         }
                         drawn = n
+                        // The links carry their tasks: one badge per PAIR, at the middle of the
+                        // curve between them, saying how many and - when it is not simply working -
+                        // why it is coloured that way. A link that needs a person should say so
+                        // where the person is looking.
+                        var badges = root.boardLinkData
+                        var hits = []
+                        for (var m = 0; m < badges.length; m++) {
+                            var lb = badges[m]
+                            var ra = rectOf(lb.from), rb = rectOf(lb.to)
+                            if (!ra || !rb) continue
+                            var label = root.linkLabel(lb)
+                            if (label === "") continue
+                            var lp = root.linkCurve(ra, rb, 0, root.sz(30))
+                            // The cubic at t=0.5: (p0 + 3p1 + 3p2 + p3) / 8.
+                            var mx = (lp[0].x + 3 * lp[1].x + 3 * lp[2].x + lp[3].x) / 8
+                            // The CANVAS's height, not ctx.height: a QML Context2D has no
+                            // height, so badgeY got undefined, returned NaN and every badge
+                            // was drawn at NaN - invisible, untappable, and the filter with
+                            // it. A pure check on badgeY could not see this (2026-10-10).
+                            var my = root.badgeY((lp[0].y + 3 * lp[1].y + 3 * lp[2].y + lp[3].y) / 8,
+                                                 links.height, root.sz(34))
+                            ctx.font = root.fs(9) + "px monospace"
+                            var bw = ctx.measureText(label).width + root.sz(8)
+                            ctx.fillStyle = root.cVoid
+                            ctx.fillRect(mx - bw / 2, my - root.sz(7), bw, root.sz(14))
+                            ctx.strokeStyle = root.edgeTint(lb.tone)
+                            ctx.lineWidth = 1
+                            ctx.strokeRect(mx - bw / 2, my - root.sz(7), bw, root.sz(14))
+                            ctx.fillStyle = root.edgeTint(lb.tone)
+                            ctx.textAlign = "center"
+                            ctx.textBaseline = "middle"
+                            ctx.fillText(label, mx, my)
+                            // Where this badge is, so a tap on it can filter the panel
+                            // to that pair. Recorded here because this is the only place
+                            // that knows where the badge ended up.
+                            hits.push({ x: mx - bw / 2, y: my - root.sz(7), w: bw, h: root.sz(14),
+                                        // The SAME key the panel filters on (both
+                                        // directions are one link), or the tap filters to a
+                                        // pair no row has and the panel comes out empty - which
+                                        // is exactly what the live pass saw (2026-10-10).
+                                        pair: pairKeyOf(lb.from, lb.to) })
+                        }
+                        root.badgeHit = hits
                     }
                 }
             }
+        }
+        // The tasks panel: every task on every machine, grouped as a person
+        // needs them, BESIDE the board whose links are those same tasks. A link
+        // is one task or several; this is the list of them, in the order that
+        // matters - what is waiting on a person first.
+        Rectangle {
+            id: taskPanel
+            objectName: "taskPanel"
+            // Also shown when a filter is on and matches nothing: otherwise filtering to a
+            // pair with no tasks left hides the panel AND the only way back to all tasks.
+            visible: root.boardMode && (root.taskPanelList.length > 0 || root.linkFilter !== "")
+            Layout.preferredWidth: Math.min(root.sz(380), Math.max(root.sz(240), root.width * 0.32))
+            Layout.fillHeight: true
+            color: "transparent"
+            ScrollView {
+                anchors.fill: parent
+                clip: true
+                contentWidth: availableWidth
+                Column {
+                    width: taskPanel.width
+                    spacing: root.sz(2)
+                    // What the panel is filtered to, and the way back to everything.
+                    Lnk {
+                        objectName: "allTasks"
+                        visible: root.linkFilter !== ""
+                        text: "x all tasks  (" + root.pairLabel(root.linkFilter) + ")"
+                        font.pixelSize: root.fs(10)
+                        base: cAmber
+                        onClicked: root.linkFilter = ""
+                    }
+                    Repeater {
+                        model: root.taskPanelList
+                        delegate: Item {
+                            id: trow
+                            required property var modelData
+                            width: taskPanel.width
+                            height: trow.modelData.kind === "header" ? root.sz(26)
+                  : (trow.modelData.latest ? root.sz(58) : root.sz(42))
+                            // 75 rows in Done, unacked is a wall nobody clears one tap at a
+                            // time. The header offers it once; each ack still goes to the
+                            // worker's agent, and only to tasks whose state says so.
+                            Lnk {
+                                objectName: "ackAll"
+                                anchors.right: parent.right
+                                anchors.rightMargin: root.sz(14)
+                                anchors.top: parent.top
+                                anchors.topMargin: root.sz(6)
+                                visible: trow.modelData.kind === "header" && trow.modelData.group === "unacked"
+                                text: "ACK all"; base: cAmber; font.pixelSize: root.fs(9)
+                                onClicked: Qt.callLater(root.ackAllUnacked)
+                            }
+                            Text {
+                                anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                                anchors.topMargin: root.sz(6)
+                                visible: trow.modelData.kind === "header"
+                                text: trow.modelData.kind === "header" ? trow.modelData.label + "  " + trow.modelData.count : ""
+                                color: trow.modelData.kind === "header" && trow.modelData.group === "needs-you" ? cAmber : cAsh
+                                font.family: "monospace"; font.pixelSize: root.fs(10); font.bold: true
+                            }
+                            Column {
+                                visible: trow.modelData.kind === "task"
+                                anchors.left: parent.left; anchors.top: parent.top
+                                // The ACK takes its width out of the text, rather than sitting
+                                // on top of the title (2026-10-10).
+                                anchors.right: ackLnk.visible ? ackLnk.left : parent.right
+                                anchors.rightMargin: ackLnk.visible ? root.sz(4) : 0
+                                Text {
+                                    width: parent.width; elide: Text.ElideRight
+                                    text: trow.modelData.kind === "task" ? trow.modelData.title : ""
+                                    color: cBone; font.family: "monospace"; font.pixelSize: root.fs(11)
+                                }
+                                Text {
+                                    width: parent.width; elide: Text.ElideRight
+                                    text: trow.modelData.kind === "task"
+                                          ? (trow.modelData.asker || "?") + " \u2192 " + (trow.modelData.worker || "?")
+                                            + "  " + root.ageLabel(trow.modelData, root.nowMs)
+                                          : ""
+                                    color: root.edgeTint(trow.modelData.kind === "task" ? trow.modelData.group : "")
+                                    font.family: "monospace"; font.pixelSize: root.fs(9)
+                                }
+                                Text {
+                                    width: parent.width; elide: Text.ElideRight
+                                    text: trow.modelData.kind === "task" ? trow.modelData.latest : ""
+                                    color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(9)
+                                }
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                enabled: trow.modelData.kind === "task"
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: Qt.callLater(function() { root.openTaskRow(trow.modelData) })
+                            }
+                            // A finished task still owes an ack: that is the one thing a person
+                            // must be able to say back, and only where it does something. On top
+                            // of the row's MouseArea (so a click here does not also open the
+                            // session), and clear of the scrollbar, which sits over the right
+                            // edge - the first live pass scrolled the list instead of acking.
+                            Lnk {
+                                id: ackLnk
+                                objectName: "ackLnk"
+                                anchors.right: parent.right
+                                anchors.rightMargin: root.sz(14)
+                                anchors.top: parent.top
+                                anchors.topMargin: root.sz(6)
+                                visible: trow.modelData.kind === "task" && trow.modelData.group === "unacked"
+                                text: "ACK"; base: cAmber; font.pixelSize: root.fs(9)
+                                onClicked: Qt.callLater(function() { root.ackTask(trow.modelData) })
+                            }
+                        }
+                    }
+                }
+            }
+        }
         }
     }
 
@@ -3170,9 +3881,9 @@ Item {
                     // Messages measure themselves after they are added, so
                     // the height keeps growing after a scroll to the end: it
                     // is followed for as long as the reader is down there.
-                    onContentHeightChanged: if (root.chatStick) Qt.callLater(chatList.positionViewAtEnd)
-                    onMovementEnded: root.chatStick = chatList.atYEnd
-                    onAtYEndChanged: if (atYEnd) root.chatStick = true
+                    onContentHeightChanged: if (root.followingEnd(root.chatStick)) Qt.callLater(chatList.positionViewAtEnd)
+                    onMovementEnded: root.chatStick = root.followingEnd(chatList.atYEnd)
+                    onAtYEndChanged: if (atYEnd && root.followingEnd(root.chatStick)) root.chatStick = true
                     // Scrolling up by any means — the wheel included, which
                     // reports no movement — stops the following. Content
                     // growing never moves the view up, so this is the reader.

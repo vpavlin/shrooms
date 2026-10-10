@@ -209,16 +209,42 @@ mkdir -p "$work/agents"
 cp basecamp-agents/Main.qml basecamp-agents/test/AgentsHarness.qml "$work/agents/"
 shot=${AGENTS_SHOT:-$work/agents.png}
 out=$(run "$QML" -I "$work/agents" "$work/agents/AgentsHarness.qml" "$shot")
-echo "$out" | grep -E "^qml: (HOSTS|PROBED|ROWS|STREAMING|PROMPT|CALLS|ATTACHED|SENT|CONVERSATIONS|TAKEOVER|LISTWIDTH|PLANS|GLANCE)" || true
-expect() { echo "$out" | grep -qF "$1" || { echo "FAIL: $2"; exit 1; }; }
+echo "$out" | grep -E "^qml: (HOSTS|PROBED|ROWS|STREAMING|PROMPT|CALLS|ATTACHED|SENT|CONVERSATIONS|TAKEOVER|LISTWIDTH|PLANS|GLANCE|TASKROWS|TASKORDER|TASKNAME|ASKER|AGE|TASKROW1)" || true
+expect() { echo "$out" | grep -qF "$1" || { echo "FAIL: $2"
+    # Show what it actually said, so the next reader does not have to re-run it
+    # by hand to find out (which is exactly what this line cost me on 2026-10-10).
+    echo "  wanted: $1"
+    echo "$out" | grep -F "${1%% *}" | head -3 | sed "s/^/  got:    /"
+    exit 1; }; }
 # The first one also says why, when the view did not load at all: a QML
 # module the runner lacks (QtQuick.Dialogs, 2026-10-03) prints nothing else.
 echo "$out" | grep -qF "HOSTS=" || { echo "$out" | head -20; echo "FAIL: the view did not load"; exit 1; }
 # A script error in the view prints a warning and carries on; here it fails.
-if echo "$out" | grep -E "Main.qml:[0-9]+:.*(TypeError|ReferenceError|is not a function|Cannot (read|assign))"; then
+# SYNTAX errors too, and this is not theoretical: a missing `;` after a binding
+# (2026-10-10) was reported as "Expected token `;`" and the view RECOVERED - it
+# dropped that one binding, kept printing HOSTS=, and every assertion below
+# passed. On the reviewer's Qt the same line failed the whole document to load.
+# A parse error must fail here whichever way the runtime reacts to it.
+if echo "$out" | grep -E "Main\.qml:[0-9]+:.*(TypeError|ReferenceError|is not a function|Cannot (read|assign)|Expected token|Unexpected token|SyntaxError|Expected a qualified name)"; then
     echo "FAIL: the view hit a script error"; exit 1
 fi
 expect "HOSTS=1 SESSIONS=2" "the agents were not listed"
+# The tasks panel's rows: grouped Needs you / Working / Stalled / Done unacked, with the
+# acked one gone, the ages right, and each row carrying what a person needs to judge it.
+expect "TASKROWS needs-you:m1:quiet 1h,needs-you:m6:quiet 15m,working:m2:quiet 30m,working:m7:quiet 10m,stalled:m3:quiet 2h,unacked:m4:done 3h" "the task rows are not grouped and ordered as a person needs them: Needs you first, then oldest-first inside each group"
+expect "TASKORDER needs-you,working,stalled,unacked labels=Needs you/Working/Stalled/Done, unacked" "the task groups are not in the agreed order or named as agreed"
+expect "TASKNAME named by the asker|From X: the request|the real ask|the worker's own summary|" "a task is not named by the asker's title, then the request's first line, then the summary"
+expect "ASKER SPEL,jimmy,shrooms,pi5.office," "the asker is not read as a session: a caged one, or one with no session at all"
+expect "AGE 30s,1h,10h," "the age is not in the units a person reads"
+expect "TASKROW1 From Jimmy: review the module | from=jimmy to=review | latest=which of the two? | quiet 1h | hasref=false" "a row does not carry its title, asker, worker, latest line, labelled age"
+expect "CAGED true,false" "a caged asker is not told apart from an uncaged one"
+expect "AGELABEL quiet 1h,done 2h," "the age is not labelled for what it measures"
+expect "BAREROW jimmy:no-title-1" "a task with no title leaves a gap instead of falling back to its id"
+expect "ACKERR no such task | null | no reply" "an ACK the agent refused is not told apart from one that was accepted"
+expect "PANEL [Needs you 2] m1 m6 [Working 2] m2 m7 [Stalled 1] m3 [Done, unacked 1] m4" "the panel does not head each non-empty group, or a task that is both blocked and stalled is not in Needs you"
+expect "LINKS pi5/jimmy>laptop/review:2:input-required:2 · needs you,laptop/shrooms>laptop/review:2:stalled:2 · stalled" "a link does not carry the tasks on it, the most urgent tone does not win, or a CAGED asker's link silently vanished"
+expect "LOAD laptop/review=5 owed,laptop/shrooms=2 asked,pi5/jimmy=2 asked" "a card does not show what it owes and what it is waiting for"
+expect "NEEDSYOU true,false,false,false,false,false,false" "a card is amber without a needs-you task, or is not amber with one"
 # This device first: an agent on the machine Basecamp runs on is no peer of it.
 expect "PROBED=desk|office|fdb0:9afc:a5ef:1111:2222:3333:4444:5555;laptop|office|fdb0:9afc:a5ef:388c" "this device's own agent is not looked for"
 # History before the conversation, the conversation's rows in order, the
@@ -233,6 +259,70 @@ expect "SEARCH=fdb0:9afc:a5ef:388c:8264:7716:36fc:64eb shrooms tests FOUND=2 BUS
 expect "READING=true TEXT=Earlier: the tests, in a terminal." "a result from before the agent is not shown whole"
 # Row 3: two earlier lines from the transcript, the first message, then it.
 expect "JUMP lit=3 row=3 kind=said searchOpen=false stick=false reach=521,0" "a search result does not jump to its message"
+expect "JUMPID abc-123,," "the message id is not read out of the task ref"
+expect "JUMPROW true,false,false,false,false" "a jump matches something that is not the task's message"
+expect "JUMPQ [shrooms task laptop/review:m1" "the search fallback does not look for the task id"
+expect "ACKPATH /v1/tasks/jimmy:m1/ack,/v1/tasks//ack" "the ack path is not the one the core forwards"
+expect "UNACKED a,d" "a bulk ack would sweep up a task that is still running or already acked"
+expect "STABLE false,true,quiet 1h|quiet 2h" "a task row changes with the clock, so the panel moves under the cursor"
+expect "BADGEHIT n=3 bad=0" "the link badges were not drawn where they can be tapped"
+expect "TASKWATCH fd00::1 shrooms 300" "tapping a task opens its session with one event instead of the tail"
+expect "LIVELINK n=1 pair=laptop/shrooms>laptop/jimmy count=1 tone=input-required" "the live-shaped link is not built from a real task"
+expect "LIVEFILTER laptop/jimmy>laptop/shrooms n=1" "tapping that link's badge would show an EMPTY panel"
+expect "PAIRKEY a/y>b/x|a/y>b/x|a/y>a/y|" "a link in the other direction is not the same link"
+expect "DEEPJUMP litMax=20 want=20 has20=true evs=400 tail=401" "the jump to a task OUTSIDE the loaded tail never lights - the reviewer's live pass: nothing lit, nothing moves"
+# A WIDENED TAIL MUST OPEN FRESH. The core's Hub::watch shows the kept copy of a
+# session and ignores a larger POSITIVE tail, so the widening did nothing and jumpTo
+# wanted a seq that was never loaded. The stub models that; this is the negative tail.
+expect "fresh=true tails=300/-401" "the widened tail was asked for with the kept copy still in front of it"
+# The race: the match fires while the core is still REPLAYING the widened tail, and
+# every rebuild during the replay throws the position away - so the reader lands
+# at the bottom. About half the live runs. The settle must wait for caught-up.
+expect "settled=20 settledCaught=true" "the jump settled while the replay was still running, so the reader lands at the end"
+expect "BESTHIT 5,3,true" "the jump lands on a later mention of the task instead of its arrival"
+expect "PAIR laptop/review>pi5/jimmy,,1,1,0,2" "a link tap does not filter the panel to its own pair"
+expect "BADGEAT a>b,,a>b,a>b,,," "a press is taken over a card that is not on a badge"
+expect "PAIRLABEL a ↔ b,nocolon," "the filtered panel shows raw keys instead of names"
+expect "FOLLOWING true,false,false,false,false" "the view follows the end while a jump is armed or pending"
+# The automatic followers go through it. The harness has no real list geometry, so
+# this is STATIC, and it is the half of the race that is in the ListView itself.
+grep -q 'onContentHeightChanged: if (root.followingEnd(root.chatStick))' basecamp-agents/Main.qml \
+    || { echo "FAIL: the list follows content growth without asking about a pending jump"; exit 1; }
+grep -q 'onAtYEndChanged: if (atYEnd && root.followingEnd(root.chatStick))' basecamp-agents/Main.qml \
+    || { echo "FAIL: the list re-sticks itself at its end while a jump is pending"; exit 1; }
+grep -q 'onMovementEnded: root.chatStick = root.followingEnd(chatList.atYEnd)' basecamp-agents/Main.qml \
+    || { echo "FAIL: a movement re-sticks without asking about a pending jump"; exit 1; }
+# The ack path: /a2a/ is not forwarded by the core, so an ack could never work
+# from Basecamp at all. The path itself is pinned above (ACKPATH); this says the
+# call uses it.
+grep -q 'ackPath(row.id)' basecamp-agents/Main.qml \
+    || { echo "FAIL: an ack does not go to the /v1/ path the core forwards"; exit 1; }
+
+# A badge must carry the key the panel filters on. The tap cannot be driven here (a
+# harness cannot click through layers), and this is the line that was wrong: the
+# badge built its own "from>to" while the panel sorted its pair, so a tap filtered
+# to a pair no row had and the panel came out empty.
+grep -q 'pair: pairKeyOf(lb.from, lb.to)' basecamp-agents/Main.qml \
+    || { echo "FAIL: a badge does not carry the pair the panel filters on"; exit 1; }
+grep -q 'pair: lb.from + ">"' basecamp-agents/Main.qml \
+    && { echo "FAIL: a badge builds its own unsorted pair again"; exit 1; }
+
+# The clear control and the badge hit target are STATIC checks, and I am saying so:
+# the panel is only instantiated when it has rows or a filter, and this harness's
+# taskPanelList is empty (it reads the live hosts), so the object is not there to
+# read. The behaviour behind them - the pair a row belongs to, and the filter
+# itself - IS pinned above, purely (PAIR).
+grep -q 'objectName: "allTasks"' basecamp-agents/Main.qml \
+    || { echo "FAIL: no way back from a filtered panel"; exit 1; }
+grep -q 'visible: root.linkFilter !== ""' basecamp-agents/Main.qml \
+    || { echo "FAIL: the clear control is not tied to the filter"; exit 1; }
+grep -q 'root.linkFilter = pair' basecamp-agents/Main.qml \
+    || { echo "FAIL: tapping a link badge does not filter the panel"; exit 1; }
+# The canvas sits on top of the cards, so the badge area MUST decide on press and
+# hand back a press that is not on a badge. Accepting every press here killed every
+# card tap on the board (the reviewer found it). The hit test itself is pinned above.
+grep -q 'onPressed: (mouse) => { mouse.accepted = root.badgeAt' basecamp-agents/Main.qml \
+    || { echo "FAIL: the badge area would swallow every card tap on the board"; exit 1; }
 expect 'QUESTION open=true before=null posted={"allow":true,"answers":{"Which user?":"agent","What else?":"voice, logs"}} after=false [answered: agent; voice, logs from desk]' "a question is not offered, answered or closed"
 expect 'LINKMD=see <https://pi.dev>, or [docs](https://x.io/a) and `curl http://no.pe`' "a bare URL in the model's text is not a link, or code or a link was touched"
 expect '<https://already.io>' "an autolink was wrapped twice"

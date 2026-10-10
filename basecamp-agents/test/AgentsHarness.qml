@@ -54,6 +54,12 @@ Item {
     property string lastDelete: ""
     property string lastMoveKept: ""
     property string lastWatch: ""
+    // A windowed core, for the jump that has to reach OUTSIDE the loaded tail.
+    property bool windowed: false
+    property int watchTail: 0
+    property var windowEvents: []
+    // Every watch tail asked for, raw: a negative one is a FRESH open (no kept copy).
+    property var watchTails: []
     property string lastSearch: ""
     property bool findNone: false
     property string lastOpen: ""
@@ -100,6 +106,50 @@ Item {
         bridge: QtObject {
             function callModule(module, method, args) {
                 top.calls.push(method)
+                if (method === "agentWatch") {
+                    top.lastWatch = args.join(" ")
+                    // The LIVE SHAPE: the real core answers with the LAST `tail` events, so a
+                    // session deeper than the tail has no older events loaded, and a jump to a
+                    // task that arrived before the window has to reach back.
+                    // The core's Hub::watch IGNORES a larger positive tail while it keeps a
+                    // copy of a session, and only a NEGATIVE one ("without the copy") makes
+                    // it replay a wider window. Modelled here: the tail is recorded raw, and
+                    // the window uses its size. A widening that stays positive is the bug
+                    // the reviewer traced live (205 rebuilds wanting a seq never loaded).
+                    if (top.windowed) {
+                        var wt = Number(args[2])
+                        top.watchTails = top.watchTails.concat([wt])
+                        // Faithful to Hub::watch: while it keeps a copy of a session, a
+                        // larger POSITIVE tail is ignored; only a NEGATIVE one ("without the
+                        // copy") makes it replay a wider window.
+                        if (wt < 0) top.watchTail = -wt
+                        else if (top.watchTail === 0) top.watchTail = wt
+                        else top.watchTail = Math.min(top.watchTail, wt)
+                    }
+                    return JSON.stringify({ ok: true })
+                }
+                // THE LIVE SHAPE. The real core answers with the LAST `tail` events, so a
+                // session deeper than the tail does not have its older events loaded - and
+                // a jump to a task that arrived before the window has to reach back. This
+                if (method === "agentEvents" && top.windowed) {
+                    var wafter = Number(args[0])
+                    var wbase = Math.max(0, top.windowEvents.length - top.watchTail)
+                    var wfrom = Math.max(wafter, wbase)
+                    var wupto = Math.min(top.windowEvents.length, wfrom + 4)
+                    return JSON.stringify({ next: wupto, more: wupto < top.windowEvents.length,
+                                            connected: true, error: "", kept: 0, epoch: 9,
+                                            events: wfrom >= top.windowEvents.length ? []
+                                                    : top.windowEvents.slice(wfrom, wupto) })
+                }
+                if (method === "agentSearch" && top.windowed) { top.lastSearch = args.join(" "); return JSON.stringify({ search: 1 }) }
+                if (method === "agentSearched" && top.windowed)
+                    return JSON.stringify({ id: 1, done: true, error: "", found: [
+                        { seq: 20, time: "2026-10-09T10:00:00Z", role: "user",
+                          snippet: "[shrooms task jimmy:deep-1 from laptop.default (laptop/shrooms)] the arrival" },
+                        { seq: 390, time: "2026-10-09T11:00:00Z", role: "user",
+                          snippet: "[shrooms task jimmy:deep-1 \u2014 more from laptop.default (laptop/shrooms)]" } ] })
+
+
                 if (method === "status") return JSON.stringify({ name: "desk",
                     meshes: [ { label: "office", overlay: "fdb0:9afc:a5ef:1111:2222:3333:4444:5555" } ], peers: [
                     { name: "laptop", mesh: "office", overlay: "fdb0:9afc:a5ef:388c:8264:7716:36fc:64eb", online: true } ] })
@@ -153,7 +203,6 @@ Item {
                     if (args[0] === "stop") top.speakingNow = false
                     return JSON.stringify(args[0] === "state" ? { speaking: top.speakingNow, engine: "spd-say" } : { ok: true })
                 }
-                if (method === "agentWatch") { top.lastWatch = args.join(" "); return JSON.stringify({ ok: true }) }
                 if (method === "agentEvents" && top.keptPhase === 1) return JSON.stringify({ next: 3, more: false, connected: false,
                     error: "connect: no route to host", kept: 1759500000000, epoch: 4, events: Number(args[0]) >= 3 ? [] : top.events.slice(0, 3) })
                 // A copy of a session since made again: numbers above its own.
@@ -349,6 +398,45 @@ Item {
             console.error("JUMP lit=" + view.agentLit + " row=" + litRow + " kind=" + (litRow >= 0 ? view.chatModelAt(litRow).kind : "")
                           + " searchOpen=" + view.searchOpen + " stick=" + view.chatStick
                           + " reach=" + view.tailReaching(300, 1000, 500) + "," + view.tailReaching(0, 1000, 5))
+            // Tapping a task opens its session and arms a jump to the message that carried
+            // it. The id is the ref after the colon; the match is on the event id, not a
+            // sequence; and a message outside the tail is reached with the search.
+            console.error("JUMPID " + [view.taskMessageId("laptop/review:abc-123"),
+                view.taskMessageId("nocolon"), view.taskMessageId("")].join(","))
+            console.error("JUMPROW " + [view.isJumpRow({ pid: "x" }, "x"),
+                view.isJumpRow({ pid: "y" }, "x"), view.isJumpRow({ pid: "x", earlier: true }, "x"),
+                view.isJumpRow({ pid: "x" }, ""), view.isJumpRow(null, "x")].join(","))
+            console.error("JUMPQ " + view.taskSearchQuery("laptop/review:m1"))
+            // Tapping a link filters the panel to that pair; "x all tasks" clears it.
+            var fr = [{ kind: "task", askerKey: "pi5/jimmy", machine: "laptop", session: "review" },
+                      { kind: "task", askerKey: "laptop/shrooms", machine: "laptop", session: "review" }]
+            // Filtering by a row's OWN pair must find it - that is the whole bug class: the
+            // badge and the row used to build the pair differently, so the filter came out
+            // empty. Both directions of one link are the same pair, so either row's key
+            // finds both rows on it.
+            console.error("PAIR " + [view.panelPair(fr[0]), view.panelPair({ kind: "header" }),
+                view.linkFiltered(fr, view.panelPair(fr[0])).length,
+                view.linkFiltered(fr, view.panelPair(fr[1])).length,
+                view.linkFiltered(fr, "nobody>x").length,
+                view.linkFiltered(fr, "").length].join(","))
+            // The badge hit test. The canvas sits on top of the cards, so a press that is not
+            // on a badge must be handed back and fall through - a harness cannot click through
+            // layers, so the decision itself is what gets pinned.
+            var bh = [{ x: 10, y: 10, w: 20, h: 10, pair: "a>b" }]
+            console.error("BADGEAT " + [view.badgeAt(bh, 15, 15), view.badgeAt(bh, 5, 5),
+                view.badgeAt(bh, 10, 10), view.badgeAt(bh, 30, 20), view.badgeAt(bh, 31, 15),
+                view.badgeAt([], 15, 15), view.badgeAt(null, 1, 1)].join(","))
+            // May the view follow the end? Not while a jump is armed or pending: the replay
+            // grows contentHeight with every row it appends, the list touches its end, and
+            // the reader is carried to the bottom - the second half of the race, and it is
+            // in the ListView, where a harness has no geometry. The DECISION is pure.
+            var fe = [view.followingEnd(true), view.followingEnd(false)]
+            view.jumpPending = true; fe.push(view.followingEnd(true)); view.jumpPending = false
+            view.jumpTo = 5; fe.push(view.followingEnd(true)); view.jumpTo = 0
+            view.jumpToId = "x"; fe.push(view.followingEnd(true)); view.jumpToId = ""
+            console.error("FOLLOWING " + fe.join(","))
+            console.error("PAIRLABEL " + [view.pairLabel("laptop/a>pi5/b"), view.pairLabel("nocolon"),
+                view.pairLabel("")].join(","))
 
             // A question from the model: a card of its own, the options picked
             // (two of three, given in the order offered), and the answer sent.
@@ -632,12 +720,106 @@ Item {
                           .filter(function(c, i, a) { return a.indexOf(c) === i }).join(","))
             // Then the board, as the agents answer with their last lines
             // and their tasks.
+            // The tasks panel's rows, from the machines' own answers.
+            var tnow = Date.parse("2026-10-09T12:00:00Z")
+            var trows = view.taskRows(top.taskHosts)
+            console.error("TASKROWS " + trows.map(function(r) { return r.group + ":" + r.id.split(":")[1] + ":" + view.ageLabel(r, tnow) }).join(","))
+            console.error("TASKORDER " + view.taskGroupOrder.join(",") + " labels=" + view.taskGroupOrder.map(view.taskGroupLabel).join("/"))
+            console.error("TASKNAME " + [
+                view.taskTitleOf({ metadata: { "shrooms/title": "named by the asker" }, history: [{ role: "ROLE_USER", parts: [{ text: "From X: the request" }] }] }),
+                view.taskTitleOf({ history: [{ role: "ROLE_USER", parts: [{ text: "From X: the request\n\nand more" }] }] }),
+                view.taskTitleOf({ history: [{ role: "ROLE_AGENT", parts: [{ text: "not the request" }] }, { role: "ROLE_USER", parts: [{ text: "the real ask" }] }] }),
+                view.taskTitleOf({ summary: "the worker's own summary" }),
+                view.taskTitleOf({})
+            ].join("|"))
+            console.error("ASKER " + [view.askerName("laptop.default (laptop/SPEL)"), view.askerName("pi5 (pi5/jimmy)"),
+                                      view.askerName("laptop (laptop/shrooms, in a cage)"), view.askerName("pi5.office"),
+                                      view.askerName("")].join(","))
+            console.error("CAGED " + [view.askerCaged("laptop (laptop/shrooms, in a cage)"),
+                                      view.askerCaged("laptop.default (laptop/SPEL)")].join(","))
+            console.error("AGE " + [view.ageOf("2026-10-09T11:59:30Z", tnow), view.ageOf("2026-10-09T11:00:00Z", tnow),
+                                    view.ageOf("2026-10-09T02:00:00Z", tnow), view.ageOf("nonsense", tnow)].join(","))
+            // The panel's rows, with a header per non-empty group.
+            var prows = view.taskPanelRows(top.taskHosts)
+            console.error("PANEL " + prows.map(function(r) { return r.kind === "header" ? "[" + r.label + " " + r.count + "]" : r.id.split(":")[1] }).join(" "))
+            // The links carrying their tasks, and the load on each card.
+            var links = view.boardLinkList(top.taskHosts)
+            console.error("LINKS " + links.map(function(e) { return e.from + ">" + e.to + ":" + e.count + ":" + e.tone + ":" + view.linkLabel(e) }).join(","))
+            var load = view.cardLoad(top.taskHosts)
+            console.error("LOAD " + Object.keys(load).sort().map(function(k) { return k + "=" + view.loadLabel(load[k]) }).join(","))
+            // Amber means "a person is needed", so the card load must only be amber for a
+            // card whose task is actually in needs-you. Pure, so it can be pinned.
+            var nyKeys = prows.filter(function(r) { return r.group === "needs-you" })
+                .map(function(r) { return r.machine + "/" + r.session })
+            // A card is amber only when one of ITS tasks is in needs-you. Built by hand: the
+            // fixture puts every task on one host/session, so a key alone cannot tell the
+            // groups apart - and a check that cannot fail is worse than none.
+            function nyRow(g) { return { kind: "task", group: g, machine: "x", session: "y" } }
+            console.error("NEEDSYOU " + [view.cardNeedsYou("x/y", [nyRow("needs-you")]),
+                view.cardNeedsYou("x/y", [nyRow("working")]),
+                view.cardNeedsYou("x/y", [nyRow("stalled")]),
+                view.cardNeedsYou("x/y", [nyRow("unacked")]),
+                view.cardNeedsYou("x/y", [{ kind: "header", label: "Needs you", count: 1 }]),
+                view.cardNeedsYou("x/y", []),
+                view.cardNeedsYou("other/z", [nyRow("needs-you")])].join(","))
+            console.error("TASKROW1 " + (trows[0] ? trows[0].title + " | from=" + trows[0].asker + " to=" + trows[0].worker
+                          + " | latest=" + trows[0].latest + " | " + view.ageLabel(trows[0], tnow)
+                          + " | hasref=" + (trows[0].ref !== undefined) : "none"))
+            // The label takes the CLOCK as an argument, so a row's age is a binding on it
+            // and the row itself does not change - the panel shifting under the cursor was
+            // exactly that (2026-10-10).
+            console.error("AGELABEL " + [view.ageLabel({ at: "2026-10-09T11:00:00Z", quiet: true }, tnow),
+                                         view.ageLabel({ at: "2026-10-09T10:00:00Z", quiet: false }, tnow),
+                                         view.ageLabel({})].join(","))
+            // a task with no title at all must still be a row, not a gap
+            var bare = view.taskRows([{ name: "pi5", address: "fd00::9",
+                sessions: [{ name: "jimmy" }],
+                tasks: [{ id: "jimmy:no-title-1", status: { state: "TASK_STATE_WORKING", timestamp: "2026-10-09T11:00:00Z" },
+                          metadata: { "shrooms/session": "jimmy" } }] }], tnow)
+            console.error("BAREROW " + (bare[0] ? bare[0].title : "none"))
+            // An ACK the agent refused must not read as success. The DECISION is pure
+            // (ackRefusal), because calling ackTask() starts an async refresh a test cannot
+            // wait on - the first version of this case hung the whole suite exactly that way.
+            console.error("ACKERR " + view.ackRefusal(JSON.stringify(
+                { jsonrpc: "2.0", id: "ack-review:m1", error: { code: -32001, message: "no such task" } }))
+                + " | " + view.ackRefusal(JSON.stringify({ ok: true }))
+                + " | " + view.ackRefusal(null))
             top.boardFind = top.boardHosts
             view.refreshAgents()
             view.setBoard(true)
             boardTimer.start()
         }
     }
+    // The tasks the panel is built from: one per group, one acked (which is
+    // finished and must not be listed), one stalled, and one whose name the
+    // asker set. Timestamps are fixed so the ages and the order are exact.
+    readonly property var taskHosts: [
+        { name: "laptop", address: "fd00::1", sessions: [ { name: "review" }, { name: "shrooms" } ], tasks: [
+            { id: "review:m1", status: { state: "TASK_STATE_INPUT_REQUIRED", timestamp: "2026-10-09T11:00:00Z",
+                                         message: { parts: [{ text: "which of the two?" }] } },
+              metadata: { "shrooms/session": "review", "shrooms/from": "pi5 (pi5/jimmy)" },
+              history: [{ role: "ROLE_USER", parts: [{ text: "From Jimmy: review the module\n\nand the second line" }] }] },
+            { id: "review:m2", status: { state: "TASK_STATE_WORKING", timestamp: "2026-10-09T11:30:00Z",
+                                         message: { parts: [{ text: "reading it now" }] } },
+              metadata: { "shrooms/session": "review", "shrooms/from": "laptop (laptop/shrooms)",
+                          "shrooms/title": "the asker named this one" } },
+            { id: "review:m3", status: { state: "TASK_STATE_WORKING", timestamp: "2026-10-09T10:00:00Z" },
+              metadata: { "shrooms/session": "review", "shrooms/from": "pi5 (pi5/jimmy)", "shrooms/stalled": true } },
+            // input-required AND stalled: a task waiting on a person stays in Needs you
+            { id: "review:m6", status: { state: "TASK_STATE_INPUT_REQUIRED", timestamp: "2026-10-09T11:45:00Z" },
+              metadata: { "shrooms/session": "review", "shrooms/from": "laptop (laptop/shrooms, in a cage)",
+                          "shrooms/stalled": true } },
+            // the session in the id is the OLD name after a rename; shrooms/session is the new one
+            { id: "oldname:m7", status: { state: "TASK_STATE_WORKING", timestamp: "2026-10-09T11:50:00Z" },
+              metadata: { "shrooms/session": "review", "shrooms/from": "pi5.office" } },
+            { id: "review:m4", status: { state: "TASK_STATE_COMPLETED", timestamp: "2026-10-09T09:00:00Z",
+                                         message: { parts: [{ text: "done, and here is why" }] } },
+              metadata: { "shrooms/session": "review", "shrooms/from": "pi5 (pi5/jimmy)" } },
+            { id: "review:m5", status: { state: "TASK_STATE_COMPLETED", timestamp: "2026-10-09T08:00:00Z" },
+              metadata: { "shrooms/session": "review", "shrooms/from": "pi5 (pi5/jimmy)", "shrooms/acknowledged": true } }
+        ] },
+        { name: "pi5", address: "fd00::2", sessions: [ { name: "jimmy" } ], tasks: [] }
+    ]
     function task(id, session, from, state, extra) {
         return { id: id, status: { state: state }, metadata: Object.assign({ "shrooms/session": session, "shrooms/from": from }, extra || {}) }
     }
@@ -658,6 +840,58 @@ Item {
           // A machine named a little otherwise in the claim.
           tasks: { tasks: [ task("review:m5", "review", "pi5 (pi5.home/jimmy)", "TASK_STATE_WORKING") ] } } ]
     Timer { id: escTimer; interval: 600; property var report: null; onTriggered: report() }
+
+    // The jump that has to reach OUTSIDE the loaded tail: 400 events, the default
+    // 300-event tail (so the window starts at seq 101), and a task that arrived at
+    // seq 20. The reviewer's live pass found this path has never worked; the harness
+    // could not see it because its core answered from the beginning every time.
+    property int deepTick: 0
+    // litTimer clears agentLit after 4s, and this test runs longer than that: the
+    // highest value seen is the answer, not the value at the end.
+    property real deepLitMax: 0
+    property bool deepPending: false
+    function startDeepJump() {
+        var evs = []
+        for (var i = 1; i <= 400; i++)
+            evs.push({ seq: i, id: "m" + i, time: "2026-10-09T10:00:00Z", kind: "message",
+                       data: { type: "assistant", text: "event " + i } })
+        top.windowEvents = evs
+        top.windowed = true
+        // A stale "load them" quiet jump: armed for a seq nobody jumps to, and left set.
+        // It used to swallow the NEXT jump - lit nothing, moved nothing (2026-10-10).
+        view.jumpQuietFor = 999
+        console.error("DEEPJUMP quietFor=" + view.jumpQuietFor + " isQuietFor20=" + view.isQuietJump(20))
+        var h = view.agentHosts[0]
+        console.error("DEEPJUMP hosts=" + view.agentHosts.map(function(x) { return x.name }).join(",")
+                      + " sessions=" + (h ? h.sessions.map(function(x) { return x.name }).join(",") : "none"))
+        view.openTaskRow({ kind: "task", id: "jimmy:deep-1", machine: h.name,
+                           session: h.sessions[0].name, address: h.address })
+        deepTimer.start()
+    }
+    Timer {
+        id: deepTimer
+        interval: 300; repeat: true
+        onTriggered: {
+            top.deepTick++
+            if (view.agentLit > top.deepLitMax) top.deepLitMax = view.agentLit
+            if (view.jumpPending) top.deepPending = true
+            if (top.deepTick >= 30) {
+                var evs = view.agentEventsList
+                var has = false
+                for (var i = 0; i < evs.length; i++) if (evs[i].seq === 20) has = true
+                var fresh = false
+                for (var k = 0; k < top.watchTails.length; k++) if (top.watchTails[k] < 0) fresh = true
+                console.error("DEEPJUMP litMax=" + top.deepLitMax + " want=20 has20=" + has
+                              + " evs=" + evs.length + " tail=" + top.watchTail + " jumpTo=" + view.jumpTo
+                              + " quietFor=" + view.jumpQuietFor + " fresh=" + fresh
+                              + " tails=" + top.watchTails.join("/")
+                              + " settled=" + view.jumpSettled + " settledCaught=" + view.jumpSettledCaught
+                              + " pendingSeen=" + top.deepPending)
+                deepTimer.stop()
+                Qt.quit()
+            }
+        }
+    }
     Timer {
         id: boardTimer
         interval: 400
@@ -667,6 +901,66 @@ Item {
             // board is what shows with none open.
             if (!settled) { settled = true; view.agentOpen = null; view.agentCreating = false; view.closeDialogs(); restart(); return }
             var links = top.findByName(view, "boardLinks")
+            // The badge hit rects come from a PAINT, so they are read here rather than in
+            // the section above. The live pass found every badge drawn at NaN because the
+            // call passed ctx.height, which a Context2D does not have - a pure check on
+            // badgeY could not see that, so this reads what the canvas actually recorded.
+            var bhBad = view.badgeHit.filter(function(b) {
+                return !(isFinite(b.x) && isFinite(b.y) && isFinite(b.w) && isFinite(b.h)) }).length
+            console.error("BADGEHIT n=" + view.badgeHit.length + " bad=" + bhBad)
+            // An ack goes to a /v1/ path: the core forwards only those, so /a2a/<session>
+            // could never work from Basecamp.
+            console.error("ACKPATH " + view.ackPath("jimmy:m1") + "," + view.ackPath(""))
+            // Tapping a task opens its session the way the LIST does. Passing a tail made
+            // the watch "-1" (fresh negates it), which is ONE event: the live pass opened a
+            // session with a single line and "N earlier events not loaded" (2026-10-10).
+            var th = view.agentHosts[0]
+            if (th && th.sessions.length > 0) {
+                view.openTaskRow({ kind: "task", id: th.name + "/" + th.sessions[0].name + ":m1",
+                                   machine: th.name, session: th.sessions[0].name, address: th.address })
+                console.error("TASKWATCH " + top.lastWatch)
+                // Put the view back: this check opened a session, and the BOARD
+                // check below is about the board.
+                view.showBoard()
+            }
+            console.error("UNACKED " + view.unackedRows([
+                { kind: "task", group: "unacked", id: "a" }, { kind: "task", group: "working", id: "b" },
+                { kind: "task", group: "needs-you", id: "c" }, { kind: "task", group: "unacked", id: "d" },
+                { kind: "header", group: "unacked" }]).map(function(r) { return r.id }).join(","))
+            // A row must not carry a clock-derived field, and its label must move with the
+            // clock: that is what keeps the panel still while the ages tick.
+            var t0 = Date.parse("2026-10-09T12:00:00Z")
+            var st = view.taskRows(top.taskHosts)[0]
+            console.error("STABLE " + ("age" in st) + "," + (st.at !== undefined) + ","
+                          + view.ageLabel(st, t0) + "|" + view.ageLabel(st, t0 + 3600000))
+            // LIVE-SHAPED: the one open task on the jimmy<->shrooms arc runs shrooms ->
+            // jimmy, and the agent's host name for that machine is "laptop". Tapping that
+            // arc's badge must FIND the task: the live pass filtered to the opposite
+            // direction (two badges at one midpoint, the hidden one returned) and the panel
+            // came out empty.
+            var liveHosts = [{ name: "laptop", address: "fd00::7",
+                sessions: [{ name: "shrooms" }, { name: "jimmy" }],
+                tasks: [{ id: "jimmy:cli-20261009T183346-04a4f81dbc3a0c9e",
+                          status: { state: "TASK_STATE_INPUT_REQUIRED", timestamp: "2026-10-09T11:00:00Z" },
+                          metadata: { "shrooms/session": "jimmy",
+                                       "shrooms/from": "laptop.default (laptop/shrooms)" } }] }]
+            var ll = view.boardLinkList(liveHosts)
+            var liveRows = view.taskPanelRows(liveHosts)
+            console.error("LIVELINK n=" + ll.length + " pair=" + (ll[0] ? ll[0].from + ">" + ll[0].to : "none")
+                + " count=" + (ll[0] ? ll[0].count : 0) + " tone=" + (ll[0] ? ll[0].tone : ""))
+            // The first TASK row, not the first row: the panel starts with a group header.
+            var liveTask = view.taskRows(liveHosts)[0]
+            console.error("LIVEFILTER " + view.panelPair(liveTask) + " n="
+                + view.linkFiltered(liveRows, view.panelPair(liveTask)).length)
+            console.error("PAIRKEY " + [view.pairKeyOf("b/x", "a/y"), view.pairKeyOf("a/y", "b/x"),
+                view.pairKeyOf("a/y", "a/y"), view.pairKeyOf("", "a/y")].join("|"))
+            // The jump must land on the task ARRIVING, not the newest mention of it.
+            var hits = [{ seq: 9, snippet: "[shrooms task jimmy:m1 \u2014 more from laptop.default (laptop/shrooms)]" },
+                        { seq: 5, snippet: "[shrooms task jimmy:m1 from laptop.default (laptop/shrooms)] the arrival" }]
+            var bh1 = view.bestHit(hits, "jimmy:m1")
+            var bh2 = view.bestHit([{ seq: 3, snippet: "nothing to do with it" }], "jimmy:m1")
+            console.error("BESTHIT " + (bh1 ? bh1.seq : "none") + "," + (bh2 ? bh2.seq : "none") + ","
+                + (view.bestHit([], "jimmy:m1") === null))
             console.error("BOARD cards=" + view.boardCardList.map(function(c) { return c.key }).join(",")
                           + " edges=" + view.boardEdgeList.map(function(e) { return e.from + ">" + e.to + ":" + e.state }).join(",")
                           + " drawn=" + (links ? links.drawn : -1)
@@ -690,7 +984,7 @@ Item {
                         var escBack = view.escToBoard()
                         Qt.callLater(function() {
                             console.error("BOARDOPEN open=" + opened + " withlist=" + shown + " esc=" + escHeld + "," + escBack + " back=" + (view.agentOpen === null) + "," + top.findByName(view, "boardFlow").visible + "," + !top.findByName(view, "agentList").visible + "," + back.visible)
-                            Qt.quit()
+                            top.startDeepJump()
                         })
                     }
                     escTimer.start()
