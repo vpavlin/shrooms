@@ -118,24 +118,27 @@ func run() error {
 			m.Self = self
 		}
 	}
+	// The mesh's machines, this one first: what a cage's socket offers
+	// (ADR-044), and the name a note to a task's asker gives this machine
+	// (asker.go) — on every agent, caged or not: without it the notes named
+	// tasks with no machine, which task_ack cannot take (2026-10-10).
+	m.Machines = func() ([]agent.Machine, error) {
+		st, err := fetchStatus(*sock)
+		if err != nil {
+			return nil, err
+		}
+		var out []agent.Machine
+		for _, x := range st.machines() {
+			out = append(out, agent.Machine{Name: x.Name, Addr: x.Addr})
+		}
+		return out, nil
+	}
 	if *cages {
 		if m.Cages = agent.NewCages(*cageImage); m.Cages != nil {
 			m.Cages.Socket = *sock
 			m.Cages.SealedToken = *sealedToken
 			if m.Cages.SealedToken == "" {
 				m.Cages.SealedToken = filepath.Join(*stateDir, agent.SealedTokenFile)
-			}
-			// What a cage's socket offers as the mesh's machines (ADR-044).
-			m.Machines = func() ([]agent.Machine, error) {
-				st, err := fetchStatus(*sock)
-				if err != nil {
-					return nil, err
-				}
-				var out []agent.Machine
-				for _, x := range st.machines() {
-					out = append(out, agent.Machine{Name: x.Name, Addr: x.Addr})
-				}
-				return out, nil
 			}
 			log.Info("cages offered", "podman", m.Cages.Podman, "image", m.Cages.Image)
 			// The images caged sessions use, built again if this agent's
