@@ -660,8 +660,8 @@ Item {
             // and their tasks.
             // The tasks panel's rows, from the machines' own answers.
             var tnow = Date.parse("2026-10-09T12:00:00Z")
-            var trows = view.taskRows(top.taskHosts, tnow)
-            console.error("TASKROWS " + trows.map(function(r) { return r.group + ":" + r.id.split(":")[1] + ":" + r.age }).join(","))
+            var trows = view.taskRows(top.taskHosts)
+            console.error("TASKROWS " + trows.map(function(r) { return r.group + ":" + r.id.split(":")[1] + ":" + view.ageLabel(r, tnow) }).join(","))
             console.error("TASKORDER " + view.taskGroupOrder.join(",") + " labels=" + view.taskGroupOrder.map(view.taskGroupLabel).join("/"))
             console.error("TASKNAME " + [
                 view.taskTitleOf({ metadata: { "shrooms/title": "named by the asker" }, history: [{ role: "ROLE_USER", parts: [{ text: "From X: the request" }] }] }),
@@ -678,7 +678,7 @@ Item {
             console.error("AGE " + [view.ageOf("2026-10-09T11:59:30Z", tnow), view.ageOf("2026-10-09T11:00:00Z", tnow),
                                     view.ageOf("2026-10-09T02:00:00Z", tnow), view.ageOf("nonsense", tnow)].join(","))
             // The panel's rows, with a header per non-empty group.
-            var prows = view.taskPanelRows(top.taskHosts, tnow)
+            var prows = view.taskPanelRows(top.taskHosts)
             console.error("PANEL " + prows.map(function(r) { return r.kind === "header" ? "[" + r.label + " " + r.count + "]" : r.id.split(":")[1] }).join(" "))
             // The links carrying their tasks, and the load on each card.
             var links = view.boardLinkList(top.taskHosts)
@@ -701,9 +701,13 @@ Item {
                 view.cardNeedsYou("x/y", []),
                 view.cardNeedsYou("other/z", [nyRow("needs-you")])].join(","))
             console.error("TASKROW1 " + (trows[0] ? trows[0].title + " | from=" + trows[0].asker + " to=" + trows[0].worker
-                          + " | latest=" + trows[0].latest + " | " + view.ageLabel(trows[0])
+                          + " | latest=" + trows[0].latest + " | " + view.ageLabel(trows[0], tnow)
                           + " | hasref=" + (trows[0].ref !== undefined) : "none"))
-            console.error("AGELABEL " + [view.ageLabel({ age: "2h", quiet: true }), view.ageLabel({ age: "3h", quiet: false }),
+            // The label takes the CLOCK as an argument, so a row's age is a binding on it
+            // and the row itself does not change - the panel shifting under the cursor was
+            // exactly that (2026-10-10).
+            console.error("AGELABEL " + [view.ageLabel({ at: "2026-10-09T11:00:00Z", quiet: true }, tnow),
+                                         view.ageLabel({ at: "2026-10-09T10:00:00Z", quiet: false }, tnow),
                                          view.ageLabel({})].join(","))
             // a task with no title at all must still be a row, not a gap
             var bare = view.taskRows([{ name: "pi5", address: "fd00::9",
@@ -783,6 +787,38 @@ Item {
             // board is what shows with none open.
             if (!settled) { settled = true; view.agentOpen = null; view.agentCreating = false; view.closeDialogs(); restart(); return }
             var links = top.findByName(view, "boardLinks")
+            // The badge hit rects come from a PAINT, so they are read here rather than in
+            // the section above. The live pass found every badge drawn at NaN because the
+            // call passed ctx.height, which a Context2D does not have - a pure check on
+            // badgeY could not see that, so this reads what the canvas actually recorded.
+            var bhBad = view.badgeHit.filter(function(b) {
+                return !(isFinite(b.x) && isFinite(b.y) && isFinite(b.w) && isFinite(b.h)) }).length
+            console.error("BADGEHIT n=" + view.badgeHit.length + " bad=" + bhBad)
+            // An ack goes to a /v1/ path: the core forwards only those, so /a2a/<session>
+            // could never work from Basecamp.
+            console.error("ACKPATH " + view.ackPath("jimmy:m1") + "," + view.ackPath(""))
+            // Tapping a task opens its session the way the LIST does. Passing a tail made
+            // the watch "-1" (fresh negates it), which is ONE event: the live pass opened a
+            // session with a single line and "N earlier events not loaded" (2026-10-10).
+            var th = view.agentHosts[0]
+            if (th && th.sessions.length > 0) {
+                view.openTaskRow({ kind: "task", id: th.name + "/" + th.sessions[0].name + ":m1",
+                                   machine: th.name, session: th.sessions[0].name, address: th.address })
+                console.error("TASKWATCH " + top.lastWatch)
+                // Put the view back: this check opened a session, and the BOARD
+                // check below is about the board.
+                view.showBoard()
+            }
+            console.error("UNACKED " + view.unackedRows([
+                { kind: "task", group: "unacked", id: "a" }, { kind: "task", group: "working", id: "b" },
+                { kind: "task", group: "needs-you", id: "c" }, { kind: "task", group: "unacked", id: "d" },
+                { kind: "header", group: "unacked" }]).map(function(r) { return r.id }).join(","))
+            // A row must not carry a clock-derived field, and its label must move with the
+            // clock: that is what keeps the panel still while the ages tick.
+            var t0 = Date.parse("2026-10-09T12:00:00Z")
+            var st = view.taskRows(top.taskHosts)[0]
+            console.error("STABLE " + ("age" in st) + "," + (st.at !== undefined) + ","
+                          + view.ageLabel(st, t0) + "|" + view.ageLabel(st, t0 + 3600000))
             console.error("BOARD cards=" + view.boardCardList.map(function(c) { return c.key }).join(",")
                           + " edges=" + view.boardEdgeList.map(function(e) { return e.from + ">" + e.to + ":" + e.state }).join(",")
                           + " drawn=" + (links ? links.drawn : -1)

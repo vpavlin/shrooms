@@ -231,14 +231,14 @@ fi
 expect "HOSTS=1 SESSIONS=2" "the agents were not listed"
 # The tasks panel's rows: grouped Needs you / Working / Stalled / Done unacked, with the
 # acked one gone, the ages right, and each row carrying what a person needs to judge it.
-expect "TASKROWS needs-you:m1:1h,needs-you:m6:15m,working:m2:30m,working:m7:10m,stalled:m3:2h,unacked:m4:3h" "the task rows are not grouped and ordered as a person needs them: Needs you first, then oldest-first inside each group"
+expect "TASKROWS needs-you:m1:quiet 1h,needs-you:m6:quiet 15m,working:m2:quiet 30m,working:m7:quiet 10m,stalled:m3:quiet 2h,unacked:m4:done 3h" "the task rows are not grouped and ordered as a person needs them: Needs you first, then oldest-first inside each group"
 expect "TASKORDER needs-you,working,stalled,unacked labels=Needs you/Working/Stalled/Done, unacked" "the task groups are not in the agreed order or named as agreed"
 expect "TASKNAME named by the asker|From X: the request|the real ask|the worker's own summary|" "a task is not named by the asker's title, then the request's first line, then the summary"
 expect "ASKER SPEL,jimmy,shrooms,pi5.office," "the asker is not read as a session: a caged one, or one with no session at all"
 expect "AGE 30s,1h,10h," "the age is not in the units a person reads"
 expect "TASKROW1 From Jimmy: review the module | from=jimmy to=review | latest=which of the two? | quiet 1h | hasref=false" "a row does not carry its title, asker, worker, latest line, labelled age"
 expect "CAGED true,false" "a caged asker is not told apart from an uncaged one"
-expect "AGELABEL quiet 2h,done 3h," "the age is not labelled for what it measures"
+expect "AGELABEL quiet 1h,done 2h," "the age is not labelled for what it measures"
 expect "BAREROW jimmy:no-title-1" "a task with no title leaves a gap instead of falling back to its id"
 expect "ACKERR no such task | null | no reply" "an ACK the agent refused is not told apart from one that was accepted"
 expect "PANEL [Needs you 2] m1 m6 [Working 2] m2 m7 [Stalled 1] m3 [Done, unacked 1] m4" "the panel does not head each non-empty group, or a task that is both blocked and stalled is not in Needs you"
@@ -262,9 +262,20 @@ expect "JUMP lit=3 row=3 kind=said searchOpen=false stick=false reach=521,0" "a 
 expect "JUMPID abc-123,," "the message id is not read out of the task ref"
 expect "JUMPROW true,false,false,false,false" "a jump matches something that is not the task's message"
 expect "JUMPQ [shrooms task laptop/review:m1" "the search fallback does not look for the task id"
+expect "ACKPATH /v1/tasks/jimmy:m1/ack,/v1/tasks//ack" "the ack path is not the one the core forwards"
+expect "UNACKED a,d" "a bulk ack would sweep up a task that is still running or already acked"
+expect "STABLE false,true,quiet 1h|quiet 2h" "a task row changes with the clock, so the panel moves under the cursor"
+expect "BADGEHIT n=3 bad=0" "the link badges were not drawn where they can be tapped"
+expect "TASKWATCH fd00::1 shrooms 300" "tapping a task opens its session with one event instead of the tail"
 expect "PAIR pi5/jimmy>laptop/review,,1,1,0,2" "a link tap does not filter the panel to its own pair"
 expect "BADGEAT a>b,,a>b,a>b,,," "a press is taken over a card that is not on a badge"
 expect "PAIRLABEL a → b,nocolon," "the filtered panel shows raw keys instead of names"
+# The ack path: /a2a/ is not forwarded by the core, so an ack could never work
+# from Basecamp at all. The path itself is pinned above (ACKPATH); this says the
+# call uses it.
+grep -q 'ackPath(row.id)' basecamp-agents/Main.qml \
+    || { echo "FAIL: an ack does not go to the /v1/ path the core forwards"; exit 1; }
+
 # The clear control and the badge hit target are STATIC checks, and I am saying so:
 # the panel is only instantiated when it has rows or a filter, and this harness's
 # taskPanelList is empty (it reads the live hosts), so the object is not there to
@@ -279,7 +290,7 @@ grep -q 'root.linkFilter = pair' basecamp-agents/Main.qml \
 # The canvas sits on top of the cards, so the badge area MUST decide on press and
 # hand back a press that is not on a badge. Accepting every press here killed every
 # card tap on the board (the reviewer found it). The hit test itself is pinned above.
-grep -q 'onPressed: mouse.accepted = root.badgeAt' basecamp-agents/Main.qml \
+grep -q 'onPressed: (mouse) => { mouse.accepted = root.badgeAt' basecamp-agents/Main.qml \
     || { echo "FAIL: the badge area would swallow every card tap on the board"; exit 1; }
 expect 'QUESTION open=true before=null posted={"allow":true,"answers":{"Which user?":"agent","What else?":"voice, logs"}} after=false [answered: agent; voice, logs from desk]' "a question is not offered, answered or closed"
 expect 'LINKMD=see <https://pi.dev>, or [docs](https://x.io/a) and `curl http://no.pe`' "a bare URL in the model's text is not a link, or code or a link was touched"

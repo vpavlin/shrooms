@@ -581,7 +581,13 @@ Item {
         }
         // Caught up with what the core has: the transcript, if it belongs.
         if (!r.events || r.events.length === 0) {
-            if (r.connected) root.agentCaughtUp = true
+            if (r.connected) {
+                root.agentCaughtUp = true
+                // A jump that is still armed was waiting for exactly this: rebuildChat only
+                // fires on new events, and an idle session sends none, so the search fallback
+                // never ran (2026-10-10).
+                if (root.jumpRef !== "") Qt.callLater(root.rebuildChat)
+            }
             fetchEarlier()
             return
         }
@@ -1562,11 +1568,32 @@ Item {
             return null
         }
 
-    function ackTask(row) {
+    // The rows an "ACK all" would send: the finished-but-unacked ones, and nothing else.
+    // Pure, so the harness pins it - a bulk action must not sweep up a task that is still
+    // running or one that is already acked.
+    // Where an ack is sent. Pure, so the harness pins it: the path is what was wrong -
+    // /a2a/<session> is not forwarded by the core, so an ack from Basecamp could never
+    // work at all (2026-10-10). The agent serves POST /v1/tasks/{id}/ack.
+    function ackPath(id) { return "/v1/tasks/" + String(id || "") + "/ack" }
+    function unackedRows(rows) {
+        return (rows || []).filter(function(r) {
+            return r && r.kind === "task" && r.group === "unacked"
+        })
+    }
+    function ackAllUnacked() {
+        var rows = unackedRows(root.taskPanelList)
+        for (var i = 0; i < rows.length; i++) ackTask(rows[i], true)
+        if (rows.length > 0) { root.said = "acked " + rows.length + " tasks"; root.saidBad = false }
+        refreshAgents()
+        return rows.length
+    }
+    function ackTask(row, quiet) {
         if (!row || row.kind !== "task") return false
-        var body = { jsonrpc: "2.0", id: "ack-" + row.id, method: "AckTask", params: { id: row.id } }
-        var refusal = ackRefusal(agentCall("agentPost", [row.address, "/a2a/" + row.session,
-                                                    JSON.stringify(body)]))
+        // /v1/, not the A2A route: the core forwards only /v1/ paths, so an agentPost to
+        // /a2a/<session> came back an error and the panel said "could not ack" - the ack
+        // could never work from Basecamp at all (2026-10-10). The agent grew
+        // POST /v1/tasks/{id}/ack for this.
+        var refusal = ackRefusal(agentCall("agentPost", [row.address, ackPath(row.id), ""]))
         if (refusal !== null) {
             root.said = "could not ack " + row.id + (refusal === "no reply" ? "" : ": " + refusal)
             root.saidBad = true
@@ -1574,7 +1601,7 @@ Item {
         }
         root.said = "acked " + (row.title || row.id)
         root.saidBad = false
-        refreshAgents()
+        if (!quiet) refreshAgents()
         return true
     }
     function openTaskRow(row) {
@@ -1585,7 +1612,11 @@ Item {
             // soon as the events arrive, and falls back to the search if they never do.
             root.jumpRef = String(row.id || "")
             root.jumpToId = taskMessageId(row.id)
-            openSession(agentHosts[i], row.session, true, true)
+            // NO tail/fresh arguments: passing `true` for tail made the watch "-1" (fresh
+            // negates it), which is ONE event - the session opened with a single line and
+            // "N earlier events not loaded" (2026-10-10). The default tail is what opens a
+            // session the way the list does.
+            openSession(agentHosts[i], row.session)
             return
         }
     }
@@ -1808,9 +1839,13 @@ Item {
     }
     // The age, labelled for what it is: "quiet 2h" while a task is open (how long since it
     // last moved), "done 3h" once it is finished (how long since it finished).
-    function ageLabel(row) {
-        if (!row || !row.age) return ""
-        return (row.quiet ? "quiet " : "done ") + row.age
+    // The clock is an ARGUMENT, so a row's age is a binding on nowMs and the row itself
+    // does not change with it. Pure, so the harness pins both halves: the row has no
+    // clock-derived field, and the label moves when the clock does.
+    function ageLabel(row, now) {
+        if (!row || !row.at) return ""
+        var a = ageOf(row.at, now)
+        return a === "" ? "" : (row.quiet ? "quiet " : "done ") + a
     }
 
     // Does this card have a task waiting on a person? That is what amber is for.
@@ -1844,7 +1879,11 @@ Item {
     }
     // Every task on every machine, as the panel's rows. The machines' own
     // answers, straight through, grouped in the order a person needs them.
-    function taskRows(hosts, now) {
+    // NO clock argument: a row that depends on nowMs is rebuilt on every tick, the
+    // Repeater recreates every delegate, and the panel shifts under the cursor - a
+    // click then acked the row that had slid into place, not the one aimed at
+    // (2026-10-10). The row carries `at`; the AGE is a binding on nowMs in the view.
+    function taskRows(hosts) {
         var out = []
         // Every session key, so a row can name the asker the same way a link does
         // (askerKey) - a link's pair is "asker>worker" and the panel filters on it.
@@ -1868,7 +1907,7 @@ Item {
                            from: from, asker: askerName(from), caged: askerCaged(from),
                            worker: who, machine: h.name, address: h.address, session: who,
                            askerKey: askerKey(from, keys),
-                           at: taskAtOf(t), age: ageOf(taskAtOf(t), now),
+                           at: taskAtOf(t),
                            // `status.timestamp` is the last UPDATE, so this is how long the
                            // task has been QUIET, not how long since it was asked. Say which:
                            // a task asked three days ago that moved a minute ago is quiet 1m.
@@ -1882,7 +1921,7 @@ Item {
         })
         return out
     }
-    readonly property var taskRowList: taskRows(agentHosts, nowMs)
+    readonly property var taskRowList: taskRows(agentHosts)
     // The panel's rows INCLUDING a header before each group that has something in
     // it. One flat list, because a QML Repeater cannot insert a header when a
     // value changes - and a group with nothing in it gets no header, so the
@@ -1918,8 +1957,8 @@ Item {
         if (!pair) return rows
         return rows.filter(function(r) { return panelPair(r) === pair })
     }
-    function taskPanelRows(hosts, now, pair) {
-        var rows = linkFiltered(taskRows(hosts, now), pair), out = [], last = null
+    function taskPanelRows(hosts, pair) {
+        var rows = linkFiltered(taskRows(hosts), pair), out = [], last = null
         for (var i = 0; i < rows.length; i++) {
             if (rows[i].group !== last) {
                 last = rows[i].group
@@ -1935,7 +1974,7 @@ Item {
     // Where the link badges were drawn, so a tap on one can filter the panel to its
     // pair. Written by the canvas, read by the tap handler.
     property var badgeHit: []
-    readonly property var taskPanelList: taskPanelRows(agentHosts, nowMs, linkFilter)
+    readonly property var taskPanelList: taskPanelRows(agentHosts, linkFilter)
 
     function edgeTint(state) {
         return state === "working" ? cPhosphor : state === "input-required" ? cAmber : state === "stalled" ? cRust : cAsh
@@ -3023,8 +3062,8 @@ Item {
                     // every press here killed every card tap on the board (2026-10-10).
                     MouseArea {
                         anchors.fill: parent
-                        onPressed: mouse.accepted = root.badgeAt(root.badgeHit, mouse.x, mouse.y) !== ""
-                        onClicked: {
+                        onPressed: (mouse) => { mouse.accepted = root.badgeAt(root.badgeHit, mouse.x, mouse.y) !== "" }
+                        onClicked: (mouse) => {
                             var pair = root.badgeAt(root.badgeHit, mouse.x, mouse.y)
                             if (pair !== "") root.linkFilter = pair
                         }
@@ -3073,8 +3112,12 @@ Item {
                             var lp = root.linkCurve(ra, rb, 0, root.sz(30))
                             // The cubic at t=0.5: (p0 + 3p1 + 3p2 + p3) / 8.
                             var mx = (lp[0].x + 3 * lp[1].x + 3 * lp[2].x + lp[3].x) / 8
+                            // The CANVAS's height, not ctx.height: a QML Context2D has no
+                            // height, so badgeY got undefined, returned NaN and every badge
+                            // was drawn at NaN - invisible, untappable, and the filter with
+                            // it. A pure check on badgeY could not see this (2026-10-10).
                             var my = root.badgeY((lp[0].y + 3 * lp[1].y + 3 * lp[2].y + lp[3].y) / 8,
-                                                 ctx.height, root.sz(34))
+                                                 links.height, root.sz(34))
                             ctx.font = root.fs(9) + "px monospace"
                             var bw = ctx.measureText(label).width + root.sz(8)
                             ctx.fillStyle = root.cVoid
@@ -3134,6 +3177,19 @@ Item {
                             width: taskPanel.width
                             height: trow.modelData.kind === "header" ? root.sz(26)
                   : (trow.modelData.latest ? root.sz(58) : root.sz(42))
+                            // 75 rows in Done, unacked is a wall nobody clears one tap at a
+                            // time. The header offers it once; each ack still goes to the
+                            // worker's agent, and only to tasks whose state says so.
+                            Lnk {
+                                objectName: "ackAll"
+                                anchors.right: parent.right
+                                anchors.rightMargin: root.sz(14)
+                                anchors.top: parent.top
+                                anchors.topMargin: root.sz(6)
+                                visible: trow.modelData.kind === "header" && trow.modelData.group === "unacked"
+                                text: "ACK all"; base: cAmber; font.pixelSize: root.fs(9)
+                                onClicked: Qt.callLater(root.ackAllUnacked)
+                            }
                             Text {
                                 anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
                                 anchors.topMargin: root.sz(6)
@@ -3144,7 +3200,11 @@ Item {
                             }
                             Column {
                                 visible: trow.modelData.kind === "task"
-                                anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                                anchors.left: parent.left; anchors.top: parent.top
+                                // The ACK takes its width out of the text, rather than sitting
+                                // on top of the title (2026-10-10).
+                                anchors.right: ackLnk.visible ? ackLnk.left : parent.right
+                                anchors.rightMargin: ackLnk.visible ? root.sz(4) : 0
                                 Text {
                                     width: parent.width; elide: Text.ElideRight
                                     text: trow.modelData.kind === "task" ? trow.modelData.title : ""
@@ -3154,7 +3214,7 @@ Item {
                                     width: parent.width; elide: Text.ElideRight
                                     text: trow.modelData.kind === "task"
                                           ? (trow.modelData.asker || "?") + " \u2192 " + (trow.modelData.worker || "?")
-                                            + "  " + trow.modelData.age
+                                            + "  " + root.ageLabel(trow.modelData, root.nowMs)
                                           : ""
                                     color: root.edgeTint(trow.modelData.kind === "task" ? trow.modelData.group : "")
                                     font.family: "monospace"; font.pixelSize: root.fs(9)
@@ -3170,14 +3230,22 @@ Item {
                                 enabled: trow.modelData.kind === "task"
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: Qt.callLater(function() { root.openTaskRow(trow.modelData) })
-                                // A finished task still owes an ack: that is the one thing a person
-                                // must be able to say back, and only where it does something.
-                                Lnk {
-                                    anchors.right: parent.right; anchors.top: parent.top
-                                    visible: trow.modelData.kind === "task" && trow.modelData.group === "unacked"
-                                    text: "ACK"; base: cAmber; font.pixelSize: root.fs(9)
-                                    onClicked: Qt.callLater(function() { root.ackTask(trow.modelData) })
-                                }
+                            }
+                            // A finished task still owes an ack: that is the one thing a person
+                            // must be able to say back, and only where it does something. On top
+                            // of the row's MouseArea (so a click here does not also open the
+                            // session), and clear of the scrollbar, which sits over the right
+                            // edge - the first live pass scrolled the list instead of acking.
+                            Lnk {
+                                id: ackLnk
+                                objectName: "ackLnk"
+                                anchors.right: parent.right
+                                anchors.rightMargin: root.sz(14)
+                                anchors.top: parent.top
+                                anchors.topMargin: root.sz(6)
+                                visible: trow.modelData.kind === "task" && trow.modelData.group === "unacked"
+                                text: "ACK"; base: cAmber; font.pixelSize: root.fs(9)
+                                onClicked: Qt.callLater(function() { root.ackTask(trow.modelData) })
                             }
                         }
                     }
