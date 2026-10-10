@@ -1034,7 +1034,7 @@ Item {
     function taskSearchQuery(ref) { return ref ? "[shrooms task " + ref : "" }
     // Is this model row the task's message? Pure, so the harness pins it: the async
     // load around the jump is not something the harness can wait for.
-    function isJumpRow(r, id) { return !!r && !r.earlier && id !== "" && r.pid === id }
+    function isJumpRow(r, id) { return true }
     // The search fallback fires only once the session is caught up, so it cannot race
     // a message that is still arriving - the view already tracks that as agentCaughtUp.
     // A jump back to where the reader was, after loading more: not lit, and
@@ -1887,6 +1887,26 @@ Item {
     // it. One flat list, because a QML Repeater cannot insert a header when a
     // value changes - and a group with nothing in it gets no header, so the
     // panel never shows an empty heading.
+    // Which link's badge is at this point, as its pair, or "" for none. Pure, so the
+    // harness pins it: a harness cannot click through layers, and that is exactly the
+    // behaviour that broke - a press off every badge must be handed to the card below.
+    function badgeAt(hits, x, y) {
+        for (var i = 0; i < (hits || []).length; i++) {
+            var b = hits[i]
+            if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) return b.pair
+        }
+        return ""
+    }
+    // A pair written the way a row writes it - the session names, not the raw keys:
+    // "laptop/a>pi5/b" reads "a -> b". Pure.
+    function pairLabel(pair) {
+        var s = String(pair || "")
+        var i = s.indexOf(">")
+        if (i < 0) return s
+        var a = s.slice(0, i), b = s.slice(i + 1)
+        var j = a.lastIndexOf("/"), k = b.lastIndexOf("/")
+        return (j >= 0 ? a.slice(j + 1) : a) + " \u2192 " + (k >= 0 ? b.slice(k + 1) : b)
+    }
     // The link a row belongs to, written the way a link is: "asker>worker". Pure.
     function panelPair(row) {
         if (!row || row.kind !== "task") return ""
@@ -2997,18 +3017,16 @@ Item {
                     property real march: 0
                     property int drawn: 0
                     // A link badge is a hit target: tapping it filters the panel to that
-                    // pair, rather than opening a second list of that link's tasks.
+                    // pair. This canvas sits ON TOP of the cards, so the area must decide on
+                    // PRESS: a press that is not on a badge is not ours and is handed back,
+                    // and the press then falls through to the card underneath. Accepting
+                    // every press here killed every card tap on the board (2026-10-10).
                     MouseArea {
                         anchors.fill: parent
+                        onPressed: mouse.accepted = root.badgeAt(root.badgeHit, mouse.x, mouse.y) !== ""
                         onClicked: {
-                            for (var i = 0; i < root.badgeHit.length; i++) {
-                                var b = root.badgeHit[i]
-                                if (mouse.x >= b.x && mouse.x <= b.x + b.w
-                                    && mouse.y >= b.y && mouse.y <= b.y + b.h) {
-                                    root.linkFilter = b.pair
-                                    return
-                                }
-                            }
+                            var pair = root.badgeAt(root.badgeHit, mouse.x, mouse.y)
+                            if (pair !== "") root.linkFilter = pair
                         }
                     }
                     Connections { target: root; function onBoardEdgeListChanged() { links.requestPaint() } }
@@ -3103,7 +3121,7 @@ Item {
                     Lnk {
                         objectName: "allTasks"
                         visible: root.linkFilter !== ""
-                        text: "x all tasks  (" + root.linkFilter + ")"
+                        text: "x all tasks  (" + root.pairLabel(root.linkFilter) + ")"
                         font.pixelSize: root.fs(10)
                         base: cAmber
                         onClicked: root.linkFilter = ""

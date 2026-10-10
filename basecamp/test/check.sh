@@ -263,6 +263,8 @@ expect "JUMPID abc-123,," "the message id is not read out of the task ref"
 expect "JUMPROW true,false,false,false,false" "a jump matches something that is not the task's message"
 expect "JUMPQ [shrooms task laptop/review:m1" "the search fallback does not look for the task id"
 expect "PAIR pi5/jimmy>laptop/review,,1,1,0,2" "a link tap does not filter the panel to its own pair"
+expect "BADGEAT a>b,,a>b,a>b,,," "a press is taken over a card that is not on a badge"
+expect "PAIRLABEL a → b,nocolon," "the filtered panel shows raw keys instead of names"
 # The clear control and the badge hit target are STATIC checks, and I am saying so:
 # the panel is only instantiated when it has rows or a filter, and this harness's
 # taskPanelList is empty (it reads the live hosts), so the object is not there to
@@ -272,8 +274,13 @@ grep -q 'objectName: "allTasks"' basecamp-agents/Main.qml \
     || { echo "FAIL: no way back from a filtered panel"; exit 1; }
 grep -q 'visible: root.linkFilter !== ""' basecamp-agents/Main.qml \
     || { echo "FAIL: the clear control is not tied to the filter"; exit 1; }
-grep -q 'root.linkFilter = b.pair' basecamp-agents/Main.qml \
+grep -q 'root.linkFilter = pair' basecamp-agents/Main.qml \
     || { echo "FAIL: tapping a link badge does not filter the panel"; exit 1; }
+# The canvas sits on top of the cards, so the badge area MUST decide on press and
+# hand back a press that is not on a badge. Accepting every press here killed every
+# card tap on the board (the reviewer found it). The hit test itself is pinned above.
+grep -q 'onPressed: mouse.accepted = root.badgeAt' basecamp-agents/Main.qml \
+    || { echo "FAIL: the badge area would swallow every card tap on the board"; exit 1; }
 expect 'QUESTION open=true before=null posted={"allow":true,"answers":{"Which user?":"agent","What else?":"voice, logs"}} after=false [answered: agent; voice, logs from desk]' "a question is not offered, answered or closed"
 expect 'LINKMD=see <https://pi.dev>, or [docs](https://x.io/a) and `curl http://no.pe`' "a bare URL in the model's text is not a link, or code or a link was touched"
 expect '<https://already.io>' "an autolink was wrapped twice"

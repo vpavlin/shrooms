@@ -366,6 +366,15 @@ Item {
                 view.linkFiltered(fr, "laptop/shrooms>laptop/review").length,
                 view.linkFiltered(fr, "nobody>x").length,
                 view.linkFiltered(fr, "").length].join(","))
+            // The badge hit test. The canvas sits on top of the cards, so a press that is not
+            // on a badge must be handed back and fall through - a harness cannot click through
+            // layers, so the decision itself is what gets pinned.
+            var bh = [{ x: 10, y: 10, w: 20, h: 10, pair: "a>b" }]
+            console.error("BADGEAT " + [view.badgeAt(bh, 15, 15), view.badgeAt(bh, 5, 5),
+                view.badgeAt(bh, 10, 10), view.badgeAt(bh, 30, 20), view.badgeAt(bh, 31, 15),
+                view.badgeAt([], 15, 15), view.badgeAt(null, 1, 1)].join(","))
+            console.error("PAIRLABEL " + [view.pairLabel("laptop/a>pi5/b"), view.pairLabel("nocolon"),
+                view.pairLabel("")].join(","))
 
             // A question from the model: a card of its own, the options picked
             // (two of three, given in the order offered), and the answer sent.
