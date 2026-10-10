@@ -252,11 +252,40 @@ expect "ABODY {\"text\":\"yes, take it\"} | true | false | {\"text\":\"\"}|END" 
 expect "AGELABEL quiet 1h,done 2h," "the age is not labelled for what it measures"
 expect "BAREROW jimmy:no-title-1" "a task with no title leaves a gap instead of falling back to its id"
 expect "ACKERR no such task | null | no reply" "an ACK the agent refused is not told apart from one that was accepted"
-expect "PANEL [Needs you  1] m8 [Blocked] m1 m6 [Working] m2 m7 [Stalled] m3 [Done, unacked] m4" "the panel does not head each non-empty group, or a task that is both blocked and stalled is not in Needs you"
-expect "PANELFOLDED [Needs you  1] m8 [Blocked] m1 m6 [Working] m2 m7 [Stalled] m3 [Done, unacked] |" "folded, the panel still lists the finished tasks (or lost their header)"
+expect "PANEL [Needs you  1] m8 [Blocked  2] m1 m6 [Working  2] m2 m7 [Stalled  1] m3 [Done, unacked  1] m4" "the panel does not head each non-empty group, or a task that is both blocked and stalled is not in Needs you"
+expect "PANELFOLDED [Needs you  1] m8 [Blocked  2] m1 m6 [Working  2] m2 m7 [Stalled  1] m3 [Done, unacked  1] |" "folded, the panel still lists the finished tasks (or lost their header)"
 expect "FILESALLOW true,true,false,false,pi5/jimmy,pi5/jimmy,pi5/jimmy+atlas/*,atlas/* |" "who a session takes files from is not edited as MACHINE/SESSION or a whole machine, once each"
 expect "MESHTOGGLE home,default+office, |" "ticking a mesh does not turn it on and off, in the machine's order"
-expect "ACKEDHERE m8,m1,m6,m2,m7,m3 | m8,m1,m6,m2,m7,m3,m4" "an ACK does not take the row away at once, or an undone one does not come back"expect "LINKS pi5/jimmy>laptop/review:2:input-required:2 · needs you,laptop/shrooms>laptop/review:2:stalled:2 · stalled" "a link does not carry the tasks on it, the most urgent tone does not win, or a CAGED asker's link silently vanished"
+expect "ACKEDHERE m8,m1,m6,m2,m7,m3 | m8,m1,m6,m2,m7,m3,m4" "an ACK does not take the row away at once, or an undone one does not come back"
+expect "LINKS pi5/jimmy>laptop/review:2:blocked:2 · blocked,laptop/shrooms>laptop/review:2:blocked:2 · blocked" "a link does not carry the tasks on it, the most urgent tone does not win, or a CAGED asker's link silently vanished"
+expect "LINKASKER ,laptop/shrooms,false,true |" "a device-only asker makes a board link, or a needs-you link is possible at all"
+
+# QML delivers a click to the LAST sibling that accepts it, so the action links must sit
+# ABOVE the row's MouseArea in document order - otherwise the MouseArea takes their click
+# and "answer" opens the session instead of answering. ACK was already above it; answer,
+# nudge and cancel were not, and the reviewer hit exactly that live on 2026-10-10.
+#
+# A source-order check, not a click test, and it says so: the harness has no delegate, so
+# a real click cannot be simulated here. It fails when the order is wrong, which is what
+# it is for.
+python3 - <<'ORDER' || exit 1
+import sys
+src = open("basecamp-agents/Main.qml").read()
+mi = src.index("root.openTaskRow(trow.modelData)")
+mstart = src.rindex("MouseArea {", 0, mi)
+bad = []
+for name in ("answerLnk", "nudgeLnk", "cancelLnk", "ackLnk"):
+    li = src.index('objectName: "' + name + '"') if 'objectName: "' + name + '"' in src else src.index("id: " + name)
+    ci = src.rindex("Column {", 0, li)
+    if not (mstart < ci):
+        bad.append(name)
+if bad:
+    print("FAIL: the row's MouseArea is not below the Column holding " + ", ".join(bad))
+    print("  QML gives the click to the last sibling that accepts it, so the MouseArea")
+    print("  wins and the action opens the session instead of running")
+    sys.exit(1)
+print("  agents panel: answer, nudge, cancel and ACK all sit above the row's MouseArea")
+ORDER
 expect "LOAD laptop/review=6 owed,laptop/shrooms=2 asked,pi5/jimmy=2 asked" "a card does not show what it owes and what it is waiting for"
 expect "NEEDSYOU true,false,false,false,false,false,false" "a card is amber without a needs-you task, or is not amber with one"
 # This device first: an agent on the machine Basecamp runs on is no peer of it.
@@ -281,7 +310,7 @@ expect "UNACKED a,d" "a bulk ack would sweep up a task that is still running or 
 expect "STABLE false,true,quiet 5m|quiet 1h" "a task row changes with the clock, so the panel moves under the cursor"
 expect "BADGEHIT n=3 bad=0" "the link badges were not drawn where they can be tapped"
 expect "TASKWATCH fd00::1 shrooms 300" "tapping a task opens its session with one event instead of the tail"
-expect "LIVELINK n=1 pair=laptop/shrooms>laptop/jimmy count=1 tone=input-required" "the live-shaped link is not built from a real task"
+expect "LIVELINK n=1 pair=laptop/shrooms>laptop/jimmy count=1 tone=blocked" "the live-shaped link is not built from a real task"
 expect "LIVEFILTER laptop/jimmy>laptop/shrooms n=1" "tapping that link's badge would show an EMPTY panel"
 expect "PAIRKEY a/y>b/x|a/y>b/x|a/y>a/y|" "a link in the other direction is not the same link"
 expect "DEEPJUMP litMax=20 want=20 has20=true evs=400 tail=401" "the jump to a task OUTSIDE the loaded tail never lights - the reviewer's live pass: nothing lit, nothing moves"

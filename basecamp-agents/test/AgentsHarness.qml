@@ -779,6 +779,13 @@ Item {
             console.error("ACKEDHERE " + afterAck + " | " + view.taskRows(top.taskHosts).map(function(r) { return r.id.split(":")[1] }).join(","))            // The links carrying their tasks, and the load on each card.
             var links = view.boardLinkList(top.taskHosts)
             console.error("LINKS " + links.map(function(e) { return e.from + ">" + e.to + ":" + e.count + ":" + e.tone + ":" + view.linkLabel(e) }).join(","))
+            // A needs-you task comes from a DEVICE, and a link runs between two SESSIONS:
+            // askerKey finds no session and the task makes no link at all. That is why a link's
+            // tone can never be "needs you" - and why its count is not one either.
+            console.error("LINKASKER " + [view.askerKey("nothing.default", { "laptop/review": true }),
+                                      view.askerKey("laptop.default (laptop/shrooms)", { "laptop/shrooms": true }),
+                                      view.askerHasSession("nothing.default"),
+                                      view.askerHasSession("laptop.default (laptop/shrooms)")].join(",") + " |")
             var load = view.cardLoad(top.taskHosts)
             console.error("LOAD " + Object.keys(load).sort().map(function(k) { return k + "=" + view.loadLabel(load[k]) }).join(","))
             // Amber means "a person is needed", so the card load must only be amber for a

@@ -1940,17 +1940,24 @@ Item {
                 var pair = pairKeyOf(from, to)
                 if (pair === "") continue
                 if (!byPair[pair]) {
-                    byPair[pair] = { from: from, to: to, count: 0, needsYou: 0, stalled: 0, working: 0,
-                                     tasks: [], tone: "working" }
+                    byPair[pair] = { from: from, to: to, count: 0, needsYou: 0, blocked: 0,
+                                     stalled: 0, working: 0, tasks: [], tone: "working" }
                     out.push(byPair[pair])
                 }
                 var e = byPair[pair]
                 e.count++
                 e.tasks.push({ id: t.id, title: taskTitleOf(t), state: taskStalledOf(t) ? "stalled" : w })
-                if (taskStalledOf(t)) e.stalled++
-                else if (w === "input-required") e.needsYou++
+                // The GROUP, not the raw state: input-required now covers both Needs you and
+                // Blocked, and only the first is "a person is waiting". Counting the state
+                // made a link whose tasks are all Blocked say "needs you" - the very thing
+                // this change exists to stop (the reviewer, live pass).
+                var lg = taskGroup(t)
+                if (lg === "needs-you") e.needsYou++
+                else if (lg === "blocked") e.blocked++
+                else if (taskStalledOf(t)) e.stalled++
                 else e.working++
-                e.tone = e.needsYou > 0 ? "input-required" : e.stalled > 0 ? "stalled" : "working"
+                e.tone = e.needsYou > 0 ? "input-required"
+                       : e.blocked > 0 ? "blocked" : e.stalled > 0 ? "stalled" : "working"
             }
         }
         return out
@@ -1990,6 +1997,7 @@ Item {
     function linkLabel(e) {
         if (!e || e.count < 1) return ""
         if (e.needsYou > 0) return e.count + (e.needsYou === 1 ? " \u00b7 needs you" : " \u00b7 " + e.needsYou + " need you")
+        if (e.blocked > 0) return e.count + (e.blocked === 1 ? " \u00b7 blocked" : " \u00b7 " + e.blocked + " blocked")
         if (e.stalled > 0) return e.count + " \u00b7 stalled"
         return String(e.count)
     }
@@ -2075,7 +2083,10 @@ Item {
     // The header count is for Needs you only: it is the group where a number means "this
     // many people are waiting on you". Blocked is ash and uncounted - it is a fact about
     // the fleet, not a thing the reader owes.
-    function groupShowsCount(g) { return g === "needs-you" }
+    // Every group header keeps its count (the reviewer, live pass): the count is a
+    // fact about the fleet. What stays Needs-you-only is the AMBER, and the board
+    // link's count - those are the "a person is waiting" signal.
+    function groupShowsCount(g) { return true }
     // A header reads "Needs you  3" where a count means something, and just "Blocked"
     // where it does not. Pure, so the harness pins it.
     function headerText(row) {
@@ -3676,6 +3687,12 @@ Item {
                                 color: trow.modelData.kind === "header" && trow.modelData.group === "needs-you" ? cAmber : cAsh
                                 font.family: "monospace"; font.pixelSize: root.fs(10); font.bold: true
                             }
+                            MouseArea {
+                                anchors.fill: parent
+                                enabled: trow.modelData.kind === "task"
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: Qt.callLater(function() { root.openTaskRow(trow.modelData) })
+                            }
                             Column {
                                 visible: trow.modelData.kind === "task"
                                 anchors.left: parent.left; anchors.top: parent.top
@@ -3780,12 +3797,6 @@ Item {
                                 onClicked: Qt.callLater(function() {
                                     root.answerTask(trow.modelData, answerField.text)
                                 })
-                            }
-                            MouseArea {
-                                anchors.fill: parent
-                                enabled: trow.modelData.kind === "task"
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: Qt.callLater(function() { root.openTaskRow(trow.modelData) })
                             }
                             // A finished task still owes an ack: that is the one thing a person
                             // must be able to say back, and only where it does something. On top
