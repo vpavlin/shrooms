@@ -745,6 +745,10 @@ Item {
             // Folded, Done keeps its header and count but not its rows.
             var folded = view.taskPanelRows(top.taskHosts, "", false)
             console.error("PANELFOLDED " + folded.map(function(r) { return r.kind === "header" ? "[" + r.label + " " + r.count + "]" : r.id.split(":")[1] }).join(" ") + " |")
+            // Who a session takes files from (ADR-048): an entry is MACHINE/SESSION or a whole machine.
+            console.error("FILESALLOW " + [view.filesValid("jimmy-crib/vpavlin"), view.filesValid(" pi5/* "), view.filesValid("jimmy-crib"),
+                view.filesValid("a/b/c"), view.filesAllow(["pi5/jimmy"], "pi5/jimmy").join("+"), view.filesAllow(["pi5/jimmy"], "nonsense").join("+"),
+                view.filesAllow(["pi5/jimmy"], "atlas/*").join("+"), view.filesDeny(["pi5/jimmy", "atlas/*"], "pi5/jimmy").join("+")].join(",") + " |")
             // An ACK takes the row away at once, before its agent says so; undone, it is back.
             view.markAcked(["review:m4"], true)
             var afterAck = view.taskRows(top.taskHosts).map(function(r) { return r.id.split(":")[1] }).join(",")

@@ -1360,6 +1360,48 @@ Item {
         root.cageOpts = c ? { image: c.image, nix: !!c.nix, github: !!c.github, sealed: !!c.sealed } : { image: "", nix: false, github: false, sealed: false }
         cageDialog.open()
     }
+    // Files between agents (ADR-048): who the open session takes files from, who
+    // asked and was refused, and what it was sent.
+    // An allow entry: MACHINE/SESSION, or MACHINE and a star for all of it. Pure.
+    function filesValid(entry) { return /^[^\/\s]+\/[^\/\s]+$/.test(String(entry || "").trim()) }
+    // The list with entry added once; unchanged when it is there or not an entry. Pure.
+    function filesAllow(list, entry) {
+        var e = String(entry || "").trim(), l = (list || []).slice()
+        if (!filesValid(e) || l.indexOf(e) >= 0) return l
+        l.push(e)
+        return l
+    }
+    function filesDeny(list, entry) { return (list || []).filter(function(x) { return x !== entry }) }
+    function setAcceptFiles(list) {
+        if (!agentOpen) return false
+        if (agentCall("agentPost", [agentOpen.address, "/v1/sessions/" + agentOpen.session + "/settings",
+                                    JSON.stringify({ accept_files_from: list })]) === null) return false
+        Qt.callLater(refreshAgents)
+        return true
+    }
+    function ignoreFileRequest(from) {
+        if (!agentOpen) return false
+        if (agentCall("agentPost", [agentOpen.address, "/v1/sessions/" + agentOpen.session + "/settings",
+                                    JSON.stringify({ ignore_file_request: from })]) === null) return false
+        Qt.callLater(refreshAgents)
+        return true
+    }
+    property var droppedFiles: []
+    function loadDropped() {
+        if (!agentOpen) return
+        var r = agentCall("agentGet", [agentOpen.address, "/v1/sessions/" + agentOpen.session + "/drop"])
+        root.droppedFiles = (r && r.files) ? r.files : []
+    }
+    function removeDropped(f) {
+        if (!agentOpen || !f) return false
+        var r = agentCall("agentDelete", [agentOpen.address, "/v1/sessions/" + agentOpen.session + "/drop?from="
+                                          + encodeURIComponent(f.from) + "&file=" + encodeURIComponent(f.name)])
+        loadDropped()
+        return r !== null
+    }
+    function sizeLabel(n) { return n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : n >= 1024 ? (n / 1024).toFixed(1) + " kB" : n + " bytes" }
+    function openFiles() { loadDropped(); filesDialog.open() }
+
     // Whether the open session takes tasks from caged agents.
     function setAcceptCaged(on) {
         if (!agentOpen) return false
@@ -2712,6 +2754,97 @@ Item {
         }
     }
     Dialog {
+        id: filesDialog
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(root.sz(560), root.width - root.sz(40))
+        height: Math.min(root.sz(620), root.height - root.sz(40))
+        padding: root.sz(20)
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        Overlay.modal: Rectangle { color: Qt.rgba(0, 0, 0, 0.6) }
+        background: Rectangle { color: cPanel; radius: root.sz(12); border.color: cLine }
+        header: Item {}
+        footer: Item {}
+        contentItem: ScrollView {
+            clip: true
+            contentWidth: availableWidth
+            ColumnLayout {
+                // Clear of the scroll bar, which sits over the right edge and took
+                // the clicks meant for the × beside each sender.
+                width: parent.width - root.sz(18)
+                spacing: root.sz(8)
+                Text { text: "FILES · " + (root.agentOpen ? root.agentOpen.session : ""); color: cPhosphor
+                       font.family: "monospace"; font.pixelSize: root.fs(12); font.letterSpacing: 1.5 }
+                // Who asked and was refused: allow, or set it aside.
+                Text { visible: !!(root.agentInfo && root.agentInfo.file_requests && root.agentInfo.file_requests.length)
+                       text: "WANTS TO SEND FILES"; color: cAmber; font.family: "monospace"; font.pixelSize: root.fs(10) }
+                Repeater {
+                    model: root.agentInfo && root.agentInfo.file_requests ? root.agentInfo.file_requests : []
+                    delegate: RowLayout {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        Text { Layout.fillWidth: true; elide: Text.ElideRight; color: cBone; font.family: "monospace"; font.pixelSize: root.fs(11)
+                               text: modelData.from + (modelData.name ? "  tried " + modelData.name : "") }
+                        Lnk { text: "allow"; base: cPhosphor; font.pixelSize: root.fs(10)
+                              onClicked: Qt.callLater(root.setAcceptFiles, root.filesAllow(root.agentInfo.accept_files_from, modelData.from)) }
+                        Lnk { text: "ignore"; base: cAsh; font.pixelSize: root.fs(10)
+                              onClicked: Qt.callLater(root.ignoreFileRequest, modelData.from) }
+                    }
+                }
+                // Who it takes files from: nobody until allowed.
+                Text { text: "TAKES FILES FROM"; color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(10); Layout.topMargin: root.sz(8) }
+                Text { visible: !(root.agentInfo && root.agentInfo.accept_files_from && root.agentInfo.accept_files_from.length)
+                       text: "nobody yet"; color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(11) }
+                Repeater {
+                    model: root.agentInfo && root.agentInfo.accept_files_from ? root.agentInfo.accept_files_from : []
+                    delegate: RowLayout {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        Text { Layout.fillWidth: true; text: modelData; color: cBone; font.family: "monospace"; font.pixelSize: root.fs(11) }
+                        Lnk { text: "×"; base: cRust; font.pixelSize: root.fs(12)
+                              onClicked: Qt.callLater(root.setAcceptFiles, root.filesDeny(root.agentInfo.accept_files_from, modelData)) }
+                    }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    TextField {
+                        id: filesAdd
+                        Layout.fillWidth: true
+                        placeholderText: "machine/session, or machine/ and a star for all of it"
+                        color: cBone; placeholderTextColor: cAsh; font.family: "monospace"; font.pixelSize: root.fs(11)
+                        background: Rectangle { color: cVoid; radius: 6; border.color: filesAdd.activeFocus ? cPhosphor : cLine }
+                        onAccepted: addFiles.clicked()
+                    }
+                    Lnk { id: addFiles; text: "ADD"; base: root.filesValid(filesAdd.text) ? cPhosphor : cAsh; font.pixelSize: root.fs(10)
+                          onClicked: if (root.filesValid(filesAdd.text) && root.setAcceptFiles(root.filesAllow(root.agentInfo ? root.agentInfo.accept_files_from : [], filesAdd.text))) filesAdd.text = "" }
+                }
+                // What other agents sent it.
+                Text { text: "RECEIVED"; color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(10); Layout.topMargin: root.sz(8) }
+                Text { visible: root.droppedFiles.length === 0; text: "nothing yet"; color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(11) }
+                Repeater {
+                    model: root.droppedFiles
+                    delegate: RowLayout {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 0
+                            Text { Layout.fillWidth: true; elide: Text.ElideMiddle; text: modelData.name; color: cBone; font.family: "monospace"; font.pixelSize: root.fs(11) }
+                            Text { Layout.fillWidth: true; elide: Text.ElideRight; color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(9)
+                                   text: "from " + modelData.from + " · " + root.sizeLabel(modelData.size) + " · " + modelData.path }
+                        }
+                        Lnk { text: "delete"; base: cRust; font.pixelSize: root.fs(10); onClicked: Qt.callLater(root.removeDropped, modelData) }
+                    }
+                }
+                RowLayout {
+                    Layout.alignment: Qt.AlignRight
+                    Layout.topMargin: root.sz(10)
+                    Lnk { text: "CLOSE"; base: cBone; font.pixelSize: root.fs(12); onClicked: filesDialog.close() }
+                }
+            }
+        }
+    }
+    Dialog {
         id: restartDialog
         modal: true
         anchors.centerIn: parent
@@ -3801,6 +3934,10 @@ Item {
                         Lnk { readonly property bool on: !!(root.agentInfo && root.agentInfo.accept_caged)
                               objectName: "acceptCagedLink"; text: on ? "CAGED TASKS" : "caged tasks"; base: on ? cViolet : cAsh
                               onClicked: Qt.callLater(root.setAcceptCaged, !on) }
+                        // Files from other agents (ADR-048): amber while a refused sender asks.
+                        Lnk { readonly property int asking: root.agentInfo && root.agentInfo.file_requests ? root.agentInfo.file_requests.length : 0
+                              objectName: "filesLink"; text: asking > 0 ? "files · " + asking + " asking" : "files"
+                              base: asking > 0 ? cAmber : cAsh; onClicked: Qt.callLater(root.openFiles) }
                         Lnk { text: "restart"; base: cAsh; onClicked: root.askRestart() }
                         Lnk { text: "delete"; base: cAsh; onClicked: root.askDelete() }
                         Lnk { visible: root.agentWorking; text: "■ stop"; base: cRust; onClicked: root.stopTurn() }
