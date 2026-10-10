@@ -1402,6 +1402,30 @@ Item {
     function sizeLabel(n) { return n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : n >= 1024 ? (n / 1024).toFixed(1) + " kB" : n + " bytes" }
     function openFiles() { loadDropped(); filesDialog.open() }
 
+    // Which of its machine's meshes the open session is there for (ADR-049):
+    // from any other it does not exist. None ticked is every mesh.
+    property var machineMeshes: []
+    property var meshesPicked: []
+    function openMeshes() {
+        if (!agentOpen) return
+        var r = agentCall("agentGet", [agentOpen.address, "/v1/meshes"])
+        root.machineMeshes = (r && r.meshes) ? r.meshes : []
+        root.meshesPicked = (agentInfo && agentInfo.meshes) ? agentInfo.meshes.slice() : []
+        meshesDialog.open()
+    }
+    // Ticking a mesh on or off: the picked list in the machine's order. Pure.
+    function meshesToggle(all, picked, m) {
+        var on = (picked || []).indexOf(m) >= 0
+        return (all || []).filter(function(x) { return x === m ? !on : (picked || []).indexOf(x) >= 0 })
+    }
+    function saveMeshes() {
+        if (!agentOpen) return false
+        if (agentCall("agentPost", [agentOpen.address, "/v1/sessions/" + agentOpen.session + "/settings",
+                                    JSON.stringify({ meshes: root.meshesPicked })]) === null) return false
+        Qt.callLater(refreshAgents)
+        return true
+    }
+
     // Whether the open session takes tasks from caged agents.
     function setAcceptCaged(on) {
         if (!agentOpen) return false
@@ -2754,6 +2778,40 @@ Item {
         }
     }
     Dialog {
+        id: meshesDialog
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(root.sz(460), root.width - root.sz(40))
+        padding: root.sz(20)
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        Overlay.modal: Rectangle { color: Qt.rgba(0, 0, 0, 0.6) }
+        background: Rectangle { color: cPanel; radius: root.sz(12); border.color: cLine }
+        header: Item {}
+        footer: Item {}
+        contentItem: ColumnLayout {
+            spacing: root.sz(10)
+            Text { text: "MESHES · " + (root.agentOpen ? root.agentOpen.session : ""); color: cPhosphor
+                   font.family: "monospace"; font.pixelSize: root.fs(12); font.letterSpacing: 1.5 }
+            Text { Layout.fillWidth: true; wrapMode: Text.Wrap; color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(11)
+                   text: "From a mesh not ticked, this session does not exist: not listed, opened, asked or sent files. None ticked is every mesh." }
+            Repeater {
+                model: root.machineMeshes
+                delegate: Lnk {
+                    required property var modelData
+                    readonly property bool on: root.meshesPicked.indexOf(modelData) >= 0
+                    text: (on ? "[x] " : "[ ] ") + modelData; base: on ? cSky : cBone; font.pixelSize: root.fs(12)
+                    onClicked: root.meshesPicked = root.meshesToggle(root.machineMeshes, root.meshesPicked, modelData)
+                }
+            }
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                spacing: root.sz(20)
+                Lnk { text: "CANCEL"; base: cBone; font.pixelSize: root.fs(12); onClicked: meshesDialog.close() }
+                Lnk { text: "SAVE"; base: cPhosphor; font.pixelSize: root.fs(12); onClicked: if (root.saveMeshes()) meshesDialog.close() }
+            }
+        }
+    }
+    Dialog {
         id: filesDialog
         modal: true
         anchors.centerIn: parent
@@ -3938,6 +3996,10 @@ Item {
                         Lnk { readonly property int asking: root.agentInfo && root.agentInfo.file_requests ? root.agentInfo.file_requests.length : 0
                               objectName: "filesLink"; text: asking > 0 ? "files · " + asking + " asking" : "files"
                               base: asking > 0 ? cAmber : cAsh; onClicked: Qt.callLater(root.openFiles) }
+                        // Which of its machine's meshes it is there for (ADR-049).
+                        Lnk { readonly property var only: root.agentInfo && root.agentInfo.meshes ? root.agentInfo.meshes : []
+                              objectName: "meshesLink"; text: only.length ? "on " + only.join(", ") : "meshes"
+                              base: only.length ? cSky : cAsh; onClicked: Qt.callLater(root.openMeshes) }
                         Lnk { text: "restart"; base: cAsh; onClicked: root.askRestart() }
                         Lnk { text: "delete"; base: cAsh; onClicked: root.askDelete() }
                         Lnk { visible: root.agentWorking; text: "■ stop"; base: cRust; onClicked: root.stopTurn() }

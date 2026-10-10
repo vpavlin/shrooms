@@ -749,6 +749,10 @@ Item {
             console.error("FILESALLOW " + [view.filesValid("jimmy-crib/vpavlin"), view.filesValid(" pi5/* "), view.filesValid("jimmy-crib"),
                 view.filesValid("a/b/c"), view.filesAllow(["pi5/jimmy"], "pi5/jimmy").join("+"), view.filesAllow(["pi5/jimmy"], "nonsense").join("+"),
                 view.filesAllow(["pi5/jimmy"], "atlas/*").join("+"), view.filesDeny(["pi5/jimmy", "atlas/*"], "pi5/jimmy").join("+")].join(",") + " |")
+            // Ticking meshes (ADR-049): in the machine's order, on and off.
+            console.error("MESHTOGGLE " + [view.meshesToggle(["default", "home", "office"], [], "home").join("+"),
+                view.meshesToggle(["default", "home", "office"], ["office"], "default").join("+"),
+                view.meshesToggle(["default", "home"], ["home"], "home").join("+")].join(",") + " |")
             // An ACK takes the row away at once, before its agent says so; undone, it is back.
             view.markAcked(["review:m4"], true)
             var afterAck = view.taskRows(top.taskHosts).map(function(r) { return r.id.split(":")[1] }).join(",")

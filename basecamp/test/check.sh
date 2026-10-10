@@ -244,6 +244,7 @@ expect "ACKERR no such task | null | no reply" "an ACK the agent refused is not 
 expect "PANEL [Needs you 2] m1 m6 [Working 2] m2 m7 [Stalled 1] m3 [Done, unacked 1] m4" "the panel does not head each non-empty group, or a task that is both blocked and stalled is not in Needs you"
 expect "PANELFOLDED [Needs you 2] m1 m6 [Working 2] m2 m7 [Stalled 1] m3 [Done, unacked 1] |" "folded, the panel still lists the finished tasks (or lost their header)"
 expect "FILESALLOW true,true,false,false,pi5/jimmy,pi5/jimmy,pi5/jimmy+atlas/*,atlas/* |" "who a session takes files from is not edited as MACHINE/SESSION or a whole machine, once each"
+expect "MESHTOGGLE home,default+office, |" "ticking a mesh does not turn it on and off, in the machine's order"
 expect "ACKEDHERE m1,m6,m2,m7,m3 | m1,m6,m2,m7,m3,m4" "an ACK does not take the row away at once, or an undone one does not come back"
 expect "LINKS pi5/jimmy>laptop/review:2:input-required:2 · needs you,laptop/shrooms>laptop/review:2:stalled:2 · stalled" "a link does not carry the tasks on it, the most urgent tone does not win, or a CAGED asker's link silently vanished"
 expect "LOAD laptop/review=5 owed,laptop/shrooms=2 asked,pi5/jimmy=2 asked" "a card does not show what it owes and what it is waiting for"
