@@ -29,6 +29,13 @@ jobs:
           if [ -n "$unformatted" ]; then
             echo "not gofmt'd:"; echo "$unformatted"; exit 1
           fi
+      - name: agent docs match the repository
+        # AGENTS.md and docs/glossary.md: every path, make target, ADR and
+        # pkg.Symbol they name must exist; docs/codemap.md must be what the
+        # packages' own doc comments generate (issue #22).
+        run: |
+          python3 scripts/check-agent-docs.py
+          python3 scripts/codemap.py --check
       - name: vet
         run: CGO_CFLAGS= CGO_LDFLAGS= go vet $(./scripts/test-packages.sh pure)
       - name: test

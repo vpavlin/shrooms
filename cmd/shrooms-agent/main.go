@@ -1,9 +1,11 @@
-// Command shrooms-agent serves this machine's Claude Code sessions to the
-// owner's other devices over the mesh (docs/agents.md).
+// Command shrooms-agent runs this machine's coding-agent sessions (Claude Code,
+// pi) and serves them to its user here and to the owner's other devices over
+// the mesh (docs/agents.md).
 //
-// It listens only on this device's overlay addresses, so only mesh members can
-// reach it, and it names every caller by the overlay address its request came
-// from. Run it as the user whose Claude Code it should be — not as root:
+// It listens on a unix socket only its user can open, and, when this device is
+// in a mesh, on its overlay addresses, so only mesh members can reach it; it
+// names every remote caller by the overlay address its request came from
+// (ADR-056). Run it as the user whose Claude Code it should be — not as root:
 // sessions run with that user's settings, permissions and credentials.
 package main
 

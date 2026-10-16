@@ -1,3 +1,22 @@
+// Package keycard drives a Keycard: pairing, the secure channel, the PIN, and
+// signing at this project's own derivation path (ADR-022).
+//
+// It lived in mobile/ while a phone was the only thing that could reach a card,
+// and mobile/ is a separate Go module — so nothing on the desktop could import
+// any of it. Moving it here is what lets `admin init` talk to a card over a
+// reader instead of having a key copied out of an app by hand.
+//
+// Nothing in here knows what carries the bytes.
+//
+// The card protocol runs here, in Go, shared with everything else this project
+// does with credentials. Android supplies one thing: a way to move bytes to the
+// card, which is `IsoDep.transceive`. That is the whole of the platform-specific
+// surface, and it is why this is not a second Keycard implementation — pairing,
+// the secure channel, PIN handling and signing all live in keycard-go.
+//
+// Both the daemon (cmd/shrooms: admin init and the keycard commands) and the
+// phone (mobile/) link it. It was kept in mobile/ at first so the daemon would
+// not carry keycard-go's size; the desktop's need for a card outweighed that.
 package keycard
 
 import (
@@ -18,28 +37,6 @@ import (
 
 	"github.com/vpavlin/shrooms/internal/cred"
 )
-
-// Package keycard drives a Keycard: pairing, the secure channel, the PIN, and
-// signing at this project's own derivation path (ADR-022).
-//
-// It lived in mobile/ while a phone was the only thing that could reach a card,
-// and mobile/ is a separate Go module — so nothing on the desktop could import
-// any of it. Moving it here is what lets `admin init` talk to a card over a
-// reader instead of having a key copied out of an app by hand.
-//
-// Nothing in here knows what carries the bytes.
-//
-// The card protocol runs here, in Go, shared with everything else this project
-// does with credentials. Android supplies one thing: a way to move bytes to the
-// card, which is `IsoDep.transceive`. That is the whole of the platform-specific
-// surface, and it is why this is not a second Keycard implementation — pairing,
-// the secure channel, PIN handling and signing all live in keycard-go.
-//
-// Why in the mobile module rather than internal/: keycard-go costs about
-// 3.6 MiB linked, which is 7% of the APK and would be 29% of the daemon. The
-// daemon does not need it — on a desktop the card is driven by an external
-// signer (ADR-022) — and mobile/ is a separate module, so a server that will
-// never meet a card links none of this.
 
 // Transport moves one APDU to the card and returns its response.
 //
