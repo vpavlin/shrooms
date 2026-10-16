@@ -215,6 +215,13 @@ func TestARealSharedFolder(t *testing.T) {
 	if c == nil {
 		t.Fatal("no podman")
 	}
+	// No resource limits, as the other three real-cage tests do (cagebreak_test.go,
+	// cagebreak_mounts_test.go, cagebreak_icmp6_test.go). Without this the container
+	// cannot start where the memory controller is not delegated to the user session:
+	// rootless podman on pi5 fails with "crun: opening file `memory.max` for writing:
+	// No such file or directory", which is a fact about the machine and not about the
+	// shared folder this test is about. It was the only one of the four without it.
+	c.Memory, c.CPUs, c.Pids = "", "", 0
 	ctx := context.Background()
 	vol := sharedVolumeFor([]string{"realtest-" + filepath.Base(t.TempDir())})
 	t.Cleanup(func() { c.run(ctx, "volume", "rm", "-f", vol) })
