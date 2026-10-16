@@ -124,8 +124,38 @@ func TestSealedCageMounts(t *testing.T) {
 				t.Errorf("the cage sees %d entries of %s, the host has %d: the mount is narrower than it looks",
 					len(got), claudeDir, len(want))
 			} else {
-				t.Logf("the cage sees all %d entries of %s (the directory holding the claude binary, mounted read-only) — wider than the binary, and harmless: it is claude's own versions directory",
-					len(got), claudeDir)
+				// Say what this MEASURES, and MEASURE what it says. The first version of this line
+				// claimed two things: the entry count (measured just above) and that the directory
+				// "is mounted read-only" — which nothing here had looked at. That is the same
+				// shape as the bug this file exists for: a claim that reads as evidence. It also
+				// called the directory "claude's own versions directory", true on a real machine
+				// and false here, where the claude binary is the fake the test manager registers
+				// and the directory is a go-build directory (both caught on review, 2026-10-15).
+				//
+				// The read-only claim is now read off `ms`, the list the cage was built from,
+				// which is this agent's own sealedMounts() output — an observation of the
+				// configuration, not a belief about sealedMounts().
+				//
+				// Deliberately NOT a write attempt from inside the cage: on a real machine this
+				// directory is the live claude installation, so a write probe would write into it
+				// exactly when the mount is NOT read-only — the test would do the damage it is
+				// checking for. That is why the two other mounts (2, 3, 6) can be probed by
+				// writing and this one cannot.
+				found, ro := false, false
+				for _, mt := range ms {
+					if mt.path == claudeDir {
+						found, ro = true, mt.ro
+					}
+				}
+				switch {
+				case !found:
+					t.Errorf("the list the cage was built from has no mount for %s, yet the cage can read it: it is mounted some other way than this test believes", claudeDir)
+				case !ro:
+					t.Errorf("the list the cage was built from does not mark %s read-only: the directory holding the claude binary is writable from inside", claudeDir)
+				default:
+					t.Logf("the cage sees all %d entries of %s, and the list it was built from marks that directory read-only, so everything in it comes along, not just the binary",
+						len(got), claudeDir)
+				}
 			}
 		}
 	}
