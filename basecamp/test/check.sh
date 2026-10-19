@@ -444,3 +444,50 @@ expect "DELETED=/v1/sessions/logos OPEN=none" "deleting did not remove the open 
 expect "BOARD cards=pi5/jimmy,laptop/shrooms,laptop/notes,proteus/review edges=proteus/review>laptop/notes:input-required,laptop/shrooms>pi5/jimmy:stalled,pi5/jimmy>proteus/review:working drawn=3 list=false flow=true tasks=3" "the board does not show every session, or the links between agents working on each other's tasks"
 expect "BOARDOPEN open=jimmy withlist=true esc=true,true back=true,true,true,false" "a card on the board does not open its session beside the list, Esc does not bring the board back (or takes it from a dialog), or the board does not come back in its place"
 echo "agents panel OK${AGENTS_SHOT:+ (picture: $shot)}"
+
+# The task controls, by CLICKING them: answer / nudge / cancel / ack.
+#
+# Why this is a separate test and not more greps above: every assertion in this
+# file is a SOURCE-ORDER check — it greps Main.qml. That proves a handler is
+# wired, NOT that a click reaches it. A MouseArea sitting above a button
+# swallows the click and every grep above still passes; that already cost a
+# round on ACK (2026-10-10), and the panel's other controls were never clicked
+# at all until now.
+#
+# So this drives the real, unmodified Main.qml with QtTest's
+# TestCase.mouseClick — hit-tested synthetic clicks through Qt's actual input
+# pipeline, the path a finger takes, not calls to the handler functions. It
+# asserts by CAPTURED REQUEST: answer posts /answer with the typed text, nudge
+# and ack post theirs, cancel is two-step (the first tap arms and sends
+# NOTHING), nudge appears only on a blocked task, and a click on a control does
+# not also fall through to the row's "open the session" area.
+#
+# It is not vacuous: giving that row's MouseArea `z: 99` (the swallow shape)
+# makes 6 of its 10 tests fail, which is how we know it can fail at all.
+echo
+echo "==> the task controls, by clicking them"
+# qmltestrunner ships in the same bin directory as the qml runtime
+# (qt6-declarative-dev-tools) — no second search, and no second way to get it
+# wrong.
+QMLTEST=$(dirname "$QML")/qmltestrunner
+if [ ! -x "$QMLTEST" ]; then
+    echo "FAIL: no qmltestrunner beside $QML" >&2
+    echo "  (qt6-declarative-dev-tools ships both; this is the package question" >&2
+    echo "   that the qml discovery above already had to answer once)" >&2
+    ls -1 "$(dirname "$QML")" 2>/dev/null | head -20 >&2 || true
+    exit 1
+fi
+mkdir -p "$work/liveclick"
+cp basecamp-agents/Main.qml basecamp-agents/test/tst_liveclick.qml "$work/liveclick/"
+out=$(run "$QMLTEST" -input "$work/liveclick/tst_liveclick.qml")
+echo "$out" | grep -E "^(PASS|FAIL|Totals)" || true
+# The WHOLE totals line, anchored at BOTH ends: "10 passed, 0 failed" is a
+# prefix of a run that also skipped or blacklisted something, and a substring
+# match cannot tell the two apart (the PANELFOLDED lesson). The duration is
+# optional because the runner appends `, 4339ms` — found by running this gate
+# rather than by reading the runner's output format.
+echo "$out" | grep -qE '^Totals: 10 passed, 0 failed, 0 skipped, 0 blacklisted(, [0-9]+ms)?$' \
+    || { echo "FAIL: a click did not reach its control, or the test did not run"; \
+         echo "  wanted: Totals: 10 passed, 0 failed, 0 skipped, 0 blacklisted"; \
+         echo "$out" | tail -20; exit 1; }
+echo "task controls OK"
