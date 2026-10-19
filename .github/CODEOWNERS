@@ -1,0 +1,8 @@
+# What agents read as given, and what decides: reviewed by the owner. A
+# script checks that what these name exists, not that what they say is true
+# (strudelPi, #29).
+/AGENTS.md          @vpavlin
+/CLAUDE.md          @vpavlin
+/docs/glossary.md   @vpavlin
+/docs/adr/          @vpavlin
+/.github/CODEOWNERS @vpavlin
