@@ -32,7 +32,7 @@ GO ?= go
 VERSION ?= $(shell git describe --tags --match 'v*' --always --dirty 2>/dev/null || echo dev)
 
 .PHONY: all deps deps-basecamp check-lib shrooms wakuspike s3topics m0demo \
-        s1 s3 probe relay relay-image m0 m1 m2 m2-edm m3 m3-remote dist dist-arm64 image push-image agent-image agent-image-ctx push-agent-image deps-release install uninstall test-uninstall purge build-all vet-cgo vet-pcsc test test-unit e2e e2e-two-nodes e2e-keycard e2e-keycard-mesh android-deps android-core aar apk fdroid basecamp-check basecamp-core-check basecamp-lgx basecamp-agents-lgx site-adrs fmt clean
+        s1 s3 probe relay relay-image m0 m1 m2 m2-edm m3 m3-remote dist dist-arm64 image push-image agent-image agent-image-ctx push-agent-image deps-release install uninstall test-uninstall purge build-all vet-cgo vet-pcsc test test-unit e2e e2e-two-nodes e2e-keycard e2e-keycard-mesh android-deps android-core aar apk fdroid basecamp-check basecamp-core-check basecamp-lgx basecamp-agents-lgx site-adrs fmt clean shrooms-attacker
 
 all: shrooms
 
@@ -79,6 +79,11 @@ GOTAGS = $(if $(TAGS),-tags $(TAGS),)
 
 shrooms: check-lib
 	$(GO) build -trimpath $(GOTAGS) -ldflags "-X main.version=$(VERSION)" -o bin/shrooms ./cmd/shrooms
+
+## A daemon with the audit F-03 e2e hooks (SHROOMS_ANNOUNCE_WG,
+## SHROOMS_E2E_ALLOW_DUPLICATE_WG). Never shipped; see scripts/e2e-f03-*.sh.
+shrooms-attacker: check-lib
+	$(GO) build -trimpath -tags e2e_attacker -o bin/shrooms-attacker ./cmd/shrooms
 
 wakuspike: check-lib
 	$(GO) build -o bin/wakuspike ./cmd/wakuspike

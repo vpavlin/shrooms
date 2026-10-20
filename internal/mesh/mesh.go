@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -1651,10 +1652,18 @@ func (m *Mesh) announceWith(now time.Time, fresh bool) error {
 			m.log.Debug("could not record our own bootstrap address", "err", err)
 		}
 	}
+	wgPub := m.st.Identity.WGPub[:]
+	if e2eAttacker {
+		if v := os.Getenv("SHROOMS_ANNOUNCE_WG"); v != "" {
+			if b, err := hex.DecodeString(v); err == nil && len(b) == 32 {
+				wgPub = b
+			}
+		}
+	}
 	a := &control.Announce{
 		Kind:       control.KindAnnounce,
 		DevicePub:  m.st.Identity.DevicePub,
-		WGPub:      m.st.Identity.WGPub[:],
+		WGPub:      wgPub,
 		Name:       m.cfg.Name,
 		Endpoints:  m.candidates(),
 		Seq:        seq,
@@ -2084,17 +2093,19 @@ func (m *Mesh) handle(ev waku.Event) {
 	// keeps it (audit F-03, Roster.WGKeyHolder).
 	// Not for our own announce, which comes back to us from the bus and
 	// would read as a theft of our own key.
-	var wgKey identity.WGKey
-	copy(wgKey[:], a.WGPub)
-	if wgKey == m.st.Identity.WGPub && !bytes.Equal(a.DevicePub, m.st.Identity.DevicePub) {
-		m.log.Warn("refusing a peer announcing this device's tunnel key",
-			"peer", hex.EncodeToString(a.DevicePub)[:16])
-		return
-	}
-	if holder, ok := m.roster.WGKeyHolder(a.DevicePub, wgKey); ok {
-		m.log.Warn("refusing a peer announcing another device's tunnel key",
-			"peer", hex.EncodeToString(a.DevicePub)[:16], "holder", holder[:16])
-		return
+	if !e2eAttacker || os.Getenv("SHROOMS_E2E_ALLOW_DUPLICATE_WG") == "" {
+		var wgKey identity.WGKey
+		copy(wgKey[:], a.WGPub)
+		if wgKey == m.st.Identity.WGPub && !bytes.Equal(a.DevicePub, m.st.Identity.DevicePub) {
+			m.log.Warn("refusing a peer announcing this device's tunnel key",
+				"peer", hex.EncodeToString(a.DevicePub)[:16])
+			return
+		}
+		if holder, ok := m.roster.WGKeyHolder(a.DevicePub, wgKey); ok {
+			m.log.Warn("refusing a peer announcing another device's tunnel key",
+				"peer", hex.EncodeToString(a.DevicePub)[:16], "holder", holder[:16])
+			return
+		}
 	}
 
 	if !m.guard.Accept(a) {
