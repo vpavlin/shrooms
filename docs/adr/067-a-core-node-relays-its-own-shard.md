@@ -2,7 +2,8 @@
 
 **Status:** accepted 2026-10-20 by the owner; being built. Amends what Core
 meant since ADR-003 and `state.Config.Mode`'s note ("Core relays for the
-network").
+network"). The patch goes when the July pin does: v0.40 carries upstream's fix
+(ADR-071).
 
 ## Context
 

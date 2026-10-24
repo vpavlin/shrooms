@@ -57,14 +57,21 @@ jobs:
             --build-arg LD_REF=${{ steps.ld.outputs.rev }} \
             --target lib -o docker/build/lib .
 
+      # Master has v0.40's C ABI, so the v0.40 binding (ADR-071): the July
+      # one cannot build against it, which is all this job reported from
+      # 2026-10-22.
       - name: Build every package
-        run: make build-all LD_DIR=docker/build/lib
+        run: make build-all LD_DIR=docker/build/lib TAGS=ld040
 
+      # build-vpn.Dockerfile copies the library from lib/ in the context. Not
+      # staged here before, which nobody saw: the job never got this far.
       - name: Build logos-vpn
         run: |
+          rm -rf lib && cp -a docker/build/lib lib
           VERSION=${GITHUB_REF_NAME:-dev} docker build \
             -f docker/build-vpn.Dockerfile \
             --build-arg VERSION=${GITHUB_REF_NAME:-dev} \
+            --build-arg TAGS=ld040 \
             --target dist -o dist .
           cp packaging/shrooms.service dist/
 

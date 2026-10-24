@@ -735,6 +735,12 @@ encoding is also asymmetric — base64 on send, byte array on receive.
 Mitigation: `internal/waku` targets the packaged build, and the header is pinned
 to the `.so`. Re-check on any upgrade. See PROTOTYPE §4 S1a/S1b.
 
+Since 2026-10-24 (ADR-071) there are two bindings behind one API: the July pin's
+(the default) and v0.40's (`-tags ld040`: nim-ffi 0.3 typed calls, per-event
+listeners). Both take the flat config, and received payloads are read in either
+encoding, so a fleet can move one node at a time; the July and v0.40 libraries
+were tested against each other both ways.
+
 ### R3 — Android JNI is thin
 
 The wrapper at `xAlisher/logos-libdelivery-android` exposes only

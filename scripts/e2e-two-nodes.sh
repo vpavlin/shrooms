@@ -16,7 +16,10 @@
 set -uo pipefail
 
 cd "$(dirname "$0")/.."
-BIN=$(pwd)/bin/shrooms
+BIN=${BIN:-$(pwd)/bin/shrooms}
+# Node B from another build, when given: the July library against v0.40
+# (ADR-071), since a fleet moves one machine at a time.
+BIN_B=${BIN_B:-$BIN}
 WORK=$(mktemp -d)
 SOCKS=$(mktemp -d /tmp/e2e-sock-XXXXXX)   # short: a unix path is capped near 108
 PIDS=()
@@ -35,6 +38,7 @@ bad()  { printf '    \033[31mFAIL\033[0m %s\n' "$1"; FAIL=$((FAIL+1)); }
 note() { printf '         %s\n' "$1"; }
 
 [ -x "$BIN" ] || { echo "no $BIN — run 'make shrooms'"; exit 1; }
+[ -x "$BIN_B" ] || { echo "no $BIN_B"; exit 1; }
 [ "$(id -u)" -eq 0 ] || { echo "needs root: a WireGuard device is CAP_NET_ADMIN"; exit 77; }
 [ -e /dev/net/tun ] || modprobe tun 2>/dev/null
 [ -e /dev/net/tun ] || { echo "no /dev/net/tun and modprobe did not help"; exit 77; }
@@ -78,7 +82,7 @@ fi
 
 # --- node B: same mesh, bootstrapped from A and nothing else ---------------
 mkdir -p "$WORK/b"
-"$BIN" prepare --config "$WORK/b/config.toml" --state "$WORK/b/state" \
+"$BIN_B" prepare --config "$WORK/b/config.toml" --state "$WORK/b/state" \
     --name beta --port "$B_WG" >"$WORK/b/prepare.log" 2>&1
 # The key is written into B's config directly, which is what a config that
 # carries it looks like. `set-key` did this until joining by key was removed
@@ -110,9 +114,9 @@ fi
 ok "node B is pointed at node A as its only bootstrap"
 
 # B needs a credential before A will look at it.
-DEV=$("$BIN" keys --state "$WORK/b/state" 2>&1 | sed -n 's/^device  *//p'  | head -1)
-WG=$( "$BIN" keys --state "$WORK/b/state" 2>&1 | sed -n 's/^tunnel  *//p'  | head -1)
-SEAL=$("$BIN" keys --state "$WORK/b/state" 2>&1 | sed -n 's/^sealing  *//p' | head -1)
+DEV=$("$BIN_B" keys --state "$WORK/b/state" 2>&1 | sed -n 's/^device  *//p'  | head -1)
+WG=$( "$BIN_B" keys --state "$WORK/b/state" 2>&1 | sed -n 's/^tunnel  *//p'  | head -1)
+SEAL=$("$BIN_B" keys --state "$WORK/b/state" 2>&1 | sed -n 's/^sealing  *//p' | head -1)
 BLOB=$(printf 'pw\n' | "$BIN" admin issue --dir "$WORK/a/admin" \
     --config "$WORK/a/config.toml" --state "$WORK/b/state" \
     --name beta --device "$DEV" --wg "$WG" --seal "$SEAL" --write=false 2>&1 |
@@ -120,10 +124,10 @@ BLOB=$(printf 'pw\n' | "$BIN" admin issue --dir "$WORK/a/admin" \
 if [ -n "$BLOB" ]; then ok "node A issues node B a credential"; else
   bad "no credential issued"; exit 1
 fi
-"$BIN" credential set "$BLOB" --config "$WORK/b/config.toml" --state "$WORK/b/state" \
+"$BIN_B" credential set "$BLOB" --config "$WORK/b/config.toml" --state "$WORK/b/state" \
   >/dev/null 2>&1
 
-"$BIN" daemon --config "$WORK/b/config.toml" --state "$WORK/b/state" \
+"$BIN_B" daemon --config "$WORK/b/config.toml" --state "$WORK/b/state" \
     --socket "$SOCKS/b.sock" >"$WORK/b/daemon.log" 2>&1 &
 PIDS+=($!)
 if wait_for 90 "$SOCKS/b.sock"; then ok "node B is up"; else
@@ -146,12 +150,12 @@ if saw "$SOCKS/a.sock" beta && saw "$SOCKS/b.sock" alpha; then
 else
   bad "they never saw each other in ${DISCOVERY}s"
   note "A: $("$BIN" status --socket "$SOCKS/a.sock" 2>&1 | head -3 | tr '\n' ' ')"
-  note "B: $("$BIN" status --socket "$SOCKS/b.sock" 2>&1 | head -3 | tr '\n' ' ')"
+  note "B: $("$BIN_B" status --socket "$SOCKS/b.sock" 2>&1 | head -3 | tr '\n' ' ')"
 fi
 
 # A credential that verifies is the difference between being seen and being
 # admitted, so assert the thing that would be missing if it did not.
-"$BIN" status --socket "$SOCKS/b.sock" 2>&1 | grep -q "no credential" &&
+"$BIN_B" status --socket "$SOCKS/b.sock" 2>&1 | grep -q "no credential" &&
   bad "node B still reports itself unenrolled" ||
   ok "node B is admitted, not merely present"
 
@@ -185,7 +189,7 @@ else
   bad "node B kept no roster to come back to"
 fi
 
-"$BIN" daemon --config "$WORK/b/config.toml" --state "$WORK/b/state" \
+"$BIN_B" daemon --config "$WORK/b/config.toml" --state "$WORK/b/state" \
     --socket "$SOCKS/b2.sock" >"$WORK/b/daemon.log" 2>&1 &
 PIDS+=($!)
 if wait_for 90 "$SOCKS/b2.sock"; then ok "node B restarts"; else
@@ -222,7 +226,7 @@ grep -E "remembered peers|tunnel established|peer discovered|provisional" "$WORK
 # A revoked device must stop being carried, and the check is on the OTHER node:
 # revocation is something peers enforce, not something the revoked device
 # cooperates with.
-DEV_B=$("$BIN" keys --state "$WORK/b/state" 2>&1 | sed -n 's/^device  *//p' | head -1)
+DEV_B=$("$BIN_B" keys --state "$WORK/b/state" 2>&1 | sed -n 's/^device  *//p' | head -1)
 # No --config: admin revoke does not take one, and flag.ExitOnError turns an
 # unknown flag into usage text and an exit — which a grep for "revok" then
 # matched, reporting a revocation that never happened.

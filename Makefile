@@ -432,11 +432,11 @@ relay-image:
 ## API change can break a command without any check noticing — which is exactly
 ## what happened to cmd/m0demo when the control-plane signature changed.
 build-all: check-lib
-	$(GO) build ./...
+	$(GO) build $(GOTAGS) ./...
 	@# The mobile module is nested, so ./... does not reach it — which is how a
 	@# change to a struct it reads got as far as an F-Droid publish before
 	@# anything complained.
-	cd mobile && $(GO) build ./...
+	cd mobile && $(GO) build $(GOTAGS) ./...
 
 ## Vet the packages that link liblogosdelivery. The no-cgo vet in CI cannot
 ## reach these, so without it internal/mesh is never vetted at all.

@@ -193,3 +193,24 @@ func TestTheMachinesLoadIsExported(t *testing.T) {
 		}
 	}
 }
+
+// v0.40 prefixed its own metrics with logos_delivery_ (ADR-071). Its message
+// count comes out under the name the dashboards already read, once, beside
+// libp2p's, whose names did not change.
+func TestTheDeliveryNodesMetricsReadTheSameFromEitherLibrary(t *testing.T) {
+	for name, body := range map[string]string{
+		"july":  "waku_node_messages_total{type=\"relay\"} 7\nlibp2p_peers 3\n",
+		"v0.40": "# HELP logos_delivery_node_messages number of messages received\nlogos_delivery_node_messages_total{type=\"relay\"} 7\nlibp2p_peers 3\n",
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, body) }))
+		var out strings.Builder
+		deliveryMetrics(&out, srv.URL)
+		srv.Close()
+		got := out.String()
+		if !strings.Contains(got, "shrooms_delivery_messages_total{type=\"relay\"} 7\n") ||
+			!strings.Contains(got, "shrooms_delivery_peers 3\n") ||
+			strings.Count(got, "# TYPE shrooms_delivery_messages_total") != 1 {
+			t.Errorf("%s: got\n%s", name, got)
+		}
+	}
+}

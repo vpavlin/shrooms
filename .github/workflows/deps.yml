@@ -17,6 +17,10 @@ on:
       tag:
         description: "The deps tag these are for, e.g. deps-v3 (written into README.txt)"
         required: true
+      ld_ref:
+        description: "logos-delivery revision to build; empty for the Dockerfile's pin"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -38,8 +42,10 @@ jobs:
       - name: Build
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LD_REF: ${{ inputs.ld_ref }}
         run: |
           docker build -f docker/build-lib.Dockerfile \
+            ${LD_REF:+--build-arg LD_REF=$LD_REF} \
             --secret id=github_token,env=GITHUB_TOKEN \
             --target lib -o out/lib .
 
@@ -59,9 +65,9 @@ jobs:
           Built from source in docker/build-lib.Dockerfile (debian bookworm), at
           logos-delivery $rev (lib/.ld-rev), by the deps workflow on a native
           ${{ matrix.arch }} runner, from shrooms ${{ github.sha }}. Changes to
-          upstream: docker/patches/0001-subscribe-only-configured-shards.patch
-          (a Core node relays only its configured shards, shrooms ADR-067), and
-          logging compiled at INFO rather than TRACE.
+          upstream: logging compiled at INFO rather than TRACE, and, on a
+          revision older than upstream #4513, docker/patches/0001-subscribe-only-configured-shards.patch
+          (a Core node relays only its configured shards, shrooms ADR-067).
 
           Upstream: https://github.com/logos-messaging/logos-delivery
           Licensed Apache-2.0 OR MIT by its authors. See LICENSE-UPSTREAM.txt.

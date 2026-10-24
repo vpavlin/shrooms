@@ -318,11 +318,14 @@ func sentMetrics(e *expo, now time.Time, label string) {
 }
 
 // deliveryRenames are the delivery node's metrics passed through, and what
-// they are called here.
+// they are called here. v0.40 renamed its own metrics with a logos_delivery_
+// prefix, libp2p's kept theirs; both libraries' names are here, so a
+// dashboard reads one name whichever library a node runs (ADR-071).
 var deliveryRenames = [][2]string{
 	{"libp2p_network_bytes_total", "shrooms_delivery_bytes_total"},
 	{"libp2p_peers", "shrooms_delivery_peers"},
 	{"waku_node_messages_total", "shrooms_delivery_messages_total"},
+	{"logos_delivery_node_messages_total", "shrooms_delivery_messages_total"},
 }
 
 // deliveryMetrics passes the delivery node's traffic through, renamed; it
@@ -351,10 +354,12 @@ func deliveryMetrics(w io.Writer, url string) {
 		"shrooms_delivery_peers":          "Peers the delivery node is connected to.",
 		"shrooms_delivery_messages_total": "Messages the delivery node handled.",
 	}
+	written := map[string]bool{}
 	for _, rn := range deliveryRenames {
-		if len(lines[rn[0]]) == 0 {
+		if len(lines[rn[0]]) == 0 || written[rn[1]] {
 			continue
 		}
+		written[rn[1]] = true
 		typ := "counter"
 		if !strings.HasSuffix(rn[1], "_total") {
 			typ = "gauge"

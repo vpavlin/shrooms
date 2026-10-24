@@ -58,8 +58,10 @@ RUN CGO_ENABLED=0 go build -trimpath -o /out/shrooms-agent ./cmd/shrooms-agent
 # Not "|| true" on the build itself. It used to be, which meant a failed
 # compile produced a successful layer with no binary in it, and the error
 # surfaced three stages later as "/out/shrooms: not found".
+# TAGS=ld040 builds the binding for v0.40 (ADR-071); empty is the July one.
+ARG TAGS=
 RUN if [ "$TARGETARCH" = arm64 ] && [ "$BUILDARCH" != arm64 ]; then export CC=aarch64-linux-gnu-gcc; fi; \
-    go build -trimpath \
+    go build -trimpath ${TAGS:+-tags $TAGS} \
         -ldflags "-X main.version=${VERSION}" \
         -o /out/shrooms ./cmd/shrooms
 # Only where it can run: a cross-compiled binary is checked on its target.
