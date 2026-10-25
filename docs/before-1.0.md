@@ -401,12 +401,11 @@ run with a real card.
 
 ## Open, not urgent
 
-- **A VPN on the machine stops the mesh dead**, and says "node is offline"
-  while the network is fine. The delivery library resolves through
-  `1.1.1.1` and never reads `/etc/resolv.conf`, so anything that blocks direct
-  DNS fails both the entry nodes and the library's own online probe.
-  [dns-the-library-insists-on.md](dns-the-library-insists-on.md) has the
-  proposal — one config key, already supported by the library.
+- **A VPN on the machine stops the mesh dead**: closed by
+  [ADR-071](adr/071-the-delivery-node-resolves-like-the-machine.md). The
+  delivery node now resolves through what `/etc/resolv.conf` names, or
+  `name_servers`. Still untested with a tunnel up: whether Mullvad's firewall
+  passes mesh traffic without local-network sharing, and the MTU underneath.
 - **The bootstrap address in an invite reaches only one of the two join
   paths**, and not the one the install page recommends
   ([the-bootstrap-address-an-invite-carries.md](the-bootstrap-address-an-invite-carries.md)).

@@ -32,6 +32,7 @@ again. CI fails while this file is out of date.
 | `internal/portmap` | Package portmap asks the local router to open an inbound UDP port, so that a node behind a home NAT can be dialled directly instead of paying for a relay. |
 | `internal/relay` | Package relay carries WireGuard traffic between peers that cannot reach each other directly. |
 | `internal/rendezvous` | Package rendezvous adapts a Logos Delivery node to the interfaces the protocol packages define. |
+| `internal/resolvconf` | Package resolvconf reads the name servers the machine itself resolves with. |
 | `internal/service` | Package service publishes local ports on the mesh under their own names. |
 | `internal/state` | Package state handles on-disk configuration and persistent device state. |
 | `internal/topic` | Package topic derives the mesh's rotating rendezvous content topics. |

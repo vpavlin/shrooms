@@ -180,6 +180,7 @@ func needsRestart(was, now state.Config) []string {
 	add("mode", was.Mode != now.Mode)
 	add("cluster_id", was.ClusterID != now.ClusterID)
 	add("entry_nodes", !slices.Equal(was.EntryNodes, now.EntryNodes))
+	add("name_servers", !slices.Equal(was.NameServers, now.NameServers))
 	add("hosts_suffix", was.HostsSuffix != now.HostsSuffix)
 	add("relay", was.Relay != now.Relay)
 	add("advertise", !slices.Equal(was.Advertise, now.Advertise))

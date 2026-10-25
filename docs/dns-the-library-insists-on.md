@@ -1,7 +1,9 @@
 # The resolver the library insists on
 
-**Status:** proposed, not built. Found 2026-09-08, debugging a join that timed
-out on a laptop whose network was fine. The machine ran Mullvad.
+**Status:** built; the decision is [ADR-071](adr/071-the-delivery-node-resolves-like-the-machine.md).
+`name_servers` is the key, and unset means what `/etc/resolv.conf` names. The
+rest of this note is the finding as written, found 2026-09-08 debugging a join
+that timed out on a laptop whose network was fine. The machine ran Mullvad.
 
 A device could not join a mesh. Its daemon repeated two lines, a few seconds
 apart, forever:

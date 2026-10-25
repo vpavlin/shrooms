@@ -24,6 +24,7 @@ import (
 	"github.com/vpavlin/shrooms/internal/identity"
 	"github.com/vpavlin/shrooms/internal/invite"
 	"github.com/vpavlin/shrooms/internal/rendezvous"
+	"github.com/vpavlin/shrooms/internal/resolvconf"
 	"github.com/vpavlin/shrooms/internal/state"
 	"github.com/vpavlin/shrooms/internal/waku"
 )
@@ -717,7 +718,28 @@ func nodeConfig(cfg state.Config) waku.Config {
 	if len(cfg.EntryNodes) > 0 {
 		c["entryNodes"] = cfg.EntryNodes
 	}
+	if ns, _ := nameServers(cfg); len(ns) > 0 {
+		c["dnsAddrsNameServers"] = ns
+	}
 	return c
+}
+
+// nameServers is what the delivery node resolves with, and where that came
+// from: the configured list, else this machine's resolv.conf, else nothing,
+// and the library keeps its own default (ADR-071).
+//
+// The library never reads resolv.conf itself. On a machine whose network
+// allows only its own resolver (Mullvad's DNS-leak protection was the case),
+// the fleet's /dns4/ names and the library's own online probe both fail, and
+// the node then declares itself offline and dials nothing.
+func nameServers(cfg state.Config) (servers []string, source string) {
+	if len(cfg.NameServers) > 0 {
+		return cfg.NameServers, "name_servers"
+	}
+	if ns := resolvconf.Nameservers(resolvconf.Path); len(ns) > 0 {
+		return ns, resolvconf.Path
+	}
+	return nil, "library default"
 }
 
 func startNode(cfg waku.Config) (*waku.Node, error) {

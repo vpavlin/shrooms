@@ -942,23 +942,25 @@ reflexive addresses (as peers observe us):
     <code>connectToRelayPeers: won't attempt new connections - node is
     offline</code> beside <code>Failed to query DNS … address=one.one.one.one
     error="(1) Operation not permitted"</code></td>
-    <td>the delivery library does not use the system resolver. Its
-    <code>dnsAddrsNameServers</code> defaults to <code>1.1.1.1</code> and
-    <code>1.0.0.1</code>, which is how it resolves the fleet's
-    <code>/dns4/</code> entry nodes and how it probes whether it is online at
-    all. Anything that blocks direct DNS to those addresses — a VPN with
-    DNS-leak protection, a network that permits only its own resolver, a local
-    service holding <code>1.1.1.1</code> — fails the probe, and the node then
-    declares itself offline and dials nothing. The mesh never gets as far as
-    being unreachable</td>
-    <td><code>dig +short @1.1.1.1 one.one.one.one</code>. If that fails while
-    <code>host one.one.one.one</code> works, this is it — the two go through
-    different paths and only the direct one matters here. Disconnecting the VPN
-    restores it; if it does not, look for a "block when disconnected" setting,
-    which keeps the firewall rules on while the tunnel is off. Then restart
-    shrooms and read the log with <code>--since</code>: <code>journalctl … |
-    head</code> shows the <em>oldest</em> entries, and diagnosing last week's
-    failure as though it were this minute's is the easiest mistake here</td>
+    <td>the delivery library does not use the system resolver by itself. The
+    daemon hands it what <code>/etc/resolv.conf</code> names, or
+    <code>name_servers</code> from <code>/etc/shrooms/config.toml</code>
+    (ADR-071), and uses those to resolve the fleet's <code>/dns4/</code> entry
+    nodes and to probe whether it is online at all. When the network blocks
+    DNS to those addresses — a VPN with DNS-leak protection and a resolv.conf
+    it did not rewrite, a network that permits only its own resolver — the
+    probe fails, and the node declares itself offline and dials nothing. The
+    mesh never gets as far as being unreachable</td>
+    <td>the daemon log line <code>delivery node resolves names through</code>
+    says which resolvers it was given and where from. <code>dig +short
+    @&lt;that address&gt; one.one.one.one</code> must answer; if it does not
+    while <code>host one.one.one.one</code> works, set
+    <code>name_servers = ["…"]</code> to the resolver the network allows (under
+    Mullvad, <code>10.64.0.1</code>) and restart. The VPN stays on: shrooms runs
+    over it, as a network the machine is on. Read the log with
+    <code>--since</code>: <code>journalctl … | head</code> shows the
+    <em>oldest</em> entries, and diagnosing last week's failure as though it
+    were this minute's is the easiest mistake here</td>
 </tr>
 
 <tr>

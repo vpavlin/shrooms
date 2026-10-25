@@ -194,3 +194,37 @@ func TestAnArrayRoundTripsQuotesAndBackslashes(t *testing.T) {
 		t.Errorf("a hand-written backslash: %q, %v", c.Name, err)
 	}
 }
+
+func TestNameServersRoundTripAndValidation(t *testing.T) {
+	in := DefaultConfig()
+	in.NetworkKey = "P27KNQ2HDSIUFIXZAGYDBSU2GU3PE4M52POFBUBOWHUZEWYSCP5A"
+	in.NameServers = []string{"192.168.7.1", "2001:db8::53"}
+
+	path := t.TempDir() + "/config.toml"
+	if err := WriteConfig(path, in); err != nil {
+		t.Fatalf("WriteConfig: %v", err)
+	}
+	out, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if len(out.NameServers) != 2 || out.NameServers[0] != in.NameServers[0] || out.NameServers[1] != in.NameServers[1] {
+		t.Errorf("name_servers round trip lost data: %#v", out.NameServers)
+	}
+
+	// Unset stays unset: the library's own default is a deliberate fallback,
+	// and an empty list written out would read as "no resolvers".
+	in.NameServers = nil
+	if err := WriteConfig(path, in); err != nil {
+		t.Fatalf("WriteConfig: %v", err)
+	}
+	if out, err = LoadConfig(path); err != nil || out.NameServers != nil {
+		t.Errorf("unset name_servers loaded as %#v, err %v", out.NameServers, err)
+	}
+
+	// A name cannot be resolved by the thing that cannot resolve.
+	in.NameServers = []string{"resolver.example.test"}
+	if err := in.Validate(); err == nil {
+		t.Error("a hostname in name_servers was accepted")
+	}
+}

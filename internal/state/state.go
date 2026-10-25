@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"sort"
@@ -200,6 +201,16 @@ type Config struct {
 	// the escape hatch for pointing at a fleet whose current addresses we know,
 	// without waiting for a library rebuild.
 	EntryNodes []string
+
+	// NameServers are the resolvers the delivery node queries, as IP
+	// addresses. Unset means what /etc/resolv.conf says, and the library's own
+	// default (Cloudflare, directly) where there is no such file (ADR-071).
+	//
+	// Device level, not per mesh: it describes how this machine reaches the
+	// world, and the machine has one answer. Set it where resolv.conf names a
+	// resolver the library cannot use, or to pin one regardless of what the
+	// network hands out.
+	NameServers []string
 
 	// ClusterID overrides the cluster the preset would select. Zero means
 	// "let the preset decide", which is normally right.
@@ -466,6 +477,13 @@ func (c *Config) Validate() error {
 	}
 	if c.Preset == "" && len(c.EntryNodes) == 0 {
 		return errors.New("preset is empty and no entry_nodes are set — the node would have nowhere to bootstrap from")
+	}
+	// Addresses only: the library's type is a list of IPs, and a name here
+	// would need resolving by the thing that cannot resolve.
+	for _, ns := range c.NameServers {
+		if addr, err := netip.ParseAddr(ns); err != nil || addr.Zone() != "" {
+			return fmt.Errorf("name_servers: %q is not an IP address", ns)
+		}
 	}
 
 	// A mesh, in either shape. "No network_key" is only an error when there
@@ -1047,6 +1065,8 @@ func parseConfig(text string) (Config, error) {
 			c.DeliveryPort = p
 		case "entry_nodes":
 			c.EntryNodes = parseArray(val)
+		case "name_servers":
+			c.NameServers = parseArray(val)
 		case "cluster_id":
 			var cid uint16
 			if _, err := fmt.Sscanf(val, "%d", &cid); err != nil {
@@ -1251,6 +1271,11 @@ func RenderConfig(c Config) (string, error) {
 	if len(c.EntryNodes) > 0 {
 		b.WriteString("\n# Explicit bootstrap addresses, used instead of the preset's.\n")
 		fmt.Fprintf(&b, "entry_nodes = %s\n", formatArray(c.EntryNodes))
+	}
+	if len(c.NameServers) > 0 {
+		b.WriteString("\n# Resolvers the delivery node queries, as IP addresses. Unset means the\n")
+		b.WriteString("# ones in /etc/resolv.conf (ADR-071).\n")
+		fmt.Fprintf(&b, "name_servers = %s\n", formatArray(c.NameServers))
 	}
 	b.WriteString("\n# Pin the rendezvous node's TCP port, so this node can publish a dialable\n")
 	b.WriteString("# address other members bootstrap from (ADR-031). Only useful on a Core\n")

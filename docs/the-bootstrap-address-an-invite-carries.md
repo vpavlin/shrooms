@@ -78,9 +78,9 @@ Harder than it should be, which is the other reason nobody noticed:
   **and** `relay` **and** a pinned `delivery_port` **and** a public IP — a home
   laptop satisfies none of the last three, so a home mesh puts nothing in its
   invites and this whole mechanism is dormant.
-- The joiner must be unable to reach the public entry nodes. Blocking DNS to
-  `1.1.1.1` does it, which is exactly what a machine running Mullvad does for
-  free — see [the other note](dns-the-library-insists-on.md).
+- The joiner must be unable to reach the public entry nodes. Setting
+  `name_servers` to an address nothing answers on does it: the `/dns4/` names
+  then time out (ADR-071).
 
 So the test rig is: a VPS with `--relay` and a pinned delivery port as the
 inviter, and a laptop with its VPN on as the joiner. Both halves of that are

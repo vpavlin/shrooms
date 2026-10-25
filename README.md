@@ -825,6 +825,7 @@ $ ssh user@vps 'sudo bash -s -- --purge --yes' < scripts/uninstall.sh
 | `!! delivery library unreachable for …` in `status` | the delivery library has stopped taking requests while reporting itself connected. The daemon restarts itself once this has lasted five minutes and a repair has failed the same way; `sudo systemctl restart shrooms` fixes it now |
 | `!! credentials due for renewal` in `status` | listed devices' memberships end within ten days, or have. Run the printed `shrooms admin renew --mesh <name>` on the machine holding that mesh's admin key |
 | no peers at all after 60 s | the daemon is not reaching the fleet; check outbound connectivity |
+| `node is offline` in the daemon log beside `Failed to query DNS` | the delivery node's resolvers are blocked, usually by a VPN's DNS-leak protection. The log line `delivery node resolves names through` says which it was given; set `name_servers` in the config to one the network allows and restart (ADR-071) |
 | `missing liblogosdelivery.h` | run `make deps-basecamp` |
 | the daemon exits immediately | `libpq` missing — deploy the container rather than a bare binary |
 | `parse state: unexpected end of JSON input`, restarting in a loop | a power cut truncated `state.json`. **Do not delete it** — see [docs/when-a-node-loses-its-state.md](docs/when-a-node-loses-its-state.md) |
