@@ -438,6 +438,7 @@ func waitingFleet(cfgPath string) state.Config {
 	}
 	fleet.ClusterID = onDisk.ClusterID
 	fleet.EntryNodes = onDisk.EntryNodes
+	fleet.NameServers = onDisk.NameServers
 	return fleet
 }
 

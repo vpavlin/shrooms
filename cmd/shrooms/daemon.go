@@ -137,6 +137,14 @@ func cmdDaemon(args []string) error {
 	if len(entry) > 0 {
 		nodeCfg["entryNodes"] = entry
 	}
+	// Named in the log, because the failure this prevents reads as "node is
+	// offline" with nothing pointing at DNS.
+	if ns, source := nameServers(cfg); len(ns) > 0 {
+		nodeCfg["dnsAddrsNameServers"] = ns
+		log.Info("delivery node resolves names through", "servers", ns, "from", source)
+	} else {
+		log.Info("delivery node resolves names through the library's default", "from", source)
+	}
 	// tcpPort, confirmed against the library's own AvailableConfigs rather than
 	// guessed. The binary also contains "p2pTcpPort" and a withP2pTcpPort
 	// builder, which the FFI configuration layer rejects outright —
