@@ -5,6 +5,12 @@ Every shrooms daemon serves Prometheus metrics on its own mesh addresses, at
 the mesh can scrape them. Nobody else can reach them. Decided in
 [ADR-046](adr/046-metrics-on-the-mesh-addresses.md).
 
+Each mesh address shows that mesh only: its peers, what was sent on it, and
+the machine's own figures without the other meshes' interfaces. A member of
+one mesh never reads another mesh's names, addresses or traffic. Device keys
+are per mesh so that a machine's meshes can't be linked
+([ADR-015](adr/015-multiple-meshes-one-daemon.md)).
+
 They answer one question: *where does the traffic come from?* There are three
 candidates, so there are three kinds of metric.
 
@@ -53,10 +59,14 @@ The `kind`s are:
 
 Probes travel over WireGuard, not delivery, and aren't counted.
 
-`/targets` on the same port lists this node and every peer, once each, in
-Prometheus' `http_sd` format. A scraper is told about one node and finds the
-rest. Peers on meshes the scraping node isn't on show up but can't be
-reached. Peers without metrics (phones, older daemons) show as down.
+`/targets` on the same port lists, in Prometheus' `http_sd` format, this node
+and its peers on the mesh it was asked on. Asked by this machine itself (the
+scraper of `deploy/metrics` beside it), it lists every machine on every mesh,
+once per mesh, and labels one target per machine `first="1"`. Prometheus keeps
+a machine's own series (`shrooms_host_*`, `shrooms_process_*`, the delivery
+node's) and its agent from that target only, so nothing is counted twice
+(`deploy/metrics/prometheus.yml.in`). A scraper is told about one node and
+finds the rest. Peers without metrics (phones, older daemons) show as down.
 
 ## What an agent exports
 

@@ -4,7 +4,6 @@ import (
 	"github.com/vpavlin/shrooms/internal/hostload"
 	"time"
 
-	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -19,7 +18,7 @@ import (
 func metricsFixture(t *testing.T) (*metricsServer, statusPayload) {
 	t.Helper()
 	st := statusPayload{Name: "laptop", Version: "v0.9.0-160", ModeRunning: "Core",
-		Meshes: []meshStatus{{Label: "office", Overlay: "fdb0::1", Peers: 2}, {Label: "home", Overlay: "fd7b::1", Peers: 1}},
+		Meshes: []meshStatus{{Label: "office", Overlay: "fdb0::1", Iface: "logos01", Peers: 2}, {Label: "home", Overlay: "fd7b::1", Iface: "logos02", Peers: 1}},
 		Peers: []peerStatus{
 			{Mesh: "office", Name: "pi5", Overlay: "fdb0::2", RxBytes: 1000, TxBytes: 2000, Live: true, Online: true, RTTMs: 12},
 			{Mesh: "office", Name: "phone \"nothing\"", Overlay: "fdb0::3", RxBytes: 5, TxBytes: 6, Relayed: true},
@@ -31,6 +30,7 @@ func metricsFixture(t *testing.T) (*metricsServer, statusPayload) {
     lo: 999 1 0 0 0 0 0 0 999 1 0 0 0 0 0 0
 enx349971e78e37: 123456789 1 0 0 0 0 0 0 98765 1 0 0 0 0 0 0
  logos01: 4000 1 0 0 0 0 0 0 3000 1 0 0 0 0 0 0
+ logos02: 4100 1 0 0 0 0 0 0 3100 1 0 0 0 0 0 0
 `), 0o600)
 	delivery := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, "# HELP libp2p_network_bytes_total x\n# TYPE libp2p_network_bytes_total counter\n"+
@@ -47,7 +47,7 @@ enx349971e78e37: 123456789 1 0 0 0 0 0 0 98765 1 0 0 0 0 0 0
 // interfaces, the delivery node's traffic — in the text format, line by line.
 func TestMetricsSayWhereTheBytesGo(t *testing.T) {
 	m, _ := metricsFixture(t)
-	srv := httptest.NewServer(m.handler())
+	srv := httptest.NewServer(m.handler("office"))
 	defer srv.Close()
 	resp, err := http.Get(srv.URL + "/metrics")
 	if err != nil {
@@ -59,7 +59,6 @@ func TestMetricsSayWhereTheBytesGo(t *testing.T) {
 		`shrooms_info{node="laptop",version="v0.9.0-160",mode="Core"} 1`,
 		`shrooms_mesh_peers{mesh="office"} 2`,
 		`shrooms_peer_receive_bytes_total{mesh="office",peer="pi5"} 1000`,
-		`shrooms_peer_transmit_bytes_total{mesh="home",peer="pi5"} 8`,
 		`shrooms_peer_relayed{mesh="office",peer="phone \"nothing\""} 1`,
 		`shrooms_peer_rtt_seconds{mesh="office",peer="pi5"} 0.012`,
 		`shrooms_host_receive_bytes_total{interface="enx349971e78e37"} 123456789`,
@@ -72,7 +71,7 @@ func TestMetricsSayWhereTheBytesGo(t *testing.T) {
 			t.Errorf("missing %s", want)
 		}
 	}
-	for _, not := range []string{`interface="lo"`, "nim_gc_mem_bytes", "libp2p_network_bytes_created", "shrooms_delivery_bytes_created"} {
+	for _, not := range []string{`interface="lo"`, `mesh="home"`, `interface="logos02"`, "fd7b", "nim_gc_mem_bytes", "libp2p_network_bytes_created", "shrooms_delivery_bytes_created"} {
 		if strings.Contains(out, not) {
 			t.Errorf("%s should not be served", not)
 		}
@@ -86,25 +85,47 @@ func TestMetricsSayWhereTheBytesGo(t *testing.T) {
 	}
 }
 
-// One target per machine, however many meshes it is seen on.
-func TestTargetsListEachMachineOnce(t *testing.T) {
-	m, _ := metricsFixture(t)
-	srv := httptest.NewServer(m.handler())
-	defer srv.Close()
-	resp, err := http.Get(srv.URL + "/targets")
-	if err != nil {
-		t.Fatal(err)
+// A peer asking on one mesh learns that mesh's machines only (ADR-046, as
+// amended: a mesh's members cannot read another mesh's).
+func TestAPeerSeesOnlyItsOwnMesh(t *testing.T) {
+	m, st := metricsFixture(t)
+	var b strings.Builder
+	m.write(&b, "home")
+	out := b.String()
+	if !strings.Contains(out, `shrooms_peer_transmit_bytes_total{mesh="home",peer="pi5"} 8`+"\n") {
+		t.Errorf("home's own peer missing:\n%s", out)
 	}
-	var groups []sdGroup
-	json.NewDecoder(resp.Body).Decode(&groups)
+	for _, not := range []string{`mesh="office"`, "phone", `interface="logos01"`} {
+		if strings.Contains(out, not) {
+			t.Errorf("home's listener serves %s", not)
+		}
+	}
+	if got := targetList(targets(st, 9180, "home", false)); got != "laptop@[fd7b::1]:9180/1 pi5@[fd7b::2]:9180/1" {
+		t.Errorf("a peer on home was told about %s", got)
+	}
+}
+
+// The scraper beside the daemon gets every machine on every mesh, with one
+// target per machine marked first; a peer's address is not this machine.
+func TestTheMachinesOwnScraperSeesEveryMesh(t *testing.T) {
+	_, st := metricsFixture(t)
+	want := `laptop@[fdb0::1]:9180/1 laptop@[fd7b::1]:9180/0 pi5@[fdb0::2]:9180/1 phone "nothing"@[fdb0::3]:9180/1 pi5@[fd7b::2]:9180/0`
+	if got := targetList(targets(st, 9180, "office", true)); got != want {
+		t.Fatalf("targets %q, want %q", got, want)
+	}
+	for addr, self := range map[string]bool{"127.0.0.1:5": true, "[::1]:5": true, "[fdb0::1]:5": true, "[fd7b::1]:5": true, "[fdb0::2]:5": false, "[fe80::1]:5": false} {
+		if fromSelf(addr, st) != self {
+			t.Errorf("fromSelf(%s) = %v", addr, !self)
+		}
+	}
+}
+
+func targetList(groups []sdGroup) string {
 	var got []string
 	for _, g := range groups {
-		got = append(got, g.Labels["node"]+"@"+g.Targets[0])
+		got = append(got, g.Labels["node"]+"@"+g.Targets[0]+"/"+g.Labels["first"])
 	}
-	want := `laptop@[fdb0::1]:9180 pi5@[fdb0::2]:9180 phone "nothing"@[fdb0::3]:9180`
-	if strings.Join(got, " ") != want {
-		t.Fatalf("targets %q, want %q", strings.Join(got, " "), want)
-	}
+	return strings.Join(got, " ")
 }
 
 // No metrics server on the delivery node (older library, not up yet): the
@@ -113,7 +134,7 @@ func TestMetricsWithoutTheDeliveryNode(t *testing.T) {
 	m, _ := metricsFixture(t)
 	m.delivery = "http://127.0.0.1:1/metrics"
 	var b strings.Builder
-	m.write(&b)
+	m.write(&b, "office")
 	// The delivery node's own counters are absent; what this node itself
 	// sent (shrooms_delivery_sent_*) is ours and always there.
 	for _, passed := range []string{"shrooms_delivery_bytes_total", "shrooms_delivery_peers", "shrooms_delivery_messages_total"} {
@@ -130,7 +151,7 @@ func TestMetricsWithoutTheDeliveryNode(t *testing.T) {
 // busiest second, in the text format Prometheus reads (2026-10-21).
 func TestWhatThisNodeSentIsExported(t *testing.T) {
 	var b strings.Builder
-	sentMetrics(&expo{w: &b}, time.Now())
+	sentMetrics(&expo{w: &b}, time.Now(), "office")
 	out := b.String()
 	for _, want := range []string{
 		"# TYPE shrooms_delivery_sent_messages_total counter",

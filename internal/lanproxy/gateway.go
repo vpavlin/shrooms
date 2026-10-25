@@ -523,11 +523,21 @@ func remoteAddr(c net.Conn) netip.Addr {
 	return netip.Addr{}
 }
 
-// splice copies both ways, passing on a half-close, until both sides end.
+// idleAfter closes a LAN host connection that has carried nothing either way
+// for this long. Without it a member could hold a host's connections, and
+// the gateway's slots, open indefinitely (2026-10-25). Both directions count,
+// so a one-way stream (a camera) is not idle; a printer's MQTT keepalive is a
+// minute, far inside it.
+var idleAfter = 30 * time.Minute
+
+// splice copies both ways, passing on a half-close, until both sides end or
+// nothing has moved either way for idleAfter.
 func splice(a, b net.Conn) {
+	var last atomic.Int64
+	last.Store(time.Now().UnixNano())
 	done := make(chan struct{}, 2)
 	cp := func(dst, src net.Conn) {
-		io.Copy(dst, src)
+		io.Copy(dst, activity{src, &last})
 		if cw, ok := dst.(interface{ CloseWrite() error }); ok {
 			cw.CloseWrite()
 		} else {
@@ -537,8 +547,33 @@ func splice(a, b net.Conn) {
 	}
 	go cp(a, b)
 	go cp(b, a)
-	<-done
-	<-done
+	tick := time.NewTicker(min(idleAfter/4, time.Minute))
+	defer tick.Stop()
+	for ended := 0; ended < 2; {
+		select {
+		case <-done:
+			ended++
+		case <-tick.C:
+			if time.Since(time.Unix(0, last.Load())) >= idleAfter {
+				a.Close()
+				b.Close()
+			}
+		}
+	}
+}
+
+// activity is a reader that notes when it last read anything.
+type activity struct {
+	r    io.Reader
+	last *atomic.Int64
+}
+
+func (a activity) Read(p []byte) (int, error) {
+	n, err := a.r.Read(p)
+	if n > 0 {
+		a.last.Store(time.Now().UnixNano())
+	}
+	return n, err
 }
 
 // OnLink checks a LAN address against this machine's interfaces now.

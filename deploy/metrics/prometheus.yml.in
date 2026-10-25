@@ -12,6 +12,15 @@ scrape_configs:
     # A phone, or a node with metrics off, is listed but never answers:
     # quickly, so it does not hold up the round.
     scrape_timeout: 10s
+    # A machine is listed once per mesh, each listener showing only its mesh
+    # (ADR-046), and the machine's own series on every one. Kept from the
+    # target marked first only, so dashboards that sum by node count them
+    # once. The per-mesh series (peers, what was sent on the mesh) come from
+    # every target.
+    metric_relabel_configs:
+      - source_labels: [first, __name__]
+        regex: '0;(shrooms_host_.*|shrooms_process_.*|shrooms_delivery_(bytes_total|peers|messages_total|sent_peak_per_second))'
+        action: drop
 
   # The coding agents (shrooms-agent): what their models did, by machine,
   # session, provider and model. Found through the same /targets as the
@@ -22,6 +31,10 @@ scrape_configs:
         refresh_interval: 60s
     scrape_timeout: 10s
     relabel_configs:
+      # One agent per machine, not one per mesh it is listed on.
+      - source_labels: [first]
+        regex: '0'
+        action: drop
       - source_labels: [__address__]
         regex: (.*):[0-9]+
         target_label: __address__

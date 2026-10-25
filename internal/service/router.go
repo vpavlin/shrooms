@@ -144,7 +144,15 @@ func (p *Publisher) serveNames(ctx context.Context, addr netip.Addr, device stri
 					}
 					return
 				}
-				go r.handle(ctx, c, tls)
+				from, ok := p.limit.take(c)
+				if !ok {
+					c.Close()
+					continue
+				}
+				go func() {
+					defer p.limit.give(from)
+					r.handle(ctx, c, tls)
+				}()
 			}
 		}(ln)
 	}
@@ -172,6 +180,14 @@ func (r *router) handle(ctx context.Context, in net.Conn, isTLS bool) {
 		return
 	}
 
+	// As forward does (F-34): a target that was this machine's when the
+	// service was published may have moved. The name router skipped this,
+	// found 2026-10-25.
+	if err := LocalTarget(spec.Target); err != nil {
+		r.log("service refused a connection: its target is no longer this machine",
+			"service", spec.Name, "target", spec.Target, "err", err)
+		return
+	}
 	d := net.Dialer{Timeout: dialTimeout}
 	out, err := d.DialContext(ctx, "tcp", spec.Target)
 	if err != nil {

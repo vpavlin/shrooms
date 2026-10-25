@@ -19,6 +19,11 @@ package main
 // /targets lists this node and every peer for Prometheus' http_sd, so a
 // scraper needs to be told about one node and finds the rest.
 //
+// Each mesh's listener shows that mesh and the machine, never another mesh
+// (ADR-046, amended 2026-10-25). A device's keys are per mesh so that its
+// meshes cannot be linked (ADR-015), and one page for every listener handed
+// a member of one mesh the names, addresses and traffic of every other.
+//
 // Text format written by hand, as the project does wire formats: no client
 // library for a few dozen lines.
 
@@ -67,7 +72,7 @@ type metricsServer struct {
 	host     hostload.Paths
 
 	mu sync.Mutex
-	ls map[string]net.Listener
+	ls map[string]net.Listener // by address; each serves its own mesh
 }
 
 func newMetricsServer(port uint16, snapshot func() statusPayload, log *slog.Logger) *metricsServer {
@@ -100,21 +105,21 @@ func (m *metricsServer) run(ctx context.Context) {
 }
 
 func (m *metricsServer) listen() {
-	want := map[string]bool{}
+	want := map[string]string{} // address -> its mesh
 	for _, ms := range m.snapshot().Meshes {
 		if ms.Overlay != "" {
-			want[net.JoinHostPort(ms.Overlay, strconv.Itoa(int(m.port)))] = true
+			want[net.JoinHostPort(ms.Overlay, strconv.Itoa(int(m.port)))] = ms.Label
 		}
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for a, l := range m.ls {
-		if !want[a] {
+		if _, ok := want[a]; !ok {
 			l.Close()
 			delete(m.ls, a)
 		}
 	}
-	for a := range want {
+	for a, label := range want {
 		if _, ok := m.ls[a]; ok {
 			continue
 		}
@@ -124,27 +129,83 @@ func (m *metricsServer) listen() {
 		}
 		m.ls[a] = l
 		m.log.Info("metrics up", "address", a)
-		go (&http.Server{Handler: m.handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
+		go (&http.Server{Handler: m.handler(label), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
 			WriteTimeout: 30 * time.Second, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 64 << 10}).Serve(l)
 	}
 }
 
-func (m *metricsServer) handler() http.Handler {
+// handler serves one mesh's listener.
+func (m *metricsServer) handler(label string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-		m.write(w)
+		m.write(w, label)
 	})
 	mux.HandleFunc("GET /targets", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(targets(m.snapshot(), m.port))
+		st := m.snapshot()
+		// This machine asking is the scraper beside it (deploy/metrics), which
+		// is on every mesh this daemon is: it gets them all. A peer gets the
+		// mesh it asked on.
+		all := fromSelf(r.RemoteAddr, st)
+		json.NewEncoder(w).Encode(targets(st, m.port, label, all))
 	})
 	return mux
 }
 
-// write is the metrics, now.
-func (m *metricsServer) write(w io.Writer) {
-	st := m.snapshot()
+// fromSelf is whether a request came from this machine: loopback, or one of
+// its own overlay addresses. A peer cannot send from those: WireGuard takes
+// from a peer only the addresses it is allowed, which are its own.
+func fromSelf(remote string, st statusPayload) bool {
+	host, _, err := net.SplitHostPort(remote)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	if ip.IsLoopback() {
+		return true
+	}
+	for _, ms := range st.Meshes {
+		for _, a := range []string{ms.Overlay, ms.OverlayV4} {
+			if o := net.ParseIP(a); o != nil && o.Equal(ip) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// onlyMesh is the snapshot as one mesh may see it: that mesh, its peers.
+func onlyMesh(st statusPayload, label string) statusPayload {
+	out := st
+	out.Meshes, out.Peers = nil, nil
+	for _, ms := range st.Meshes {
+		if ms.Label == label {
+			out.Meshes = append(out.Meshes, ms)
+		}
+	}
+	for _, p := range st.Peers {
+		if p.Mesh == label {
+			out.Peers = append(out.Peers, p)
+		}
+	}
+	return out
+}
+
+// write is the metrics, now, as mesh label's listener serves them: that
+// mesh, and the machine without the other meshes' interfaces.
+func (m *metricsServer) write(w io.Writer, label string) {
+	full := m.snapshot()
+	others := map[string]bool{}
+	for _, ms := range full.Meshes {
+		if ms.Label != label && ms.Iface != "" {
+			others[ms.Iface] = true
+		}
+	}
+	st := onlyMesh(full, label)
 	e := &expo{w: w}
 	e.family("shrooms_info", "gauge", "This node: its name, version and delivery mode.")
 	e.sample("shrooms_info", 1, "node", st.Name, "version", st.Version, "mode", st.ModeRunning)
@@ -191,7 +252,12 @@ func (m *metricsServer) write(w io.Writer) {
 	}
 
 	e.family("shrooms_host_receive_bytes_total", "counter", "Bytes this machine received on each interface (/proc/net/dev) — what a router counts.")
-	ifs := readNetDev(m.netdev)
+	var ifs []ifaceStat
+	for _, i := range readNetDev(m.netdev) {
+		if !others[i.name] {
+			ifs = append(ifs, i)
+		}
+	}
 	for _, i := range ifs {
 		e.sample("shrooms_host_receive_bytes_total", float64(i.rx), "interface", i.name)
 	}
@@ -209,15 +275,23 @@ func (m *metricsServer) write(w io.Writer) {
 	if m.delivery != "" {
 		deliveryMetrics(w, m.delivery)
 	}
-	sentMetrics(e, time.Now())
+	sentMetrics(e, time.Now(), label)
 }
 
 // sentMetrics is what this node itself published on the rendezvous plane, by
 // mesh and kind (internal/mesh/sendstats.go): for sizing RLN's per-publisher
 // rate limits, which the delivery node's own counters cannot answer — they
 // count everything it relays.
-func sentMetrics(e *expo, now time.Time) {
-	counts, peak := mesh.SendStats(now)
+//
+// One mesh's, on that mesh's listener; the busiest second is the machine's.
+func sentMetrics(e *expo, now time.Time, label string) {
+	all, peak := mesh.SendStats(now)
+	var counts []mesh.SendCount
+	for _, c := range all {
+		if c.Mesh == label {
+			counts = append(counts, c)
+		}
+	}
 	e.family("shrooms_delivery_sent_messages_total", "counter", "Messages this node published on the rendezvous plane (its own, not relayed), by mesh and kind.")
 	for _, c := range counts {
 		e.sample("shrooms_delivery_sent_messages_total", float64(c.Messages), "mesh", c.Mesh, "kind", c.Kind)
@@ -384,19 +458,31 @@ type sdGroup struct {
 	Labels  map[string]string `json:"labels"`
 }
 
-// targets is this node and every peer, once each — a machine on two meshes
-// is one machine — at its address on the first mesh it is seen on.
-func targets(st statusPayload, port uint16) []sdGroup {
+// targets is what a scraper should scrape: on mesh label, this node and its
+// peers there. For this machine's own scraper (all), every machine on every
+// mesh, once per mesh it shares, since each listener shows only its own:
+// "first" marks one target per machine, from which Prometheus keeps the
+// machine's own series (prometheus.yml.in), so nothing is counted twice. A
+// machine on two meshes is one machine as far as its name says.
+func targets(st statusPayload, port uint16, label string, all bool) []sdGroup {
+	if !all {
+		st = onlyMesh(st, label)
+	}
 	var out []sdGroup
-	seen := map[string]bool{}
+	seen := map[string]bool{}  // node+mesh
+	first := map[string]bool{} // node
 	add := func(name, mesh, addr string) {
-		if addr == "" || seen[name] {
+		if addr == "" || seen[name+"\x00"+mesh] {
 			return
 		}
-		seen[name] = true
+		seen[name+"\x00"+mesh] = true
+		f := "0"
+		if !first[name] {
+			first[name], f = true, "1"
+		}
 		out = append(out, sdGroup{
 			Targets: []string{net.JoinHostPort(addr, strconv.Itoa(int(port)))},
-			Labels:  map[string]string{"node": name, "mesh": mesh},
+			Labels:  map[string]string{"node": name, "mesh": mesh, "first": f},
 		})
 	}
 	for _, ms := range st.Meshes {

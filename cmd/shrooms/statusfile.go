@@ -9,6 +9,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"syscall"
 	"time"
 )
 
@@ -64,6 +65,12 @@ func writeStatusFile(ctx context.Context, log *slog.Logger, path string, group s
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return err
 	}
+	// The directory is chowned, and files are made and renamed in it, as
+	// root: so it has to be root's, not a symlink and not another user's,
+	// whose owner could swap what it holds between a check and a use.
+	if err := ownDir(dir); err != nil {
+		return fmt.Errorf("status_file: %w", err)
+	}
 
 	// Resolve the reader group once. A file mode of 0640 is only useful with a
 	// group somebody is actually in: the daemon runs as root, so without this
@@ -100,13 +107,12 @@ func writeStatusFile(ctx context.Context, log *slog.Logger, path string, group s
 		}
 		defer os.Remove(tmp.Name())
 
-		if _, err := tmp.Write(payload); err != nil {
-			tmp.Close()
-			return err
-		}
-		if err := tmp.Close(); err != nil {
-			return err
-		}
+		// Mode and group are set on the open file, not by name, and before
+		// the write: by name, root followed whatever the path was by then, so
+		// in a directory another user could write, swapping the temp file for
+		// a symlink had root chmod and chgrp a file of their choosing
+		// (2026-10-25, the class of the Tailscale report's symlink finding).
+		//
 		// 0640, matching the control socket. The old 0644 was justified as
 		// "holds no secret", which conflated secrets with sensitive data: this
 		// names every device on the mesh and each peer's real external
@@ -116,15 +122,24 @@ func writeStatusFile(ctx context.Context, log *slog.Logger, path string, group s
 		// The group is what makes it readable by a dashboard that is not root,
 		// which is the same mechanism and the same decision as the socket —
 		// the same reasoning that kept the removed HTTP endpoint loopback-only.
-		if err := os.Chmod(tmp.Name(), 0o640); err != nil {
+		if err := tmp.Chmod(0o640); err != nil {
+			tmp.Close()
 			return err
 		}
 		// Before the rename, so a reader never sees the file with the wrong
 		// owner — the write is atomic and the ownership has to be part of it.
 		if gid >= 0 {
-			if err := os.Chown(tmp.Name(), -1, gid); err != nil {
+			if err := tmp.Chown(-1, gid); err != nil {
+				tmp.Close()
 				return fmt.Errorf("set group on the status file: %w", err)
 			}
+		}
+		if _, err := tmp.Write(payload); err != nil {
+			tmp.Close()
+			return err
+		}
+		if err := tmp.Close(); err != nil {
+			return err
 		}
 		return os.Rename(tmp.Name(), path)
 	}
@@ -149,5 +164,21 @@ func writeStatusFile(ctx context.Context, log *slog.Logger, path string, group s
 			}
 		}
 	}()
+	return nil
+}
+
+// ownDir is whether dir is a real directory owned by the user this process
+// runs as.
+func ownDir(dir string) error {
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("%s is not a directory (a symlink?); point status_file at a directory of the daemon's own", dir)
+	}
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok && st.Uid != uint32(os.Geteuid()) {
+		return fmt.Errorf("%s belongs to uid %d, not this daemon's %d; another user could change what is in it", dir, st.Uid, os.Geteuid())
+	}
 	return nil
 }

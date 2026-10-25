@@ -281,6 +281,7 @@ type Publisher struct {
 	stats  map[string]*Status
 	router []RouterStatus
 	lns    []net.Listener
+	limit  *connLimit // every service and the name router together
 }
 
 // Publish binds every service to addr and forwards to its target.
@@ -293,7 +294,7 @@ func Publish(ctx context.Context, addr netip.Addr, device string, specs []Spec, 
 	if log == nil {
 		log = func(string, ...any) {}
 	}
-	p := &Publisher{log: log, stats: make(map[string]*Status)}
+	p := &Publisher{log: log, stats: make(map[string]*Status), limit: newConnLimit(MaxServiceConns, MaxServiceConnsPerMember)}
 
 	// Every Status exists before any accept loop runs, so a goroutine can never
 	// observe a half-built map. The listeners are started in a second pass for
@@ -376,10 +377,20 @@ func (p *Publisher) accept(ctx context.Context, ln net.Listener, spec Spec, st *
 			}
 			return
 		}
+		// Counted before a goroutine is spent, as the LAN gateway does: over
+		// a cap, a connection costs a closed socket and nothing else.
+		from, ok := p.limit.take(c)
+		if !ok {
+			c.Close()
+			continue
+		}
 		p.mu.Lock()
 		st.Conns++
 		p.mu.Unlock()
-		go p.forward(ctx, c, spec)
+		go func() {
+			defer p.limit.give(from)
+			p.forward(ctx, c, spec)
+		}()
 	}
 }
 
