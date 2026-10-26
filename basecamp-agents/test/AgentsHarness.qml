@@ -459,6 +459,7 @@ Item {
             view.cancelQueued("b-v")
             console.error("CANCELLED=" + view.agentQueued.length)
 
+
             // A voice note's way to a turn: transcribing, failed with a retry,
             // then the turn it became, marked as said.
             var n = top.events.length
@@ -1038,6 +1039,34 @@ Item {
                               + " settled=" + view.jumpSettled + " settledCaught=" + view.jumpSettledCaught
                               + " pendingSeen=" + top.deepPending)
                 deepTimer.stop()
+                // Last, as it opens other sessions under the checks above.
+                    // Each session its own draft (2026-10-26): what was written for
+                    // one is not in the box of another, and is there again on return.
+                    var comp = top.findByName(view, "composer")
+                    var firstS = view.agentOpen.session
+                    comp.text = "for the first"
+                    view.openSession(view.agentHosts[0], "other")
+                    var inOther = comp.text
+                    comp.text = "for the other"
+                    view.openSession(view.agentHosts[0], firstS)
+                    console.error("DRAFTS other=[" + inOther + "] back=[" + comp.text + "]")
+                    // A voice note goes to the session it was started in, whatever is
+                    // open when it stops; cancelled, it goes nowhere.
+                    var outBefore = top.outbox.length
+                    view.startRecording()
+                    var dlgOpen = view.recordDialogOpen
+                    view.openSession(view.agentHosts[0], "other")
+                    view.stopAndSend()
+                    var went = top.outbox[top.outbox.length - 1].session
+                    view.startRecording()
+                    view.cancelRecording()
+                    console.error("RECORDFOR dialog=" + dlgOpen + " to=" + went + " cancelled=" + (top.outbox.length - outBefore)
+                                  + " closed=" + !view.recordDialogOpen)
+                    top.outbox = top.outbox.filter(function(x) { return x.id !== "b-v" })
+                    comp.text = ""
+                    view.openSession(view.agentHosts[0], firstS)
+                    comp.text = ""
+                    view.pumpAgent()
                 Qt.quit()
             }
         }

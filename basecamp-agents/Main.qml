@@ -338,6 +338,13 @@ Item {
             if (rd && typeof rd === "object" && !Array.isArray(rd)) root.readTurns = rd
         } catch (e) {}
         try {
+            var dr = JSON.parse(String(callCore("getPref", ["agent_drafts"]) || "{}"))
+            var kept = {}
+            if (dr && typeof dr === "object" && !Array.isArray(dr))
+                for (var dk in dr) if (dr[dk] && typeof dr[dk] === "object" && typeof dr[dk].text === "string") kept[dk] = dr[dk]
+            root.drafts = kept
+        } catch (e) {}
+        try {
             var ap = JSON.parse(String(callCore("getPref", ["agent_autoplay"]) || "{}"))
             if (ap && typeof ap === "object" && !Array.isArray(ap)) root.autoPlay = ap
         } catch (e) {}
@@ -482,6 +489,27 @@ Item {
     property var agentJobsSeen: ({})
     property string agentSending: ""
     property bool agentRecording: false
+    // The session a voice note is being recorded for: it goes there whatever
+    // is open when it stops (the phone's recordingFor, 2026-10-26).
+    property var recordingFor: null
+    // What is written for each session and not sent yet, by machine/session
+    // (by name: one machine answers on an address per mesh):
+    // one box for all of them sent what was written for one to another, when
+    // the person had looked in elsewhere and come back without noticing (the
+    // owner, 2026-10-26). Switching keeps the one left and brings back the one
+    // opened, with its attachments; Enter sends only the open one's.
+    property var drafts: ({})
+    function draftKey(o) { return o ? o.name + "/" + o.session : "" }
+    function keepDraft() {
+        if (!agentOpen) return
+        var d = Object.assign({}, drafts)
+        var k = draftKey(agentOpen)
+        if (composer.text === "" && agentAttached.length === 0) delete d[k]
+        else d[k] = { text: composer.text, files: agentAttached }
+        root.drafts = d
+        draftSave.restart()
+    }
+    Timer { id: draftSave; interval: 1000; onTriggered: root.savePref("agent_drafts", JSON.stringify(root.drafts)) }
     property bool agentTranscribing: false
     // Conversations on the host a new session is being made on.
     property var conversations: []
@@ -668,8 +696,9 @@ Item {
         // Picking a session in the list leaves the "+ session" form, which
         // otherwise stayed in front of it (2026-10-04).
         root.agentCreating = false
-        // The one left was read up to what it showed.
+        // The one left was read up to what it showed, and keeps its draft.
         noteRead()
+        keepDraft()
         root.agentOpen = { address: h.address, name: h.name, mesh: h.mesh, session: s }
         noteRead()
         root.agentEventsList = []
@@ -679,7 +708,9 @@ Item {
         root.agentKept = 0
         root.agentEpoch = -1
         root.chatStick = true
-        root.agentAttached = []
+        var dr = drafts[draftKey(root.agentOpen)]
+        root.agentAttached = (dr && Array.isArray(dr.files)) ? dr.files : []
+        composer.text = (dr && dr.text) ? dr.text : ""
         chatModel.clear()
         // fresh: without the copy kept by the core (it is of a session since
         // made again), which a negative tail says.
@@ -1424,7 +1455,10 @@ Item {
         var r = agentAttached.length === 0
             ? agentCall("agentQueue", [agentOpen.address, agentOpen.session, text.trim()])
             : agentCall("agentQueueFiles", [agentOpen.address, agentOpen.session, text.trim(), agentAttached.join("\n")])
-        if (r !== null) { root.agentAttached = []; root.chatStick = true; refreshOutbox() }
+        if (r !== null) {
+            root.agentAttached = []; root.chatStick = true; refreshOutbox()
+            var d = Object.assign({}, drafts); delete d[draftKey(agentOpen)]; root.drafts = d; draftSave.restart()
+        }
         return r !== null
     }
     // What is written and not yet sent, for the open session.
@@ -1459,19 +1493,49 @@ Item {
     function attachedName(path) {
         return String(path).split("/").pop().replace(/^b-[0-9a-f]+-[0-9a-f]+-[0-9a-f]+-/, "").replace(/^\d{8}-\d{6}-(\d+-)?/, "")
     }
+    // Recording opens a dialog that names the session it is for, with
+    // stop-and-send large and cancel apart (the owner, 2026-10-26: the stop
+    // square was easy to miss), and, being modal, no other session can be
+    // opened under it.
     function toggleRecording() {
         if (!agentOpen || agentTranscribing) return
-        if (!agentRecording) {
-            if (agentCall("agentRecord", ["start", "", "", ""]) !== null) root.agentRecording = true
-        } else {
-            root.agentRecording = false
-            // A voice note goes as a voice note: queued, transcribed on the
-            // agent's machine and sent as the turn — nothing to wait for here.
-            if (agentCall("agentRecord", ["send", agentOpen.address, agentOpen.session, ""]) !== null) {
-                root.chatStick = true
-                refreshOutbox()
-            }
+        if (!agentRecording) startRecording()
+        else stopAndSend()
+    }
+    function startRecording() {
+        if (agentCall("agentRecord", ["start", "", "", ""]) !== null) {
+            root.recordingFor = { address: agentOpen.address, name: agentOpen.name, session: agentOpen.session }
+            root.recordStarted = Date.now()
+            root.agentRecording = true
+            recordDialog.open()
         }
+    }
+    function stopAndSend() {
+        var to = recordingFor || agentOpen
+        root.agentRecording = false
+        root.recordingFor = null
+        recordDialog.close()
+        if (!to) return
+        // A voice note goes as a voice note: queued, transcribed on the
+        // agent's machine and sent as the turn — nothing to wait for here.
+        if (agentCall("agentRecord", ["send", to.address, to.session, ""]) !== null) {
+            root.chatStick = true
+            refreshOutbox()
+        }
+    }
+    function cancelRecording() {
+        agentCall("agentRecord", ["cancel", "", "", ""])
+        root.agentRecording = false
+        root.recordingFor = null
+        recordDialog.close()
+    }
+    readonly property bool recordDialogOpen: recordDialog.visible
+    property double recordStarted: 0
+    property double recordNow: 0
+    Timer { interval: 500; repeat: true; running: recordDialog.visible; triggeredOnStart: true; onTriggered: root.recordNow = Date.now() }
+    function recordClock() {
+        var s = Math.max(0, Math.floor((recordNow - recordStarted) / 1000))
+        return Math.floor(s / 60) + ":" + ("0" + (s % 60)).slice(-2)
     }
     function shortDir(d) { return String(d || "").replace(/^\/home\/[^\/]+/, "~") }
     // The coding agents a machine runs (GET /v1/harnesses), Claude Code first;
@@ -3572,6 +3636,52 @@ Item {
             }
         }
     }
+    // While a voice note records (toggleRecording): for whom, for how long;
+    // neither Escape nor a click outside closes it, since either would throw
+    // away what was said or leave it recording unseen.
+    Dialog {
+        id: recordDialog
+        objectName: "recordDialog"
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(root.sz(460), root.width - root.sz(40))
+        padding: root.sz(24)
+        closePolicy: Popup.NoAutoClose
+        Overlay.modal: Rectangle { color: Qt.rgba(0, 0, 0, 0.7) }
+        background: Rectangle { color: cPanel; radius: root.sz(14); border.color: cRust }
+        header: Item {}
+        footer: Item {}
+        contentItem: ColumnLayout {
+            spacing: root.sz(12)
+            RowLayout {
+                Layout.alignment: Qt.AlignHCenter
+                spacing: root.sz(10)
+                Pulse { tint: cRust; width: root.sz(14) }
+                Text { text: "RECORDING  " + root.recordClock(); color: cRust; font.family: "monospace"; font.pixelSize: root.fs(12); font.letterSpacing: 1.5 }
+            }
+            Text { Layout.alignment: Qt.AlignHCenter; color: cBone; font.family: "monospace"; font.pixelSize: root.fs(18)
+                   text: "for " + (root.recordingFor ? root.recordingFor.session : "") }
+            Text { Layout.alignment: Qt.AlignHCenter; color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(11)
+                   text: "on " + (root.recordingFor ? root.recordingFor.name : "") }
+            Rectangle {
+                objectName: "recordSend"
+                Layout.fillWidth: true
+                Layout.topMargin: root.sz(8)
+                Layout.preferredHeight: root.sz(72)
+                radius: root.sz(12)
+                color: sendArea.containsMouse ? Qt.lighter(cPhosphor, 1.15) : cPhosphor
+                Text { anchors.centerIn: parent; text: "■  STOP AND SEND"; color: cVoid; font.family: "monospace"; font.pixelSize: root.fs(15); font.bold: true }
+                MouseArea { id: sendArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.stopAndSend() }
+            }
+            Lnk {
+                objectName: "recordCancel"
+                Layout.alignment: Qt.AlignHCenter
+                Layout.topMargin: root.sz(6)
+                text: "cancel"; base: cAsh; font.pixelSize: root.fs(12)
+                onClicked: root.cancelRecording()
+            }
+        }
+    }
     Dialog {
         id: cagedDialog
         objectName: "cagedDialog"
@@ -5619,6 +5729,8 @@ Item {
                         Layout.preferredHeight: Math.min(root.sz(140), Math.max(root.sz(40), composer.implicitHeight))
                         TextArea {
                             id: composer
+                            objectName: "composer"
+                            onTextChanged: if (root.agentOpen) root.keepDraft()
                             placeholderText: "message — Enter sends, Shift+Enter for a new line"
                             placeholderTextColor: cAsh
                             wrapMode: TextArea.Wrap

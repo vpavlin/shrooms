@@ -216,6 +216,28 @@ fun withStar(hosts: List<AgentHost>, host: String, session: String, on: Boolean)
 data class OpenSession(val address: String, val host: String, val mesh: String, val session: String, val jump: String = "")
 
 /**
+ * What is written for each session and not sent yet. One box for every
+ * session sent a message written for one to another, when the person had
+ * looked in elsewhere and come back without noticing (the owner, 2026-10-26):
+ * each session has its own draft, kept on the phone, and Enter can only send
+ * the one on screen.
+ */
+object Drafts {
+    private fun prefs(ctx: android.content.Context) = ctx.getSharedPreferences("agent_drafts", android.content.Context.MODE_PRIVATE)
+    // By machine and session: one machine answers on an address per mesh.
+    private fun key(host: String, session: String) = "$host/$session"
+    fun get(ctx: android.content.Context, host: String, session: String): String =
+        prefs(ctx).getString(key(host, session), "") ?: ""
+    fun put(ctx: android.content.Context, host: String, session: String, text: String) {
+        prefs(ctx).edit().apply { if (text.isEmpty()) remove(key(host, session)) else putString(key(host, session), text) }.apply()
+    }
+    fun rename(ctx: android.content.Context, host: String, from: String, to: String) {
+        val t = get(ctx, host, from)
+        if (t.isNotEmpty()) { put(ctx, host, to, t); put(ctx, host, from, "") }
+    }
+}
+
+/**
  * Finds every agent among the peers: one probe per online device on each of
  * its addresses, first answer wins. A probe rather than reading what peers
  * announce, because announcing bound ports is off by default (ADR-026) and an
@@ -997,11 +1019,13 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String
     // When what is shown is the copy kept on the phone (History), the time it
     // was kept; 0 once the machine's own events have arrived.
     var keptAt by remember(o) { mutableStateOf(0L) }
-    var input by remember { mutableStateOf("") }
+    val ctx = LocalContext.current
+    // This session's own draft (Drafts): another session's is never in the box.
+    var input by remember(o.host, o.session) { mutableStateOf(Drafts.get(ctx, o.host, o.session)) }
+    fun setInput(t: String) { input = t; Drafts.put(ctx, o.host, o.session, t) }
     var actionError by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
     val list = rememberLazyListState()
-    val ctx = LocalContext.current
     // Renamed — here, from another device or from Basecamp: what this phone
     // keeps under the name (copy, unread, auto-play, the outbox) moves with
     // it, and the screen goes on under the new one.
@@ -1011,6 +1035,7 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String
         Unread.rename(ctx, o.host, o.session, to)
         Speech.rename(ctx, o.host, o.session, to)
         Outbox.rename(ctx, o.address, o.session, to)
+        Drafts.rename(ctx, o.host, o.session, to)
         onRenamed(to)
     }
     // Files to go with the next message: kept on the phone at once, and sent
@@ -1033,13 +1058,25 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String
     }
     // Voice notes: recorded here, transcribed on the agent's machine, and the
     // text put in the box to be read and corrected before it is sent.
+    //
+    // A recording belongs to the session it was started in, and goes there
+    // whatever is on screen when it stops: a five-minute explanation went to
+    // another session, switched to in between (the owner, 2026-10-26). While
+    // it records, a dialog fills the screen and names that session, with
+    // stop-and-send large and cancel apart: the stop square was easy to miss.
     val recorder = remember { VoiceRecorder(ctx) }
     var recording by remember { mutableStateOf(false) }
+    var recordingFor by remember { mutableStateOf<OpenSession?>(null) }
     DisposableEffect(Unit) { onDispose { recorder.cancel() } }
     fun startRecording() {
         runCatching { recorder.start() }
-            .onSuccess { recording = true }
+            .onSuccess { recording = true; recordingFor = o }
             .onFailure { actionError = "could not record: ${it.message}" }
+    }
+    fun cancelRecording() {
+        recording = false
+        recordingFor = null
+        recorder.cancel()
     }
     val askMic = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
@@ -1059,11 +1096,14 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String
     // what was said, so there is nothing to wait for and read back here.
     fun stopAndQueue() {
         recording = false
+        val to = recordingFor ?: o
+        recordingFor = null
         val f = recorder.stop() ?: return
         val id = Outbox.newId()
         val kept = java.io.File(Outbox.voiceDir(ctx), "$id.m4a")
         if (!f.renameTo(kept)) { f.copyTo(kept, overwrite = true); f.delete() }
-        enqueue(Outgoing(id, o.address, o.host, o.session, "voice", file = kept.path, created = System.currentTimeMillis()))
+        Outbox.add(ctx, Outgoing(id, to.address, to.host, to.session, "voice", file = kept.path, created = System.currentTimeMillis()))
+        scope.launch { Outbox.flush(ctx) { it.address == to.address && it.session == to.session } }
     }
     LaunchedEffect(o) {
         while (isActive) {
@@ -1323,6 +1363,7 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String
     }
     // For a process that stop does not reach — a request hanging on a dropped
     // connection. Only this session's; the others on the machine go on.
+    if (recording) RecordingDialog(recordingFor ?: o, recorder.startedAt, onSend = { stopAndQueue() }, onCancel = { cancelRecording() })
     renaming?.let { draft ->
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { renaming = null },
@@ -1827,7 +1868,7 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String
             }
             Box(Modifier.weight(1f)) {
                 OutlinedTextField(
-                    value = input, onValueChange = { input = it },
+                    value = input, onValueChange = { setInput(it) },
                     placeholder = { Text("message", color = Palette.Ash) },
                     textStyle = MaterialTheme.typography.bodyMedium.copy(color = Palette.Bone),
                     colors = OutlinedTextFieldDefaults.colors(
@@ -1847,7 +1888,7 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String
                     .clickable(enabled = canSend) {
                         val text = input.trim()
                         val files = attached
-                        input = ""
+                        setInput("")
                         attached = emptyList()
                         actionError = ""
                         enqueue(Outgoing(Outbox.newId(), o.address, o.host, o.session, "text", text = text,
@@ -2437,3 +2478,43 @@ fun deleteSessionText(state: String): String = buildString {
         "waiting" -> append("\n\nIt is waiting for an answer to a permission prompt, which will be dropped.")
     }
 }
+
+/**
+ * While a voice note records: which session it is for, how long it has run,
+ * stop-and-send as the big button and cancel as a small one apart from it.
+ * Neither back nor a tap outside closes it: either would throw away what
+ * was said, or leave it recording unseen.
+ */
+@Composable
+private fun RecordingDialog(to: OpenSession, startedAt: Long, onSend: () -> Unit, onCancel: () -> Unit) {
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(startedAt) { while (true) { now = System.currentTimeMillis(); delay(500) } }
+    val secs = ((now - startedAt) / 1000).coerceAtLeast(0)
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = {},
+        properties = androidx.compose.ui.window.DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
+    ) {
+        Column(
+            Modifier.fillMaxWidth().background(Palette.Panel, RoundedCornerShape(18.dp)).padding(22.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Pulse(Palette.Rust, 14)
+                Spacer(Modifier.width(10.dp))
+                Text("RECORDING  %d:%02d".format(secs / 60, secs % 60), style = MaterialTheme.typography.labelMedium, color = Palette.Rust)
+            }
+            Text("for ${to.session}", style = MaterialTheme.typography.titleLarge, color = Palette.Bone)
+            Text("on ${to.host}", style = MaterialTheme.typography.bodySmall, color = Palette.Ash)
+            Box(
+                Modifier.fillMaxWidth().height(88.dp).background(Palette.Phosphor, RoundedCornerShape(16.dp)).clickable { onSend() },
+                contentAlignment = Alignment.Center,
+            ) { Text("■  STOP AND SEND", style = MaterialTheme.typography.titleMedium, color = Palette.Void) }
+            Spacer(Modifier.height(6.dp))
+            Text("CANCEL", style = MaterialTheme.typography.labelMedium, color = Palette.Ash,
+                modifier = Modifier.border(1.dp, Palette.Line, RoundedCornerShape(12.dp)).clickable { onCancel() }
+                    .padding(horizontal = 28.dp, vertical = 12.dp))
+        }
+    }
+}
+

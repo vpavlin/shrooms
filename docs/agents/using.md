@@ -241,8 +241,18 @@ from (TAKES FILES FROM: nobody until you add `machine/session`, or
 the link turns amber, "files · 1 asking", and the panel has **allow** and
 **ignore** for it. See [Files between agents](../agents-files.md).
 
-**Voice notes.** 🎤 starts recording; tap again to stop and send. The
-recording is sent to the agent's machine, transcribed there (by Parakeet,
+**Each session has its own message box.** What you type for one session
+stays with it: open another and its box shows only what was written there,
+and Enter sends only that. Come back and your text is waiting. Attached
+files are kept with the draft too. On the phone a draft also survives
+leaving the conversation.
+
+**Voice notes.** 🎤 starts recording and opens a window that names the
+session it's for, with a timer. **Stop and send** is the big button;
+**cancel** throws the recording away. Back, Escape or a click outside don't
+close the window, so a long recording can't be lost or sent to the wrong
+place by accident. The recording always goes to the session it was started
+in. It is sent to the agent's machine, transcribed there (by Parakeet,
 which works out the language itself), and what was said goes to the model as
 your turn. No audio reaches a speech service. While it is transcribed the
 conversation says "🎤 voice note — transcribing on the agent's machine…". If
