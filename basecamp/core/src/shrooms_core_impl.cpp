@@ -1170,6 +1170,15 @@ std::string ShroomsCoreImpl::agentsFind(const std::string& peers)
     return hub().found();
 }
 
+std::string ShroomsCoreImpl::agentsFindSince(const std::string& peers, const std::string& since)
+{
+    hub().find(peers);
+    // The generation first: a change between the two reads is seen next time.
+    std::string gen = std::to_string(hub().foundGeneration());
+    if (gen == since) return "{\"gen\":" + gen + ",\"same\":true}";
+    return "{\"gen\":" + gen + ",\"hosts\":" + hub().found() + "}";
+}
+
 std::string ShroomsCoreImpl::agentWatch(const std::string& address, const std::string& session, const std::string& tail)
 {
     if (!agents::isAgentAddress(address)) return errorJson("not an agent address", address);

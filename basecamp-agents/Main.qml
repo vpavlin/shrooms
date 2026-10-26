@@ -92,9 +92,21 @@ Item {
     // (ADR-056). Not a fault — a mesh is what adds the other machines.
     readonly property bool noMesh: !(root.st && root.st.meshes && root.st.meshes.length > 0)
     readonly property string noMeshNote: "No Shrooms mesh here: the agents on this machine only. Your other machines and your phone join through Shrooms — shrooms.vpavlin.xyz/start.html"
+    // What of the status this view reads: names, meshes, peers and whether
+    // they are up. The rest (each peer's traffic history, most of 37 KB)
+    // changes every time and is no reason to recompute the view: taken only
+    // when this does (2026-10-26, the Duet tablet).
+    property string statusKey: ""
+    function statusKeyOf(d) {
+        return JSON.stringify([d.name || "", (d.meshes || []).map(function(m) { return [m.label, m.overlay] }),
+                               (d.peers || []).map(function(p) { return [p.name, p.mesh, p.overlay, !!p.online] })])
+    }
     function reload() {
         var d = unwrap(callCore("status", []))
         if (d && typeof d === "object" && !d.error) {
+            var key = statusKeyOf(d)
+            if (key === root.statusKey && root.st) return
+            root.statusKey = key
             root.st = d
             root.peers = d.peers || []
             root.problem = ""
@@ -104,6 +116,7 @@ Item {
             if (root.agentsOpen && agentPeers() !== root.lookedOn) refreshAgents()
         } else if (d && d.error) {
             // No daemon: the agents still work on this machine alone.
+            root.statusKey = ""
             root.st = null
             root.peers = []
             root.problem = ""
@@ -566,10 +579,43 @@ Item {
         return out.join(";")
     }
 
+    // What finding last returned, to do nothing when nothing changed: every
+    // machine's sessions and tasks, hundreds of KB, used to be carried here
+    // and parsed on the GUI thread every round (a third of a core on the
+    // Duet tablet, 2026-10-26). A core with agentsFindSince says "same";
+    // an older one is compared by its answer.
+    property string foundGen: ""
+    property bool findSinceMissing: false
+    property string lastFound: ""
+    property double lastFoundChange: 0
+    // The list the last round made: anything else put in its place (a
+    // mesh switch, a rename, a cleared list) is rebuilt whatever was found.
+    property var hostsMade: null
     function refreshAgents() {
+        // And only while every machine answered: one that missed a round is
+        // counted round by round until it is greyed (mergeHosts).
+        var unchangedOk = root.agentHosts === root.hostsMade
+            && root.agentHosts.every(function(h) { return !h.missed })
         root.lookedOn = agentPeers()
-        var r = unwrap(callCore("agentsFind", [root.lookedOn]))
+        var r
+        if (!findSinceMissing) {
+            var w = unwrap(callCore("agentsFindSince", [root.lookedOn, unchangedOk ? root.foundGen : ""]))
+            if (w && w.gen !== undefined) {
+                root.foundGen = String(w.gen)
+                if (w.same && unchangedOk) return
+                r = w.hosts
+            } else {
+                root.findSinceMissing = true
+            }
+        }
+        if (r === undefined) {
+            var raw = callCore("agentsFind", [root.lookedOn])
+            if (raw === root.lastFound && unchangedOk) return
+            root.lastFound = raw
+            r = unwrap(raw)
+        }
         if (!Array.isArray(r)) return
+        root.lastFoundChange = Date.now()
         var hosts = [], seen = {}
         for (var i = 0; i < r.length; i++) {
             var h = r[i]
@@ -595,6 +641,7 @@ Item {
         var now = Date.now()
         root.nowMs = now
         root.agentHosts = mergeHosts(agentHosts, hosts, now)
+        root.hostsMade = root.agentHosts
         noteRead()
         // Kept for the next start, now and then rather than every round.
         if (now - lastHostsSave > 30000) {
@@ -3936,12 +3983,21 @@ Item {
         || agentTranscribing || agentRecording || searchBusy || aloud !== null || speakQueue.length > 0
         || agentQueued.length > 0 || !agentCaughtUp
     Timer {
-        // Finding agents: cheap, since the core probes in the background and
-        // this returns at once what it has.
-        interval: 3000
+        // Finding agents: the core probes in the background and this returns
+        // at once what it has. Every 3 s while some session works or waits,
+        // or something changed in the last half minute; every 10 s while all
+        // is quiet: each round asks every machine over the mesh, and on the
+        // Duet tablet the daemon carrying it took a fifth of a core.
+        interval: root.findBusy() ? 3000 : 10000
         running: root.agentsOpen && root.haveCore
         repeat: true; triggeredOnStart: true
-        onTriggered: root.refreshAgents()
+        onTriggered: { root.refreshAgents(); interval = root.findBusy() ? 3000 : 10000 }
+    }
+    function findBusy() {
+        if (Date.now() - lastFoundChange < 30000) return true
+        return agentHosts.some(function(h) {
+            return (h.sessions || []).some(function(x) { return x.state === "working" || x.state === "waiting" })
+        })
     }
     Timer {
         // The open session: collected by the core, read here several times a

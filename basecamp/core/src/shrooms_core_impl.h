@@ -469,6 +469,16 @@ public:
     std::string agentsFind(const std::string& peers);
 
     /**
+     * @brief agentsFind, answering {"gen":N,"same":true} when nothing found
+     * has changed since generation `since`, else {"gen":N,"hosts":[...]}.
+     *
+     * The view polls every few seconds and the answer, with each machine's
+     * sessions and tasks, ran to hundreds of KB: carried across to the view
+     * and parsed on its GUI thread each time, for nothing new (2026-10-26).
+     */
+    std::string agentsFindSince(const std::string& peers, const std::string& since);
+
+    /**
      * @brief Follows one session's live stream in the background, replacing
      * whatever was followed before, from its last `tail` events ("0" for all).
      * Returns {"ok":true} or an error.

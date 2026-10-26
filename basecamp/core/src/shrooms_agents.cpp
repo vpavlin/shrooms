@@ -64,6 +64,8 @@ namespace {
 constexpr size_t kMaxBody = 8 * 1024 * 1024;
 constexpr size_t kKeepEvents = 4000;
 constexpr size_t kMaxReply = 512 * 1024;
+// A peer's tasks are asked for every this many rounds of finding (find).
+constexpr unsigned kTasksEvery = 5;
 // What is kept on disk of each conversation: as the phone keeps.
 constexpr size_t kHistoryEvents = 300;
 constexpr size_t kHistoryBytes = 1 << 20;
@@ -415,15 +417,35 @@ void Hub::find(const std::string& peers)
                 // from before them ignores the question.
                 bool ok = request(p[2], "GET", "/v1/sessions?tail=6", "", 3, body, err);
                 // And the tasks between agents, for the board's links; an
-                // agent from before them has none to say.
-                std::string tasks, terr;
-                if (!ok || !request(p[2], "GET", "/v1/tasks", "", 3, tasks, terr) || tasks.empty() || tasks[0] != '{') tasks = "{}";
+                // agent from before them has none to say. Not every round:
+                // a machine's list was 72 KB, asked of 8 machines every 3 s,
+                // and the Duet tablet's daemon spent a fifth of a core
+                // carrying it and its view a third parsing it (duet/duet,
+                // 2026-10-26). Sessions change what the list shows; tasks
+                // are slower, and kept between their rounds.
+                std::string tasks;
+                bool askTasks;
+                {
+                    std::lock_guard<std::mutex> g(mu_);
+                    askTasks = rounds_[p[2]]++ % kTasksEvery == 0 || tasks_.find(p[2]) == tasks_.end();
+                    if (!askTasks) tasks = tasks_[p[2]];
+                }
+                if (ok && askTasks) {
+                    std::string terr;
+                    if (!request(p[2], "GET", "/v1/tasks", "", 3, tasks, terr) || tasks.empty() || tasks[0] != '{') tasks = "{}";
+                }
+                if (!ok) tasks = "{}";
                 std::lock_guard<std::mutex> g(mu_);
                 if (ok) {
-                    found_[p[2]] = "{\"name\":\"" + jsonEscape(p[0]) + "\",\"mesh\":\"" + jsonEscape(p[1]) +
-                                   "\",\"address\":\"" + jsonEscape(p[2]) + "\",\"list\":" + body + ",\"tasks\":" + tasks + "}";
+                    tasks_[p[2]] = tasks;
+                    std::string host = "{\"name\":\"" + jsonEscape(p[0]) + "\",\"mesh\":\"" + jsonEscape(p[1]) +
+                                       "\",\"address\":\"" + jsonEscape(p[2]) + "\",\"list\":" + body + ",\"tasks\":" + tasks + "}";
+                    auto it = found_.find(p[2]);
+                    if (it == found_.end() || it->second != host) { found_[p[2]] = host; foundGen_++; }
                 } else {
-                    found_.erase(p[2]);
+                    tasks_.erase(p[2]);
+                    rounds_.erase(p[2]);
+                    if (found_.erase(p[2]) > 0) foundGen_++;
                 }
             });
         }

@@ -104,6 +104,9 @@ public:
     /** What the last rounds found, as a JSON array. */
     std::string found();
 
+    /** Bumped whenever what found() returns changes. */
+    long long foundGeneration() const { return foundGen_.load(); }
+
     /**
      * Follows one session's live stream, replacing whatever was followed.
      * tail > 0 starts at the last `tail` events instead of the first.
@@ -302,6 +305,11 @@ private:
     std::mutex mu_;
     std::map<std::string, std::string> found_;   // address -> host JSON
     std::atomic<bool> finding_{false};
+    std::atomic<long long> foundGen_{0};
+    // Each peer's tasks as last fetched, and its rounds: the tasks are asked
+    // for every kTasksEvery rounds, not every round (tasksRound).
+    std::map<std::string, std::string> tasks_;
+    std::map<std::string, unsigned> rounds_;
 
     std::thread follower_;
     std::atomic<unsigned> generation_{0};

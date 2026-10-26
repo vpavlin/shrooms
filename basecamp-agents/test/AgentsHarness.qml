@@ -63,6 +63,7 @@ Item {
     property var watchTails: []
     property string lastSearch: ""
     property bool findNone: false
+    property var findSince: []
     property string lastOpen: ""
     property var outbox: []
     property string lastQueued: ""
@@ -159,6 +160,17 @@ Item {
                     meshes: [ { label: "office", overlay: "fdb0:9afc:a5ef:1111:2222:3333:4444:5555" } ], peers: [
                     { name: "laptop", mesh: "office", overlay: "fdb0:9afc:a5ef:388c:8264:7716:36fc:64eb", online: true } ] })
                 // The same machine answering on a second mesh address.
+                // The core's agentsFindSince: what agentsFind finds, with a
+                // generation, and "same" when it has not changed.
+                if (method === "agentsFindSince") {
+                    var fl = top.findNone ? [] : top.boardFind ? top.boardFind
+                        : top.hosts.concat([Object.assign({}, top.hosts[0], { mesh: "home", address: "fd7b::1" })])
+                    if (!top.findNone && !top.boardFind) top.lastFind = args[0]
+                    var fs = JSON.stringify(fl), g = 0
+                    for (var c = 0; c < fs.length; c++) g = (g * 31 + fs.charCodeAt(c)) % 1000000007
+                    top.findSince = top.findSince.concat([String(args[1]) === String(g) ? "same" : "hosts"])
+                    return JSON.stringify(String(args[1]) === String(g) ? { gen: g, same: true } : { gen: g, hosts: fl })
+                }
                 if (method === "agentsFind" && top.findNone) return JSON.stringify([])
                 if (method === "agentsFind" && top.boardFind) return JSON.stringify(top.boardFind)
                 if (method === "agentsFind") { top.lastFind = args[0]
@@ -590,6 +602,13 @@ Item {
                                                           [{ name: "laptop", mesh: "", address: "local", sessions: [] }], Date.now()).map(function(h) { return h.name }).join(","))
             top.findNone = false
             view.refreshAgents()
+            // Found again and unchanged: the core says "same" and the list
+            // is left as it is, not rebuilt.
+            view.refreshAgents()
+            var madeBefore = view.agentHosts
+            top.findSince = []
+            view.refreshAgents()
+            console.error("FINDSAME " + top.findSince.join(",") + " kept=" + (view.agentHosts === madeBefore))
 
             // Starring: first in the list, out of its machine's, and kept on the agent.
             var h0 = view.agentHosts[0]
