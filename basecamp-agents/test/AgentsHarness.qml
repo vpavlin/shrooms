@@ -64,6 +64,7 @@ Item {
     property string lastSearch: ""
     property bool findNone: false
     property var findSince: []
+    property var extraTask: null
     property string lastOpen: ""
     property var outbox: []
     property string lastQueued: ""
@@ -166,10 +167,23 @@ Item {
                     var fl = top.findNone ? [] : top.boardFind ? top.boardFind
                         : top.hosts.concat([Object.assign({}, top.hosts[0], { mesh: "home", address: "fd7b::1" })])
                     if (!top.findNone && !top.boardFind) top.lastFind = args[0]
-                    var fs = JSON.stringify(fl), g = 0
-                    for (var c = 0; c < fs.length; c++) g = (g * 31 + fs.charCodeAt(c)) % 1000000007
-                    top.findSince = top.findSince.concat([String(args[1]) === String(g) ? "same" : "hosts"])
-                    return JSON.stringify(String(args[1]) === String(g) ? { gen: g, same: true } : { gen: g, hosts: fl })
+                    // As the core 0.28 sends it: the hosts without their
+                    // tasks, the tasks by address, each with a generation.
+                    var bare = fl.map(function(x) { var c = Object.assign({}, x); delete c.tasks; return c })
+                    var tmap = {}
+                    fl.forEach(function(x) { tmap[x.address] = x.tasks || {} })
+                    if (top.extraTask && fl.length > 0) {
+                        var a0 = fl[0].address, t0 = (tmap[a0] && tmap[a0].tasks) || []
+                        tmap[a0] = { tasks: t0.concat([top.extraTask]) }
+                    }
+                    function hash(v) { var str = JSON.stringify(v), g = 0; for (var c = 0; c < str.length; c++) g = (g * 31 + str.charCodeAt(c)) % 1000000007; return String(g) }
+                    var g = hash(bare), tg = hash(tmap)
+                    var parts = String(args[1]).split("/")
+                    var ans = { gen: g, tgen: tg }
+                    if (parts[0] === g) ans.same = true; else ans.hosts = bare
+                    if (parts[1] !== tg) ans.tasks = tmap
+                    top.findSince = top.findSince.concat([ans.same ? (ans.tasks ? "tasks" : "same") : "hosts"])
+                    return JSON.stringify(ans)
                 }
                 if (method === "agentsFind" && top.findNone) return JSON.stringify([])
                 if (method === "agentsFind" && top.boardFind) return JSON.stringify(top.boardFind)
@@ -609,6 +623,17 @@ Item {
             top.findSince = []
             view.refreshAgents()
             console.error("FINDSAME " + top.findSince.join(",") + " kept=" + (view.agentHosts === madeBefore))
+            // Only a task changed: the hosts stay "same", the tasks come alone
+            // and reach the machine's entry.
+            var h0 = top.hosts[0]
+            var tasksBefore = (h0.tasks && h0.tasks.tasks) ? h0.tasks.tasks.length : 0
+            top.extraTask = { id: "new-1", status: { state: "TASK_STATE_WORKING" }, metadata: { "shrooms/title": "new one" } }
+            top.findSince = []
+            view.refreshAgents()
+            var mine = view.agentHosts.filter(function(x) { return x.address === h0.address })[0]
+            console.error("FINDTASKS " + top.findSince.join(",") + " grew=" + (mine && mine.tasks.length === tasksBefore + 1))
+            top.extraTask = null
+            view.refreshAgents()
 
             // Starring: first in the list, out of its machine's, and kept on the agent.
             var h0 = view.agentHosts[0]

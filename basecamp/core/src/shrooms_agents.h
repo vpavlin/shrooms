@@ -107,6 +107,13 @@ public:
     /** Bumped whenever what found() returns changes. */
     long long foundGeneration() const { return foundGen_.load(); }
 
+    /** The hosts found, without their tasks, as a JSON array. */
+    std::string foundHosts();
+    /** Every host's tasks, {"address": {"tasks":[...]}, ...}. */
+    std::string foundTasks();
+    /** Bumped whenever any host's tasks change. */
+    long long tasksGeneration() const { return tasksGen_.load(); }
+
     /**
      * Follows one session's live stream, replacing whatever was followed.
      * tail > 0 starts at the last `tail` events instead of the first.
@@ -305,7 +312,8 @@ private:
     std::mutex mu_;
     std::map<std::string, std::string> found_;   // address -> host JSON
     std::atomic<bool> finding_{false};
-    std::atomic<long long> foundGen_{0};
+    std::atomic<long long> foundGen_{0};   // found_: the hosts, without tasks
+    std::atomic<long long> tasksGen_{0};   // tasks_
     // Each peer's tasks as last fetched, and its rounds: the tasks are asked
     // for every kTasksEvery rounds, not every round (tasksRound).
     std::map<std::string, std::string> tasks_;

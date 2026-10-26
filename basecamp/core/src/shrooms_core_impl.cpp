@@ -1173,10 +1173,20 @@ std::string ShroomsCoreImpl::agentsFind(const std::string& peers)
 std::string ShroomsCoreImpl::agentsFindSince(const std::string& peers, const std::string& since)
 {
     hub().find(peers);
-    // The generation first: a change between the two reads is seen next time.
+    // since is "HOSTS/TASKS", the two generations the view has. The hosts
+    // and the tasks go separately, each only when it changed: while a
+    // session works its hosts change every few seconds, and the tasks, far
+    // the larger, seldom. The generations first: a change between these
+    // reads and the lists is seen next time.
     std::string gen = std::to_string(hub().foundGeneration());
-    if (gen == since) return "{\"gen\":" + gen + ",\"same\":true}";
-    return "{\"gen\":" + gen + ",\"hosts\":" + hub().found() + "}";
+    std::string tgen = std::to_string(hub().tasksGeneration());
+    auto slash = since.find('/');
+    std::string sinceHosts = since.substr(0, slash);
+    std::string sinceTasks = slash == std::string::npos ? "" : since.substr(slash + 1);
+    std::string out = "{\"gen\":" + gen + ",\"tgen\":" + tgen;
+    out += gen == sinceHosts ? ",\"same\":true" : ",\"hosts\":" + hub().foundHosts();
+    if (tgen != sinceTasks) out += ",\"tasks\":" + hub().foundTasks();
+    return out + "}";
 }
 
 std::string ShroomsCoreImpl::agentWatch(const std::string& address, const std::string& session, const std::string& tail)

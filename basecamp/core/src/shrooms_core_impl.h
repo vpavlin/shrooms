@@ -469,8 +469,10 @@ public:
     std::string agentsFind(const std::string& peers);
 
     /**
-     * @brief agentsFind, answering {"gen":N,"same":true} when nothing found
-     * has changed since generation `since`, else {"gen":N,"hosts":[...]}.
+     * @brief agentsFind, in two parts with a generation each. `since` is
+     * "HOSTS/TASKS", the generations the view has. Answers
+     * {"gen":N,"tgen":M} with "same":true or "hosts":[...] (without tasks),
+     * and "tasks":{"address":{...}} only when the tasks changed.
      *
      * The view polls every few seconds and the answer, with each machine's
      * sessions and tasks, ran to hundreds of KB: carried across to the view

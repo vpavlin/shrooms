@@ -105,7 +105,8 @@ Item {
         var d = unwrap(callCore("status", []))
         if (d && typeof d === "object" && !d.error) {
             var key = statusKeyOf(d)
-            if (key === root.statusKey && root.st) return
+            if (key === root.statusKey && root.st) { root.statusQuiet++; return }
+            root.statusQuiet = 0
             root.statusKey = key
             root.st = d
             root.peers = d.peers || []
@@ -123,7 +124,11 @@ Item {
             if (root.agentsOpen && agentPeers() !== root.lookedOn) refreshAgents()
         }
     }
-    Timer { interval: 5000; running: root.haveCore; repeat: true; triggeredOnStart: true; onTriggered: root.reload() }
+    // Every 5 s, or every 15 s once it has not changed for a minute: a peer
+    // coming or going is what it is read for, and each read parses some
+    // 40 KB on the GUI thread (2026-10-26).
+    property int statusQuiet: 0
+    Timer { interval: root.statusQuiet >= 12 ? 15000 : 5000; running: root.haveCore; repeat: true; triggeredOnStart: true; onTriggered: root.reload() }
 
     // What the last action said, shown at the bottom until the next one.
     property string said: ""
@@ -419,6 +424,39 @@ Item {
         out.sort(function(a, b) { return a.here !== b.here ? (a.here ? -1 : 1) : (a.name < b.name ? -1 : a.name > b.name ? 1 : 0) })
         return out
     }
+    // The list's cards by key, not by the hosts' objects: every round of
+    // finding makes new objects, and a Repeater handed a new array makes
+    // every card again. On the Duet tablet that was 70-90 cards per 10 s
+    // while any session worked, a quarter of its GUI thread (duet/duet,
+    // 2026-10-26). The keys change only when a machine or a session comes,
+    // goes or is starred; the cards look their data up by key and update in
+    // place.
+    function hostKey(h) { return h.name + "\t" + (meshPick !== "" ? (h.mesh || "") : "") }
+    property var hostKeys: []
+    property var hostByKey: ({})
+    property var starredKeys: []
+    property var starredByKey: ({})
+    function stableKeys(prev, next) { return prev.join("\n") === next.join("\n") ? prev : next }
+    function updateHostKeys() {
+        var keys = [], by = {}
+        for (var i = 0; i < shownHosts.length; i++) { var k = hostKey(shownHosts[i]); keys.push(k); by[k] = shownHosts[i] }
+        root.hostByKey = by
+        root.hostKeys = stableKeys(hostKeys, keys)
+    }
+    onStarredSessionsChanged: {
+        var keys = [], by = {}
+        for (var i = 0; i < starredSessions.length; i++) {
+            var k = hostKey(starredSessions[i].host) + "\t" + starredSessions[i].sess.name
+            keys.push(k); by[k] = starredSessions[i]
+        }
+        root.starredByKey = by
+        root.starredKeys = stableKeys(starredKeys, keys)
+    }
+    function sessionIn(h, name) {
+        var ss = (h && h.sessions) || []
+        for (var i = 0; i < ss.length; i++) if (ss[i].name === name) return ss[i]
+        return null
+    }
     // The same, in the board's and the tasks' order (by name): they lay
     // themselves out by it, and this machine first would move every card.
     // This machine, reached on its socket, is on every mesh it is on.
@@ -585,6 +623,14 @@ Item {
     // Duet tablet, 2026-10-26). A core with agentsFindSince says "same";
     // an older one is compared by its answer.
     property string foundGen: ""
+    // The tasks, by machine address, as the core last sent them: apart from
+    // the hosts, and only when they changed (agentsFindSince).
+    property string tasksGen: ""
+    property var tasksByAddr: ({})
+    function withTasks(h) {
+        var t = tasksByAddr[h.address]
+        return Object.assign({}, h, { tasks: t || {} })
+    }
     property bool findSinceMissing: false
     property string lastFound: ""
     property double lastFoundChange: 0
@@ -599,11 +645,23 @@ Item {
         root.lookedOn = agentPeers()
         var r
         if (!findSinceMissing) {
-            var w = unwrap(callCore("agentsFindSince", [root.lookedOn, unchangedOk ? root.foundGen : ""]))
+            var w = unwrap(callCore("agentsFindSince", [root.lookedOn, unchangedOk ? root.foundGen + "/" + root.tasksGen : ""]))
             if (w && w.gen !== undefined) {
                 root.foundGen = String(w.gen)
-                if (w.same && unchangedOk) return
-                r = w.hosts
+                var split = w.tgen !== undefined   // a core 0.27.0 sends tasks inside each host
+                var tasksNew = split && w.tasks !== undefined
+                if (tasksNew) { root.tasksByAddr = w.tasks; root.tasksGen = String(w.tgen) }
+                if (w.same && unchangedOk && !tasksNew) return
+                if (w.same && unchangedOk) {
+                    // Only the tasks changed: the same machines, their new tasks.
+                    root.agentHosts = agentHosts.map(function(h) {
+                        var t = tasksByAddr[h.address]
+                        return t && t.tasks ? Object.assign({}, h, { tasks: t.tasks }) : h
+                    })
+                    root.hostsMade = root.agentHosts
+                    return
+                }
+                r = split && w.hosts ? w.hosts.map(withTasks) : w.hosts
             } else {
                 root.findSinceMissing = true
             }
@@ -616,7 +674,7 @@ Item {
         }
         if (!Array.isArray(r)) return
         root.lastFoundChange = Date.now()
-        var hosts = [], seen = {}
+        var hosts = [], seen = {}, lv = null
         for (var i = 0; i < r.length; i++) {
             var h = r[i]
             // One machine on several meshes answers on each of its addresses,
@@ -636,8 +694,11 @@ Item {
             // Where its subscription stands comes with the list: kept for the
             // usage link at a glance (one that misses a round keeps its last).
             var pl = h.list ? planLimits(h.name, h.list.limits) : null
-            if (pl) { var lv = Object.assign({}, liveLimits); lv[h.name] = pl; root.liveLimits = lv }
+            if (pl) { if (!lv) lv = Object.assign({}, liveLimits); lv[h.name] = pl }
         }
+        // Once a round, not once a machine: each assignment re-ran
+        // everything bound to it.
+        if (lv && JSON.stringify(lv) !== JSON.stringify(liveLimits)) root.liveLimits = lv
         var now = Date.now()
         root.nowMs = now
         root.agentHosts = mergeHosts(agentHosts, hosts, now)
@@ -2138,6 +2199,7 @@ Item {
         function onContentYChanged() { if (!root.hostRebuilding) root.hostScrollKept = hostList.contentItem.contentY }
     }
     onShownHostsChanged: {
+        root.updateHostKeys()
         if (typeof hostList === "undefined" || !hostList.contentItem) return
         root.hostRebuilding = true
         Qt.callLater(function() {
@@ -4878,57 +4940,70 @@ Item {
                             text: "🍄  STARRED"; color: cPhosphor; font.family: "monospace"; font.pixelSize: root.fs(11); font.letterSpacing: 1.5
                         }
                         Repeater {
-                            model: root.starredSessions
+                            model: root.starredKeys
                             delegate: SessionCard {
-                                required property var modelData
+                                required property string modelData
+                                readonly property var item: root.starredByKey[modelData]
+                                visible: !!item
                                 width: hostList.availableWidth
-                                host: root.hostFor(modelData.host, modelData.sess)
-                                sess: modelData.sess
+                                host: item ? root.hostFor(item.host, item.sess) : ({ name: "", sessions: [] })
+                                sess: item ? item.sess : ({ name: "" })
                                 showHost: true
                             }
                         }
                     }
                     Repeater {
-                    model: root.shownHosts
+                    model: root.hostKeys
                     delegate: Column {
                         id: hostCol
-                        required property var modelData
+                        required property string modelData
+                        readonly property string key: modelData
+                        // Under the old name, so the rows below read as they did.
+                        readonly property var hostData: root.hostByKey[key] || ({ name: "", mesh: "", sessions: [] })
+                        // Its unstarred sessions by name, kept while the names
+                        // are: the cards stay and their data updates in place.
+                        property var sessKeys: []
+                        readonly property string sessKeyStr: root.unstarred(hostData).map(function(x) { return x.name }).join("\n")
+                        onSessKeyStrChanged: if (sessKeys.join("\n") !== sessKeyStr) sessKeys = sessKeyStr === "" ? [] : sessKeyStr.split("\n")
+                        Component.onCompleted: sessKeys = sessKeyStr === "" ? [] : sessKeyStr.split("\n")
                         width: hostList.availableWidth
                         spacing: root.sz(6)
-                        readonly property bool up: root.hostReachable(hostCol.modelData)
+                        readonly property bool up: root.hostReachable(hostCol.hostData)
                         RowLayout {
                             width: parent.width
                             spacing: 8
-                            Rectangle { width: root.sz(9); height: width; radius: width / 2; color: "transparent"; border.width: 2; border.color: root.meshTint(hostCol.modelData.mesh) }
-                            Text { text: hostCol.modelData.name; color: hostCol.modelData.here ? cPhosphor : cBone; font.family: "monospace"; font.pixelSize: root.fs(14) }
-                            Text { visible: !!hostCol.modelData.here; objectName: "hereTag"; text: "THIS MACHINE"; color: cPhosphor; font.family: "monospace"; font.pixelSize: root.fs(9); font.letterSpacing: 1 }
-                            Text { visible: !hostCol.up; text: "offline · seen " + root.clock(hostCol.modelData.lastSeen); color: cAmber; font.family: "monospace"; font.pixelSize: root.fs(10) }
+                            Rectangle { width: root.sz(9); height: width; radius: width / 2; color: "transparent"; border.width: 2; border.color: root.meshTint(hostCol.hostData.mesh) }
+                            Text { text: hostCol.hostData.name; color: hostCol.hostData.here ? cPhosphor : cBone; font.family: "monospace"; font.pixelSize: root.fs(14) }
+                            Text { visible: !!hostCol.hostData.here; objectName: "hereTag"; text: "THIS MACHINE"; color: cPhosphor; font.family: "monospace"; font.pixelSize: root.fs(9); font.letterSpacing: 1 }
+                            Text { visible: !hostCol.up; text: "offline · seen " + root.clock(hostCol.hostData.lastSeen); color: cAmber; font.family: "monospace"; font.pixelSize: root.fs(10) }
                             // The meshes give way on a narrow panel, cut short:
                             // "+ session" stays (it was pushed out, 2026-10-19).
                             Text { objectName: "hostMeshes"; Layout.fillWidth: true; Layout.minimumWidth: 0; elide: Text.ElideRight
-                                   text: hostCol.modelData.meshes && hostCol.modelData.meshes.length ? hostCol.modelData.meshes.join(" · ") : hostCol.modelData.mesh
-                                   color: root.meshTint(hostCol.modelData.mesh); font.family: "monospace"; font.pixelSize: root.fs(10) }
+                                   text: hostCol.hostData.meshes && hostCol.hostData.meshes.length ? hostCol.hostData.meshes.join(" · ") : hostCol.hostData.mesh
+                                   color: root.meshTint(hostCol.hostData.mesh); font.family: "monospace"; font.pixelSize: root.fs(10) }
                             Lnk { objectName: "newSessionLink"; visible: hostCol.up; text: "+ session"; onClicked: {
-                                newSession.host = hostCol.modelData
+                                newSession.host = hostCol.hostData
                                 root.agentCreating = true
-                                Qt.callLater(function() { root.loadHarnesses(hostCol.modelData); root.loadConversations(hostCol.modelData) })
+                                Qt.callLater(function() { root.loadHarnesses(hostCol.hostData); root.loadConversations(hostCol.hostData) })
                             } }
                         }
                         Text {
-                            visible: hostCol.modelData.sessions.length === 0
+                            visible: hostCol.hostData.sessions.length === 0
                             text: "no sessions yet"; color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(10)
                         }
                         Text {
-                            visible: hostCol.modelData.sessions.length > 0 && root.unstarred(hostCol.modelData).length === 0
+                            visible: hostCol.hostData.sessions.length > 0 && root.unstarred(hostCol.hostData).length === 0
                             text: "all starred"; color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(10)
                         }
                         Repeater {
-                            model: root.unstarred(hostCol.modelData)
+                            model: hostCol.sessKeys
                             delegate: SessionCard {
-                                required property var modelData
+                                required property string modelData
+                                readonly property var found: root.sessionIn(hostCol.hostData, modelData)
+                                visible: !!found
                                 width: hostCol.width
-                                host: root.hostFor(hostCol.modelData, modelData)
-                                sess: modelData
+                                host: root.hostFor(hostCol.hostData, found)
+                                sess: found || ({ name: modelData })
                             }
                         }
                     }

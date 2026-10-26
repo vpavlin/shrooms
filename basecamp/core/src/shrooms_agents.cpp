@@ -430,20 +430,24 @@ void Hub::find(const std::string& peers)
                     askTasks = rounds_[p[2]]++ % kTasksEvery == 0 || tasks_.find(p[2]) == tasks_.end();
                     if (!askTasks) tasks = tasks_[p[2]];
                 }
+                // Without each task's conversation (ADR-069's history=0): the
+                // view reads a task's metadata and status, and the history
+                // and artifacts were most of 0.3-0.7 MB a machine (2026-10-26).
+                // An agent from before it sends them anyway.
                 if (ok && askTasks) {
                     std::string terr;
-                    if (!request(p[2], "GET", "/v1/tasks", "", 3, tasks, terr) || tasks.empty() || tasks[0] != '{') tasks = "{}";
+                    if (!request(p[2], "GET", "/v1/tasks?history=0", "", 3, tasks, terr) || tasks.empty() || tasks[0] != '{') tasks = "{}";
                 }
-                if (!ok) tasks = "{}";
                 std::lock_guard<std::mutex> g(mu_);
                 if (ok) {
-                    tasks_[p[2]] = tasks;
+                    auto t = tasks_.find(p[2]);
+                    if (t == tasks_.end() || t->second != tasks) { tasks_[p[2]] = tasks; tasksGen_++; }
                     std::string host = "{\"name\":\"" + jsonEscape(p[0]) + "\",\"mesh\":\"" + jsonEscape(p[1]) +
-                                       "\",\"address\":\"" + jsonEscape(p[2]) + "\",\"list\":" + body + ",\"tasks\":" + tasks + "}";
+                                       "\",\"address\":\"" + jsonEscape(p[2]) + "\",\"list\":" + body + "}";
                     auto it = found_.find(p[2]);
                     if (it == found_.end() || it->second != host) { found_[p[2]] = host; foundGen_++; }
                 } else {
-                    tasks_.erase(p[2]);
+                    if (tasks_.erase(p[2]) > 0) tasksGen_++;
                     rounds_.erase(p[2]);
                     if (found_.erase(p[2]) > 0) foundGen_++;
                 }
@@ -461,10 +465,38 @@ std::string Hub::found()
     bool first = true;
     for (const auto& kv : found_) {
         if (!first) out += ",";
+        // As before agentsFindSince: each host with its tasks.
+        auto t = tasks_.find(kv.first);
+        out += kv.second.substr(0, kv.second.size() - 1) + ",\"tasks\":" + (t == tasks_.end() ? std::string("{}") : t->second) + "}";
+        first = false;
+    }
+    return out + "]";
+}
+
+std::string Hub::foundHosts()
+{
+    std::lock_guard<std::mutex> g(mu_);
+    std::string out = "[";
+    bool first = true;
+    for (const auto& kv : found_) {
+        if (!first) out += ",";
         out += kv.second;
         first = false;
     }
     return out + "]";
+}
+
+std::string Hub::foundTasks()
+{
+    std::lock_guard<std::mutex> g(mu_);
+    std::string out = "{";
+    bool first = true;
+    for (const auto& kv : tasks_) {
+        if (!first) out += ",";
+        out += "\"" + jsonEscape(kv.first) + "\":" + kv.second;
+        first = false;
+    }
+    return out + "}";
 }
 
 void Hub::stopFollower()
