@@ -482,7 +482,7 @@ func (g *Gateway) serve(h *servedHost, l *liveConn) {
 		return
 	}
 	g.log.Debug("LAN host connection", "host", h.spec.Name, "port", l.port, "from", l.from)
-	splice(l.c, lan)
+	splice(l.c, lan, idleAfter)
 }
 
 func (h *servedHost) take(l *liveConn) bool {
@@ -528,11 +528,13 @@ func remoteAddr(c net.Conn) netip.Addr {
 // the gateway's slots, open indefinitely (2026-10-25). Both directions count,
 // so a one-way stream (a camera) is not idle; a printer's MQTT keepalive is a
 // minute, far inside it.
-var idleAfter = 30 * time.Minute
+const idleAfter = 30 * time.Minute
 
 // splice copies both ways, passing on a half-close, until both sides end or
-// nothing has moved either way for idleAfter.
-func splice(a, b net.Conn) {
+// nothing has moved either way for idle. A parameter, not the constant read
+// in here: a test that shortened a package variable raced a connection an
+// earlier test left splicing (CI, 2026-10-26).
+func splice(a, b net.Conn, idle time.Duration) {
 	var last atomic.Int64
 	last.Store(time.Now().UnixNano())
 	done := make(chan struct{}, 2)
@@ -547,14 +549,14 @@ func splice(a, b net.Conn) {
 	}
 	go cp(a, b)
 	go cp(b, a)
-	tick := time.NewTicker(min(idleAfter/4, time.Minute))
+	tick := time.NewTicker(min(idle/4, time.Minute))
 	defer tick.Stop()
 	for ended := 0; ended < 2; {
 		select {
 		case <-done:
 			ended++
 		case <-tick.C:
-			if time.Since(time.Unix(0, last.Load())) >= idleAfter {
+			if time.Since(time.Unix(0, last.Load())) >= idle {
 				a.Close()
 				b.Close()
 			}

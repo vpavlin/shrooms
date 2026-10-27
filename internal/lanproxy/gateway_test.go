@@ -330,14 +330,10 @@ func TestOnlyAPhysicalLinkIsALan(t *testing.T) {
 // A spliced connection that carries nothing either way is closed after the
 // idle limit; one that keeps carrying, even one way, is not.
 func TestAnIdleLANConnectionIsClosed(t *testing.T) {
-	old := idleAfter
-	idleAfter = 200 * time.Millisecond
-	defer func() { idleAfter = old }()
-
 	a1, a2 := net.Pipe()
 	b1, b2 := net.Pipe()
 	ended := make(chan struct{})
-	go func() { splice(a2, b1); close(ended) }()
+	go func() { splice(a2, b1, 200*time.Millisecond); close(ended) }()
 
 	// Busy one way for longer than the limit.
 	go io.Copy(io.Discard, b2)
