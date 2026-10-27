@@ -73,6 +73,21 @@ On this laptop, against the v0.40 release branch built by
   back in 8 ms;
 - the release container build with `TAGS=ld040`: max glibc 2.34.
 
+## Before any node moves
+
+- **A stop right after a start hangs (found 2026-10-27).**
+  - On the release branch (1a3b6c7d), `Start` answers only after about 10 s,
+    and a `Stop` straight after it never answers: the call times out at 30 s,
+    and `destroy` then fails ("in-flight handlers did not drain", the context
+    quarantined).
+  - With a node that has run 2 s, stop takes 0.1 s and destroy succeeds.
+  - On 2026-10-24 the same test passed with a 3 s start, so it depends on
+    what the start is still doing in the background.
+  - `TestANodeCanBeMadeAgainAfterClose` fails under `-tags ld040` until this
+    is understood. The daemon replaces a stuck node in-process, so this must
+    work first. Next step: find which start-time task stop waits on, and
+    report it upstream.
+
 ## Consequences
 
 - Until the flip there are two bindings to keep in step. A change to the API
