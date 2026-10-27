@@ -364,6 +364,11 @@ Item {
             var moved = top.lastPostPath + " " + top.lastPost
             view.cageOpenSession(false)
             console.error("CAGED open=" + cageOpen + " offer=" + (view.cageStatus !== null) + " moved=" + moved + " out=" + top.lastPost)
+            // A fresh conversation, and other agents allowed to ask (ADR-072).
+            view.freshOpenSession()
+            var freshPath = top.lastPostPath
+            view.setFreshByAgents(true)
+            console.error("FRESH new=" + freshPath + " allow=" + top.lastPostPath + " " + top.lastPost)
             view.setAcceptCaged(true)
             var accepted = top.lastPostPath + " " + top.lastPost
             console.error("ACCEPTCAGED " + accepted + " said=" + view.said)

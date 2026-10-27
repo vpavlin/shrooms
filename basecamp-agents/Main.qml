@@ -1255,6 +1255,10 @@ Item {
                 add(e, { kind: "voicenote", id: d.id, error: d.status === "failed", text: d.error || "" })
             else if (e.kind === "stopped") add(e, { kind: "note", text: "asleep; the next message wakes it" })
             else if (e.kind === "restarted") add(e, { kind: "note", text: "restarted" + (e.by ? " from " + e.by : "") })
+            // A fresh conversation (ADR-072): what is above it, the model no longer has.
+            else if (e.kind === "new_conversation") add(e, { kind: "note", text: "— new conversation —" + (e.by ? " from " + e.by : "") + (d.archived ? "; its folder cleared" : "") })
+            else if (e.kind === "setting" && d.fresh_by_agents !== undefined)
+                add(e, { kind: "note", text: (d.fresh_by_agents ? "other agents may start it fresh" : "only its owner starts it fresh") + (e.by ? " from " + e.by : "") })
             else if (e.kind === "task") add(e, { kind: "note", text: taskNote(d.id || "", d.state || "", d.summary || "") })
             else if (e.kind === "renamed") add(e, { kind: "note", text: "renamed (was " + (d.from || "") + ")" + (e.by ? " from " + e.by : "") })
             else if (e.kind === "caged") add(e, { kind: "note", text: cagedNote(d, e.by) })
@@ -2051,6 +2055,24 @@ Item {
     // For a process that stop does not reach — a request hanging on a dropped
     // connection. Only this session's; the others on the machine go on.
     function askRestart() { restartDialog.open() }
+    // A fresh conversation (ADR-072), and whether other agents may ask for one.
+    function askFresh() { freshDialog.open() }
+    function freshOpenSession() {
+        if (!agentOpen) return false
+        var r = agentCall("agentPost", [agentOpen.address, "/v1/sessions/" + agentOpen.session + "/new", ""])
+        if (r === null) return false
+        root.said = "session " + agentOpen.session + " starts fresh with the next message" + (r && r.archived ? "; its folder was cleared" : "")
+        root.saidBad = false
+        return true
+    }
+    function setFreshByAgents(on) {
+        if (!agentOpen) return false
+        if (agentCall("agentPost", [agentOpen.address, "/v1/sessions/" + agentOpen.session + "/settings", JSON.stringify({ fresh_by_agents: on })]) === null) return false
+        root.said = on ? "other agents may start " + agentOpen.session + " fresh" : "only you start " + agentOpen.session + " fresh"
+        root.saidBad = false
+        Qt.callLater(refreshAgents)
+        return true
+    }
     function restartOpenSession() {
         if (!agentOpen) return false
         if (agentCall("agentPost", [agentOpen.address, "/v1/sessions/" + agentOpen.session + "/restart", ""]) === null) return false
@@ -2929,7 +2951,7 @@ Item {
     readonly property var boardCardList: boardCards(meshHosts)
     readonly property var boardEdgeList: boardEdges(meshHosts)
     function askDelete() { deleteDialog.open() }
-    function dialogs() { return [usageDialog, voiceDialog, deleteDialog, renameDialog, modelDialog, rolesDialog, restartDialog, readingDialog, cageDialog] }
+    function dialogs() { return [usageDialog, voiceDialog, deleteDialog, renameDialog, modelDialog, rolesDialog, restartDialog, freshDialog, readingDialog, cageDialog] }
     function closeDialogs() { dialogs().forEach(function(d) { d.close() }) }
     function deleteDialogOpen() { return deleteDialog.visible }
     function deleteOpenSession() {
@@ -3870,6 +3892,48 @@ Item {
                     Layout.topMargin: root.sz(10)
                     Lnk { text: "CLOSE"; base: cBone; font.pixelSize: root.fs(12); onClicked: cagedDialog.close() }
                 }
+            }
+        }
+    }
+    Dialog {
+        id: freshDialog
+        objectName: "freshDialog"
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(root.sz(520), root.width - root.sz(40))
+        padding: root.sz(20)
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        Overlay.modal: Rectangle { color: Qt.rgba(0, 0, 0, 0.6) }
+        background: Rectangle { color: cPanel; radius: root.sz(12); border.color: cRust }
+        header: Item {}
+        footer: Item {}
+        readonly property bool caged: !!(root.agentInfo && root.agentInfo.cage)
+        contentItem: ColumnLayout {
+            spacing: root.sz(14)
+            Text {
+                Layout.fillWidth: true; wrapMode: Text.Wrap
+                text: root.agentOpen ? "Start \"" + root.agentOpen.session + "\" on " + root.agentOpen.name + " fresh?" : ""
+                color: cBone; font.family: "monospace"; font.pixelSize: root.fs(14)
+            }
+            Text {
+                Layout.fillWidth: true; wrapMode: Text.Wrap
+                text: "A new conversation: none of its earlier context. Its name, model, settings and role stay, and the old conversation stays in its history."
+                      + (freshDialog.caged ? " Its working folder is cleared, moved aside for 30 days, but for dot-files, AGENTS.md and what .keep lists; what is installed in its cage stays."
+                                           : " Its folder is not touched.")
+                color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(11)
+            }
+            CheckBox {
+                objectName: "freshByAgentsBox"
+                checked: !!(root.agentInfo && root.agentInfo.fresh_by_agents)
+                text: "Other agents may start it fresh with a task they send. Off, only you can."
+                onToggled: if (!root.setFreshByAgents(checked)) checked = !checked
+            }
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                spacing: root.sz(20)
+                Lnk { text: "CANCEL"; base: cBone; font.pixelSize: root.fs(12); onClicked: freshDialog.close() }
+                Lnk { objectName: "freshConfirm"; text: "START FRESH"; base: cRust; font.pixelSize: root.fs(12)
+                      onClicked: if (root.freshOpenSession()) freshDialog.close() }
             }
         }
     }
@@ -5267,6 +5331,7 @@ Item {
                         Lnk { readonly property bool set: !!(root.agentInfo && ((root.agentInfo.skills || []).length || (root.agentInfo.responsibilities || []).length))
                               objectName: "rolesLink"; text: set ? "SKILLS" : "skills"; base: set ? cSky : cAsh
                               onClicked: Qt.callLater(root.askRoles) }
+                        Lnk { objectName: "newConversationLink"; text: "new conversation"; base: cAsh; onClicked: root.askFresh() }
                         Lnk { text: "restart"; base: cAsh; onClicked: root.askRestart() }
                         Lnk { text: "delete"; base: cAsh; onClicked: root.askDelete() }
                         Lnk { visible: root.agentWorking; text: "■ stop"; base: cRust; onClicked: root.stopTurn() }

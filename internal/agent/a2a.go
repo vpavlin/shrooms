@@ -51,6 +51,9 @@ const (
 	a2aTooMany = -32050
 	// a2aCagedRefused: the session takes no tasks from caged agents.
 	a2aCagedRefused = -32051
+	// a2aFreshRefused: a task asked to start the session fresh and could
+	// not (ADR-072).
+	a2aFreshRefused = -32052
 )
 
 // a2aPart is a Part; only text is taken and given.
@@ -452,6 +455,24 @@ func (h *handler) a2aSend(w http.ResponseWriter, r *http.Request, req rpcRequest
 			return
 		}
 		title, _ := m.Metadata["shrooms/title"].(string)
+		// A fresh start asked for with the task (ADR-072): only on a
+		// session its owner opened to it, never for a task held for the
+		// owner, and only while nothing else is open there; otherwise the
+		// task is refused with why, never quietly given the old context.
+		if fresh, _ := m.Metadata["shrooms/fresh"].(bool); fresh {
+			switch {
+			case held:
+				rpcReply(w, req.ID, nil, &rpcError{a2aFreshRefused, "session " + s.Name() + " holds tasks from you for its owner; it cannot be started fresh for one"})
+				return
+			case !s.FreshByAgents():
+				rpcReply(w, req.ID, nil, &rpcError{a2aFreshRefused, "session " + s.Name() + " is not started fresh by other agents; its owner can allow it (fresh_by_agents), or send the task without fresh"})
+				return
+			}
+			if _, err := h.m.NewConversation(s, by); err != nil {
+				rpcReply(w, req.ID, nil, &rpcError{a2aFreshRefused, err.Error()})
+				return
+			}
+		}
 		if held {
 			t, err = h.m.SubmitHeld(s, m.MessageID, by, sender, strings.Join(text, "\n\n"), taskTitle(title), params.ReferenceTaskIDs)
 			if err == nil {

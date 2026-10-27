@@ -984,6 +984,7 @@ private fun Field(label: String, value: String, onChange: (String) -> Unit) {
 private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String) -> Unit = {}) {
     var askDelete by remember { mutableStateOf(false) }
     var askRestart by remember { mutableStateOf(false) }
+    var askFresh by remember { mutableStateOf(false) }
     var filesOpen by remember { mutableStateOf(false) }
     var cagedOpen by remember { mutableStateOf(false) }
     var meshesOpen by remember { mutableStateOf(false) }
@@ -1540,6 +1541,52 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String
             },
         )
     }
+    // A fresh conversation (ADR-072), and whether other agents may ask for one.
+    if (askFresh) {
+        val caged = info?.cage != null
+        var freshByAgents by remember { mutableStateOf(info?.freshByAgents == true) }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { askFresh = false },
+            containerColor = Palette.Panel,
+            title = { Text("Start ${o.session} fresh?", color = Palette.Bone) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("A new conversation: none of its earlier context. Its name, model, settings and role stay, and the old " +
+                        "conversation stays in its history." +
+                        if (caged) " Its working folder is cleared — moved aside for 30 days — but for dot-files, AGENTS.md and " +
+                            "what .keep lists; what is installed in its cage stays." else " Its folder is not touched.",
+                        style = MaterialTheme.typography.bodySmall, color = Palette.Ash)
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable {
+                        freshByAgents = !freshByAgents
+                        val on = freshByAgents
+                        scope.launch {
+                            withContext(Dispatchers.IO) { runCatching { client.setFreshByAgents(o.session, on) } }
+                                .onFailure { freshByAgents = !on; actionError = it.message ?: "could not change it" }
+                        }
+                    }) {
+                        Text(if (freshByAgents) "☑" else "☐", color = if (freshByAgents) Palette.Phosphor else Palette.Ash)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Other agents may start it fresh with a task they send. Off, only you can.",
+                            style = MaterialTheme.typography.bodySmall, color = Palette.Bone)
+                    }
+                }
+            },
+            confirmButton = {
+                Text("START FRESH", style = MaterialTheme.typography.labelSmall, color = Palette.Rust,
+                    modifier = Modifier.clickable {
+                        askFresh = false
+                        scope.launch {
+                            withContext(Dispatchers.IO) { runCatching { client.newConversation(o.session) } }
+                                .onFailure { actionError = it.message ?: "could not start it fresh" }
+                        }
+                    }.padding(12.dp))
+            },
+            dismissButton = {
+                Text("CANCEL", style = MaterialTheme.typography.labelSmall, color = Palette.Ash,
+                    modifier = Modifier.clickable { askFresh = false }.padding(12.dp))
+            },
+        )
+    }
     if (askRestart) {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { askRestart = false },
@@ -1676,6 +1723,7 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String
                 Link(if (hasRoles) "SKILLS" else "skills", if (hasRoles) Palette.Sky else Palette.Ash) {
                     rolesDraft = skillsText(info?.skills.orEmpty()) to info?.responsibilities.orEmpty().joinToString("\n")
                 }
+                Link("new conversation", Palette.Ash) { askFresh = true }
                 Link("restart", Palette.Ash) { askRestart = true }
                 Link("delete", Palette.Ash) { askDelete = true }
             }

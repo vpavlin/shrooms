@@ -161,6 +161,9 @@ object AgentChat {
                 }
                 "stopped" -> out += ChatItem.Stopped(e.seq, e.time, e.data.optString("reason"))
                 "restarted" -> out += ChatItem.Note(e.seq, e.time, "restarted${by(e)}")
+                // A fresh conversation (ADR-072): what is above it, the model no longer has.
+                "new_conversation" -> out += ChatItem.Note(e.seq, e.time, "— new conversation —${by(e)}" +
+                    (if (e.data.optString("archived").isNotEmpty()) "; its folder cleared" else ""))
                 "renamed" -> out += ChatItem.Note(e.seq, e.time, "renamed (was ${e.data.optString("from")})${by(e)}")
                 "caged" -> out += ChatItem.Note(e.seq, e.time, cagedNote(e.data) + by(e))
                 // An A2A task's end, or its supervision giving up on it.
@@ -173,6 +176,9 @@ object AgentChat {
                     out += ChatItem.Note(e.seq, e.time, modelNote(e.data.optString("model")) + by(e))
                 } else if (e.data.has("skills") || e.data.has("responsibilities")) {
                     out += ChatItem.Note(e.seq, e.time, rolesNote(e.data) + by(e))
+                } else if (e.data.has("fresh_by_agents")) {
+                    out += ChatItem.Note(e.seq, e.time,
+                        (if (e.data.optBoolean("fresh_by_agents")) "other agents may start it fresh" else "only its owner starts it fresh") + by(e))
                 }
                 "claude" -> claude(e, answers, lastStop, out)
             }

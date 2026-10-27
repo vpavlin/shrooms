@@ -101,6 +101,9 @@ type Info struct {
 	Limited *Limited `json:"limited,omitempty"`
 	// AcceptCaged: it takes tasks from caged agents (ADR-044).
 	AcceptCaged bool `json:"accept_caged"`
+	// FreshByAgents: other agents may start it on a fresh conversation
+	// (ADR-072).
+	FreshByAgents bool `json:"fresh_by_agents"`
 	// AcceptFilesFrom: the agents it takes files from, MACHINE/SESSION or
 	// MACHINE/*; FileRequests, those refused lately, for the apps to offer
 	// (drop.go).
@@ -167,6 +170,7 @@ type Session struct {
 	fileAsks        []FileAsk // senders refused lately
 	meshes          []string  // the meshes it is there for; none is all (meshes.go)
 	modelSet        string    // the model chosen for it; "" for its harness's default
+	freshByAgents   bool      // other agents may start it fresh (ADR-072)
 	skills          []Skill   // what it is good at, as its owner set it (roles.go)
 	duties          []string  // what it owns and may do without asking
 	turns           uint64
@@ -291,6 +295,7 @@ type record struct {
 	AcceptCaged     *bool    `json:"accept_caged,omitempty"`
 	AcceptFiles     []string `json:"accept_files_from,omitempty"`
 	AcceptCagedFrom []string `json:"accept_caged_from,omitempty"`
+	FreshByAgents   bool     `json:"fresh_by_agents,omitempty"`
 	Meshes          []string `json:"meshes,omitempty"`
 	ModelSet        string   `json:"model_setting,omitempty"`
 	Skills          []Skill  `json:"skills,omitempty"`
@@ -338,6 +343,7 @@ func NewManager(ctx context.Context, log *slog.Logger, stateDir, claudeBin strin
 			s.acceptCagedFrom = r.AcceptCagedFrom
 			s.meshes = r.Meshes
 			s.modelSet = r.ModelSet
+			s.freshByAgents = r.FreshByAgents
 			s.skills, s.duties = r.Skills, r.Duties
 			s.loadEvents()
 			m.sessions[r.Name] = s
@@ -346,6 +352,8 @@ func NewManager(ctx context.Context, log *slog.Logger, stateDir, claudeBin strin
 	if m.tasks, err = openTaskStore(stateDir); err != nil {
 		return nil, err
 	}
+	// Cleared working directories past their keeping (ADR-072).
+	m.pruneArchive(time.Now())
 	go m.reap()
 	go m.keepAlive(keepAliveEvery)
 	go m.supervise(superviseEvery)
@@ -454,7 +462,7 @@ func (m *Manager) save() error {
 	for _, s := range m.sessions {
 		s.mu.Lock()
 		r := record{Name: s.Name(), Dir: s.dir, ConvID: s.convID, AutoApprove: s.autoApprove, Starred: s.starred,
-			KeepRunning: s.keepRunning, Cage: s.cage, AcceptCaged: s.acceptCaged, AcceptFiles: s.acceptFiles, AcceptCagedFrom: s.acceptCagedFrom, Meshes: s.meshes, ModelSet: s.modelSet,
+			KeepRunning: s.keepRunning, Cage: s.cage, AcceptCaged: s.acceptCaged, AcceptFiles: s.acceptFiles, AcceptCagedFrom: s.acceptCagedFrom, Meshes: s.meshes, ModelSet: s.modelSet, FreshByAgents: s.freshByAgents,
 			Skills: s.skills, Duties: s.duties}
 		if s.harness.Name() != "claude" {
 			r.Harness = s.harness.Name()
@@ -690,7 +698,7 @@ func (s *Session) Info() Info {
 		Running: s.proc != nil, LastSeq: s.seq, AutoApprove: s.autoApprove,
 		ContextUsed: s.ctxUsed, ContextWindow: s.ctxWindow, Preview: s.preview, Model: s.model,
 		Harness: s.harness.Name(), Caps: s.harness.Caps(), Starred: s.starred, Turns: s.turns,
-		KeepRunning: s.keepRunning, AcceptCaged: s.acceptsCaged(),
+		KeepRunning: s.keepRunning, AcceptCaged: s.acceptsCaged(), FreshByAgents: s.freshByAgents,
 		AcceptFilesFrom: append([]string(nil), s.acceptFiles...), FileRequests: append([]FileAsk(nil), s.fileAsks...),
 		AcceptCagedFrom: append([]string(nil), s.acceptCagedFrom...),
 		Meshes:          append([]string(nil), s.meshes...), ModelSetting: s.modelSet, TokensPerSecond: s.tokRate,

@@ -74,6 +74,7 @@ func Handler(log *slog.Logger, m *Manager, who Who) http.Handler {
 	mux.HandleFunc("POST /v1/sessions/{name}/prompts/{id}", h.answer)
 	mux.HandleFunc("POST /v1/sessions/{name}/interrupt", h.interrupt)
 	mux.HandleFunc("POST /v1/sessions/{name}/restart", h.restart)
+	mux.HandleFunc("POST /v1/sessions/{name}/new", h.newConversation)
 	mux.HandleFunc("POST /v1/sessions/{name}/rename", h.rename)
 	mux.HandleFunc("POST /v1/sessions/{name}/cage", h.cage)
 	mux.HandleFunc("POST /v1/sessions/{name}/cage/limits", h.cageLimits)
@@ -278,6 +279,8 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 		// What it is for (ADR-063): its skills, and what it may do without asking.
 		Skills           *[]Skill  `json:"skills"`
 		Responsibilities *[]string `json:"responsibilities"`
+		// Whether other agents may start it fresh (ADR-072).
+		FreshByAgents *bool `json:"fresh_by_agents"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		fail(w, http.StatusBadRequest, err)
@@ -303,6 +306,13 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.log.Info("roles set", "session", s.Name(), "by", h.caller(r))
+	}
+	if req.FreshByAgents != nil {
+		if err := s.SetFreshByAgents(*req.FreshByAgents, h.caller(r)); err != nil {
+			fail(w, http.StatusInternalServerError, err)
+			return
+		}
+		h.log.Info("fresh by agents", "session", s.Name(), "on", *req.FreshByAgents, "by", h.caller(r))
 	}
 	if req.Model != nil {
 		if err := s.SetModel(*req.Model, h.caller(r)); err != nil {
@@ -641,6 +651,27 @@ func (h *handler) rename(w http.ResponseWriter, r *http.Request) {
 	}
 	h.log.Info("session renamed", "from", r.PathValue("name"), "to", in.Name, "by", h.caller(r))
 	writeJSON(w, http.StatusOK, in)
+}
+
+// newConversation starts a session fresh (ADR-072), the owner's way. Not
+// from a cage: a caged agent asks with a task marked shrooms/fresh, which
+// the session's owner must have allowed.
+func (h *handler) newConversation(w http.ResponseWriter, r *http.Request) {
+	s, ok := h.session(w, r)
+	if !ok {
+		return
+	}
+	if r.Header.Get(cagedHeader) != "" {
+		fail(w, http.StatusForbidden, errors.New("a caged agent cannot start a session fresh; send a task marked fresh, if its owner allows that"))
+		return
+	}
+	archived, err := h.m.NewConversation(s, h.caller(r))
+	if err != nil {
+		fail(w, http.StatusConflict, err)
+		return
+	}
+	h.log.Info("new conversation", "session", s.Name(), "by", h.caller(r), "archived", archived)
+	writeJSON(w, http.StatusOK, map[string]any{"session": s.Info(), "archived": archived})
 }
 
 func (h *handler) restart(w http.ResponseWriter, r *http.Request) {

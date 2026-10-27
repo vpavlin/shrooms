@@ -31,9 +31,10 @@ import (
 
 const a2aUsage = `usage:
   shrooms-agent a2a list                                 the agents on the mesh: MACHINE/SESSION, harness, state
-  shrooms-agent a2a send [--wait] [--title T] MACHINE/SESSION TEXT
+  shrooms-agent a2a send [--wait] [--title T] [--fresh] MACHINE/SESSION TEXT
                                                          ask a session: a new task. --wait prints its reply,
-                                                         --title names the task in lists
+                                                         --title names the task in lists, --fresh starts it on a
+                                                         fresh conversation where its owner allows that
   shrooms-agent a2a reply [--wait] TASK TEXT             more on a task you sent: the answer it asked for,
                                                          or a correction. Not a new task
   shrooms-agent a2a send-file [--note N] MACHINE/SESSION FILE
@@ -156,9 +157,10 @@ func a2aMain(args []string) error {
 	fs := flag.NewFlagSet("a2a "+args[0], flag.ContinueOnError)
 	wait := fs.Bool("wait", false, "wait for the turn to end and print the reply")
 	title := fs.String("title", "", "send: a few words saying what you ask, for lists of tasks")
+	fresh := fs.Bool("fresh", false, "send: start the session on a fresh conversation for this task, where its owner allows it")
 	note := fs.String("note", "", "send-file: what the file is and what to do with it")
 	sock := fs.String("socket", "/run/shrooms/shrooms.sock", "the shrooms daemon's control socket, to find machines by name")
-	if err := fs.Parse(flagsFirst(args[1:], "wait")); err != nil {
+	if err := fs.Parse(flagsFirst(args[1:], "wait", "fresh")); err != nil {
 		return err
 	}
 	c := newA2AClient(*sock)
@@ -174,7 +176,7 @@ func a2aMain(args []string) error {
 		fmt.Print(out)
 		return nil
 	case args[0] == "send" && len(rest) >= 2:
-		t, err = c.send(rest[0], strings.Join(rest[1:], " "), *title, *wait)
+		t, err = c.send(rest[0], strings.Join(rest[1:], " "), *title, *wait, *fresh)
 		// Printed as get, reply, ack and cancel take it: with its machine.
 		if machine, _, _ := strings.Cut(rest[0], "/"); err == nil && t.ID != "" && !strings.Contains(t.ID, "/") {
 			t.ID = machine + "/" + t.ID
@@ -259,8 +261,8 @@ func (t cliTask) String() string {
 }
 
 // send asks MACHINE/SESSION; with wait, the answer is the turn's end.
-func (c a2aClient) send(to, text, title string, wait bool) (cliTask, error) {
-	return c.message(to, "", text, title, wait)
+func (c a2aClient) send(to, text, title string, wait, fresh bool) (cliTask, error) {
+	return c.message(to, "", text, title, wait, fresh)
 }
 
 // answer is more on a task already open — what it said it needs:
@@ -271,7 +273,7 @@ func (c a2aClient) answer(ref, text string, wait bool) (cliTask, error) {
 		return cliTask{}, err
 	}
 	session, _, _ := strings.Cut(id, ":")
-	return c.message(name+"/"+session, id, text, "", wait)
+	return c.message(name+"/"+session, id, text, "", wait, false)
 }
 
 // taskRef reads a task as MACHINE/SESSION:MESSAGE-ID or SESSION:MESSAGE-ID;
@@ -298,7 +300,7 @@ func (c a2aClient) taskRef(ref string) (machine, id string, err error) {
 	return "", "", fmt.Errorf("no machine on the mesh knows task %s: give it as MACHINE/SESSION:MESSAGE-ID", ref)
 }
 
-func (c a2aClient) message(to, taskID, text, title string, wait bool) (cliTask, error) {
+func (c a2aClient) message(to, taskID, text, title string, wait, fresh bool) (cliTask, error) {
 	name, session, ok := strings.Cut(to, "/")
 	if !ok || session == "" {
 		return cliTask{}, fmt.Errorf("%q: want MACHINE/SESSION", to)
@@ -318,6 +320,11 @@ func (c a2aClient) message(to, taskID, text, title string, wait bool) (cliTask, 
 	}
 	if title != "" {
 		meta["shrooms/title"] = title
+	}
+	// A new task on a fresh conversation (ADR-072): honoured only where
+	// the receiver's owner allows it, refused with why elsewhere.
+	if fresh && taskID == "" {
+		meta["shrooms/fresh"] = true
 	}
 	msg := map[string]any{"messageId": newMessageID(), "role": "ROLE_USER",
 		"parts": []any{map[string]any{"text": text}}, "metadata": meta}

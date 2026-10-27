@@ -200,7 +200,7 @@ mkdir -p "$work/agents"
 cp basecamp-agents/Main.qml basecamp-agents/test/AgentsHarness.qml "$work/agents/"
 shot=${AGENTS_SHOT:-$work/agents.png}
 out=$(run "$QML" -I "$work/agents" "$work/agents/AgentsHarness.qml" "$shot")
-echo "$out" | grep -E "^qml: (FINDTASKS|FINDSAME|DRAFTS|RECORDFOR|HOSTS|PROBED|ROWS|STREAMING|PROMPT|CALLS|ATTACHED|SENT|CONVERSATIONS|TAKEOVER|LISTWIDTH|PLANS|GLANCE|TASKROWS|TASKORDER|TASKNAME|ASKER|AGE|TASKROW1)" || true
+echo "$out" | grep -E "^qml: (FRESH|FINDTASKS|FINDSAME|DRAFTS|RECORDFOR|HOSTS|PROBED|ROWS|STREAMING|PROMPT|CALLS|ATTACHED|SENT|CONVERSATIONS|TAKEOVER|LISTWIDTH|PLANS|GLANCE|TASKROWS|TASKORDER|TASKNAME|ASKER|AGE|TASKROW1)" || true
 expect() { echo "$out" | grep -qF "$1" || { echo "FAIL: $2"
     # Show what it actually said, so the next reader does not have to re-run it
     # by hand to find out (which is exactly what this line cost me on 2026-10-10).
@@ -424,6 +424,7 @@ expect "ATTACHED=1 shot.png STICK=true" "a picked file was not attached at once,
 expect "COMPOSER=[ahoj, tady Vašek]" "the voice note's text did not land in the message box"
 expect "OUTBOX=1,2 voice=voice label=[QUEUED · waiting for laptop — connect: no route to host]" "a message or voice note does not go through the outbox, or is not shown queued"
 expect "CANCELLED=1" "a queued voice note cannot be taken back"
+expect "FRESH new=/v1/sessions/shrooms/new allow=/v1/sessions/shrooms/settings {\"fresh_by_agents\":true}" "a fresh conversation, or allowing other agents to ask for one, did not reach the agent"
 expect "FINDTASKS tasks grew=true" "a change to tasks alone did not reach the machine's entry, or sent the hosts again"
 expect "FINDSAME same kept=true" "finding again with nothing changed was carried and rebuilt, not answered \"same\""
 expect "DRAFTS other=[] back=[for the first]" "a session's draft is shown in another, or not kept for its own"

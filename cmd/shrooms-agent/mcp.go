@@ -42,6 +42,9 @@ var mcpTools = []map[string]any{
 				"lists of tasks show it. Always set it on a new task; not used when answering one."},
 			"task": map[string]any{"type": "string", "description": "Only to answer a task that needs input: MACHINE/SESSION:MESSAGE-ID."},
 			"wait": map[string]any{"type": "boolean", "description": "Wait for the reply (default true), for up to 45 s; a task still going after that is returned with its id, to follow with task_status."},
+			"fresh": map[string]any{"type": "boolean", "description": "Start the session on a fresh conversation for this new task: none of its earlier context, and a caged " +
+				"session's working directory cleared (its tools kept). Only where its owner allows other agents to (fresh_by_agents), and only while " +
+				"it has no other task open; refused with why otherwise. For a session with one job per task, such as an auditor; leave it off to talk."},
 		}},
 	},
 	{
@@ -203,6 +206,7 @@ type mcpArgs struct {
 	Path    string `json:"path"`
 	Note    string `json:"note"`
 	Wait    *bool  `json:"wait"`
+	Fresh   bool   `json:"fresh"`
 	Task    string `json:"task"`
 	State   string `json:"state"`
 	Summary string `json:"summary"`
@@ -238,7 +242,7 @@ func (c a2aClient) call(tool string, a mcpArgs) (string, error) {
 		if a.Task != "" {
 			t, err = c.answer(a.Task, a.Text, false)
 		} else {
-			t, err = c.send(a.To, a.Text, a.Title, false)
+			t, err = c.send(a.To, a.Text, a.Title, false, a.Fresh)
 		}
 		if err != nil {
 			return "", err

@@ -54,6 +54,8 @@ data class AgentSession(
     val acceptCaged: Boolean = false,
     /** The caged agents it takes tasks from by name: a session, or a whole machine (ADR-070). */
     val acceptCagedFrom: List<String> = emptyList(),
+    /** Whether other agents may start it on a fresh conversation with a task (ADR-072). */
+    val freshByAgents: Boolean = false,
     /** Tasks from other caged agents, held until the owner allows or declines them. */
     val taskRequests: List<TaskRequest> = emptyList(),
     /** Who it takes files from: MACHINE/SESSION, or a whole machine (ADR-048). */
@@ -258,6 +260,7 @@ class AgentClient(private val address: String) {
                 cage = SessionCage.parse(s.optJSONObject("cage")),
                 limited = Limited.parse(s.optJSONObject("limited")),
                 acceptCaged = s.optBoolean("accept_caged"),
+                freshByAgents = s.optBoolean("fresh_by_agents"),
                 acceptFilesFrom = s.optJSONArray("accept_files_from")?.let { a -> (0 until a.length()).map { a.getString(it) } }.orEmpty(),
                 acceptCagedFrom = s.optJSONArray("accept_caged_from")?.let { a -> (0 until a.length()).map { a.getString(it) } }.orEmpty(),
                 taskRequests = s.optJSONArray("task_requests")?.let { a ->
@@ -556,6 +559,20 @@ class AgentClient(private val address: String) {
     /** Gives the session another name; its history and process go with it. */
     fun rename(session: String, name: String) {
         request("POST", "/v1/sessions/${enc(session)}/rename", JSONObject().put("name", name).toString())
+    }
+
+    /**
+     * Starts it on a fresh conversation (ADR-072): its name, cage, model and settings stay; a caged
+     * session's working directory is cleared, its tools kept. Returns where the cleared files went, "" if none.
+     */
+    fun newConversation(session: String): String {
+        val r = request("POST", "/v1/sessions/${enc(session)}/new", null)
+        return runCatching { JSONObject(r).optString("archived") }.getOrDefault("")
+    }
+
+    /** Whether other agents may start it fresh with a task (ADR-072); only its owner sets this. */
+    fun setFreshByAgents(session: String, on: Boolean) {
+        request("POST", "/v1/sessions/${enc(session)}/settings", JSONObject().put("fresh_by_agents", on).toString())
     }
 
     /** Ends the session's process, stuck or not, and starts it again on the same conversation. */

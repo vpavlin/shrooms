@@ -42,7 +42,7 @@ You do nothing to switch this on. Each session starts with:
 | Tool | Who uses it | What it does |
 |---|---|---|
 | `list_agents` | anyone | every session on the mesh: `MACHINE/SESSION`, harness, state (idle, working, waiting), directory, and what it is good at and responsible for ([below](#what-each-agent-is-for)) |
-| `ask_agent` | the asker | sends a message to `MACHINE/SESSION`, with a short `title` that lists of tasks show; waits for the reply (up to 10 minutes) unless `wait` is false; with `task` set, answers a task that is blocked |
+| `ask_agent` | the asker | sends a message to `MACHINE/SESSION`, with a short `title` that lists of tasks show; waits for the reply (up to 10 minutes) unless `wait` is false; with `task` set, answers a task that is blocked; with `fresh`, asks for the task on a fresh conversation (below) |
 | `task_status` | the asker | where a task stands, and the reply so far |
 | `task_update` | the worker | finishes a task: `done` with a summary, `blocked` with what it needs, or `failed` with why |
 | `task_ack` | the asker | says it has what it needed |
@@ -181,6 +181,32 @@ a week, then dropped.
 state directory. Restarting the agent resumes everything, reminders included,
 where it was.
 
+## A fresh start for a task
+
+Some sessions do one job per task: an auditor, a reviewer. Each job should
+start clean, not carry the last one's context, findings or files. A new task
+can ask for that: `ask_agent` with `fresh`, `a2a send --fresh`, or
+`"shrooms/fresh": true` in the message's metadata from any A2A client
+(ADR-072).
+
+- **Its owner must have allowed it:** the session's `fresh_by_agents`,
+  ticked in the apps' "new conversation" dialog. It's off by default, so no
+  agent can wipe a session its owner did not open to that. Only the owner
+  can change it.
+- **Only while nothing else is open there.** A session that works, has
+  messages waiting or has another task open refuses it. A task held for the
+  owner (ADR-070) can't ask for it.
+- **Refused means refused:** the asker gets an error (`-32052`) saying why,
+  and the task is not run in the old conversation instead.
+- **The caller decides each time.** A task without `fresh` goes on in the
+  session's conversation as before, and a reply on an open task always goes
+  where that task is. So agents can still just talk to it.
+
+A fresh start keeps the session's name, cage, model, settings and role, and
+forgets its conversation: the next message begins a new one. A caged
+session's working directory is cleared too, its tools kept; see "new
+conversation" in [Using the apps](using.md).
+
 ## The watchdog
 
 A model's turn can end with the work half done, and only the worker knows
@@ -260,6 +286,7 @@ agent that would rather run a command:
 shrooms-agent a2a list
 shrooms-agent a2a send --wait homeserver/review "Is the nightly build green?"
 shrooms-agent a2a send --title "Nightly build" homeserver/review "Is it green?"
+shrooms-agent a2a send --fresh --title "Audit foray" proteus/auditor "Audit ~/foray at main."
 shrooms-agent a2a reply --wait homeserver/review:cli-20261008T091502-3f9a1c2e "Yes, main."
 shrooms-agent a2a send-file --note "Last night's log" homeserver/review build.log
 shrooms-agent a2a get    homeserver/review:cli-20261008T091502-3f9a1c2e
@@ -270,7 +297,7 @@ shrooms-agent a2a update review:cli-20261008T091502-3f9a1c2e done "Two problems:
 
 - `send` without `--wait` prints the task id and returns; with it, the reply
   (or the task as it stands after 10 minutes). `--title` names the task in
-  lists.
+  lists. `--fresh` asks for it on a fresh conversation (below).
 - `reply` is more on a task you sent: the answer it asked for, or a
   correction. It is the same task, not a new one.
 - `send-file` pushes a file to a session that takes files from this one;

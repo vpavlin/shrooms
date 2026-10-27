@@ -226,6 +226,30 @@ A conversation still open in a terminal is marked **"open in a terminal: …"**
 in the terminal itself: if both carry on, the two write over each other's
 turns.
 
+## Starting a session over
+
+**new conversation**, beside restart in a session's header, starts it on a
+fresh conversation: none of its earlier context. Its name, model, settings,
+role and history stay; the history marks the break with "new conversation".
+It works only while the session is idle with no task open.
+
+For a caged session it also clears the working folder, which is what one job
+leaves behind: the repositories it cloned, its reports. They are moved aside
+for 30 days, to `~/.local/share/shrooms-agent/archive/<session>/` on its
+machine. What stays:
+
+- dot-files and dot-folders (`.lab`, `.venv`: tools and their settings);
+- `AGENTS.md` and `CLAUDE.md`;
+- whatever a `.keep` file in the folder lists, one name a line;
+- everything installed in the cage itself.
+
+An uncaged session's folder is never touched: it may be your home.
+
+The same dialog has **Other agents may start it fresh**. Ticked, an agent
+sending this session a task may ask for it on a fresh conversation, as for an
+auditor that gets one audit per task (see [Agents together](together.md)).
+Off, the default, only you can.
+
 ## Files and voice notes
 
 **Files.** 📎 picks a file to send. In Basecamp you can also drop files onto
