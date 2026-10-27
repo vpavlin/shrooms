@@ -127,6 +127,28 @@ int main()
         CHECK(has(r, "\"known\":false"), "a key that is not one matched: %s", r.c_str());
     }
 
+    // A recorder that says it has an error and keeps running is passed
+    // over for the next: pw-record with no audio node in PipeWire (the
+    // Duet, 2026-10-27) printed "no target node available", lived on, and
+    // recorded nothing, while parecord worked.
+    {
+        char tmpl[] = "/tmp/core_check_rec_XXXXXX";
+        std::string bin = mkdtemp(tmpl);
+        std::ofstream(bin + "/pw-record") << "#!/bin/sh\necho 'stream node 44 error: no target node available' >&2\nexec sleep 30\n";
+        std::ofstream(bin + "/parecord") << "#!/bin/sh\ntouch " << bin << "/parecord-ran\nexec sleep 30\n";
+        chmod((bin + "/pw-record").c_str(), 0755);
+        chmod((bin + "/parecord").c_str(), 0755);
+        std::string oldPath = std::getenv("PATH") ? std::getenv("PATH") : "";
+        setenv("PATH", (bin + ":" + oldPath).c_str(), 1);
+        r = core.agentRecord("start", "", "", "");
+        struct stat st {};
+        bool parecordRan = ::stat((bin + "/parecord-ran").c_str(), &st) == 0;
+        CHECK(!has(r, "\"error\"") && parecordRan, "the recorder that said error was kept: %s", r.c_str());
+        core.agentRecord("cancel", "", "", "");
+        setenv("PATH", oldPath.c_str(), 1);
+        std::system(("rm -rf " + bin).c_str());
+    }
+
     std::printf(fails ? "%d failed\n" : "all passed\n", fails);
     return fails ? 1 : 0;
 }

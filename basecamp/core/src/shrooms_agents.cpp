@@ -1178,6 +1178,7 @@ bool Hub::speaking(std::string& engine)
 
 namespace {
 std::string slurp(const std::string& path);
+void stopRecorder(int pid);
 }  // namespace
 
 // What a recording that came out empty says: which recorder, and its own
@@ -1237,11 +1238,24 @@ std::string Hub::recordStart()
         }
         // One that ends at once — no PipeWire, no PulseAudio, no device — is
         // not recording: the next one may be (arecord, straight to ALSA).
-        std::this_thread::sleep_for(std::chrono::milliseconds(300));
-        if (::waitpid(pid, nullptr, WNOHANG) == pid) {
+        // Nor is one that says it has an error and goes on: pw-record with
+        // no audio node in PipeWire (the Duet, whose audio is PulseAudio's)
+        // printed "stream node 44 error: no target node available", kept
+        // running and wrote a bare header, while parecord recorded fine
+        // (duet/duet, 2026-10-27). Watched for most of a second.
+        bool ended = false, failed = false;
+        for (int i = 0; i < 7 && !ended && !failed; i++) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            ended = ::waitpid(pid, nullptr, WNOHANG) == pid;
+            std::string said = slurp(errPath);
+            for (auto& c : said) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            failed = said.find("error") != std::string::npos || said.find("no target") != std::string::npos;
+        }
+        if (ended || failed) {
+            if (!ended) stopRecorder(pid);
             std::string said = slurp(errPath);
             while (!said.empty() && (said.back() == '\n' || said.back() == ' ')) said.pop_back();
-            why = std::string(argv[0]) + " stopped at once" + (said.empty() ? "" : ": " + said.substr(0, 200));
+            why = std::string(argv[0]) + (ended ? " stopped at once" : " reported an error") + (said.empty() ? "" : ": " + said.substr(0, 200));
             continue;
         }
         recorder_ = pid;
