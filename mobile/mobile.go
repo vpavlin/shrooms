@@ -253,8 +253,14 @@ func noteJoinResult(configDir string, err error) {
 // Before the first mesh there is no session and therefore no watchdog, so the
 // only cure is ending the process — which a tablet owner discovered on
 // 2026-09-25 by force-stopping the app after two invites went nowhere.
+//
+// It also closes the running session's record, as SessionRebuilt does: the
+// watchdog's restart ends the process with a kill, and the next start read
+// the record left open as one, listing the watchdog's own restarts as
+// "KILLED" among Android's (a phone on 2026-10-31, twice in a morning).
 func NoteRestart(configDir, why string) {
 	appendLog(configDir, "WARN", "restarting the app on purpose: "+why)
+	sessionRestarted(configDir, why)
 }
 
 // joinInvite records the attempt around the exchange, so a device that has

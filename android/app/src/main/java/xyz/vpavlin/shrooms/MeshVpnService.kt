@@ -99,6 +99,13 @@ class MeshVpnService : VpnService() {
     private var offlineNoted = 0L
 
     /**
+     * Rebuilds for a stalled rendezvous plane since it last worked. A field,
+     * not the watchdog's own state: each rebuild starts a new poll loop.
+     * See the stall branch in poll().
+     */
+    private var stallRebuilds = 0
+
+    /**
      * Whether this process has already rebuilt the tunnel to recover names.
      *
      * Once only. A rebuild that does not restore them — a config with no
@@ -538,7 +545,10 @@ class MeshVpnService : VpnService() {
                         hardRestart("rendezvous deaf: ${s.rendezvous.problem.ifEmpty { "nothing of ours heard" }}")
                     }
 
-                    !s.connected || s.rendezvous.ok -> healthy = now
+                    !s.connected || s.rendezvous.ok -> {
+                        healthy = now
+                        if (s.rendezvous.ok) stallRebuilds = 0
+                    }
 
                     // Offline is not a fault, and the cure for a fault makes it
                     // worse.
@@ -610,10 +620,27 @@ class MeshVpnService : VpnService() {
                         // as the other two restarts: a node that is gone again
                         // within half an hour gets the cheaper rebuild, not a
                         // loop of new processes.
-                        if (s.rendezvous.status == "Disconnected" && libraryRestartAllowed()) {
+                        //
+                        // And when rebuilding has already been tried and did
+                        // nothing. On 2026-10-31, on mobile data in a poor
+                        // signal area, a phone rebuilt every 11-19 minutes for
+                        // an hour with "nothing has arrived yet" each time, and
+                        // one rebuild left it subscribed to no topics at all:
+                        // a rebuild keeps the node, and the node was what was
+                        // wrong. Two rebuilds without the plane ever working
+                        // in between is the sign; a connection that works
+                        // never gets here, since any working moment resets it.
+                        if ((s.rendezvous.status == "Disconnected" || stallRebuilds >= 2) &&
+                            libraryRestartAllowed()) {
                             noteLibraryRestart()
-                            hardRestart(s.rendezvous.problem)
+                            val tried = stallRebuilds
+                            stallRebuilds = 0
+                            hardRestart(
+                                if (s.rendezvous.status == "Disconnected") s.rendezvous.problem
+                                else "${s.rendezvous.problem}, after $tried rebuilds did not help"
+                            )
                         } else {
+                            stallRebuilds++
                             Log.w(TAG, "rendezvous stalled: ${s.rendezvous.problem} — rebuilding")
                             MeshState.log("WARN", "rendezvous stalled, reconnecting")
                             restart("rendezvous stalled: ${s.rendezvous.problem}")

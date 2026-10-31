@@ -113,3 +113,33 @@ func TestOccasionalCorrectionsDoNotAccumulate(t *testing.T) {
 		now = now.Add(time.Hour)
 	}
 }
+
+// A peer that drifts again the moment each truce ends gets longer truces, up
+// to RoamTruceMax, without the rewrites in between; one that settles for a
+// truce's length starts from the shortest again.
+func TestTrucesGrowWhileTheFightGoesOn(t *testing.T) {
+	m := &Mesh{log: slog.New(slog.DiscardHandler)}
+	now := time.Now()
+	for i := 0; i < RoamFights; i++ {
+		m.yieldRoam("peer", "k11", now)
+	}
+	want := RoamTruce
+	for round := 0; round < 6; round++ {
+		now = now.Add(want + time.Second) // the truce ends, and it drifts at once
+		if !m.yieldRoam("peer", "k11", now) {
+			t.Fatalf("round %d: corrected again instead of conceding", round)
+		}
+		want = min(want*2, RoamTruceMax)
+		if got := m.roams["peer"].truce; got != want {
+			t.Fatalf("round %d: truce %v, want %v", round, got, want)
+		}
+	}
+	// Settled through a whole truce: corrected again, from the start.
+	now = now.Add(want + RoamTruce)
+	if m.yieldRoam("peer", "k11", now) {
+		t.Error("a settled peer was not corrected")
+	}
+	if m.roams["peer"].truce != 0 {
+		t.Error("the long truce outlived the fight")
+	}
+}
