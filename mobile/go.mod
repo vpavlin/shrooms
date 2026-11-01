@@ -14,6 +14,10 @@ go 1.26.0
 
 toolchain go1.26.10
 
+// No multipath TCP on our listeners (ADR-075): nothing here uses it, and
+// CVE-2026-98432's published root exploit went through an MPTCP listener.
+godebug multipathtcp=0
+
 require (
 	github.com/ethereum/go-ethereum v1.17.0
 	github.com/vpavlin/shrooms v0.0.0
