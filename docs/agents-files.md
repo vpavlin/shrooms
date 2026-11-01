@@ -90,3 +90,7 @@ go to its outbox (ADR-045).
 **Who a sender is.** The machine is the one the mesh says the request came
 from. The session is the one its agent names: the mesh is the boundary, as
 for A2A (ADR-041).
+
+**They are kept two weeks.** A received file is removed 14 days after it
+arrives, with everything else in `uploads/` (`--uploads-keep`; ADR-078).
+Something worth keeping longer is the receiver's to move out of there.

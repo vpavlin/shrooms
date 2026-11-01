@@ -79,10 +79,13 @@ func run() error {
 	openCodeModel := flag.String("opencode-model", "",
 		"the model an OpenCode session on this machine uses unless the session names one; empty leaves OpenCode's own config to decide")
 	agentSock := flag.String("agent-socket", agent.SocketPath(), "this agent's own unix socket, for this machine's user only (ADR-056)")
+	uploadsKeep := flag.Duration("uploads-keep", agent.DefaultUploadsKeep,
+		"how long files sent to sessions (uploads, and what other agents send) are kept; 0 keeps them for good (ADR-078)")
 	mcp := flag.Bool("mcp", true, "give every session the mesh's agents as MCP tools (shrooms-agent mcp) and tell it how to use them")
 	schedules := flag.String("schedules", filepath.Join(home, ".config", "shrooms-agent", "schedules.json"),
 		"the sessions' schedules: this machine's Scala session and which calendar is whose (ADR-064); none if missing")
 	flag.Parse()
+	agent.SetUploadsKeep(*uploadsKeep)
 
 	level := slog.LevelInfo
 	if *verbose {
