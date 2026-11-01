@@ -59,10 +59,6 @@ type instance struct {
 	port      atomic.Uint32
 	ephemeral bool
 
-	// mapped is the external address the router gave us for this mesh's port,
-	// if it gave one (ADR-024).
-	mapped netip.AddrPort
-
 	// remap asks keepMapped to forget what it has and ask again now.
 	//
 	// Sent when the underlay changes. A mapping describes one router, and this

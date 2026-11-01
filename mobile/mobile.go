@@ -36,6 +36,7 @@ import (
 	"github.com/vpavlin/shrooms/internal/identity"
 	"github.com/vpavlin/shrooms/internal/invite"
 	"github.com/vpavlin/shrooms/internal/mesh"
+	"github.com/vpavlin/shrooms/internal/portmap"
 	"github.com/vpavlin/shrooms/internal/rendezvous"
 	"github.com/vpavlin/shrooms/internal/state"
 	"github.com/vpavlin/shrooms/internal/v4"
@@ -133,6 +134,31 @@ type meshInstance struct {
 	// another, and deriving it twice is how the config handed to the mesh
 	// package ended up with the device's port instead of this one.
 	port uint16
+	// remap asks this mesh's port mapper to ask the router again: the
+	// phone changed network (NetworkChanged).
+	remap chan struct{}
+}
+
+// gateway is the router of the network the phone is on, as the app read it
+// from ConnectivityManager (SetGateway), for the port mapper to ask. The Go
+// side cannot find it itself: /proc/net/route is closed to apps on Android.
+var gateway atomic.Value // netip.Addr
+
+// SetGateway records the router of the phone's current network, as an IPv4
+// address, or "" when it has none or the app cannot tell (the mapper then
+// guesses .1 of the phone's own /24). Call it before NetworkChanged, which
+// is what has the mappers ask it.
+func SetGateway(gw string) {
+	a, err := netip.ParseAddr(strings.TrimSpace(gw))
+	if err != nil || !a.Is4() {
+		a = netip.Addr{}
+	}
+	gateway.Store(a)
+}
+
+func currentGateway() netip.Addr {
+	a, _ := gateway.Load().(netip.Addr)
+	return a
 }
 
 // Init creates a new mesh called meshName and returns its network key.
@@ -1030,6 +1056,14 @@ func NetworkChanged(addresses string) int {
 			if in.mesh != nil {
 				in.mesh.NetworkChanged()
 			}
+			// And ask the new network's router for a way in. Never blocks:
+			// a nudge already pending is as good as two.
+			if in.remap != nil {
+				select {
+				case in.remap <- struct{}{}:
+				default:
+				}
+			}
 		}
 	}
 	return len(addrs)
@@ -1345,6 +1379,20 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 		defer close(s.done)
 		wgRun.Wait()
 	}()
+
+	// Ask the router for a way in, as the daemon does (ADR-024, ADR-075).
+	// Without it, a phone behind a home router that filters by sender port
+	// was reachable from an office behind carrier-grade NAT only through the
+	// relay, though the router would have granted a mapping for the asking.
+	for _, in := range instances {
+		in.remap = make(chan struct{}, 1)
+		go func(in *meshInstance) {
+			guard(log, configDir, "port mapping for "+in.label, func() {
+				in.mesh.KeepMapped(ctx, func() *portmap.Client { return &portmap.Client{Gateway: currentGateway()} },
+					in.label, func() uint16 { return in.port }, in.remap)
+			})
+		}(in)
+	}
 
 	if forward != nil {
 		// No socket and no port: the intercept already holds the packets. The

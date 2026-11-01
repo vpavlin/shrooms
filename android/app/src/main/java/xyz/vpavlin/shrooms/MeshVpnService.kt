@@ -940,6 +940,10 @@ class MeshVpnService : VpnService() {
                 // Only when they changed (lastAddresses); a call that failed —
                 // no session yet — is not recorded, so the next one retries.
                 val addrs = underlyingAddresses()
+                // And the router to ask for a port mapping (ADR-075): the
+                // core cannot read routes on Android. Before networkChanged,
+                // which is what has it ask.
+                runCatching { Mobile.setGateway(underlyingGateway()) }
                 if (addrs != lastAddresses) {
                     val taken = runCatching { Mobile.networkChanged(addrs) }.getOrDefault(-1L)
                     if (taken >= 0) lastAddresses = addrs
@@ -1019,6 +1023,19 @@ class MeshVpnService : VpnService() {
      * the core to announce. Empty between networks. Link-local, loopback and
      * multicast addresses are dropped here; the core filters again.
      */
+    /**
+     * The IPv4 router of the underlying network, from its default route, or
+     * "" when it has none (a carrier network often names no gateway).
+     */
+    private fun underlyingGateway(): String {
+        val cm = getSystemService(ConnectivityManager::class.java) ?: return ""
+        val net = underlyingNetwork() ?: return ""
+        val props = cm.getLinkProperties(net) ?: return ""
+        return props.routes
+            .firstOrNull { it.isDefaultRoute && it.gateway is java.net.Inet4Address }
+            ?.gateway?.hostAddress ?: ""
+    }
+
     private fun underlyingAddresses(): String {
         val cm = getSystemService(ConnectivityManager::class.java) ?: return ""
         val net = underlyingNetwork() ?: return ""
