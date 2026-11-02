@@ -1,7 +1,9 @@
 # 052. Backups on our own Logos Storage nodes, encrypted to a Keycard
 
-**Status:** proposed 2026-10-13. The inventory below is done; nothing is
-built yet.
+**Status:** superseded by ADR-077 (2026-11-01). Never built; re-checked
+against current Logos Storage, `--block-ttl 0` expires blocks at once rather
+than never, so this design as written would have lost every backup. The
+inventory below still stands.
 
 ## Context
 
