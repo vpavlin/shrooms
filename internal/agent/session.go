@@ -354,6 +354,8 @@ func NewManager(ctx context.Context, log *slog.Logger, stateDir, claudeBin strin
 	}
 	// Cleared working directories past their keeping (ADR-072).
 	m.pruneArchive(time.Now())
+	// And files sent to sessions past theirs (ADR-078).
+	go m.keepUploads()
 	go m.reap()
 	go m.keepAlive(keepAliveEvery)
 	go m.supervise(superviseEvery)
