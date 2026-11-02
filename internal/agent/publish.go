@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -117,7 +118,7 @@ func (m *Manager) publishRemote(rel string, f *os.File, n int64) (string, error)
 	}
 	req, _ := http.NewRequest(http.MethodPut, u, f)
 	req.ContentLength = n
-	c := &http.Client{Timeout: 10 * time.Minute}
+	c := &http.Client{Timeout: 10 * time.Minute, Transport: &http.Transport{DialContext: dialMeshFirst}}
 	resp, err := c.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("the file server (%s): %w", m.FilesURL, err)
@@ -136,6 +137,19 @@ func (m *Manager) publishRemote(rel string, f *os.File, n int64) (string, error)
 		return "", fmt.Errorf("uploaded %d bytes, but the file server shows %s with %s", n, head.Status, head.Header.Get("Content-Length"))
 	}
 	return u, nil
+}
+
+// dialMeshFirst dials over IPv6 first, the mesh's own addresses, and IPv4
+// only if that fails. A mesh name resolves to both, and a machine's own IPv4
+// alias is a local address that any service listening on 0.0.0.0 answers:
+// pi5 publishing to its own file server reached its nginx and got a 404
+// (2026-11-02), while every other machine reached the server.
+func dialMeshFirst(ctx context.Context, network, addr string) (net.Conn, error) {
+	d := &net.Dialer{Timeout: 10 * time.Second}
+	if c, err := d.DialContext(ctx, "tcp6", addr); err == nil {
+		return c, nil
+	}
+	return d.DialContext(ctx, network, addr)
 }
 
 func (m *Manager) publishedRoot() string { return filepath.Join(m.dir, "published") }
