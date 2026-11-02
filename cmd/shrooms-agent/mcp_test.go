@@ -116,7 +116,8 @@ func TestMCPServesTheMeshsAgents(t *testing.T) {
 	}
 	var list struct{ Tools []struct{ Name string } }
 	json.Unmarshal(got[2], &list)
-	if len(list.Tools) != 7 || list.Tools[6].Name != "schedule" || list.Tools[1].Name != "ask_agent" || list.Tools[3].Name != "task_update" || list.Tools[4].Name != "send_file" {
+	if len(list.Tools) != 8 || list.Tools[7].Name != "schedule" || list.Tools[1].Name != "ask_agent" || list.Tools[3].Name != "task_update" ||
+		list.Tools[4].Name != "send_file" || list.Tools[5].Name != "publish_file" {
 		t.Errorf("tools: %s", got[2])
 	}
 	text := func(id float64) (string, bool) {

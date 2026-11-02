@@ -130,6 +130,8 @@ func proxyAllowed(method, path, rpc string) bool {
 		return true // its own machine and session only (cageProxy)
 	case method == http.MethodPost && isDrop(path):
 		return true // a file to another session, named as this one's (drop.go)
+	case method == http.MethodPost && isPublish(path):
+		return true // a file published, as its own session, on its own machine (publish.go)
 	case isSchedule(path) && (method == http.MethodGet || method == http.MethodPost || method == http.MethodDelete):
 		return true // its own schedule, on its own machine (cageProxy, ADR-064)
 	}
@@ -184,8 +186,8 @@ func (m *Manager) cageProxy(s *Session) http.Handler {
 		}
 		path := "/" + r.PathValue("path")
 		limit := int64(16 << 20)
-		if isDrop(path) {
-			limit = MaxDrop + 1
+		if isDrop(path) || isPublish(path) {
+			limit = max(MaxDrop, MaxPublish) + 1
 		}
 		body, err := io.ReadAll(io.LimitReader(r.Body, limit))
 		if err != nil {
@@ -233,6 +235,13 @@ func (m *Manager) cageProxy(s *Session) http.Handler {
 			}
 			u["session"] = s.Name()
 			body, _ = json.Marshal(u)
+		case isPublish(path):
+			// As its own session, through its own machine's agent.
+			if addr != self.Addr {
+				fail(w, http.StatusForbidden, errors.New("a cage publishes through its own machine's agent"))
+				return
+			}
+			path = "/v1/sessions/" + url.PathEscape(s.Name()) + "/publish"
 		case isSchedule(path):
 			// Its own calendar only: on this machine, as its own session.
 			if addr != self.Addr {

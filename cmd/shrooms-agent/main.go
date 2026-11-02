@@ -81,6 +81,9 @@ func run() error {
 	agentSock := flag.String("agent-socket", agent.SocketPath(), "this agent's own unix socket, for this machine's user only (ADR-056)")
 	uploadsKeep := flag.Duration("uploads-keep", agent.DefaultUploadsKeep,
 		"how long files sent to sessions (uploads, and what other agents send) are kept; 0 keeps them for good (ADR-078)")
+	filesURL := flag.String("files-url", os.Getenv("SHROOMS_AGENT_FILES_URL"),
+		"the mesh's file server, where sessions publish files (any server that takes an HTTP PUT, e.g. http://files.pi5.office.mesh); "+
+			"empty: this agent keeps them and serves them on its mesh addresses at /files/ (ADR-079); default $SHROOMS_AGENT_FILES_URL")
 	mcp := flag.Bool("mcp", true, "give every session the mesh's agents as MCP tools (shrooms-agent mcp) and tell it how to use them")
 	schedules := flag.String("schedules", filepath.Join(home, ".config", "shrooms-agent", "schedules.json"),
 		"the sessions' schedules: this machine's Scala session and which calendar is whose (ADR-064); none if missing")
@@ -139,6 +142,7 @@ func run() error {
 	// (asker.go) — on every agent, caged or not: without it the notes named
 	// tasks with no machine, which task_ack cannot take (2026-10-10).
 	m.Socket = *agentSock
+	m.FilesURL, m.Port = *filesURL, *port
 	m.DaemonSocket = *sock
 	// Sessions, and the tools they start, find this agent where it is.
 	os.Setenv("SHROOMS_AGENT_SOCKET", *agentSock)

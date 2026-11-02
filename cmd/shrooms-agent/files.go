@@ -206,3 +206,53 @@ func outboxMain(args []string) error {
 	fmt.Println(out.Result)
 	return nil
 }
+
+// publish puts the file at path where people read it (ADR-079), through this
+// machine's agent, as this session: a link on the mesh.
+func (c a2aClient) publish(path, area, folder, name string) (string, error) {
+	session := os.Getenv("SHROOMS_AGENT_SESSION")
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	if fi, err := f.Stat(); err != nil || fi.IsDir() {
+		return "", fmt.Errorf("%s: not a file", path)
+	} else if fi.Size() > agent.MaxPublish {
+		return "", fmt.Errorf("%s is %d MB; a published file may be at most %d MB", path, fi.Size()>>20, agent.MaxPublish>>20)
+	}
+	if name == "" {
+		name = filepath.Base(path)
+	}
+	addr, err := c.resolve("localhost")
+	if err != nil {
+		return "", err
+	}
+	if session == "" {
+		session = "-" // a cage's proxy names its own session whatever this says
+	}
+	q := url.Values{"area": {area}, "folder": {folder}, "name": {name}}
+	req, _ := http.NewRequest(http.MethodPost, c.base(addr)+"/v1/sessions/"+url.PathEscape(session)+"/publish?"+q.Encode(), f)
+	req.Header.Set("Content-Type", "application/octet-stream")
+	resp, err := c.http(10 * time.Minute).Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	var out struct {
+		URL   string   `json:"url"`
+		URLs  []string `json:"urls"`
+		Error string   `json:"error"`
+	}
+	json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out)
+	if resp.StatusCode/100 != 2 {
+		if out.Error == "" {
+			out.Error = resp.Status
+		}
+		return "", errors.New(out.Error)
+	}
+	if len(out.URLs) > 1 {
+		return out.URL + "\n(the same file from the machine's other meshes: " + strings.Join(out.URLs[1:], ", ") + ")", nil
+	}
+	return out.URL, nil
+}

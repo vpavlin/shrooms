@@ -201,8 +201,13 @@ var validName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$`)
 
 // Manager owns every session on this machine.
 type Manager struct {
-	log *slog.Logger
-	dir string // state: sessions.json and one event log per session
+	// FilesURL is the mesh's file server, where sessions publish (any server
+	// that takes a PUT); "" serves published files from this agent itself
+	// (publish.go, ADR-079). Port is the agent's port on its mesh addresses.
+	FilesURL string
+	Port     int
+	log      *slog.Logger
+	dir      string // state: sessions.json and one event log per session
 	// usage is what the session logs say the model did, read incrementally
 	// (Usage).
 	usage usageCache

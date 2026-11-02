@@ -183,3 +183,13 @@ func TestTheOwnerDecidesOnEachCage(t *testing.T) {
 		t.Error("the allow list did not survive a restart")
 	}
 }
+
+// A caged session may publish, as itself, on its own machine (ADR-079).
+func TestCageMayPublish(t *testing.T) {
+	if !proxyAllowed(http.MethodPost, "/v1/sessions/x/publish", "") {
+		t.Error("publish refused to a cage")
+	}
+	if proxyAllowed(http.MethodGet, "/v1/sessions/x/publish", "") || proxyAllowed(http.MethodPost, "/v1/sessions/x/publish/more", "") {
+		t.Error("more than publish allowed")
+	}
+}

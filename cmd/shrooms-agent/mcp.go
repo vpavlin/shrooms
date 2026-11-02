@@ -78,6 +78,21 @@ var mcpTools = []map[string]any{
 		}},
 	},
 	{
+		"name": "publish_file",
+		"description": "Publish a file so people (your owner) and other agents can open it: you get a link on the mesh. " +
+			"Use this to share anything (a report, a build, screenshots, data) instead of email, chat services or " +
+			"third-party upload sites. Pick the area: projects (work on something), reviews (a review or audit), " +
+			"releases (an installable build, folder APP/VERSION), notes (a report to keep), tmp (short-lived, removed " +
+			"after two weeks); folder is what it belongs to (default: your session's name). Everyone on the mesh can read " +
+			"what you publish: never publish secrets, keys or private data. At most 100 MB a file.",
+		"inputSchema": map[string]any{"type": "object", "required": []string{"path", "area"}, "properties": map[string]any{
+			"path":   map[string]any{"type": "string", "description": "the file on this machine"},
+			"area":   map[string]any{"type": "string", "enum": []string{"projects", "reviews", "releases", "notes", "tmp"}},
+			"folder": map[string]any{"type": "string", "description": "what it belongs to, e.g. shrooms-backup or whisperbox/0.5.3; default your session's name"},
+			"name":   map[string]any{"type": "string", "description": "the file's name there; default its own"},
+		}},
+	},
+	{
 		"name":        "task_ack",
 		"description": "Close a task you gave another agent, once you have what you needed from it: MACHINE/SESSION:MESSAGE-ID.",
 		"inputSchema": map[string]any{"type": "object", "required": []string{"task"}, "properties": map[string]any{
@@ -204,6 +219,9 @@ type mcpArgs struct {
 	Text    string `json:"text"`
 	Title   string `json:"title"`
 	Path    string `json:"path"`
+	Area    string `json:"area"`
+	Folder  string `json:"folder"`
+	Name    string `json:"name"`
 	Note    string `json:"note"`
 	Wait    *bool  `json:"wait"`
 	Fresh   bool   `json:"fresh"`
@@ -276,6 +294,15 @@ func (c a2aClient) call(tool string, a mcpArgs) (string, error) {
 			return "", err
 		}
 		return fmt.Sprintf("sent %s to %s, kept there at %s", filepath.Base(a.Path), a.To, at), nil
+	case "publish_file":
+		if a.Path == "" || a.Area == "" {
+			return "", fmt.Errorf("publish_file needs path and area")
+		}
+		u, err := c.publish(a.Path, a.Area, a.Folder, a.Name)
+		if err != nil {
+			return "", err
+		}
+		return "published: " + u, nil
 	case "task_status", "task_ack":
 		method := "GetTask"
 		if tool == "task_ack" {
