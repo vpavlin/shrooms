@@ -494,6 +494,7 @@ PAGE = """<!doctype html>
     <a href="{up}basecamp.html">desktop</a>
     <a href="{up}keycard.html">keycard</a>
     <a href="{up}agents.html"{here_agents}>agents</a>
+    <a href="{up}backup.html">backup</a>
     <a href="{up}dev.html"{here_dev}>dev notes</a>
     <span class="spacer"></span>
     <a href="https://github.com/vpavlin/shrooms">github</a>

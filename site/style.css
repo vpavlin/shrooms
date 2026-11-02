@@ -170,7 +170,9 @@ nav {
     z-index: 2;
     display: flex;
     align-items: center;
-    gap: 18px;
+    /* 14, not 18: with "backup" the tenth link, 18 wrapped github onto a
+       second line at 1280 px. */
+    gap: 14px;
     flex-wrap: wrap;
 
     /* Padded on the sides, and pulled out by the same amount, so the bar's

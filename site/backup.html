@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shrooms — backup</title>
+<meta name="description" content="Shrooms Backup: your machines back each other up over the mesh — restic, encrypted with keys from your Keycard, kept on your own Logos Storage nodes.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+<meta property="og:title" content="shrooms — backup">
+<meta property="og:description" content="Your machines back each other up over the mesh: restic, keys from your Keycard, copies on your own Logos Storage nodes. No cloud, no account.">
+<meta property="og:image" content="https://shrooms.vpavlin.xyz/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#07090b">
+</head>
+<body>
+<div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+<div class="lattice" aria-hidden="true"></div>
+<canvas id="field"></canvas>
+<div class="grain" aria-hidden="true"></div>
+
+<div class="page">
+<nav>
+    <a class="mark" href="index.html"><img class="nav-logo" src="logo.svg" alt="" width="24" height="24">shrooms</a>
+    <a href="index.html">what &amp; why</a>
+    <a href="start.html">quick start</a>
+    <a href="install.html">install</a>
+    <a href="guides.html">guides</a>
+    <a href="basecamp.html">desktop</a>
+    <a href="keycard.html">keycard</a>
+    <a href="agents.html">agents</a>
+    <a href="backup.html" class="here">backup</a>
+    <a href="dev.html">dev notes</a>
+    <span class="spacer"></span>
+    <a href="https://github.com/vpavlin/shrooms">github</a>
+</nav>
+
+<header class="hero">
+    <h1>Shrooms Backup</h1>
+    <p class="lede">
+        Your machines back each other up, over the mesh.
+    </p>
+    <div class="cta">
+        <a class="primary" href="#install">Install</a>
+        <a href="https://github.com/vpavlin/shrooms-backup">The code</a>
+    </div>
+</header>
+
+<div class="note">
+    <p><strong>New, and being tested.</strong> It backs up its author's
+    machines since November 2026. Restoring works from the command line; the
+    apps cannot restore yet, and nothing tells you when a backup fails unless
+    you look. Read <a href="#limits">what it does not do</a> before trusting
+    it with anything.</p>
+</div>
+
+<figure class="shot">
+    <a href="shots/backup-overview.png"><img src="shots/backup-overview.png" alt="Shrooms Backup in Basecamp: the laptop, jimmy-crib and proteus backing up, their copies in step on proteus, scribe and the VPS, and each mirror's storage and disk" loading="lazy" width="1500" height="860"></a>
+    <figcaption>Three machines backing up and where their copies are, as the mirrors report them. (The author's machines.)</figcaption>
+</figure>
+
+<h2 id="why">Why it belongs next to shrooms</h2>
+<p>
+    You already have several machines on one mesh: a desktop in the office, a
+    box at home, a VPS. Shrooms Backup lets each one back itself up to the
+    others you pick, with no cloud account and no backup service in between.
+    The mesh does the finding: every machine running it is found on its own,
+    from Basecamp or the phone, and the copies travel over the mesh's own
+    encrypted links.
+</p>
+
+<h2 id="how">How it works</h2>
+<ul>
+    <li><strong><a href="https://restic.net">restic</a> does the backing
+    up:</strong> files cut into chunks, each chunk stored once, encrypted,
+    snapshots kept by day and week. After the first run, a run carries only
+    what changed.</li>
+    <li><strong>The copies live in <a href="https://logos.co">Logos
+    Storage</a></strong>, on a private network of your own nodes: each machine
+    runs one on its mesh address, and nothing else joins. A machine uploads
+    its run to its own node; each mirror fetches what it lacks. A run counts
+    only when every mirror holds all of it.</li>
+    <li><strong>Mirrors cannot be told to forget.</strong> What a machine
+    deletes from its backups stays on its mirrors for 30 days, so a machine
+    that is broken into cannot take its history with it.</li>
+    <li><strong>Keys come from your <a href="keycard.html">Keycard</a>.</strong>
+    One card gives every machine a key of its own, worked out again whenever
+    it is needed, so there is nothing to write down beyond the card's
+    recovery phrase. The card goes into a reader on your laptop, never into
+    the machine being backed up; the key reaches that machine over the mesh.
+    Mirrors only ever hold ciphertext.</li>
+    <li><strong>Presets name what to keep</strong>: the mesh identity, the
+    agents' settings, their conversations, SSH and GPG keys, service
+    configs. The irreplaceable part of a machine is usually a few megabytes;
+    any folder can be added.</li>
+    <li><strong>A modest share of each disk:</strong> 10 GB unless you choose
+    more, never more than the disk can give, and a reserve always left
+    free.</li>
+</ul>
+
+<h2 id="install">Install</h2>
+<p>On each machine, with shrooms already installed and on the mesh:</p>
+<pre><code><span class="cmd">curl -fsSLO https://raw.githubusercontent.com/vpavlin/shrooms-backup/main/scripts/install.sh</span>
+<span class="cmd">sudo bash install.sh --mirror --always-on</span>                                   <span class="c"># keeps copies for others</span>
+<span class="cmd">sudo bash install.sh --preset shrooms,keys --mirrors proteus,scribe</span>      <span class="c"># backs itself up</span></code></pre>
+<p>
+    Then give a machine its key from the card, on a machine with a reader:
+    <code>shrooms-backup key --keycard --machine NAME</code>. Run the installer
+    again to update; it keeps what is set.
+</p>
+<p>
+    The apps — a Basecamp module, <code>shrooms_backup</code> with its
+    <code>shrooms_backup_core</code>, and an Android app — show every machine,
+    its runs and its copies, and change its settings from any device among
+    its owners. They are in the author's own repositories so far, not yet in
+    the public ones above; build them from
+    <a href="https://github.com/vpavlin/shrooms-backup">the repository</a>.
+</p>
+
+<h2 id="separate">A separate program</h2>
+<p>
+    Shrooms Backup is its own program, in
+    <a href="https://github.com/vpavlin/shrooms-backup">its own repository</a>,
+    with its own apps: it uses the mesh the way any application does and
+    nothing of shrooms' code. The network stays the boring part.
+    <a href="https://github.com/vpavlin/shrooms-backup/tree/main/docs/adr">Every
+    decision behind it</a>, with its reasons.
+</p>
+
+<h2 id="limits">What it does not do</h2>
+<ul>
+    <li><strong>No restore from the apps yet.</strong> Restoring is
+    <code>shrooms-backup restore --from MIRROR --target DIR</code> on the
+    machine.</li>
+    <li><strong>No alerts yet.</strong> A failed run shows in the apps, but
+    nothing tells you unless you look.</li>
+    <li><strong>No phone tap yet.</strong> Keys come from the card in a USB
+    reader; the Android app cannot set them by NFC yet.</li>
+    <li><strong>Only your own machines.</strong> Copies stay on the mesh's
+    nodes; nothing goes to a storage network outside it, which is where Logos
+    Storage is meant to take it later.</li>
+</ul>
+
+<footer>
+    <p>
+        Shrooms Backup is built in the open at
+        <a href="https://github.com/vpavlin/shrooms-backup">github.com/vpavlin/shrooms-backup</a>,
+        dual licensed Apache-2.0 or MIT.
+        Part of the <a href="https://logos.co">Logos</a> ecosystem.
+    </p>
+</footer>
+</div>
+<script src="field.js"></script>
+<script src="copy.js"></script>
+</body>
+</html>
