@@ -26,6 +26,7 @@ not described. That they are all here is checked; what they say is not.
 | `deploy/metrics/` | Prometheus and Grafana for the fleet (docs/metrics.md). |
 | `deps/` | Native dependencies pinned by content (liblogosdelivery). |
 | `docker/` | Container images: the daemon, the agent, and building liblogosdelivery. |
+| `docker/patches/` | Patches applied to liblogosdelivery when it is built: a Core node relays only its configured shards (ADR-067). |
 | `docs/` | Design notes, analyses and guides. |
 | `docs/adr/` | Architecture decision records, indexed in its README. |
 | `docs/agents/` | The Shrooms Agents guides: setup, using, together, cages. |
