@@ -120,6 +120,11 @@ func nodeConfig(cfg state.Config, learned ...string) waku.Config {
 	if len(entry) > 0 {
 		c["entryNodes"] = entry
 	}
+	// Only when configured. A phone has no resolv.conf to read, and a VPN
+	// app there is another VpnService, which cannot run beside ours anyway.
+	if len(cfg.NameServers) > 0 {
+		c["dnsAddrsNameServers"] = cfg.NameServers
+	}
 	return c
 }
 
