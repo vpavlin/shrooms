@@ -45,7 +45,9 @@ func TestPublishKeptAndServedByTheAgent(t *testing.T) {
 	r.m.Meshes = func() []MeshInfo {
 		return []MeshInfo{{Label: "review", Addr: netip.MustParseAddr("fd4a::1")}, {Label: "office", Addr: netip.MustParseAddr("fdb0::1")}}
 	}
-	r.m.Machines = func() ([]Machine, error) { return []Machine{{Name: "proteus", Addr: netip.MustParseAddr("fdb0::1")}}, nil }
+	r.m.Machines = func() ([]Machine, error) {
+		return []Machine{{Name: "proteus", Addr: netip.MustParseAddr("fdb0::1")}}, nil
+	}
 	us := r.m.publishedURLs("tmp/x", []string{"office"})
 	if len(us) != 2 || !strings.HasPrefix(us[0], "http://proteus.office.mesh:") || !strings.Contains(us[1], ".review.mesh:") || strings.Contains(us[0], "fdb0") {
 		t.Errorf("urls: %v", us)
