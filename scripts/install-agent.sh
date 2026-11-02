@@ -54,7 +54,7 @@ BINARY=
 # In the portable package the agent sits beside this script.
 here=$(cd "$(dirname "$0")" && pwd)
 [ -x "$here/bin/shrooms-agent" ] && BINARY=$here/bin/shrooms-agent
-VOICE=0
+VOICE=0 FILES_URL=""
 UNINSTALL=0
 ADOPT=
 
@@ -64,6 +64,9 @@ usage: sudo $0 [--user NAME] [--voice] [--adopt-pi NAME] [--image REF | --binary
 
   --user NAME   whose agents to serve (default: the user running sudo)
   --voice       also build parakeet-cli and fetch its model, for voice notes
+  --files-url URL  the mesh's file server, where sessions publish files (publish_file,
+                ADR-079): any server that takes an HTTP PUT; without it this agent
+                keeps and serves them itself
   --adopt-pi NAME  take over a pi agent kept running on its own (pi-agent.service,
                 pi in tmux): its newest conversation becomes session NAME, kept running
   --image REF   the image to take shrooms-agent from (default: $IMAGE)
@@ -78,6 +81,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --user) USER_NAME=$2; shift 2 ;;
         --voice) VOICE=1; shift ;;
+        --files-url) FILES_URL=$2; shift 2 ;;
         --adopt-pi) ADOPT=$2; shift 2 ;;
         --image) IMAGE=$2; shift 2 ;;
         --binary) BINARY=$2; shift 2 ;;
@@ -276,6 +280,16 @@ loginctl enable-linger "$USER_NAME"
 if [ -f "$HOME_DIR/.config/systemd/user/shrooms-agent.service" ]; then
     echo "  note: $HOME_DIR/.config/systemd/user/shrooms-agent.service overrides the installed unit;"
     echo "        remove it to use this one"
+fi
+
+# The file server, as a drop-in of its own: it adds to a machine's other
+# drop-ins (pi's keys) rather than rewriting the command line they extend.
+if [ -n "$FILES_URL" ]; then
+    dropin=$HOME_DIR/.config/systemd/user/shrooms-agent.service.d
+    as_user mkdir -p "$dropin"
+    printf '[Service]\n# Where sessions publish files (ADR-079); install-agent.sh --files-url.\nEnvironment=SHROOMS_AGENT_FILES_URL=%s\n' "$FILES_URL" |
+        as_user tee "$dropin/20-files-url.conf" >/dev/null
+    echo "  sessions publish to $FILES_URL"
 fi
 
 # --- a pi agent of its own --------------------------------------------------------

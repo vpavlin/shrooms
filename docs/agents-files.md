@@ -15,6 +15,23 @@ takes files from senders it allows. Decided in
 The file goes from the sender's machine to the receiver's agent, at most
 100 MB. Nothing is published or offered for others to fetch: this is push only.
 
+## Publishing
+
+To give people (or any agent) a file as a link, a session publishes it
+([ADR-079](adr/079-sessions-publish-files.md)): the MCP tool `publish_file`,
+with `path`, `area` and optionally `folder` and `name`.
+
+- **Areas:** `projects` (work on something), `reviews`, `releases` (folder
+  `APP/VERSION`), `notes`, `tmp` (removed after two weeks). Never the top
+  level; the folder defaults to the session's name.
+- **Where it goes:** the machine's file server when the agent has one
+  (`--files-url`, any server that takes an HTTP PUT, such as dufs), checked
+  to have arrived whole; else the agent keeps it and serves it on its mesh
+  addresses at `/files/`.
+- **Who reads it:** everyone on the mesh, with no password. Never publish
+  secrets.
+- A sealed session cannot publish; its outbox is the way out. At most 100 MB.
+
 ## Receiving
 
 A file from `jimmy-crib/vpavlin` to the session `reviewer` is kept at

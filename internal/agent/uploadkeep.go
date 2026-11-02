@@ -67,6 +67,9 @@ func (m *Manager) pruneUploads(now time.Time) (files int, bytes int64) {
 // keepUploads prunes uploads now and then every hour.
 func (m *Manager) keepUploads() {
 	for {
+		if n := m.prunePublishedTmp(time.Now()); n > 0 {
+			m.log.Info("published tmp files past two weeks removed", "files", n)
+		}
 		if n, b := m.pruneUploads(time.Now()); n > 0 {
 			m.log.Info("uploads past their keeping removed", "files", n, "bytes", b,
 				"keep", time.Duration(uploadsKeep.Load()))
