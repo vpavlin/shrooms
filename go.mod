@@ -4,6 +4,10 @@ go 1.26.0
 
 toolchain go1.26.10
 
+// No multipath TCP on our listeners (ADR-075): nothing here uses it, and
+// CVE-2026-98432's published root exploit went through an MPTCP listener.
+godebug multipathtcp=0
+
 require (
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1
 	github.com/keycard-tech/keycard-go/v4 v4.0.1
