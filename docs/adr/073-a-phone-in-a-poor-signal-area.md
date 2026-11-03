@@ -42,6 +42,16 @@ A phone's diagnostics from 2026-10-31, on mobile data in a poor signal area:
 - **On a phone, the no-endpoints warning says the network's addresses could not
   be given**, not the netlink error.
 
+- **The watchdog's holds are bounded and visible** (2026-11-03, build 90). A
+  phone whose delivery died after an airplane-mode toggle stayed dead for hours
+  with its tunnels up and no restart: the settle hold restarted on every
+  network callback, link-property changes (IPv6 address rotation, DNS) among
+  them, and mobile data in a poor area comes and goes. Now only a network
+  coming or going restarts it, the hold lasts at most 15 minutes until the
+  plane works or the watchdog acts, "usable network" counts the networks the
+  callback has seen rather than only the active one, and a hold longer than 10
+  minutes is written to the diagnostics log (`Mobile.NoteWatchdog`).
+
 ## Consequences
 
 - On a well-connected phone nothing changes: the escalation needs two futile
