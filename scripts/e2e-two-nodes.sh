@@ -58,6 +58,9 @@ printf 'pw\npw\n' | "$BIN" init --mesh e2e --config "$WORK/a/config.toml" --stat
     --admin-dir "$WORK/a/admin" --name alpha --port "$A_WG" >"$WORK/a/init.log" 2>&1
 sed -i 's|^mesh\.e2e\.iface = .*|mesh.e2e.iface = "'"$A_IF"'"|' "$WORK/a/config.toml"
 printf 'delivery_port = %d\n' "$A_DELIVERY" >> "$WORK/a/config.toml"
+# A LAN host written the way people write it, without "/tcp:": a daemon that
+# cannot use its lan_hosts must still bring its mesh up (k11, 2026-11-04).
+printf 'mesh.e2e.lan_hosts = ["ha=192.168.0.116:8123"]\n' >> "$WORK/a/config.toml"
 
 "$BIN" daemon --config "$WORK/a/config.toml" --state "$WORK/a/state" \
     --socket "$SOCKS/a.sock" >"$WORK/a/daemon.log" 2>&1 &
@@ -73,6 +76,11 @@ if wait_for 90 "$SOCKS/a.sock"; then ok "node A is up"; else
   bad "node A never bound its socket"
   note "$(grep -vE '^(INF|DBG|WRN|ERR|TRC|NTC) 20' "$WORK/a/daemon.log" | tail -3)"
   exit 1
+fi
+if grep -q 'LAN hosts not offered' "$WORK/a/daemon.log"; then
+  ok "node A is up despite a lan_hosts line it cannot use, and says so"
+else
+  bad "node A did not report its unusable lan_hosts"
 fi
 
 PEER_A=$(grep -o 'peer_id=[A-Za-z0-9]*' "$WORK/a/daemon.log" | head -1 | cut -d= -f2)

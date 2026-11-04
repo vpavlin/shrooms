@@ -41,6 +41,8 @@ type instance struct {
 	// lan answers for the LAN hosts this node offers on this mesh
 	// (ADR-068); nil when its config lists none.
 	lan *lanproxy.Gateway
+	// lanErr is why the config's lan_hosts are not offered, for status.
+	lanErr string
 	// tunName is the interface as the kernel named it, and aliasRoutes the
 	// LAN aliases routed at it now (lanaliases.go).
 	tunName     string
@@ -159,22 +161,31 @@ func startInstance(ctx context.Context, log *slog.Logger, cfg state.Config, st *
 	// a userspace stack above the kernel TUN, so a host's address is in no
 	// kernel namespace. Only when the config lists some: every other node's
 	// data plane is untouched.
+	//
+	// A lan_hosts entry the daemon cannot use is not fatal, any more than a
+	// service is (state.Config.Validate): the mesh comes up without LAN hosts
+	// and status says why. It was fatal, and on k11 (2026-11-04) one edited
+	// line, made to move Home Assistant from a service to a LAN host, stopped
+	// the daemon, and with it every mesh, including the one the machine was
+	// reached over to fix it.
 	var dataDev tun.Device = inbound
 	if len(m.LanHosts) > 0 {
-		specs, err := lanhost.ParseSpecs(m.LanHosts)
+		gw, err := func() (*lanproxy.Gateway, error) {
+			specs, err := lanhost.ParseSpecs(m.LanHosts)
+			if err != nil {
+				return nil, err
+			}
+			return lanproxy.NewGateway(inbound, specs, nk.Prefix(), ms.Identity.DevicePub, self,
+				wg.DefaultMTU, log.With("mesh", m.Label, "part", "lan-hosts"))
+		}()
 		if err != nil {
-			tunDev.Close()
-			return nil, fmt.Errorf("mesh %q: lan_hosts: %w", m.Label, err)
+			in.lanErr = err.Error()
+			log.Error("LAN hosts not offered: the mesh runs without them", "mesh", m.Label, "err", err)
+		} else {
+			in.lan = gw
+			dataDev = gw
+			log.Info("offering LAN hosts, each once the admin grants it", "mesh", m.Label, "hosts", len(m.LanHosts))
 		}
-		gw, err := lanproxy.NewGateway(inbound, specs, nk.Prefix(), ms.Identity.DevicePub, self,
-			wg.DefaultMTU, log.With("mesh", m.Label, "part", "lan-hosts"))
-		if err != nil {
-			tunDev.Close()
-			return nil, fmt.Errorf("mesh %q: lan_hosts: %w", m.Label, err)
-		}
-		in.lan = gw
-		dataDev = gw
-		log.Info("offering LAN hosts, each once the admin grants it", "mesh", m.Label, "hosts", len(specs))
 	}
 
 	wgLevel := device.LogLevelError
