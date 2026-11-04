@@ -420,6 +420,15 @@ The socket has always been `0660`; this is what makes the group half of that
 mean anything. Doing it by hand with `chgrp` works too, and is undone by the
 next restart — which is how this ended up in the config.
 
+#### Editing the config by hand
+
+`shrooms config validate` checks the file the way the daemon reads it. An edit
+the daemon refuses anyway cannot take the machine off its meshes: after every
+clean start it keeps that config as `config.toml.last-good`, and when the one
+in place is refused it starts on that copy, leaves your edit alone, and
+`shrooms status` opens with `CONFIG REFUSED` and the reason. Fix the file and
+restart. ([ADR-080](docs/adr/080-the-daemon-starts-on-the-last-config-that-did.md))
+
 ### 6. Use names instead of addresses
 
 Nothing to do — the daemon runs a resolver for the mesh and registers it with

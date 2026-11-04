@@ -264,5 +264,33 @@ else
   ok "node B is gone from node A's roster (${n}s)"
 fi
 
+# --- a config edit the daemon refuses (ADR-080) -----------------------------
+# Node A started cleanly above, so it kept that config as the last good one.
+# An edit it refuses must not keep it down: it starts on the last good copy,
+# says so in status, and leaves the edited file as it was.
+kill "${PIDS[0]}" 2>/dev/null
+n=0; while kill -0 "${PIDS[0]}" 2>/dev/null && [ "$n" -lt 20 ]; do sleep 1; n=$((n+1)); done
+rm -f "$SOCKS/a.sock"
+if [ -f "$WORK/a/config.toml.last-good" ]; then ok "node A kept the config it started with"; else
+  bad "node A kept no last good config"
+fi
+printf 'listen_port = "not a port\n' >> "$WORK/a/config.toml"
+cp "$WORK/a/config.toml" "$WORK/a/edited.toml"
+"$BIN" daemon --config "$WORK/a/config.toml" --state "$WORK/a/state" \
+    --socket "$SOCKS/a.sock" >"$WORK/a/daemon2.log" 2>&1 &
+PIDS+=($!)
+if wait_for 90 "$SOCKS/a.sock"; then ok "node A is up after a config edit it refuses"; else
+  bad "a refused config edit kept node A down"
+  note "$(grep -vE '^(INF|DBG|WRN|ERR|TRC|NTC) 20' "$WORK/a/daemon2.log" | tail -3)"
+fi
+if "$BIN" status --socket "$SOCKS/a.sock" 2>/dev/null | grep -q "CONFIG REFUSED"; then
+  ok "status says it runs on the last good config"
+else
+  bad "status does not say the config was refused"
+fi
+if cmp -s "$WORK/a/config.toml" "$WORK/a/edited.toml"; then ok "the edited config is left as it was"; else
+  bad "the edited config was changed"
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
