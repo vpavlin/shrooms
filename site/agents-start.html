@@ -64,7 +64,13 @@
     agent serves that machine alone until you add one.</li>
     <li><strong>Claude Code or pi working in a terminal</strong> on that
     machine, as your own user: installed, logged in, paid for. The agent runs
-    what is there; it does not install or log in either.</li>
+    what is there; it does not install or log in either. Install them first,
+    with their own instructions:
+    <a href="https://code.claude.com/docs/en/setup">Claude Code</a>,
+    <a href="https://pi.dev">pi</a>. One installed after the agent shows up
+    within 30 seconds; if it doesn't (an installer that changed your
+    <code>PATH</code>, or an agent older than 4 November 2026), run
+    <code>systemctl --user restart shrooms-agent</code>.</li>
     <li>Linux with systemd, and docker or podman (shrooms already uses one).</li>
 </ul>
 
