@@ -265,9 +265,12 @@ func cmdMeshRename(args []string) error {
 	}
 	if _, ok := cfg.MeshSet[from]; !ok {
 		if from == state.DefaultLabel || cfg.NetworkKey != "" && len(cfg.MeshSet) == 0 {
+			// What to do first, not only why: on k11 (2026-11-04) the
+			// explanation alone left the owner with no next step.
 			return fmt.Errorf("%q is this config's top-level mesh, not a named entry, "+
-				"so there is no label to change. Every other device may call it "+
-				"whatever it likes; this one does not name it at all", from)
+				"so there is no label to change yet. Name it first with "+
+				"`shrooms config flatten` (it becomes %q, the old file is kept), "+
+				"then run this again", from, state.DefaultLabel)
 		}
 		return fmt.Errorf("no mesh called %q; try: shrooms mesh list", from)
 	}
