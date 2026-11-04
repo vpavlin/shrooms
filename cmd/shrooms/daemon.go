@@ -78,9 +78,12 @@ func cmdDaemon(args []string) error {
 
 	// No key yet — no mesh yet. Wait to be told which one this is rather than
 	// exiting, which under systemd is a restart loop nobody reads.
-	if unset, err := configHasNoKey(*cfgPath); err != nil {
-		return err
-	} else if unset {
+	//
+	// A file it cannot read is not "no mesh yet": that goes on to the load
+	// below, which falls back to the last config that started (ADR-080) or
+	// fails with the same error as before. Returning it here kept a daemon
+	// with a last good copy down (caught by e2e-two-nodes).
+	if unset, err := configHasNoKey(*cfgPath); err == nil && unset {
 		return runWaiting(ctx0, log, *cfgPath, *stateDir, *sock)
 	}
 
