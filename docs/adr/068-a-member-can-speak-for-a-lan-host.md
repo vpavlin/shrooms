@@ -248,6 +248,15 @@ from home, the camera didn't).
 - **Desktop only, for now.** Android fixes a VPN's routes when it starts, and
   no phone client has needed it.
 
+**A gateway's `lan_hosts` it cannot use do not stop the daemon** (2026-11-04).
+They did: a line it refused, or a LAN stack that would not start, failed the
+mesh, and the daemon exited with every mesh down. On k11 one edited line, made
+to move Home Assistant from a service to a LAN host, took the machine off the
+mesh it was being reached over. Now the mesh comes up without LAN hosts, the
+log says why at error level, and `shrooms status` gives the reason for each
+host granted to this gateway. The same rule services and LAN aliases already
+follow: nothing optional stands between a machine and its own mesh.
+
 ## Consequences
 
 - **The printer's FTPS is a real risk without an alias.** The FTPS server's

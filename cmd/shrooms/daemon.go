@@ -1727,6 +1727,9 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 					if st.LAN == "" {
 						st.LAN = "granted, but not in this device's lan_hosts"
 					}
+					if in.lanErr != "" {
+						st.LAN = "not offered: this device's lan_hosts: " + in.lanErr
+					}
 				}
 				out.LanHosts = append(out.LanHosts, st)
 			}
