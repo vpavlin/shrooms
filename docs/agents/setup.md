@@ -43,7 +43,11 @@ On each machine that will run agents:
 - **The coding agents themselves, set up as that user.** The installer
   installs neither Claude Code nor pi. Each must work from a terminal as that
   user first: installed, logged in or given its keys, and paid for. The agent
-  only runs what is already there.
+  only runs what is already there. Install them with their own instructions:
+  [Claude Code](https://code.claude.com/docs/en/setup),
+  [pi](https://pi.dev). Ideally before the agent; one installed later is
+  picked up within 30 seconds, as long as it lands on the `PATH` the agent
+  started with (see "pi is not offered" under "Troubleshooting").
 
 You need at least one of Claude Code or pi. A machine with neither still runs
 the agent, but its sessions have nothing to run.
@@ -200,8 +204,8 @@ more reason the agent runs as a normal user: auto-approve depends on it. See
 
 pi ([pi.dev](https://pi.dev)) runs on any model provider, including a local
 one, so a machine without a Claude account can still serve sessions. The
-agent offers pi when it finds `pi` on its `PATH` at startup, and runs it as
-`pi --mode rpc`. pi's model, provider and keys come from pi's own settings,
+agent offers pi when it finds `pi` on its `PATH`, at startup or, if pi is
+installed later, within 30 seconds; and runs it as `pi --mode rpc`. pi's model, provider and keys come from pi's own settings,
 the same as on the command line.
 
 1. **Install pi as the agent's user**, and check that it works from a
@@ -571,6 +575,13 @@ installed through nvm or a Node version manager set up in `.bashrc` is
 therefore missing. Either set `PATH` in `~/.profile`, or give the full path
 with `--pi /home/you/.nvm/versions/node/v22.x/bin/pi`. Check what the service
 sees with `bash -lc 'command -v pi claude'`.
+
+The `PATH` is the one the agent started with. pi installed later into a
+directory already on it is found within 30 seconds; one whose installer added
+a new directory to your profile is not, until the agent restarts:
+`systemctl --user restart shrooms-agent`. Before 2026-11-04 the agent looked
+for pi only at startup, so on an older agent any pi installed after it needs
+that restart.
 
 **pi sessions fail with no model, or a provider's authentication error.** The
 key variable is set in your terminal but not in the service. Add an

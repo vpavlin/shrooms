@@ -202,8 +202,14 @@ func run() error {
 		}
 	}
 	// Other harnesses, when this machine has them (docs/agents-harnesses.md).
+	//
+	// Looked for again every 30 s until found, not only at startup: people
+	// install the agent first and pi after, and the agent went on offering
+	// Claude Code alone until it was restarted, with nothing saying why
+	// (k11, 2026-11-04). Register takes a harness at any time, and sessions
+	// waiting for it get it then.
 	if *piBin != "" {
-		if bin, err := exec.LookPath(*piBin); err == nil {
+		findHarness(ctx, *piBin, func(bin string) {
 			m.Register(agent.Pi{Extra: strings.Fields(*piArgs)}, bin)
 			log.Info("harness", "name", "pi", "bin", bin)
 			m.WatchCredits(ctx)
@@ -212,13 +218,13 @@ func run() error {
 					log.Warn("pi will not have the mesh's agents as tools", "err", err)
 				}
 			}
-		}
+		})
 	}
 	if *openCodeBin != "" {
-		if bin, err := exec.LookPath(*openCodeBin); err == nil {
+		findHarness(ctx, *openCodeBin, func(bin string) {
 			m.Register(agent.OpenCode{Model: *openCodeModel}, bin)
 			log.Info("harness", "name", "opencode", "bin", bin, "model", *openCodeModel)
-		}
+		})
 	}
 	if _, err := os.Stat(*sttModel); err != nil {
 		log.Info("voice notes off: no speech-to-text model", "model", *sttModel)
@@ -469,4 +475,33 @@ func sttEngine(bin, model string) string {
 		return bin
 	}
 	return agent.EngineFor(model)
+}
+
+// findHarness calls found with the program's path once it is on PATH: at once
+// if it is there now, so startup logs it as before, or later from a goroutine
+// that looks every 30 s until it appears or ctx ends.
+func findHarness(ctx context.Context, name string, found func(bin string)) {
+	findHarnessEvery(ctx, name, 30*time.Second, found)
+}
+
+func findHarnessEvery(ctx context.Context, name string, every time.Duration, found func(bin string)) {
+	if bin, err := exec.LookPath(name); err == nil {
+		found(bin)
+		return
+	}
+	go func() {
+		t := time.NewTicker(every)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if bin, err := exec.LookPath(name); err == nil {
+					found(bin)
+					return
+				}
+			}
+		}
+	}()
 }
