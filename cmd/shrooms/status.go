@@ -145,6 +145,14 @@ func cmdStatus(args []string) error {
 		return nil
 	}
 
+	// First, before anything that looks healthy: this daemon is not running
+	// the config in place, and whoever edited it needs to know (ADR-080).
+	if st.ConfigRefused != "" {
+		fmt.Printf("CONFIG REFUSED: running on the last config that started, %s\n", st.ConfigRunning)
+		fmt.Printf("  %s was refused: %s\n", st.Config, st.ConfigRefused)
+		fmt.Printf("  fix it (shrooms config validate checks it), then restart the daemon\n\n")
+	}
+
 	// Online is the announce and up is the tunnel, the same words the ANNOUNCE
 	// and TUNNEL columns use. The header used to say "up" for the announce
 	// count, so it could read "0 up" above a row saying "up 4m".

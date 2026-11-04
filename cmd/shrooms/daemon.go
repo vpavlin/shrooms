@@ -84,7 +84,7 @@ func cmdDaemon(args []string) error {
 		return runWaiting(ctx0, log, *cfgPath, *stateDir, *sock)
 	}
 
-	cfg, err := state.LoadConfig(*cfgPath)
+	cfg, cfgRaw, cfgFallback, err := loadConfigOrLastGood(log, *cfgPath)
 	if err != nil {
 		return err
 	}
@@ -277,7 +277,18 @@ func cmdDaemon(args []string) error {
 			instances = append(instances, in)
 		}
 		if err != nil {
+			// The config loaded but does not start: the next start, systemd's
+			// a few seconds from now, uses the last good one (lastgood.go).
+			if cfgFallback == "" && noteRefused(*cfgPath, cfgRaw, err) {
+				log.Error("this config does not start; the next start uses the last config that did",
+					"config", *cfgPath, "err", err)
+			}
 			return err
+		}
+	}
+	if cfgFallback == "" {
+		if err := saveLastGood(*cfgPath, cfgRaw); err != nil {
+			log.Warn("could not keep a copy of the config that started", "err", err)
 		}
 	}
 
@@ -298,7 +309,7 @@ func cmdDaemon(args []string) error {
 	rt := &runtimeBits{
 		tail: tail, restart: errs, dns: &atomic.Pointer[dnsStatus]{},
 		invites: invites, st: st, cfgPath: *cfgPath,
-		dropped: node.Dropped,
+		dropped: node.Dropped, cfgRefused: cfgFallback,
 	}
 	rl := &reloader{cfgPath: *cfgPath, log: log, instances: instances, baseline: cfg}
 	srv, err := serveControl(ctx, log, *sock, instances, cfg, rl, rt)
@@ -657,6 +668,10 @@ type statusPayload struct {
 	// one: `init --config /tmp/x.toml` once restarted the system daemon, which
 	// had never read that file — and the test suite did it on every run.
 	Config string `json:"config,omitempty"`
+	// ConfigRefused is why that config was refused, when the daemon runs on
+	// the last one that started instead (ConfigRunning). Empty normally.
+	ConfigRefused string `json:"config_refused,omitempty"`
+	ConfigRunning string `json:"config_running,omitempty"`
 
 	// Memory is where this process's memory goes, Go's share split from the
 	// rest — mostly the native delivery library. The daemon runs as root, so
@@ -1482,6 +1497,9 @@ type runtimeBits struct {
 	invites invite.Transport
 	st      *state.State
 	cfgPath string
+	// cfgRefused is why the config at cfgPath was refused, when the daemon
+	// runs on the last good copy instead (lastgood.go); empty otherwise.
+	cfgRefused string
 
 	// dropped reports how many rendezvous events the library discarded
 	// because this process was not reading fast enough.
@@ -1536,6 +1554,10 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 			Version: version,
 			Config:  absPath(rt.cfgPath),
 			Memory:  memPtr(memstat.Read()),
+		}
+		if rt.cfgRefused != "" {
+			out.ConfigRefused = rt.cfgRefused
+			out.ConfigRunning = absPath(lastGoodPath(rt.cfgPath))
 		}
 		if rt != nil {
 			if d := rt.dns.Load(); d != nil {
