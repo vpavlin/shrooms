@@ -86,6 +86,28 @@ class MeshVpnService : VpnService() {
     @Volatile
     private var networkChangedAt = 0L
 
+    /**
+     * The non-VPN networks with internet the callback has been told of, for
+     * hasUsableNetwork. Written from ConnectivityManager's callback thread.
+     */
+    private val usableNetworks = java.util.concurrent.ConcurrentHashMap.newKeySet<Network>()
+
+    /**
+     * When the watchdog's current hold began (0: not holding), and which one,
+     * so a long hold reaches the diagnostics log. See noteHold.
+     */
+    private var holdingSince = 0L
+    private var holdingFor = ""
+    private var holdNoted = 0L
+    private var lastHold = ""
+
+    /**
+     * When the watchdog began holding for a changing network, until the plane
+     * works again or the watchdog acts: the clock NETWORK_SETTLE_MAX runs on.
+     * Not the hold's own clock, which restarts whenever the hold is broken.
+     */
+    private var settlingSince = 0L
+
     // The addresses last handed to the core (Mobile.networkChanged), so it is
     // told only when they change. The callback fires for every INTERNET
     // network — cellular too, while on Wi-Fi — and on every link-properties
@@ -97,6 +119,13 @@ class MeshVpnService : VpnService() {
 
     /** When the watchdog last said it was holding off because the device is offline. */
     private var offlineNoted = 0L
+
+    /**
+     * Rebuilds for a stalled rendezvous plane since it last worked. A field,
+     * not the watchdog's own state: each rebuild starts a new poll loop.
+     * See the stall branch in poll().
+     */
+    private var stallRebuilds = 0
 
     /**
      * Whether this process has already rebuilt the tunnel to recover names.
@@ -143,6 +172,18 @@ class MeshVpnService : VpnService() {
          * node still wedged afterwards is dealt with in the same session.
          */
         private const val NETWORK_SETTLE = 3 * 60_000L
+
+        /**
+         * The longest the watchdog holds for a network that keeps changing.
+         *
+         * NETWORK_SETTLE restarts on every change, and in a poor signal area
+         * mobile data comes and goes every few minutes: on 2026-11-03 a phone
+         * whose delivery died after an airplane-mode toggle stayed dead for
+         * hours, tunnels up, never restarted. A network that has not settled
+         * in this long is not going to; the node still has to be dealt with.
+         */
+        private const val NETWORK_SETTLE_MAX = 15 * 60_000L
+        private const val SETTLING = "network still settling"
 
         /**
          * How often to say "still offline" while the watchdog holds off.
@@ -503,6 +544,8 @@ class MeshVpnService : VpnService() {
                 // long because a reconnect is disruptive and a network that is
                 // genuinely gone will not be fixed by another one.
                 val now = SystemClock.elapsedRealtime()
+                val held = holdingFor
+                holdingFor = ""
                 when {
                     // The delivery library itself has stopped taking requests
                     // — the one fault the branches below cannot see, because
@@ -538,7 +581,11 @@ class MeshVpnService : VpnService() {
                         hardRestart("rendezvous deaf: ${s.rendezvous.problem.ifEmpty { "nothing of ours heard" }}")
                     }
 
-                    !s.connected || s.rendezvous.ok -> healthy = now
+                    !s.connected || s.rendezvous.ok -> {
+                        healthy = now
+                        settlingSince = 0L
+                        if (s.rendezvous.ok) stallRebuilds = 0
+                    }
 
                     // Offline is not a fault, and the cure for a fault makes it
                     // worse.
@@ -564,6 +611,7 @@ class MeshVpnService : VpnService() {
                             offlineNoted = now
                             Log.i(TAG, "no usable network; not restarting anything until one returns")
                         }
+                        noteHold(now, "no usable network")
                         healthy = now
                     }
 
@@ -585,13 +633,19 @@ class MeshVpnService : VpnService() {
                     // at all: there is no repair to attempt yet. If the network
                     // settles and the node is genuinely wedged, this stops
                     // firing and the branch below does its job.
-                    now - networkChangedAt < NETWORK_SETTLE -> {
+                    //
+                    // But not for ever: see NETWORK_SETTLE_MAX.
+                    now - networkChangedAt < NETWORK_SETTLE &&
+                        (settlingSince == 0L || now - settlingSince < NETWORK_SETTLE_MAX) -> {
+                        if (settlingSince == 0L) settlingSince = now
+                        noteHold(now, SETTLING)
                         healthy = now
                     }
 
                     now - healthy > STALL_BEFORE_RECONNECT &&
                         now - revived > REVIVE_COOLDOWN -> {
                         revived = now
+                        settlingSince = 0L
                         // Two different faults, two different answers.
                         //
                         // "Not connected to any fleet peers" means the
@@ -610,19 +664,70 @@ class MeshVpnService : VpnService() {
                         // as the other two restarts: a node that is gone again
                         // within half an hour gets the cheaper rebuild, not a
                         // loop of new processes.
-                        if (s.rendezvous.status == "Disconnected" && libraryRestartAllowed()) {
+                        //
+                        // And when rebuilding has already been tried and did
+                        // nothing. On 2026-10-31, on mobile data in a poor
+                        // signal area, a phone rebuilt every 11-19 minutes for
+                        // an hour with "nothing has arrived yet" each time, and
+                        // one rebuild left it subscribed to no topics at all:
+                        // a rebuild keeps the node, and the node was what was
+                        // wrong. Two rebuilds without the plane ever working
+                        // in between is the sign; a connection that works
+                        // never gets here, since any working moment resets it.
+                        if ((s.rendezvous.status == "Disconnected" || stallRebuilds >= 2) &&
+                            libraryRestartAllowed()) {
                             noteLibraryRestart()
-                            hardRestart(s.rendezvous.problem)
+                            val tried = stallRebuilds
+                            stallRebuilds = 0
+                            hardRestart(
+                                if (s.rendezvous.status == "Disconnected") s.rendezvous.problem
+                                else "${s.rendezvous.problem}, after $tried rebuilds did not help"
+                            )
                         } else {
+                            stallRebuilds++
                             Log.w(TAG, "rendezvous stalled: ${s.rendezvous.problem} — rebuilding")
                             MeshState.log("WARN", "rendezvous stalled, reconnecting")
                             restart("rendezvous stalled: ${s.rendezvous.problem}")
                         }
                     }
                 }
+                if (holdingFor == "" && held != "") endHold(now, held)
                 delay(2000)
             }
         }
+    }
+
+    /**
+     * Note that the watchdog is holding off, in the diagnostics log once the
+     * hold has lasted OFFLINE_LOG_EVERY and again every OFFLINE_LOG_EVERY.
+     *
+     * Holds went only to Android's own log, so diagnostics from a phone whose
+     * delivery stayed dead for hours (2026-11-03) could not say whether the
+     * watchdog had seen the fault and waited or never seen it.
+     */
+    private fun noteHold(now: Long, why: String) {
+        if (holdingSince == 0L || why != lastHold) {
+            holdingSince = now
+            holdNoted = now
+            lastHold = why
+        }
+        holdingFor = why
+        if (now - holdNoted >= OFFLINE_LOG_EVERY) {
+            holdNoted = now
+            val min = (now - holdingSince) / 60_000
+            runCatching {
+                Mobile.noteWatchdog(filesDir.absolutePath, "holding for $min min: $why (${usableNetworks.size} networks)")
+            }
+        }
+    }
+
+    private fun endHold(now: Long, why: String) {
+        val min = (now - holdingSince) / 60_000
+        if (min * 60_000 >= OFFLINE_LOG_EVERY) {
+            runCatching { Mobile.noteWatchdog(filesDir.absolutePath, "stopped holding after $min min: $why") }
+        }
+        holdingSince = 0L
+        lastHold = ""
     }
 
     /**
@@ -892,6 +997,10 @@ class MeshVpnService : VpnService() {
      * watchdog do its job.
      */
     private fun hasUsableNetwork(): Boolean {
+        // The callback's own list first: it sees every non-VPN network with
+        // internet, where activeNetwork is one network, and null for a moment
+        // whenever the default changes. Either saying yes is enough.
+        if (usableNetworks.isNotEmpty()) return true
         val cm = getSystemService(ConnectivityManager::class.java) ?: return true
         val caps = runCatching { cm.getNetworkCapabilities(cm.activeNetwork) }.getOrNull()
             ?: return false
@@ -909,15 +1018,26 @@ class MeshVpnService : VpnService() {
             .build()
 
         val cb = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) = refresh("available")
-            override fun onLost(network: Network) = refresh("lost")
+            override fun onAvailable(network: Network) {
+                usableNetworks.add(network)
+                refresh("available", true)
+            }
+            override fun onLost(network: Network) {
+                usableNetworks.remove(network)
+                refresh("lost", true)
+            }
             override fun onLinkPropertiesChanged(network: Network, props: LinkProperties) =
-                refresh("link properties changed")
+                refresh("link properties changed", false)
 
-            private fun refresh(why: String) {
+            private fun refresh(why: String, moved: Boolean) {
                 // Before anything else, so the watchdog stops counting a
                 // rebuild as a stall even if the work below fails.
-                networkChangedAt = SystemClock.elapsedRealtime()
+                //
+                // Only when a network came or went. Link properties change
+                // for IPv6 temporary-address rotation and DNS updates too,
+                // which tear down nothing, and each one restarted the
+                // watchdog's settle hold.
+                if (moved) networkChangedAt = SystemClock.elapsedRealtime()
 
                 // Tell the system which network the tunnel actually runs over.
                 //
@@ -1036,6 +1156,7 @@ class MeshVpnService : VpnService() {
     private fun unwatchNetworks() {
         val cb = netCallback ?: return
         netCallback = null
+        usableNetworks.clear()
         val cm = getSystemService(ConnectivityManager::class.java)
         runCatching { cm?.unregisterNetworkCallback(cb) }
     }

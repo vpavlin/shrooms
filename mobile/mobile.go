@@ -253,8 +253,25 @@ func noteJoinResult(configDir string, err error) {
 // Before the first mesh there is no session and therefore no watchdog, so the
 // only cure is ending the process — which a tablet owner discovered on
 // 2026-09-25 by force-stopping the app after two invites went nowhere.
+//
+// It also closes the running session's record, as SessionRebuilt does: the
+// watchdog's restart ends the process with a kill, and the next start read
+// the record left open as one, listing the watchdog's own restarts as
+// "KILLED" among Android's (a phone on 2026-10-31, twice in a morning).
 func NoteRestart(configDir, why string) {
 	appendLog(configDir, "WARN", "restarting the app on purpose: "+why)
+	sessionRestarted(configDir, why)
+}
+
+// NoteWatchdog records what the app's watchdog decided not to do, in the log
+// Diagnostics shows.
+//
+// Its holds (no usable network, a network still settling) went only to
+// Android's own log, so a phone whose delivery stayed dead for hours after an
+// airplane-mode toggle (2026-11-03) sent diagnostics that could not say
+// whether the watchdog had seen the fault and waited, or never seen it.
+func NoteWatchdog(configDir, what string) {
+	appendLog(configDir, "INFO", "watchdog: "+what)
 }
 
 // joinInvite records the attempt around the exchange, so a device that has

@@ -179,3 +179,18 @@ func TestARebuildIsNotReportedAsAKill(t *testing.T) {
 		t.Errorf("the rebuild is not recorded as one, with why: %q", s)
 	}
 }
+
+// The watchdog's restart ends the process with a kill; the next start must
+// not list it as one of Android's (2026-10-31).
+func TestARestartOnPurposeIsNotReportedAsAKill(t *testing.T) {
+	dir := t.TempDir()
+	SessionStarted(dir, "v1")
+	NoteRestart(dir, "the watchdog: not connected to any fleet peers")
+	if note := SessionStarted(dir, "v1"); note != "" {
+		t.Errorf("the watchdog's restart was reported as a kill: %q", note)
+	}
+	if s := tail(stopsPath(dir), 10); !strings.Contains(s, "restarted on purpose after") ||
+		!strings.Contains(s, "not connected to any fleet peers") || strings.Contains(s, "KILLED") {
+		t.Errorf("the restart is not recorded as one, with why: %q", s)
+	}
+}
