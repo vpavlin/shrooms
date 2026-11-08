@@ -219,6 +219,7 @@ echo "$out" | grep -qF "HOSTS=" || { echo "$out" | head -20; echo "FAIL: the vie
 if echo "$out" | grep -E "Main\.qml:[0-9]+:.*(TypeError|ReferenceError|is not a function|Cannot (read|assign)|Expected token|Unexpected token|SyntaxError|Expected a qualified name)"; then
     echo "FAIL: the view hit a script error"; exit 1
 fi
+expect "LOGIN before=false needed=true opened=true waiting=waiting sent=abc123 checking=checking then=done email=owner@example.org needed=false" "logging a machine's Claude Code in from \"+ session\" (ADR-081) did not offer it, open the page, send the code or show it logged in"
 expect "HOSTS=1 SESSIONS=2 ENTRIES=2 MESHES=home,office" "the agents were not listed, or a machine on two meshes is not one machine on both (it showed on whichever answered first)"
 # The tasks panel's rows: grouped Needs you / Working / Stalled / Done unacked, with the
 # acked one gone, the ages right, and each row carrying what a person needs to judge it.

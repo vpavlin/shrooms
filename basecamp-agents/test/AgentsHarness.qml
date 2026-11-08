@@ -78,6 +78,9 @@ Item {
     property var voiceCalls: []
     property var usageAsked: []
     property bool noConversations: false
+    // Claude Code's login on the machine (ADR-081): 0 logged out, 1 a code
+    // handed in, 2 logged in.
+    property int loginPhase: -1
     property var gatherAddrs: []
     property int gatheredAsked: 0
     property var usageBody: ({ machine: "laptop",
@@ -253,6 +256,20 @@ Item {
                     return JSON.stringify({ next: upto, more: upto < top.events.length, connected: true, error: "",
                                             events: after >= top.events.length ? [] : top.events.slice(after, upto) })
                 }
+                if (method === "agentGet" && String(args[1]) === "/v1/claude/login")
+                    return JSON.stringify(top.loginPhase >= 1 ? { logged_in: true, method: "claude.ai", email: "owner@example.org",
+                                                                   flow: { id: "f1", state: "done", started: "2026-11-08T10:00:00Z" } }
+                                                              : { logged_in: false })
+                if (method === "agentPost" && String(args[1]) === "/v1/claude/login") {
+                    top.lastPostPath = args[1]
+                    return JSON.stringify({ id: "f1", url: "https://claude.com/cai/oauth/authorize?code=true&state=x", state: "waiting", started: "2026-11-08T10:00:00Z" })
+                }
+                if (method === "agentPost" && String(args[1]) === "/v1/claude/login/f1/code") {
+                    top.lastPost = args[2]; top.lastPostPath = args[1]; top.loginPhase = 1
+                    return JSON.stringify({ flow: { id: "f1", state: "checking", started: "2026-11-08T10:00:00Z" }, login: { logged_in: false } })
+                }
+                if (method === "agentGet" && String(args[1]) === "/v1/harnesses" && top.loginPhase === 0) return JSON.stringify({ harnesses: [
+                    { name: "claude", title: "Claude Code", caps: { approve: true, takeover: true } } ], claude_login: { logged_in: false } })
                 if (method === "agentGet" && String(args[1]) === "/v1/harnesses") return JSON.stringify({ harnesses: [
                     { name: "claude", title: "Claude Code", caps: { approve: true, takeover: true } },
                     { name: "pi", title: "pi", caps: { approve: false, takeover: false } } ],
@@ -677,6 +694,24 @@ Item {
             view.nsHarness = "pi"
             console.error("HARNESS offered=" + offered + " sent=" + made.harness + " auto=" + made.auto_approve
                           + " label=[" + view.harnessLabel("pi") + "][" + view.harnessLabel("claude") + "]")
+            // Claude Code not logged in on the machine: "+ session" offers to
+            // log it in, opens the sign-in page, sends the code, and shows it
+            // logged in once the agent says so (ADR-081).
+            var loggedInBefore = view.loginNeeded
+            top.loginPhase = 0
+            view.nsHarness = "claude"
+            view.loadHarnesses(view.agentHosts[0])
+            var needed = view.loginNeeded
+            view.loginStart(view.agentHosts[0])
+            var opened = top.lastOpen, waiting = view.loginFlow ? view.loginFlow.state : ""
+            view.loginCode = " abc123 "
+            view.loginSend(view.agentHosts[0])
+            var sent = JSON.parse(top.lastPost).code, checking = view.loginFlow ? view.loginFlow.state : ""
+            view.loginPoll(view.agentHosts[0])
+            console.error("LOGIN before=" + loggedInBefore + " needed=" + needed + " opened=" + (opened.indexOf("https://claude.com/cai/oauth/") === 0)
+                          + " waiting=" + waiting + " sent=" + sent + " checking=" + checking
+                          + " then=" + view.loginFlow.state + " email=" + view.claudeLogin.email + " needed=" + view.loginNeeded)
+            top.loginPhase = -1
             view.loadHarnesses(null)
             view.agentCreating = true
             view.openSession(view.agentHosts[0], "shrooms")

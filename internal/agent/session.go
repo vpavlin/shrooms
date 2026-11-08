@@ -255,6 +255,8 @@ type Manager struct {
 	agentAt  func(netip.Addr) string // tests: where an agent is
 	// One renewal of the owner's Claude login at a time (claudeLogin).
 	loginMu sync.Mutex
+	// login: logging this machine's Claude Code in from the apps (login.go).
+	login logins
 	// Schedules are the sessions' calendars (schedule.go, ADR-064); nil
 	// when this machine runs none. checkRunner: tests, where checks run.
 	Schedules   *Schedules

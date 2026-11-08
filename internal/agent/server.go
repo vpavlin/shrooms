@@ -44,8 +44,16 @@ func Handler(log *slog.Logger, m *Manager, who Who) http.Handler {
 	})
 	mux.HandleFunc("GET /v1/harnesses", func(w http.ResponseWriter, r *http.Request) {
 		// With whether sessions can be caged here, for "+ session".
-		writeJSON(w, http.StatusOK, map[string]any{"harnesses": m.Harnesses(), "cage": m.Cages.Status()})
+		// And whether Claude Code is logged in here, so "+ session" can offer
+		// to log it in rather than start a session that cannot answer.
+		writeJSON(w, http.StatusOK, map[string]any{"harnesses": m.Harnesses(), "cage": m.Cages.Status(),
+			"claude_login": m.ClaudeLogin(r.Context(), false)})
 	})
+	// Logging this machine's Claude Code in from the apps (login.go, ADR-081).
+	mux.HandleFunc("GET /v1/claude/login", h.claudeLogin)
+	mux.HandleFunc("POST /v1/claude/login", h.claudeLoginStart)
+	mux.HandleFunc("POST /v1/claude/login/{id}/code", h.claudeLoginCode)
+	mux.HandleFunc("DELETE /v1/claude/login", h.claudeLoginCancel)
 	mux.HandleFunc("POST /v1/sessions", h.create)
 	mux.HandleFunc("DELETE /v1/sessions/{name}", h.remove)
 	mux.HandleFunc("PATCH /v1/sessions/{name}", h.update)
