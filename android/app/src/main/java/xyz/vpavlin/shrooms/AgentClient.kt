@@ -179,8 +179,29 @@ data class CageOffer(
     val shared: Boolean = false, val sharedIn: String = "/shared",
 )
 
-/** What "+ session" offers on a machine: its harnesses, and a cage if it has podman. */
-data class SessionOffer(val harnesses: List<Harness>, val cage: CageOffer?)
+/** What "+ session" offers on a machine: its harnesses, a cage if it has podman, and its Claude Code login (null from an agent too old to say). */
+data class SessionOffer(val harnesses: List<Harness>, val cage: CageOffer?, val claudeLogin: ClaudeLogin? = null)
+
+/**
+ * A machine's Claude Code login (GET /v1/claude/login, ADR-081): the
+ * machine's, not a session's. [flow] is a login started from an app.
+ */
+data class ClaudeLogin(val loggedIn: Boolean, val method: String = "", val email: String = "", val error: String = "", val flow: LoginFlow? = null) {
+    /** Not logged in, and that was read, not a failure to read it. */
+    val needed get() = !loggedIn && error.isEmpty()
+
+    companion object {
+        fun parse(o: JSONObject): ClaudeLogin = ClaudeLogin(o.optBoolean("logged_in"), o.optString("method"), o.optString("email"),
+            o.optString("error"), o.optJSONObject("flow")?.let { LoginFlow.parse(it) })
+    }
+}
+
+/** One `claude auth login` the agent runs: "waiting" for the code, "checking", "done" or "failed". */
+data class LoginFlow(val id: String, val url: String, val state: String, val error: String = "") {
+    companion object {
+        fun parse(o: JSONObject) = LoginFlow(o.optString("id"), o.optString("url"), o.optString("state"), o.optString("error"))
+    }
+}
 
 /** Claude Code alone: what an agent too old to list its harnesses runs. */
 val claudeOnly = listOf(Harness("claude", "Claude Code", true))
@@ -292,6 +313,23 @@ class AgentClient(private val address: String) {
 
     /** The harnesses this machine runs, Claude Code first. */
     fun harnesses(): List<Harness> = offer().harnesses
+
+    /** This machine's Claude Code login, and a login in progress. */
+    fun claudeLogin(): ClaudeLogin = ClaudeLogin.parse(JSONObject(request("GET", "/v1/claude/login", null)))
+
+    /** Starts `claude auth login` there: the flow, with the URL to sign in at. */
+    fun startClaudeLogin(): LoginFlow = LoginFlow.parse(JSONObject(request("POST", "/v1/claude/login", "", timeoutMs = 30_000)))
+
+    /** Hands the sign-in page's code to the waiting login; it is "checking" until claudeLogin() says otherwise. */
+    fun claudeLoginCode(id: String, code: String): ClaudeLogin {
+        val o = JSONObject(request("POST", "/v1/claude/login/${enc(id)}/code", JSONObject().put("code", code.trim()).toString()))
+        return ClaudeLogin.parse(o.optJSONObject("login") ?: JSONObject()).copy(flow = o.optJSONObject("flow")?.let { LoginFlow.parse(it) })
+    }
+
+    /** Gives up on a login in progress. */
+    fun cancelClaudeLogin() {
+        request("DELETE", "/v1/claude/login", null)
+    }
 
     /** The harnesses this machine runs, and whether it can cage a session. */
     fun offer(): SessionOffer =
@@ -715,7 +753,7 @@ fun parseOffer(raw: String): SessionOffer {
             (0 until (ims?.length() ?: 0)).map { i -> ims!!.getString(i) }.ifEmpty { listOf(it.optString("image")) },
             it.optBoolean("nix"), it.optBoolean("sealed"),
             it.optBoolean("shared"), it.optString("shared_in").ifEmpty { "/shared" })
-    })
+    }, o.optJSONObject("claude_login")?.let { ClaudeLogin.parse(it) })
 }
 
 /**

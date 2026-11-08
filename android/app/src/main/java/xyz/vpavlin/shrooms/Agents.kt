@@ -814,6 +814,77 @@ private fun Tick(text: String, on: Boolean, onClick: () -> Unit) {
     }
 }
 
+/**
+ * Logging a machine's Claude Code in (ADR-081): the agent runs `claude auth
+ * login`, the phone opens its URL, and the code the sign-in page shows goes
+ * back. The login stays on that machine, for every session there.
+ */
+@Composable
+private fun ClaudeLoginPanel(h: AgentHost, l: ClaudeLogin, onChange: (ClaudeLogin) -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var code by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    val flow = l.flow
+    fun open(url: String) {
+        runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))) }
+            .onFailure { error = "could not open the sign-in page: ${it.message}" }
+    }
+    // Checking the code: asked again until the agent says done or failed.
+    if (flow?.state == "checking") LaunchedEffect(flow.id) {
+        while (true) {
+            kotlinx.coroutines.delay(2000)
+            val now = withContext(Dispatchers.IO) { runCatching { AgentClient(h.address).claudeLogin() }.getOrNull() } ?: continue
+            onChange(now)
+            if (now.flow?.state != "checking") break
+        }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(when (flow?.state) {
+            null -> "Claude Code is not logged in on ${h.name}: its sessions would only answer \"Not logged in\". Log it in from here — the login stays on that machine, for all its sessions."
+            "waiting" -> "Sign in on the page that opened, then paste the code it shows here."
+            "checking" -> "checking the code…"
+            "done" -> "logged in" + (if (l.email.isNotEmpty()) " as ${l.email}" else "") + " — sessions there can start now"
+            else -> "the login failed: ${flow.error}"
+        }, style = MaterialTheme.typography.bodySmall, color = when (flow?.state) {
+            "done" -> Palette.Phosphor
+            "failed" -> Palette.Amber
+            else -> Palette.Ash
+        })
+        if (flow?.state == "waiting") {
+            Field("code from the sign-in page", code) { code = it }
+            Action("SEND", enabled = !busy && code.isNotBlank()) {
+                busy = true
+                scope.launch {
+                    val r = withContext(Dispatchers.IO) { runCatching { AgentClient(h.address).claudeLoginCode(flow.id, code) } }
+                    busy = false
+                    r.onSuccess { code = ""; error = ""; onChange(it) }.onFailure { error = it.message ?: "could not send it" }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Link("open the page again", Palette.Ash) { open(flow.url) }
+                Link("cancel", Palette.Ash) {
+                    scope.launch {
+                        withContext(Dispatchers.IO) { runCatching { AgentClient(h.address).cancelClaudeLogin() } }
+                        onChange(l.copy(flow = null))
+                    }
+                }
+            }
+        }
+        if (flow == null || flow.state == "failed") Action(if (flow == null) "LOG IN" else "TRY AGAIN", enabled = !busy) {
+            busy = true
+            scope.launch {
+                val r = withContext(Dispatchers.IO) { runCatching { AgentClient(h.address).startClaudeLogin() } }
+                busy = false
+                r.onSuccess { error = ""; onChange(l.copy(flow = it)); if (it.url.isNotEmpty()) open(it.url) }
+                    .onFailure { error = it.message ?: "could not start the login" }
+            }
+        }
+        if (error.isNotEmpty()) Text(error, style = MaterialTheme.typography.bodySmall, color = Palette.Rust)
+    }
+}
+
 @Composable
 private fun NewSession(h: AgentHost, onDone: () -> Unit, onOpen: (String) -> Unit) {
     var convs by remember { mutableStateOf<List<Conversation>?>(null) }
@@ -829,10 +900,12 @@ private fun NewSession(h: AgentHost, onDone: () -> Unit, onOpen: (String) -> Uni
     var caged by remember { mutableStateOf(false) }
     var cageOpts by remember { mutableStateOf(SessionCage("")) }
     var harness by remember { mutableStateOf("claude") }
+    var login by remember { mutableStateOf<ClaudeLogin?>(null) }
     LaunchedEffect(h.address) {
         val o = withContext(Dispatchers.IO) { AgentClient(h.address).offer() }
         harnesses = o.harnesses
         cageOffer = o.cage
+        login = o.claudeLogin
     }
     val chosen = harnesses.firstOrNull { it.name == harness } ?: claudeOnly[0]
     var name by remember { mutableStateOf("") }
@@ -858,6 +931,9 @@ private fun NewSession(h: AgentHost, onDone: () -> Unit, onOpen: (String) -> Uni
                         .clickable { harness = hn.name }.padding(horizontal = 12.dp, vertical = 8.dp))
             }
         }
+        // Claude Code not logged in on that machine: log it in from here,
+        // rather than start a session that only answers "Not logged in".
+        if (harness == "claude") login?.let { l -> if (l.needed || l.flow != null) ClaudeLoginPanel(h, l) { login = it } }
         if (chosen.approves) Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { auto = !auto }) {
             Box(Modifier.size(12.dp).border(1.dp, if (auto) Palette.Phosphor else Palette.Ash, RoundedCornerShape(3.dp))
                 .background(if (auto) Palette.Phosphor else Color.Transparent, RoundedCornerShape(3.dp)))

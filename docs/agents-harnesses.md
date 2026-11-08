@@ -1,6 +1,6 @@
 # Shrooms Agents: logging in, and harnesses other than Claude Code
 
-**Status:** section 1 is for discussion; section 2 is built (2026-10-04):
+**Status:** section 1 is built (2026-11-08, ADR-081); section 2 is built (2026-10-04):
 harnesses are pluggable, and pi is the first one added.
 
 ## 1. A machine whose Claude Code is not logged in
@@ -36,6 +36,12 @@ logging in is something done once on the machine, outside any session.
 
 **Recommendation:** (a) now; (b) only if logging machines in turns out to be
 frequent — for a handful of machines it is a once-a-year chore.
+
+**Built, 2026-11-08 (ADR-081):** both. Claude Code now has `claude auth
+status --json` and a `claude auth login` that runs without a terminal, so (b)
+no longer depends on scraping an interactive flow: the agent reports the
+login, "+ session" offers to log the machine in, and success is read from
+`claude auth status`.
 
 ## 2. Harnesses: Claude Code, pi, and the next one
 
