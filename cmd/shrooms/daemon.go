@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/vpavlin/shrooms/internal/cred"
+	"github.com/vpavlin/shrooms/internal/disco"
 	dnssrv "github.com/vpavlin/shrooms/internal/dns"
 	"github.com/vpavlin/shrooms/internal/identity"
 	"github.com/vpavlin/shrooms/internal/invite"
@@ -512,6 +513,11 @@ type meshStatus struct {
 	// into "we announce an address", which is the opposite diagnosis.
 	Announced []string `json:"announced,omitempty"`
 
+	// NAT is how this mesh's socket is mapped, from what peers observed:
+	// whether a direct path between two NATed peers can work at all
+	// (disco.NATView). Per mesh, as each mesh has its own socket.
+	NAT *disco.NATView `json:"nat,omitempty"`
+
 	// AuthorityID is the mesh id: a hash over this mesh's admin keys and
 	// nothing else (cred.Authority.ID). Empty for a mesh with no authority.
 	//
@@ -867,6 +873,12 @@ type peerStatus struct {
 	// Paths are the candidates that answered a probe. Empty means either no
 	// probing has completed or none of the peer's candidates are reachable.
 	Paths []pathStatus `json:"paths,omitempty"`
+	// Heard is where this peer's last probe arrived from, HeardAgeS how long
+	// ago: whether its probes reach us at all. A pair that stays relayed with
+	// probes arriving both ways is held back by a NAT; one with none arriving
+	// is held back by the network in between.
+	Heard     string `json:"heard,omitempty"`
+	HeardAgeS int64  `json:"heard_age_s,omitempty"`
 
 	// Handshaked means a handshake has EVER completed; Live means the tunnel
 	// works now. Both are reported because they answer different questions and
@@ -1607,6 +1619,9 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 				ms.AuthorityID = a.ID().String()
 			}
 			ms.Announced = in.mesh.Announced()
+			if nv := in.mesh.NAT(); nv.Mapping != "" {
+				ms.NAT = &nv
+			}
 			for _, a := range in.mesh.AdoptedRelays() {
 				ms.RelayAdvised = append(ms.RelayAdvised, a.String())
 			}
@@ -1796,6 +1811,9 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 					ps.DiscoveredAfterS = t.DiscoveredAfter.Seconds()
 					ps.PathAfterS = t.PathAfter.Seconds()
 					ps.TunnelAfterS = t.TunnelAfter.Seconds()
+				}
+				if a, at, ok := m.HeardFrom(p.ID()); ok {
+					ps.Heard, ps.HeardAgeS = a.String(), int64(now.Sub(at).Seconds())
 				}
 				best, hasBest := m.BestPath(p.ID(), now)
 				for _, path := range m.Paths(p.ID()) {

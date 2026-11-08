@@ -450,6 +450,14 @@ func (m *Mesh) RelayStats() (relay.Stat, bool) {
 	return m.relaySrv.Stats(), true
 }
 
+// NAT is how this mesh's socket is mapped, as peers observed it.
+func (m *Mesh) NAT() disco.NATView { return m.prober.NATView(time.Now()) }
+
+// HeardFrom is where a peer's last probe came from, and when.
+func (m *Mesh) HeardFrom(peerID string) (netip.AddrPort, time.Time, bool) {
+	return m.prober.HeardAt(peerID)
+}
+
 // Reflexive returns the self-addresses peers have reported observing.
 func (m *Mesh) Reflexive() []netip.AddrPort { return m.prober.Reflexive(time.Now()) }
 

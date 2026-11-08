@@ -619,6 +619,19 @@ func cmdPaths(args []string) error {
 		fmt.Println()
 	}
 
+	// Each mesh's NAT, as its peers saw it: what decides whether a pair of
+	// NATed peers can ever go direct.
+	for _, ms := range st.Meshes {
+		if ms.NAT == nil {
+			continue
+		}
+		fmt.Printf("NAT on %s: %s\n", ms.Label, natWords(ms.NAT.Mapping))
+		for _, o := range ms.NAT.Observed {
+			fmt.Printf("  seen at %s by %d\n", o.Addr, o.By)
+		}
+		fmt.Println()
+	}
+
 	if len(st.Reflexive) > 0 {
 		fmt.Printf("reflexive addresses (as peers observe us):\n")
 		for _, r := range st.Reflexive {
@@ -643,6 +656,11 @@ func cmdPaths(args []string) error {
 			fmt.Printf("%s  %s  (ipv4 %s)\n", p.Name, p.Overlay, p.OverlayV4)
 		} else {
 			fmt.Printf("%s  %s\n", p.Name, p.Overlay)
+		}
+		if p.Heard != "" {
+			fmt.Printf("  its probes arrive from %s (%ds ago)\n", p.Heard, p.HeardAgeS)
+		} else if p.Relayed {
+			fmt.Printf("  none of its probes has arrived here\n")
 		}
 		if len(p.Paths) == 0 {
 			// "No candidate has answered a probe" is true of a relayed peer
@@ -952,5 +970,17 @@ func roundDays(d time.Duration) string {
 		return fmt.Sprintf("%d hours", int(d.Hours()))
 	default:
 		return fmt.Sprintf("%d days", int(d.Hours()/24))
+	}
+}
+
+// natWords says what a NAT verdict means for going direct.
+func natWords(mapping string) string {
+	switch mapping {
+	case "independent":
+		return "maps the same way for everyone — a direct path to another NATed peer can work"
+	case "dependent":
+		return "a new port for every destination — direct only to a peer whose NAT is forgiving, otherwise the relay"
+	default:
+		return "not known yet — fewer than two peers have reported where they see this node"
 	}
 }
