@@ -2478,7 +2478,7 @@ func (m *Mesh) syncPeers() error {
 		// continent, because a relayed packet had rewritten the endpoint and
 		// nothing ever wrote it back.
 		if peer.Endpoint != "" && haveStats && st.Endpoint != "" && st.Endpoint != peer.Endpoint {
-			if m.yieldRoam(p.ID(), p.Name, now) {
+			if m.twoWay(p.ID(), st.Endpoint, now) && m.yieldRoam(p.ID(), p.Name, now) {
 				// Stop fighting and keep what the device learned. See
 				// yieldRoam: pulling it back every few seconds achieved
 				// nothing except a rewrite every few seconds.
@@ -2555,10 +2555,17 @@ const RoamTruce = 2 * time.Minute
 // again — a rewrite every few seconds, for hours, visible in the log as an
 // unexplained repair loop on a mesh where nothing was wrong.
 //
-// After a few attempts this concedes. What the device learned is not a guess:
-// WireGuard only roams to an address that sent a packet it could authenticate,
-// which is stronger evidence than a probe reply. The truce expires, so a peer
-// that settles is corrected again if it ever needs to be.
+// After a few attempts this concedes, and only to an endpoint twoWay vouches
+// for. The truce expires, so a peer that settles is corrected again if it ever
+// needs to be.
+//
+// It used to concede to whatever the device learned, on the grounds that
+// WireGuard only roams to an address that sent a packet it could
+// authenticate. That proves packets arrive from there, not that ours get back:
+// with filtering that lets one direction through, the device roams to the
+// peer's direct source while the peer's NAT drops every reply, and conceding
+// pinned that one-way path for RoamTruce (laptop/reviewer, reviewing ADR-027,
+// 2026-11-08).
 func (m *Mesh) yieldRoam(id, name string, now time.Time) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -2586,6 +2593,27 @@ func (m *Mesh) yieldRoam(id, name string, now time.Time) bool {
 	m.log.Info("keeping the endpoint WireGuard learned; ours kept being overwritten",
 		"peer", name, "for", RoamTruce)
 	return true
+}
+
+// twoWay reports whether an endpoint the device learned is known to work in
+// both directions: the relay, which answers by construction, or an address a
+// probe was answered from within PathFresh. A probe and its pong are a round
+// trip; a packet WireGuard roamed to is only the inbound half.
+func (m *Mesh) twoWay(id, endpoint string, now time.Time) bool {
+	ap, err := netip.ParseAddrPort(endpoint)
+	if err != nil {
+		return true // relay:… — not an address a NAT can half-open
+	}
+	if m.prober == nil {
+		return false
+	}
+	ap = netip.AddrPortFrom(ap.Addr().Unmap(), ap.Port())
+	for _, p := range m.prober.Paths(id) {
+		if netip.AddrPortFrom(p.Addr.Addr().Unmap(), p.Addr.Port()) == ap && p.Fresh(now) {
+			return true
+		}
+	}
+	return false
 }
 
 // roamFight is how often one peer's endpoint has been corrected lately.
