@@ -564,8 +564,10 @@ explains it:
 device is not in. Mesh labels are listed by `shrooms status`.
 
 **Every reply says "Not logged in · Please run /login".** Claude Code is not
-logged in for the agent's user. See "Claude Code". Typing `/login` in the app
-does not work.
+logged in for the agent's user. Typing `/login` in the app does not work. Log
+it in from the app instead: "+ session" on that machine says it is not logged
+in and offers "log in", which opens the sign-in page; paste the code it shows
+back into the app (ADR-081). Or by hand, as in "Claude Code".
 
 **pi is not offered, or the log has no `harness name=pi` line.** The agent
 did not find `pi` on its `PATH`. The service starts the agent through a login

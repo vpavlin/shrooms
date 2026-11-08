@@ -1661,10 +1661,47 @@ Item {
         root.cageStatus = null
         root.nsCage = false
         root.cageOpts = { image: "", nix: false, github: false, shared: false }
+        root.claudeLogin = null
         if (!h) return
         var r = unwrap(callCore("agentGet", [h.address, "/v1/harnesses"]))
         if (r && r.harnesses && r.harnesses.length > 0) root.harnesses = r.harnesses
         if (r && r.cage && r.cage.available) root.cageStatus = r.cage
+        root.claudeLogin = r && r.claude_login ? r.claude_login : null
+        root.loginCode = ""
+    }
+    // This machine's Claude Code login (ADR-081): a machine's, not a
+    // session's. Every session there runs on it, caged and sealed ones through
+    // the agent's gateway. Logged in from here: the agent runs `claude auth
+    // login`, this opens its URL, and the code the sign-in page shows goes
+    // back. Absent from an agent too old to report it.
+    property var claudeLogin: null
+    property string loginCode: ""
+    readonly property var loginFlow: claudeLogin && claudeLogin.flow ? claudeLogin.flow : null
+    readonly property bool loginNeeded: !!claudeLogin && !claudeLogin.logged_in && !claudeLogin.error
+    function loginStart(h) {
+        if (!h) return
+        var f = agentCall("agentPost", [h.address, "/v1/claude/login", ""])
+        if (f === null) return
+        root.claudeLogin = Object.assign({}, root.claudeLogin || {}, { flow: f })
+        root.loginCode = ""
+        if (f.url) openUrl(f.url)
+    }
+    function loginSend(h) {
+        if (!h || !root.loginFlow || root.loginCode.trim() === "") return
+        var r = agentCall("agentPost", [h.address, "/v1/claude/login/" + root.loginFlow.id + "/code",
+                                        JSON.stringify({ code: root.loginCode.trim() })])
+        if (r === null) return
+        root.loginCode = ""
+        root.claudeLogin = Object.assign({}, r.login || root.claudeLogin || {}, { flow: r.flow })
+    }
+    function loginPoll(h) {
+        if (!h) return
+        var r = unwrap(callCore("agentGet", [h.address, "/v1/claude/login"]))
+        if (r && r.error === undefined) root.claudeLogin = r
+    }
+    function loginCancel(h) {
+        if (h) agentCall("agentDelete", [h.address, "/v1/claude/login"])
+        root.claudeLogin = Object.assign({}, root.claudeLogin || {}, { flow: null })
     }
     // Cages (docs/agents-in-cages.md): a session in a rootless podman
     // container of its own, offered where the machine has podman.
@@ -5161,6 +5198,49 @@ Item {
                                        color: hchip.on ? cVoid : cBone; font.family: "monospace"; font.pixelSize: root.fs(11) }
                                 MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.nsHarness = hchip.modelData.name }
                             }
+                        }
+                    }
+                    // Claude Code not logged in on that machine: log it in
+                    // here, rather than start a session that only answers
+                    // "Not logged in" (ADR-081).
+                    ColumnLayout {
+                        objectName: "claudeLogin"
+                        visible: root.nsHarness === "claude" && (root.loginNeeded || root.loginFlow !== null)
+                        Layout.fillWidth: true
+                        spacing: root.sz(6)
+                        Timer {
+                            interval: 2000; repeat: true
+                            running: parent.visible && root.loginFlow !== null && root.loginFlow.state === "checking"
+                            onTriggered: root.loginPoll(newSession.host)
+                        }
+                        Text {
+                            Layout.fillWidth: true; wrapMode: Text.Wrap
+                            text: !root.loginFlow ? "Claude Code is not logged in on " + (newSession.host ? newSession.host.name : "this machine") + ": its sessions would only answer \"Not logged in\". Log it in from here — the login stays on that machine, for all its sessions."
+                                : root.loginFlow.state === "waiting" ? "Sign in on the page that opened, then paste the code it shows here."
+                                : root.loginFlow.state === "checking" ? "checking the code…"
+                                : root.loginFlow.state === "done" ? "logged in" + (root.claudeLogin && root.claudeLogin.email ? " as " + root.claudeLogin.email : "") + " — sessions there can start now"
+                                : "the login failed: " + (root.loginFlow.error || "")
+                            color: root.loginFlow && root.loginFlow.state === "done" ? cPhosphor : root.loginFlow && root.loginFlow.state === "failed" ? cAmber : cAsh
+                            font.family: "monospace"; font.pixelSize: root.fs(10)
+                        }
+                        RowLayout {
+                            visible: root.loginFlow !== null && root.loginFlow.state === "waiting"
+                            Layout.fillWidth: true
+                            TextField { id: loginCodeField; objectName: "loginCode"; Layout.fillWidth: true; placeholderTextColor: cAsh; placeholderText: "code from the sign-in page"
+                                        text: root.loginCode; onTextChanged: root.loginCode = text; onAccepted: root.loginSend(newSession.host)
+                                        color: cBone; font.family: "monospace"; background: Rectangle { color: cPanel; border.color: loginCodeField.activeFocus ? cPhosphor : cLine; radius: 6 } }
+                            Lnk { text: "send"; onClicked: root.loginSend(newSession.host) }
+                        }
+                        RowLayout {
+                            spacing: root.sz(12)
+                            Lnk { objectName: "loginStart"; visible: !root.loginFlow || root.loginFlow.state === "failed"
+                                  text: root.loginFlow ? "try again" : "log in"; onClicked: root.loginStart(newSession.host) }
+                            Lnk { visible: root.loginFlow !== null && root.loginFlow.state === "waiting"; text: "open the page again"; base: cAsh
+                                  onClicked: root.openUrl(root.loginFlow.url) }
+                            Lnk { visible: root.loginFlow !== null && root.loginFlow.state === "waiting"; text: "copy the link"; base: cAsh
+                                  onClicked: { root.copyText(root.loginFlow.url); root.said = "copied the sign-in link"; root.saidBad = false } }
+                            Lnk { visible: root.loginFlow !== null && (root.loginFlow.state === "waiting" || root.loginFlow.state === "checking"); text: "cancel"; base: cAsh
+                                  onClicked: root.loginCancel(newSession.host) }
                         }
                     }
                     CheckBox { id: nsAuto; visible: root.harnessApproves(root.nsHarness); text: "auto-approve — never ask, like --dangerously-skip-permissions"; contentItem: Text { leftPadding: nsAuto.indicator.width + 6; text: nsAuto.text; color: cAsh; font.family: "monospace"; font.pixelSize: root.fs(10); verticalAlignment: Text.AlignVCenter } }
