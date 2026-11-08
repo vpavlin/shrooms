@@ -124,6 +124,11 @@ type Prober struct {
 	// selfAddrs are this machine's own addresses, so a candidate that is
 	// really us can be recognised. Set by SetSelfAddrs as interfaces change.
 	selfAddrs map[netip.Addr]bool
+
+	// lastRound is when each peer was last probed (ProbeFloor), and pongs
+	// what each source address may still be answered (bounds.go).
+	lastRound map[string]time.Time
+	pongs     map[netip.AddrPort]*pongBucket
 }
 
 // NewProber returns a prober that sends via the given function.
@@ -166,7 +171,32 @@ func (p *Prober) isSelf(ap netip.AddrPort) bool {
 // behind NAT may only be reachable on one of them, and which one is not
 // predictable. This is also the punch — the outbound packet opens our NAT
 // mapping so the peer's own probe can get back in.
+//
+// Bounded (bounds.go): unusable addresses are not probed, at most
+// MaxCandidates plus one more (Heard) are, and a peer is probed at most once
+// per ProbeFloor however often its announce changes.
 func (p *Prober) Probe(peerID string, candidates []netip.AddrPort, now time.Time) {
+	p.mu.Lock()
+	if p.lastRound == nil {
+		p.lastRound = make(map[string]time.Time)
+	}
+	if last, ok := p.lastRound[peerID]; ok && now.Sub(last) >= 0 && now.Sub(last) < ProbeFloor {
+		p.mu.Unlock()
+		return
+	}
+	p.lastRound[peerID] = now
+	p.mu.Unlock()
+	kept := candidates[:0:0]
+	for _, c := range candidates {
+		if usableTarget(c) {
+			kept = append(kept, c)
+		}
+	}
+	if len(kept) > MaxCandidates+1 {
+		kept = kept[:MaxCandidates+1]
+	}
+	candidates = kept
+
 	// Paths this peer has not answered on for PathForget are forgotten here,
 	// on its next probe, so the record does not keep addresses from networks
 	// it left long ago.
@@ -236,6 +266,15 @@ func (p *Prober) HandlePing(m *Message, from netip.AddrPort) {
 		p.mu.Unlock()
 	}
 
+	// At most so many pongs to one source (bounds.go): a captured ping
+	// replayed from a spoofed address would otherwise make us answer the
+	// spoofed one as often as the replays came.
+	p.mu.Lock()
+	ok := p.allowPong(from, time.Now())
+	p.mu.Unlock()
+	if !ok {
+		return
+	}
 	pkt, err := EncodePong(p.key, p.selfPriv, m.TxID, from)
 	if err != nil {
 		return

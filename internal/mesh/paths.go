@@ -658,7 +658,9 @@ func (m *Mesh) probeAll(now time.Time) {
 		if !m.prober.NeedsProbe(p.ID(), now) {
 			continue
 		}
-		cands := parseCandidates(p.Endpoints)
+		// Bounded: what a member announces is not a list of addresses for the
+		// whole mesh to probe (disco.Candidates).
+		cands := disco.Candidates(parseCandidates(p.Endpoints))
 		// Where this peer's own packets have arrived from, which is all we have
 		// about one that announces nothing — a phone whose OS will not let it
 		// list its own addresses, most often. Appended rather than preferred:

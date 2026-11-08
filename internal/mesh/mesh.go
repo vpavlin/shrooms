@@ -2236,7 +2236,7 @@ func (m *Mesh) handle(ev waku.Event) {
 	// Probe straight away. This is also the punch: the outbound probes open our
 	// NAT mapping so the peer's own probes can get back in, and both sides do
 	// this on receiving each other's announce.
-	m.prober.Probe(peer.ID(), parseCandidates(peer.Endpoints), now)
+	m.prober.Probe(peer.ID(), disco.Candidates(parseCandidates(peer.Endpoints)), now)
 
 	m.requestResync()
 }
