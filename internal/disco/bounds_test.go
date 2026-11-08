@@ -1,6 +1,8 @@
 package disco
 
 import (
+	"crypto/ed25519"
+	"encoding/hex"
 	"fmt"
 	"net/netip"
 	"testing"
@@ -138,4 +140,83 @@ func TestPongBucketRefills(t *testing.T) {
 			}
 		}
 	}
+}
+
+// A peer that never answers is searched for every ProbeInterval at first,
+// then less and less often, never less than once per ProbeBackoffMax.
+func TestSearchBacksOff(t *testing.T) {
+	sent := 0
+	p := NewProber(testKey(t), newDeviceKey(t), func([]byte, netip.AddrPort) error { sent++; return nil })
+	peer := "silent"
+	now := time.Now()
+	rounds := 0
+	var gaps []time.Duration
+	last := now
+	// An hour of ticks every ProbeInterval, as probeAll runs.
+	for at := now; at.Before(now.Add(time.Hour)); at = at.Add(ProbeInterval) {
+		if p.NeedsProbe(peer, at) {
+			p.Probe(peer, aps("198.51.100.7:51820"), at)
+			if rounds > 0 {
+				gaps = append(gaps, at.Sub(last))
+			}
+			last = at
+			rounds++
+		}
+	}
+	if rounds > 40 {
+		t.Fatalf("%d rounds in an hour; every 3 s would be 1200, the backoff should leave a few dozen", rounds)
+	}
+	for i := 0; i < ProbeEagerRounds-1; i++ {
+		if gaps[i] != ProbeInterval {
+			t.Fatalf("round %d came after %v, want eager %v", i+2, gaps[i], ProbeInterval)
+		}
+	}
+	for _, g := range gaps {
+		if g > ProbeBackoffMax+ProbeInterval {
+			t.Fatalf("a gap of %v, past ProbeBackoffMax", g)
+		}
+	}
+	if gaps[len(gaps)-1] < ProbeBackoffMax-ProbeInterval {
+		t.Fatalf("after an hour the gap is %v, want about %v", gaps[len(gaps)-1], ProbeBackoffMax)
+	}
+}
+
+// Anything that could make a path work resets the search to eager: the peer
+// probing us, its endpoints changing (ResetSearch), and a pong.
+func TestSearchResets(t *testing.T) {
+	key := testKey(t)
+	p := NewProber(key, newDeviceKey(t), func([]byte, netip.AddrPort) error { return nil })
+	peerPriv := newDeviceKey(t)
+	peer := hexPub(peerPriv)
+	now := time.Now()
+	for i := 0; i < 20; i++ {
+		p.Probe(peer, aps("198.51.100.7:51820"), now)
+		now = now.Add(ProbeBackoffMax)
+	}
+	if p.NeedsProbe(peer, now.Add(-ProbeBackoffMax+ProbeInterval)) {
+		t.Fatal("deep in backoff, but due after one interval")
+	}
+	// It pings us.
+	tx, _ := NewTxID()
+	pkt, _ := EncodePing(key, peerPriv, tx)
+	m, err := Decode(key, pkt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.HandlePing(m, netip.MustParseAddrPort("198.51.100.7:51820"))
+	if !p.NeedsProbe(peer, now.Add(-ProbeBackoffMax+ProbeInterval)) {
+		t.Fatal("its ping did not make the search eager again")
+	}
+	for i := 0; i < 20; i++ {
+		p.Probe(peer, aps("198.51.100.7:51820"), now)
+		now = now.Add(ProbeBackoffMax)
+	}
+	p.ResetSearch(peer)
+	if !p.NeedsProbe(peer, now.Add(-ProbeBackoffMax+time.Second)) {
+		t.Fatal("ResetSearch did not make the search eager again")
+	}
+}
+
+func hexPub(priv ed25519.PrivateKey) string {
+	return hex.EncodeToString(priv.Public().(ed25519.PublicKey))
 }

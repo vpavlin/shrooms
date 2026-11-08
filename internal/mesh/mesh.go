@@ -514,6 +514,9 @@ func (m *Mesh) NetworkChanged() {
 	// to RelayRefresh. Seen 2026-11-08: direct tunnels back in seconds after a
 	// Wi-Fi change, relayed ones a minute later.
 	m.reRegister.Store(true)
+	// From a new network every peer may be reachable another way: search for
+	// all of them eagerly again, not at wherever their backoff had got to.
+	m.prober.ResetSearch("")
 	m.requestAnnounce()
 	// The endpoints chosen on the old network, rewritten as soon as the
 	// probes below find the new ones.
@@ -2253,6 +2256,9 @@ func (m *Mesh) handle(ev waku.Event) {
 	// Probe straight away. This is also the punch: the outbound probes open our
 	// NAT mapping so the peer's own probes can get back in, and both sides do
 	// this on receiving each other's announce.
+	// Its endpoints changed: whatever the backoff had concluded about the old
+	// ones does not hold for these.
+	m.prober.ResetSearch(peer.ID())
 	m.prober.Probe(peer.ID(), disco.Candidates(parseCandidates(peer.Endpoints)), now)
 
 	m.requestResync()
