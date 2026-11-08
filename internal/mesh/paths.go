@@ -478,6 +478,13 @@ func relayObservationIsUseful(ap netip.AddrPort) bool {
 	return !netip.MustParsePrefix("100.64.0.0/10").Contains(a)
 }
 
+// registrationDue: register with the relay now when it is a different relay,
+// when this node moved (NetworkChanged), or when the last registration is
+// RelayRefresh old.
+func registrationDue(relayChanged, moved bool, since time.Duration) bool {
+	return relayChanged || moved || since >= RelayRefresh
+}
+
 // registerWithRelay tells our relay where to reach us.
 //
 // The relay's mapping is soft state with a TTL, and a NAT rebinding invalidates
@@ -501,9 +508,10 @@ func (m *Mesh) registerWithRelay() {
 		// The set of usable endpoints just changed, so the data plane is stale.
 		m.requestResync()
 	}
-	if !changed && now.Sub(m.relayRegistered) < RelayRefresh {
+	if !registrationDue(changed, m.reRegister.Load(), now.Sub(m.relayRegistered)) {
 		return
 	}
+	m.reRegister.Store(false)
 	m.relayRegistered = now
 
 	targets := m.registerWith(now)

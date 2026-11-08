@@ -296,6 +296,9 @@ type Mesh struct {
 	// relayRegistered is when we last renewed our mapping with the relay.
 	// See RelayRefresh: this used to be re-sent on every probe tick.
 	relayRegistered time.Time
+	// reRegister asks the next probe tick to register with the relay at once
+	// (NetworkChanged): set from any goroutine, read by the loop.
+	reRegister atomic.Bool
 
 	// repliedTo bounds how often a single peer can draw a triggered announce.
 	replyMu   sync.Mutex
@@ -505,6 +508,12 @@ func (m *Mesh) SetListenPort(p uint16) {
 func (m *Mesh) NetworkChanged() {
 	m.networkChangedAt(time.Now())
 	m.prober.ForgetReflexive()
+	// The relay knows us by the address our registration came from. After a
+	// move, or on a fresh port, that is not where we are: it kept forwarding
+	// every relayed peer's packets to the old one until the next refresh, up
+	// to RelayRefresh. Seen 2026-11-08: direct tunnels back in seconds after a
+	// Wi-Fi change, relayed ones a minute later.
+	m.reRegister.Store(true)
 	m.requestAnnounce()
 	// The endpoints chosen on the old network, rewritten as soon as the
 	// probes below find the new ones.
