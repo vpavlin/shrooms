@@ -33,14 +33,25 @@ cd "$(dirname "$0")/.."
 # The mesh name, so this works from anywhere the mesh reaches rather than only
 # from the LAN. Falls back to the address, for a machine whose tunnel is down —
 # publishing should not be the thing that needs the VPN to be working.
-HOST=${LAN_HOST:-jimmy-crib.mesh}
-FALLBACK=${LAN_HOST_FALLBACK:-192.168.0.152}
+#
+# jimmy-crib.office.mesh: it left the default mesh in September, so the bare
+# jimmy-crib.mesh no longer resolves, and 192.168.0.152 is the home LAN it moved
+# off. Both defaults were dead; set LAN_HOST_FALLBACK where a LAN address works.
+HOST=${LAN_HOST:-jimmy-crib.office.mesh}
+FALLBACK=${LAN_HOST_FALLBACK:-}
 PUBLISH=${LAN_PUBLISH:-.claude/skills/logos-publish-artifacts/publish.sh}
 STAGE=${LAN_STAGE:-.cache/shrooms-publish}
+# The repository Basecamp 0.3 reads. The publisher's own default is
+# ~/vpavlin-home/basecamp, the 0.2 repository nothing reads any more: a publish
+# there "succeeded" and listed one package (2026-11-08), the first trap above.
+REPO_DIR=${LAN_BASECAMP_REPO:-\$HOME/vpavlin-home/basecamp-0.3}
+REPO_NAME=${LAN_REPO_NAME:-vpavlin-home-0.3}
+REPO_PATH=${LAN_BASECAMP_PATH:-basecamp-0.3}
 
 [ "$#" -gt 0 ] || { echo "usage: $0 <module.lgx>..." >&2; exit 2; }
 
 if ! ssh -o BatchMode=yes -o ConnectTimeout=6 "$HOST" true 2>/dev/null; then
+    [ -n "$FALLBACK" ] || { echo "$HOST did not answer, and no LAN_HOST_FALLBACK is set" >&2; exit 1; }
     echo "==> $HOST did not answer, using $FALLBACK"
     HOST=$FALLBACK
 fi
@@ -62,4 +73,4 @@ echo "==> publishing on $HOST"
 # --no-fdroid-update: the APK is published by `make fdroid`, which signs the
 # index with the repo keystore. Asking for it here would regenerate that index
 # with nothing new in it.
-ssh "$HOST" "\$HOME/$PUBLISH --no-fdroid-update $(printf -- '--lgx %s ' "${args[@]}")"
+ssh "$HOST" "BASECAMP_REPO=$REPO_DIR REPO_NAME=$REPO_NAME BASECAMP_PATH=$REPO_PATH REPO_HOST=$HOST \$HOME/$PUBLISH --no-fdroid-update $(printf -- '--lgx %s ' "${args[@]}")"
