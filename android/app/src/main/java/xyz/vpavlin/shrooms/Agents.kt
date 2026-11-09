@@ -55,6 +55,8 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -80,6 +82,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -485,8 +488,10 @@ fun AgentsScreen(peers: List<Peer>, onClose: () -> Unit, initial: OpenSession? =
     // Refreshed while the list is on screen, so a session that starts waiting
     // for an answer shows it without a pull. What is found is remembered for
     // the notification watcher (AgentWatch).
-    LaunchedEffect(refresh, open, named) {
-        if (open != null) return@LaunchedEffect
+    val visible = screenVisible()
+    LaunchedEffect(refresh, open, named, visible) {
+        if (open != null || !visible) return@LaunchedEffect
+        var cacheWritten = ""
         while (isActive) {
             // The tasks from the machines already known, alongside the search
             // for machines rather than after it, which takes a while; not
@@ -499,7 +504,10 @@ fun AgentsScreen(peers: List<Peer>, onClose: () -> Unit, initial: OpenSession? =
             // another machine's name for a mesh would otherwise stay a week.
             val merged = HostCache.merge(HostCache.renamed(meshNames(peers, handed, cands), hosts.orEmpty()), found, System.currentTimeMillis())
             hosts = merged
-            cachePrefs.edit().putString("cache", HostCache.encode(merged)).apply()
+            // Written when it changed: the whole list, every 10 s, was a file
+            // rewrite every round.
+            val enc = HostCache.encode(merged)
+            if (enc != cacheWritten) { cachePrefs.edit().putString("cache", enc).apply(); cacheWritten = enc }
             // The watcher keeps asking a machine that missed a round, too.
             if (merged.isNotEmpty()) AgentHosts.save(ctx, merged.map { AgentHosts.Host(it.name, it.mesh, it.address) })
             // Kept when some machine answered, so a round with none does not empty the list.
@@ -1222,22 +1230,32 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String
     LaunchedEffect(o) {
         withContext(Dispatchers.IO) { runCatching { client.history(o.session, 30) } }.onSuccess { earlier = it }
     }
-    // Kept on the phone, as it is now, for when the machine cannot be reached.
-    LaunchedEffect(o) {
-        var saved = -1L to -1
-        while (isActive) {
-            delay(5_000)
-            val now = (events.lastOrNull()?.seq ?: 0L) to earlier.size
-            if (keptAt == 0L && events.isNotEmpty() && now != saved) {
-                val ev = events.toList()
-                val ea = earlier
-                withContext(Dispatchers.IO) { History.save(ctx, o.host, o.session, ev, ea) }
-                saved = now
-            }
+    // Kept on the phone, as it is now, for when the machine cannot be reached:
+    // every 30 s while on screen, and once when it is left. It was every 5 s
+    // whenever anything had arrived, up to 1 MB rewritten each time.
+    val saveShown = screenVisible()
+    var saved by remember(o) { mutableStateOf(-1L to -1) }
+    suspend fun saveIfChanged() {
+        val now = (events.lastOrNull()?.seq ?: 0L) to earlier.size
+        if (keptAt == 0L && events.isNotEmpty() && now != saved) {
+            val ev = events.toList()
+            val ea = earlier
+            withContext(Dispatchers.IO) { History.save(ctx, o.host, o.session, ev, ea) }
+            saved = now
         }
     }
-    // The session's own figures — context, model, auto-approve — kept fresh.
-    LaunchedEffect(o) {
+    LaunchedEffect(o, saveShown) {
+        if (!saveShown) { saveIfChanged(); return@LaunchedEffect }
+        while (isActive) {
+            delay(30_000)
+            saveIfChanged()
+        }
+    }
+    // The session's own figures — context, model, auto-approve — kept fresh,
+    // while it is on screen.
+    val figuresShown = screenVisible()
+    LaunchedEffect(o, figuresShown) {
+        if (!figuresShown) return@LaunchedEffect
         while (isActive) {
             withContext(Dispatchers.IO) { runCatching { client.sessions() } }.getOrNull()
                 ?.firstOrNull { it.name == o.session }?.let {
@@ -1257,6 +1275,9 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String
     // scrolled through its own history for ten seconds before settling.
     // Made again since its copy was kept: start over without the copy.
     var copyStale by remember(o) { mutableStateOf(0) }
+    // While the screen is hidden the stream and its tick wait, and carry on
+    // from the last event when it is back (screenVisible).
+    val shown = rememberUpdatedState(screenVisible())
     LaunchedEffect(o, tail, copyStale) {
         events.clear()
         streaming = ""
@@ -1286,6 +1307,7 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String
         var quiet = 0
         launch {
             while (isActive) {
+                if (!shown.value) snapshotFlow { shown.value }.first { it }
                 // The machine answered: what is shown is its own from here.
                 if (answered.get() && keptAt != 0L) keptAt = 0
                 val i = info
@@ -1334,18 +1356,27 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String
                 delay(120)
             }
         }
+        // Reconnects back off, 2 s doubling to a minute, and start over at 2 s
+        // once a connection opens: an agent that refused or a machine that
+        // was away was asked every 2 s for as long as the screen stayed open.
+        var wait = 2000L
         while (isActive) {
+            if (!shown.value) snapshotFlow { shown.value }.first { it }
+            var opened = false
             val r = withContext(Dispatchers.IO) {
                 runCatching {
-                    client.follow(o.session, after.get(), stop = { !isActive },
-                        tail = tail, onOpen = { answered.set(true) }) { e ->
+                    // Ends at the next line once the screen is hidden; the
+                    // server's comment every 20 s bounds the wait.
+                    client.follow(o.session, after.get(), stop = { !isActive || !shown.value },
+                        tail = tail, onOpen = { answered.set(true); opened = true }) { e ->
                         if (e.kind != "partial") after.set(e.seq)
                         pending += e
                     }
                 }
             }
             r.onFailure { connError = it.message ?: "connection lost" }
-            delay(2000)
+            wait = if (opened) 2000L else (wait * 2).coerceAtMost(60_000L)
+            if (shown.value) delay(wait)
         }
     }
 
