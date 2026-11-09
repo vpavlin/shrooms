@@ -78,7 +78,10 @@ fun TasksScreen(hosts: List<AgentHost>, initial: List<TaskRow>?, onRows: (List<T
     var round by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
     val targets = remember(hosts) { taskTargets(hosts) }
-    LaunchedEffect(targets, round) {
+    // Only while it is on screen (screenVisible).
+    val visible = screenVisible()
+    LaunchedEffect(targets, round, visible) {
+        if (!visible) return@LaunchedEffect
         while (isActive) {
             coroutineScope {
                 for (h in targets) launch {
