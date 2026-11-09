@@ -198,7 +198,17 @@ func cmdDaemon(args []string) error {
 	if err != nil {
 		return fmt.Errorf("rendezvous plane: %w", err)
 	}
-	defer node.Close()
+	// Not closed on the way out: the process ends right after, and stopping
+	// the library is what crashed it. Its stop resets a process-wide
+	// persistence singleton (waku/persistency, Persistency.reset) that is a
+	// ref held in a {.global.} and shared between threads under --mm:refc;
+	// after a day or so of uptime the object it points at is gone, and stop
+	// dies with SIGSEGV in its close(). pi5 dumped a 343 MB core at every
+	// daily 04:00 shutdown for weeks, with daemons up 24-29 h; one up 3 h
+	// stopped cleanly (pi5/jimmy, 2026-11-09). A node that is merely
+	// abandoned at exit loses nothing: its SQLite files are WAL and recover
+	// on the next open, and peers time the connections out. Short-lived nodes
+	// (invites, waiting) still close theirs.
 
 	if err := node.Start(); err != nil {
 		return fmt.Errorf("start rendezvous plane: %w", err)
