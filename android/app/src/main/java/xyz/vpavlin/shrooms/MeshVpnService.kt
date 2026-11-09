@@ -474,11 +474,15 @@ class MeshVpnService : VpnService() {
         scope.launch {
             var healthy = SystemClock.elapsedRealtime()
             var revived = 0L
+            var lastLine = ""
+            val power = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
             while (Mobile.running()) {
                 MeshState.update(Mobile.statusJSON())
                 val s = MeshState.snapshot.value
                 maybeNotifyDue(s)
-                if (s.connected) notify(s.notificationLine())
+                // Posted when its line changes: it was posted every 2 s,
+                // the same text, two binder calls each time (2026-11-09).
+                if (s.connected) s.notificationLine().let { if (it != lastLine) { notify(it); lastLine = it } }
 
                 // Only when the line changes. A widget redraw is cheap and a
                 // launcher redraw is not, and the summary is stable for
@@ -620,7 +624,10 @@ class MeshVpnService : VpnService() {
                         }
                     }
                 }
-                delay(2000)
+                // Every 2 s while someone may be looking; every 10 s with the
+                // screen off, where only the watchdog reads it and its limits
+                // are minutes. Each read builds and parses the whole status.
+                delay(if (power.isInteractive) 2000 else 10_000)
             }
         }
     }
