@@ -244,11 +244,14 @@ EOF
         # ACL, the socket was made a moment later with its mode applied over
         # the inherited mask, and the agent could not read it. pi5 lost its
         # agent-to-agent list that way after a stop and start (2026-11-09).
+        # \$i, written as $i in the unit: systemd substitutes $NAME only as a
+        # word of its own, so inside the -c string it reaches the shell as is,
+        # and the line still runs when pasted into a shell to test it (pi5/jimmy).
         cat > /etc/systemd/system/shrooms.service.d/20-agent-access.conf <<DROPIN
 # shrooms-agent keeps reading the socket over a restart (install-agent.sh).
 [Service]
 RuntimeDirectoryPreserve=restart
-ExecStartPost=-/bin/sh -c 'systemd-tmpfiles --create /etc/tmpfiles.d/shrooms-agent-*.conf; i=0; while [ ! -S $SOCK ] && [ \$\$i -lt 150 ]; do sleep 0.2; i=\$\$((\$\$i+1)); done; setfacl -m user:$USER_NAME:rw,mask::rw $SOCK'
+ExecStartPost=-/bin/sh -c 'systemd-tmpfiles --create /etc/tmpfiles.d/shrooms-agent-*.conf; i=0; while [ ! -S $SOCK ] && [ \$i -lt 150 ]; do sleep 0.2; i=\$((\$i+1)); done; setfacl -m user:$USER_NAME:rw,mask::rw $SOCK'
 DROPIN
         systemctl daemon-reload
     fi
