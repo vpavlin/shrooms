@@ -49,6 +49,39 @@ class HistoryTest {
         assertEquals(big.length, events[0].data.getJSONObject("message").getJSONArray("content").getJSONObject(0).getString("content").length)
     }
 
+    // What an agent or a person wrote is kept whole, however long: a session
+    // opens from this copy, and a reply cut here stayed cut (2026-11-10).
+    @Test fun aLongReplyIsKeptWhole() {
+        val reply = "a long answer, ".repeat(1000) + "with the phone hash as an optional claim at the end"
+        val events = listOf(
+            AgentEvent(1, "claude", "", JSONObject().put("type", "assistant").put("message", JSONObject()
+                .put("content", org.json.JSONArray().put(JSONObject().put("type", "text").put("text", reply))))),
+            ev(2, text = reply))
+        val h = History.decode(History.encode(0, events, emptyList()))!!
+        assertEquals(reply, h.events[0].data.getJSONObject("message").getJSONArray("content").getJSONObject(0).getString("text"))
+        assertEquals(reply, h.events[1].data.getString("text"))
+        // A tool call's input is still cut, like its result.
+        val call = AgentEvent(3, "claude", "", JSONObject().put("type", "assistant").put("message", JSONObject()
+            .put("content", org.json.JSONArray().put(JSONObject().put("type", "tool_use")
+                .put("input", JSONObject().put("content", "z".repeat(History.STRING * 2)))))))
+        val c = History.decode(History.encode(0, listOf(call), emptyList()))!!
+        assertEquals(History.STRING + 1, c.events[0].data.getJSONObject("message").getJSONArray("content")
+            .getJSONObject(0).getJSONObject("input").getString("content").length)
+    }
+
+    // A copy from before: a reply cut to STRING marks it to be loaded again;
+    // a cut tool output does not.
+    @Test fun aCopyWithACutReplyIsDropped() {
+        val cut = "x".repeat(History.STRING) + "…"
+        assertTrue(History.wasCut(cut))
+        assertTrue(!History.wasCut("short…"))
+        assertTrue(History.replyCut(JSONObject().put("text", cut)))
+        assertTrue(History.replyCut(JSONObject().put("type", "assistant").put("message", JSONObject()
+            .put("content", org.json.JSONArray().put(JSONObject().put("type", "text").put("text", cut))))))
+        assertTrue(!History.replyCut(JSONObject().put("type", "user").put("message", JSONObject()
+            .put("content", org.json.JSONArray().put(JSONObject().put("type", "tool_result").put("content", cut))))))
+    }
+
     @Test fun theMegabyteStillHolds() {
         val json = History.encode(0, (1L..1000L).map { ev(it, text = "y".repeat(History.STRING)) }, emptyList())
         assertTrue(json.length <= History.BYTES + 100)

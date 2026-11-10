@@ -65,7 +65,7 @@ ChildEnv childEnv();
 /** Whether a link is one to open: http or https, printable, not huge. */
 bool safeUrl(const std::string& url);
 
-/** A JSON event with every string longer than max bytes cut, still valid JSON. */
+/** A JSON event with every string inside a tool call or result longer than max bytes cut, still valid JSON. */
 std::string trimStrings(const std::string& ev, size_t max);
 bool isMeshAddress(const std::string& address);
 
