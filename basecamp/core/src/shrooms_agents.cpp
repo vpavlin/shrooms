@@ -69,9 +69,9 @@ constexpr unsigned kTasksEvery = 5;
 // What is kept on disk of each conversation: as the phone keeps.
 constexpr size_t kHistoryEvents = 300;
 constexpr size_t kHistoryBytes = 1 << 20;
-// Strings longer than this — a tool's output, nearly always, shown folded —
-// are kept cut, as the phone keeps them: whole, a few filled the megabyte and a
-// busy session's copy held 75 events.
+// Strings in a tool call or result longer than this are kept cut, as the phone
+// keeps them (trimStrings): whole, a few filled the megabyte and a busy
+// session's copy held 75 events.
 constexpr size_t kHistoryString = 4096;
 
 std::string jsonEscape(const std::string& s)
@@ -717,15 +717,49 @@ std::string Hub::historyPath(const std::string& address, const std::string& sess
 // escape or a UTF-8 sequence, so what comes out is still valid JSON.
 std::string trimStrings(const std::string& ev, size_t max)
 {
+    // Only strings in a tool call or its result are cut; what an agent or a
+    // person wrote is kept whole. It was all cut, and a session opens from
+    // this copy and asks only for what came after it, so a long reply stayed
+    // cut on screen (2026-11-10). Told apart by where a string sits, since
+    // there is no parser here and key order is no help (pi's and OpenCode's
+    // events come out of Go with "type" after "content"):
+    //   a tool call's input            ...content[i].input...
+    //   a tool's result                ...content[i].content...  (a second "content")
+    //   Claude Code's raw result       tool_use_result / toolUseResult
+    // A reply's text is ...content[i].text, under one "content" only.
+    struct Frame { bool obj; bool expectKey; std::string key; };
+    std::vector<Frame> st;
+    auto inTool = [&]() {
+        int contents = 0;
+        for (const auto& f : st) {
+            if (!f.obj) continue;
+            if (f.key == "input" || f.key == "tool_use_result" || f.key == "toolUseResult") return true;
+            if (f.key == "content") contents++;
+        }
+        return contents >= 2;
+    };
     std::string out;
     out.reserve(ev.size() < 2 * max ? ev.size() : 2 * max);
     size_t i = 0, n = ev.size();
     while (i < n) {
         char c = ev[i];
+        if (c != '"') {
+            out += c;
+            i++;
+            switch (c) {
+            case '{': st.push_back({true, true, ""}); break;
+            case '[': st.push_back({false, false, ""}); break;
+            case '}': case ']': if (!st.empty()) st.pop_back(); break;
+            case ',': if (!st.empty() && st.back().obj) st.back().expectKey = true; break;
+            default: break;
+            }
+            continue;
+        }
         out += c;
         i++;
-        if (c != '"') continue;
-        // Inside a string: copy up to max bytes, then skip to its end.
+        bool isKey = !st.empty() && st.back().obj && st.back().expectKey;
+        bool cutHere = !isKey && inTool();
+        std::string key;
         size_t kept = 0;
         bool cut = false;
         while (i < n && ev[i] != '"') {
@@ -735,7 +769,8 @@ std::string trimStrings(const std::string& ev, size_t max)
             else if ((static_cast<unsigned char>(ev[i]) & 0xF0) == 0xE0) len = 3;
             else if ((static_cast<unsigned char>(ev[i]) & 0xF8) == 0xF0) len = 4;
             if (i + len > n) len = n - i;
-            if (!cut && kept + len > max) {
+            if (isKey && key.size() < 64) key.append(ev, i, len);
+            if (cutHere && !cut && kept + len > max) {
                 cut = true;
                 out += "\u2026";
             }
@@ -748,6 +783,10 @@ std::string trimStrings(const std::string& ev, size_t max)
         if (i < n) {
             out += '"';
             i++;
+        }
+        if (isKey) {
+            st.back().key = key;
+            st.back().expectKey = false;
         }
     }
     return out;

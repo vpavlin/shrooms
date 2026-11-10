@@ -1862,7 +1862,16 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String
                                     .onFailure { actionError = it.message ?: "could not transcribe it again" }
                             }
                         }, reading = readingNow?.takeIf { item is ChatItem.Said && it.id == "${o.host}/${o.session}/${item.seq}" },
-                            onRead = { said -> Speech.say(ctx, "${o.host}/${o.session}/${said.seq}", said.text) })
+                            onRead = { said -> Speech.say(ctx, "${o.host}/${o.session}/${said.seq}", said.text) },
+                            onMore = { seq ->
+                                // The event as the agent keeps it, whole, in place of the cut copy.
+                                scope.launch {
+                                    val e = withContext(Dispatchers.IO) { runCatching { client.event(o.session, seq) }.getOrNull() }
+                                    val i = events.indexOfFirst { it.seq == seq }
+                                    if (e != null && i >= 0) events[i] = e
+                                    else actionError = "could not fetch the rest from ${o.host}"
+                                }
+                            })
                     }
                 }
                 // At the top (the list is laid out from the bottom): what was
@@ -2197,13 +2206,20 @@ private fun CopyLink(text: String) {
 
 @Composable
 private fun ChatRow(item: ChatItem, onAnswer: (String, Boolean, Map<String, String>?) -> Unit,
-                    onRetryVoice: (String) -> Unit = {}, reading: Speech.Reading? = null, onRead: ((ChatItem.Said) -> Unit)? = null) {
+                    onRetryVoice: (String) -> Unit = {}, reading: Speech.Reading? = null, onRead: ((ChatItem.Said) -> Unit)? = null,
+                    onMore: ((Long) -> Unit)? = null) {
+    // Text the phone's saved copy cut (History.STRING): the rest from the agent.
+    @Composable fun ReadMore(seq: Long, text: String) {
+        if (onMore != null && History.wasCut(text)) Text("read more", style = MaterialTheme.typography.labelSmall,
+            color = Palette.Sky, modifier = Modifier.clickable { onMore(seq) }.padding(vertical = 6.dp))
+    }
     when (item) {
         is ChatItem.You -> Bubble(Palette.Phosphor.copy(alpha = 0.08f), Palette.Phosphor.copy(alpha = 0.35f)) {
             Stamp((if (item.outside) listOf(item.by.uppercase(), whenSaid(item.time))
                    else listOf(if (item.voice) "YOU 🎤" else "YOU", item.by, whenSaid(item.time))).filter { it.isNotEmpty() }.joinToString("  ·  "),
                 Palette.Phosphor, copy = item.text)
             Text(spans(Markdown.links(item.text)), style = MaterialTheme.typography.bodyMedium)
+            ReadMore(item.seq, item.text)
         }
         is ChatItem.Said -> Bubble(Palette.Panel) {
             Stamp(whenSaid(item.time), copy = item.text) {
@@ -2213,6 +2229,7 @@ private fun ChatRow(item: ChatItem, onAnswer: (String, Boolean, Map<String, Stri
                     modifier = Modifier.clickable { onRead(item) }.padding(start = 6.dp, end = 10.dp, top = 2.dp, bottom = 2.dp))
             }
             if (reading == null) MarkdownText(item.text) else ReadingView(reading)
+            ReadMore(item.seq, item.text)
         }
         is ChatItem.Earlier -> if (item.user) {
             Bubble(Palette.Phosphor.copy(alpha = 0.05f), Palette.Line) {
@@ -2253,6 +2270,7 @@ private fun ChatRow(item: ChatItem, onAnswer: (String, Boolean, Map<String, Stri
                 color = if (item.error) Palette.Rust else Palette.Ash,
                 modifier = Modifier.clickable(enabled = more) { expanded = !expanded }.padding(start = 16.dp),
             ) }
+            if (expanded) Row(Modifier.padding(start = 16.dp)) { ReadMore(item.seq, item.text) }
         }
         is ChatItem.Prompt -> if (item.questions.isNotEmpty()) QuestionCard(item, onAnswer) else PromptCard(item, onAnswer)
         is ChatItem.Done -> Label("— ${item.note}${whenSaid(item.time).let { if (it.isEmpty()) "" else "  ·  $it" }}")
