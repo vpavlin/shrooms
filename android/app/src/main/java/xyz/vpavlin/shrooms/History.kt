@@ -19,17 +19,27 @@ object History {
     /** …and at most this much of them: a tool's output can be megabytes. */
     const val BYTES = 1 shl 20
     /**
-     * Strings longer than this — a tool's output, nearly always, folded to its
-     * first line when shown — are kept cut: whole, a few of them filled the
-     * megabyte and a busy session's copy held 66 events.
+     * Strings in a tool call or its result longer than this are kept cut:
+     * whole, a few outputs filled the megabyte and a busy session's copy held
+     * 66 events. Only those — every harness's events arrive in Claude Code's
+     * shape, with `tool_use` and `tool_result` (pi.go, opencode.go). What an
+     * agent or a person wrote is kept whole: it was cut too, and since a
+     * session opens from this copy and asks only for what came after it, a
+     * long reply stayed cut on screen ("…with the phone hash as an optional
+     * cla…", pi5/jimmy's session, 2026-11-10).
      */
     const val STRING = 4096
+    private val RAW_RESULT = setOf("tool_use_result", "toolUseResult")
 
-    /** [v] with every string in it cut to [STRING]; a copy, [v] untouched. */
-    fun trimmed(v: Any?): Any? = when (v) {
-        is String -> if (v.length > STRING) v.take(STRING) + "…" else v
-        is JSONObject -> JSONObject().also { o -> v.keys().forEach { k -> o.put(k, trimmed(v.opt(k))) } }
-        is JSONArray -> JSONArray().also { a -> for (i in 0 until v.length()) a.put(trimmed(v.opt(i))) }
+    /** [v] with every string inside a tool call or result cut to [STRING]; a copy, [v] untouched. */
+    fun trimmed(v: Any?, inTool: Boolean = false): Any? = when (v) {
+        is String -> if (inTool && v.length > STRING) v.take(STRING) + "…" else v
+        is JSONObject -> {
+            val tool = inTool || v.optString("type").let { it == "tool_result" || it == "tool_use" }
+            // And Claude Code's raw result of a tool, beside the message.
+            JSONObject().also { o -> v.keys().forEach { k -> o.put(k, trimmed(v.opt(k), tool || k in RAW_RESULT)) } }
+        }
+        is JSONArray -> JSONArray().also { a -> for (i in 0 until v.length()) a.put(trimmed(v.opt(i), inTool)) }
         else -> v
     }
 
@@ -76,6 +86,23 @@ object History {
 
     fun load(ctx: Context, host: String, session: String): KeptHistory? =
         runCatching { file(ctx, host, session).readText() }.getOrNull()?.let(::decode)
+            // A copy saved before replies were kept whole: dropped, so the
+            // session loads them from the agent again (see STRING).
+            ?.takeUnless { h -> h.events.any { replyCut(it.data) } }
+
+    /** Whether [text] is one this copy cut: [STRING] characters and the mark. */
+    fun wasCut(text: String): Boolean = text.length == STRING + 1 && text.endsWith("…")
+
+    /** A string cut to [STRING] outside a tool call or result: what copies did before 2026-11-10. */
+    fun replyCut(v: Any?, inTool: Boolean = false): Boolean = when (v) {
+        is String -> !inTool && wasCut(v)
+        is JSONObject -> {
+            val tool = inTool || v.optString("type").let { it == "tool_result" || it == "tool_use" }
+            v.keys().asSequence().any { k -> replyCut(v.opt(k), tool || k in RAW_RESULT) }
+        }
+        is JSONArray -> (0 until v.length()).any { replyCut(v.opt(it), inTool) }
+        else -> false
+    }
 
     fun save(ctx: Context, host: String, session: String, events: List<AgentEvent>, earlier: List<Earlier>) {
         runCatching {

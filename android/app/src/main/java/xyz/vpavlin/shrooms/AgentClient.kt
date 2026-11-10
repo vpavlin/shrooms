@@ -666,6 +666,13 @@ class AgentClient(private val address: String) {
         return last
     }
 
+    /** One event of a session, whole, as the agent keeps it: for "read more" on one the phone's copy cut. */
+    fun event(session: String, seq: Long): AgentEvent? {
+        var got: AgentEvent? = null
+        follow(session, seq - 1, stop = { got != null }) { e -> if (e.kind != "partial" && e.seq == seq) got = e }
+        return got
+    }
+
     private fun open(method: String, path: String, timeoutMs: Int): HttpURLConnection {
         val c = URL(base + path).openConnection() as HttpURLConnection
         c.requestMethod = method
