@@ -63,6 +63,7 @@ not described. That they are all here is checked; what they say is not.
 | `cmd/shrooms-relay` | Command shrooms-relay forwards packets for meshes it is not a member of. |
 | `cmd/wakuspike` | Command wakuspike is spike S1: prove that a Go process can drive liblogosdelivery via cgo, join a Waku network, and complete a publish -> receive round trip through the event callback. |
 | `internal/agent` | Package agent runs coding-agent sessions — Claude Code, pi, and other harnesses (harness.go) — and serves them to the owner's other devices over the mesh (docs/agents.md). |
+| `internal/clip` | Package clip is the shared clipboard (ADR-083): a short text sent from one device to others on the same mesh, named one by one or all of a mesh, and kept a while for picking up. |
 | `internal/control` | Package control defines the mesh control-plane messages carried over Waku. |
 | `internal/cred` | Package cred separates authority from participation. |
 | `internal/ctrl` | Package ctrl is the framing that lets control traffic share the WireGuard socket. |
