@@ -125,7 +125,7 @@ _shrooms() {
         cword=$COMP_CWORD
     fi
 
-    local commands="init join invite prepare daemon status mesh config reload bound paths memory services hosts copy paste clips key keys credential keycard admin version help"
+    local commands="init join invite prepare daemon status mesh config reload bound paths memory services hosts clipboard key keys credential keycard admin version help"
     local common="--config --state"
 
     # A path-valued flag completes as a path, whichever command it belongs to.
@@ -162,7 +162,7 @@ _shrooms() {
         --to)
             # A clip's recipients: the devices this one can reach. Only for
             # copy; services' --to is a port.
-            if [ "${words[1]}" = copy ]; then
+            if [ "${words[1]}" = clipboard ] || [ "${words[1]}" = clip ]; then
                 _shrooms_offer "$(_shrooms_peer_names)"
                 return
             fi
@@ -205,14 +205,17 @@ _shrooms() {
         status)
             COMPREPLY=($(compgen -W "--json --ipv4 --socket" -- "$cur"))
             ;;
-        copy)
-            COMPREPLY=($(compgen -W "--to --all --mesh --secret --ttl --socket" -- "$cur"))
-            ;;
-        paste)
-            COMPREPLY=($(compgen -W "--socket" -- "$cur"))
-            ;;
-        clips)
-            COMPREPLY=($(compgen -W "rm --json --socket" -- "$cur"))
+        clipboard|clip)
+            # Second word is the verb; the flags are the verb's.
+            if [ "$cword" -eq 2 ]; then
+                COMPREPLY=($(compgen -W "copy paste list remove" -- "$cur"))
+            else
+                case ${words[2]} in
+                    copy|cp) COMPREPLY=($(compgen -W "--to --all --mesh --secret --ttl --socket" -- "$cur")) ;;
+                    list|ls) COMPREPLY=($(compgen -W "--json --socket" -- "$cur")) ;;
+                    *)       COMPREPLY=($(compgen -W "--socket" -- "$cur")) ;;
+                esac
+            fi
             ;;
         mesh|meshes)
             # The labels come from the config rather than from status, because

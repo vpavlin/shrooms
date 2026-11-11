@@ -194,32 +194,32 @@ fi
 # Through the tunnel, named by its sender's address: B learns it came from
 # alpha because WireGuard only takes alpha's address from alpha.
 CLIP="e2e clip $$ https://example.org/?a=1&b=2"
-"$BIN" copy --socket "$SOCKS/a.sock" --to beta "$CLIP" >"$WORK/a/copy.log" 2>&1 ||
+"$BIN" clipboard copy --socket "$SOCKS/a.sock" --to beta "$CLIP" >"$WORK/a/copy.log" 2>&1 ||
   bad "node A could not send a clip: $(cat "$WORK/a/copy.log")"
 n=0
 while [ "$n" -lt 40 ]; do
-  [ "$("$BIN_B" paste --socket "$SOCKS/b.sock" 2>/dev/null)" = "$CLIP" ] && break
+  [ "$("$BIN_B" clipboard paste --socket "$SOCKS/b.sock" 2>/dev/null)" = "$CLIP" ] && break
   sleep 2; n=$((n+2))
 done
-if [ "$("$BIN_B" paste --socket "$SOCKS/b.sock" 2>/dev/null)" = "$CLIP" ]; then
+if [ "$("$BIN_B" clipboard paste --socket "$SOCKS/b.sock" 2>/dev/null)" = "$CLIP" ]; then
   ok "a clip goes from A to B (${n}s)"
 else
   bad "the clip never reached node B"
-  note "$("$BIN" clips --socket "$SOCKS/a.sock" 2>&1 | tail -2 | tr '\n' ' ')"
+  note "$("$BIN" clipboard list --socket "$SOCKS/a.sock" 2>&1 | tail -2 | tr '\n' ' ')"
   grep -i clip "$WORK/a/daemon.log" | tail -3 | sed 's/^/         /'
 fi
-if "$BIN_B" clips --json --socket "$SOCKS/b.sock" 2>/dev/null | grep -q '"from":"alpha"'; then
+if "$BIN_B" clipboard list --json --socket "$SOCKS/b.sock" 2>/dev/null | grep -q '"from":"alpha"'; then
   ok "node B knows it came from alpha"
 else
   bad "node B does not say who sent the clip"
 fi
-"$BIN_B" copy --socket "$SOCKS/b.sock" --all --secret "e2e secret $$" >/dev/null 2>&1
+"$BIN_B" clipboard copy --socket "$SOCKS/b.sock" --all --secret "e2e secret $$" >/dev/null 2>&1
 n=0
 while [ "$n" -lt 40 ]; do
-  [ "$("$BIN" paste --socket "$SOCKS/a.sock" 2>/dev/null)" = "e2e secret $$" ] && break
+  [ "$("$BIN" clipboard paste --socket "$SOCKS/a.sock" 2>/dev/null)" = "e2e secret $$" ] && break
   sleep 2; n=$((n+2))
 done
-if [ "$("$BIN" paste --socket "$SOCKS/a.sock" 2>/dev/null)" = "e2e secret $$" ]; then
+if [ "$("$BIN" clipboard paste --socket "$SOCKS/a.sock" 2>/dev/null)" = "e2e secret $$" ]; then
   ok "a secret goes from B to all of the mesh (${n}s)"
 else
   bad "the secret never reached node A"

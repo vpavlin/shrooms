@@ -228,9 +228,39 @@ func clipCall(sock, method, path string, body any, out any) error {
 	return nil
 }
 
-// cmdCopy sends a clip: `shrooms copy --to phone "text"`, or from stdin.
-func cmdCopy(args []string) error {
-	fs := flag.NewFlagSet("copy", flag.ExitOnError)
+// cmdClipboard is `shrooms clipboard`: one command with its verbs, rather than
+// three more at the top of a CLI that is about the mesh.
+func cmdClipboard(args []string) error {
+	if len(args) == 0 {
+		return cmdClipList(nil)
+	}
+	switch args[0] {
+	case "copy", "cp":
+		return cmdClipCopy(args[1:])
+	case "paste":
+		return cmdClipPaste(args[1:])
+	case "list", "ls":
+		return cmdClipList(args[1:])
+	case "remove", "rm":
+		return cmdClipRemove(args[1:])
+	case "help", "-h", "--help":
+		fmt.Fprintln(os.Stderr, `usage: shrooms clipboard VERB   (clip for short)
+  copy --to DEV[,DEV] [TEXT]   send to your other devices; stdin without TEXT
+       --all --mesh M          to every other device on one mesh
+       --secret                a key or password: never written down
+  paste [ID]                   print the newest clip that arrived
+  list [--json]                what arrived and what was sent (the default)
+  remove ID                    forget one`)
+		return nil
+	default:
+		return fmt.Errorf("unknown clipboard command %q; try: copy, paste, list, remove", args[0])
+	}
+}
+
+// cmdClipCopy sends a clip: `shrooms clipboard copy --to phone "text"`, or
+// from stdin.
+func cmdClipCopy(args []string) error {
+	fs := flag.NewFlagSet("clipboard copy", flag.ExitOnError)
 	sock := fs.String("socket", DefaultSocket, "control socket path")
 	to := fs.String("to", "", "who it is for: device names, comma-separated; name.mesh picks the mesh")
 	all := fs.Bool("all", false, "every other device on the mesh (--mesh, when on several)")
@@ -238,7 +268,7 @@ func cmdCopy(args []string) error {
 	secret := fs.Bool("secret", false, "a key or password: never written down, gone 5 minutes after it is copied")
 	ttl := fs.Duration("ttl", 0, "how long it waits and is kept (default 24h, 1h for a secret, at most 168h)")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: shrooms copy --to DEVICE[,DEVICE] | --all [--mesh M] [--secret] [TEXT]\n"+
+		fmt.Fprintln(os.Stderr, "usage: shrooms clipboard copy --to DEVICE[,DEVICE] | --all [--mesh M] [--secret] [TEXT]\n"+
 			"TEXT, or standard input when there is none.")
 		fs.PrintDefaults()
 	}
@@ -270,12 +300,12 @@ func cmdCopy(args []string) error {
 	return nil
 }
 
-// cmdPaste prints a clip that arrived: the newest, or the one named.
-func cmdPaste(args []string) error {
-	fs := flag.NewFlagSet("paste", flag.ExitOnError)
+// cmdClipPaste prints a clip that arrived: the newest, or the one named.
+func cmdClipPaste(args []string) error {
+	fs := flag.NewFlagSet("clipboard paste", flag.ExitOnError)
 	sock := fs.String("socket", DefaultSocket, "control socket path")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: shrooms paste [ID]   the newest clip that arrived, or the one with ID (shrooms clips)")
+		fmt.Fprintln(os.Stderr, "usage: shrooms clipboard paste [ID]   the newest clip that arrived, or the one with ID (shrooms clipboard list)")
 	}
 	if err := fs.Parse(splitArgs(fs, args)); err != nil {
 		return err
@@ -295,20 +325,30 @@ func cmdPaste(args []string) error {
 	return nil
 }
 
-// cmdClips lists the clips here, or forgets one.
-func cmdClips(args []string) error {
-	fs := flag.NewFlagSet("clips", flag.ExitOnError)
+// cmdClipRemove forgets a clip; a sent one still waiting is not sent.
+func cmdClipRemove(args []string) error {
+	fs := flag.NewFlagSet("clipboard remove", flag.ExitOnError)
 	sock := fs.String("socket", DefaultSocket, "control socket path")
-	asJSON := fs.Bool("json", false, "as JSON")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: shrooms clips [--json]   what arrived and what was sent\n"+
-			"       shrooms clips rm ID        forget one; a sent one still waiting is not sent")
+		fmt.Fprintln(os.Stderr, "usage: shrooms clipboard remove ID   forget it; a sent one still waiting is not sent")
 	}
 	if err := fs.Parse(splitArgs(fs, args)); err != nil {
 		return err
 	}
-	if fs.NArg() == 2 && fs.Arg(0) == "rm" {
-		return clipCall(*sock, http.MethodDelete, "/clips/"+fs.Arg(1), nil, nil)
+	if fs.NArg() != 1 {
+		fs.Usage()
+		os.Exit(2)
+	}
+	return clipCall(*sock, http.MethodDelete, "/clips/"+fs.Arg(0), nil, nil)
+}
+
+// cmdClipList lists what arrived and what was sent.
+func cmdClipList(args []string) error {
+	fs := flag.NewFlagSet("clipboard list", flag.ExitOnError)
+	sock := fs.String("socket", DefaultSocket, "control socket path")
+	asJSON := fs.Bool("json", false, "as JSON")
+	if err := fs.Parse(splitArgs(fs, args)); err != nil {
+		return err
 	}
 	var l clipList
 	if err := clipCall(*sock, http.MethodGet, "/clips", nil, &l); err != nil {
