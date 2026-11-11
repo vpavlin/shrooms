@@ -193,7 +193,7 @@ func (s *Store) Take(id string) (Clip, error) {
 	}
 }
 
-// index finds a clip by its ID, or by the start of it as `shrooms clips`
+// index finds a clip by its ID, or by the start of it as `shrooms clipboard list`
 // shows it, when only one starts so.
 func index(cs []Clip, id string) int {
 	found := -1
@@ -211,7 +211,7 @@ func index(cs []Clip, id string) int {
 	return found
 }
 
-// Latest is the newest clip received, for `shrooms paste` with no ID.
+// Latest is the newest clip received, for `shrooms clipboard paste` with no ID.
 func (s *Store) Latest() (Clip, error) {
 	r, _ := s.List()
 	if len(r) == 0 {

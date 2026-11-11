@@ -28,7 +28,7 @@ is a peer with an address of its own. And a clipboard has nothing to do with
 coding sessions: someone who runs Shrooms alone should have it.
 
 **A clip names its recipients, and only they receive it.** One device, several,
-or all of one mesh (`shrooms copy --to phone`, `--to laptop,phone`,
+or all of one mesh (`shrooms clipboard copy --to phone`, `--to laptop,phone`,
 `--all --mesh home`). There is no broadcast filtered on arrival, so a key meant
 for the phone never touches the VPS. "All" never spans meshes, and with
 several meshes it must say which: the office mesh has other people's machines
@@ -71,7 +71,8 @@ sheet, because no Android app can read the clipboard in the background.
 
 ## Consequences
 
-- `shrooms copy`, `shrooms paste` and `shrooms clips`; `/clips` on the socket for
+- `shrooms clipboard` with `copy`, `paste`, `list` and `remove` (`clip` for
+  short): one command with verbs, not three more at the top of the CLI. `/clips` on the socket for
   the apps, with the devices a clip can go to.
 - `clips.json` in the state directory, 0600, without secrets.
 - Port 9181 on the overlay addresses is the clipboard's.
