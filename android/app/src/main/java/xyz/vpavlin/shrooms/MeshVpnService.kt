@@ -369,6 +369,15 @@ class MeshVpnService : VpnService() {
 
                 // Go dups this, so closing it here later is safe.
                 lastAddresses = null
+                // Here, where the session lives, so a clip says so with the
+                // app's screens closed (ADR-083). The application context:
+                // the core holds the listener past this service.
+                val app = applicationContext
+                Mobile.setClipListener(object : mobile.ClipListener {
+                    override fun onClip(clipJSON: String?) {
+                        if (clipJSON != null) Clips.notifyArrived(app, clipJSON)
+                    }
+                })
                 Mobile.start(pfd.fd.toLong(), dir, upstream, protector, logger)
                 setUnderlying()
                 watchNetworks()
@@ -866,6 +875,7 @@ class MeshVpnService : VpnService() {
         scope.cancel()
         unwatchNetworks()
         runCatching { Mobile.stop() }
+        runCatching { Mobile.setClipListener(null) }
         super.onDestroy()
     }
 
