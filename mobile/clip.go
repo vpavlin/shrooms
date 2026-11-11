@@ -82,7 +82,7 @@ func clipDirectory() ([]clip.Mesh, []clip.Peer) {
 			if err != nil {
 				continue
 			}
-			peers = append(peers, clip.Peer{Mesh: in.label, Name: p.Name, Addr: a, Online: p.Online})
+			peers = append(peers, clip.Peer{Mesh: in.label, Name: p.Name, Addr: a, Online: p.Online, Signed: p.NameSigned})
 		}
 	}
 	return meshes, peers
@@ -99,8 +99,14 @@ func serveClips(s *session, configDir string, log *slog.Logger) {
 			continue
 		}
 		s.clipListeners = append(s.clipListeners, ln)
-		go (&http.Server{Handler: store.Handler(in.label), ReadHeaderTimeout: 10 * time.Second,
-			ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: time.Minute}).Serve(ln)
+		srv := &http.Server{Handler: store.Handler(in.label), ReadHeaderTimeout: 10 * time.Second,
+			ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: time.Minute,
+			MaxHeaderBytes: 16 << 10}
+		go func(label string) {
+			if err := srv.Serve(ln); err != nil && !errors.Is(err, net.ErrClosed) {
+				log.Warn("clips no longer taken", "mesh", label, "err", err)
+			}
+		}(in.label)
 	}
 	store.Kick()
 }

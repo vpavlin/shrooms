@@ -53,6 +53,14 @@ written to disk on either side, gone five minutes after it is first copied, and
 dropped from the sender once every recipient has it. Lists show it as
 "(secret)".
 
+**Anyone on a mesh may send to you.** The review (jimmy, 2026-11-11) suggested a
+per-mesh list of who may; the owner kept it open ("Everyone in the mesh"): a
+clip says who sent it, and the office mesh's members are known. What bounds
+it instead: 20 clips a minute from one sender (more are refused, 429), a
+clip may not be dated ahead of its arrival, and a sender whose name its admin
+did not sign is shown as "(unsigned)", since another member could be using
+that name while the device that has it is away (audit F-43).
+
 **Who may read clips here** is whoever may use the daemon's socket (its
 group's tier, like the settings): the person at this machine.
 
@@ -63,8 +71,10 @@ so neither its Go core nor Kotlin can reach an overlay address through the
 kernel. The phone's core will take and send clips through a small userspace
 TCP stack instead, fed from the tunnel's write path for TCP to port 9181 (and
 replies to its own ports) and injecting into it. Its own connections use ports
-61000 and up, outside Linux's ephemeral range, so they cannot collide with
-other apps' kernel connections from the same address. Peers accept only the
+above the kernel's ephemeral range as the phone sets it (61000 and up with
+Linux's default; read from `/proc` at start, since a maker may widen it), so
+they cannot collide with other apps' kernel connections from the same
+address. Peers accept only the
 phone's /128, so the stack must send from that address and not a second one.
 Taking an incoming clip is a notification with Copy; sending is the share
 sheet, because no Android app can read the clipboard in the background.

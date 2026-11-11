@@ -99,7 +99,9 @@ object Clips {
             text = o.optString("text"),
             secret = o.optBoolean("secret"),
             mesh = o.optString("mesh"),
-            from = o.optString("from"),
+            // A name only announced, not signed by its admin, says so
+            // wherever it is shown: another member could be using it.
+            from = o.optString("from") + if (o.optBoolean("unsigned")) " (unsigned)" else "",
             to = (0 until to.length()).map { i ->
                 val t = to.getJSONObject(i)
                 ClipTarget(t.optString("name"), ms(t.optString("sent")), t.optString("error"))
@@ -313,9 +315,11 @@ fun ClipsScreen(dir: String, draft: String?, onDraftUsed: () -> Unit, onClose: (
         }
     }
 
-    // The mesh the chips are for. The first one this phone is on until one is
-    // picked; a mesh that has gone falls back the same way.
-    val shownMesh = mesh.takeIf { it in view.meshes } ?: view.meshes.firstOrNull().orEmpty()
+    // The mesh the chips are for. The first one with another device on it until
+    // one is picked; a mesh that has gone falls back the same way.
+    val shownMesh = mesh.takeIf { it in view.meshes }
+        ?: view.meshes.firstOrNull { m -> view.devices.any { it.mesh == m } }
+        ?: view.meshes.firstOrNull().orEmpty()
     val devices = Clips.order(view.devices, shownMesh, recent)
     val to = picked.filter { n -> devices.any { it.name == n } }
     val canSend = text.isNotEmpty() && !sending && shownMesh.isNotEmpty() && (all || to.isNotEmpty())

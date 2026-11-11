@@ -44,6 +44,8 @@ type Store struct {
 	// retry is when each recipient that failed is tried again, by mesh and
 	// name. In memory: a restart trying everyone once more is no loss.
 	retry map[string]backoff
+	// recent is when each sender's last clips arrived, for perMinute.
+	recent map[string][]time.Time
 }
 
 // New opens the store kept at path, or one kept nowhere when path is "".
@@ -265,6 +267,13 @@ func (s *Store) Handler(mesh string) http.Handler {
 			http.Error(w, "not a member of this mesh", http.StatusForbidden)
 			return
 		}
+		s.mu.Lock()
+		allowed := s.allowLocked(mesh + "/" + from.Name)
+		s.mu.Unlock()
+		if !allowed {
+			http.Error(w, "too many clips; try again in a minute", http.StatusTooManyRequests)
+			return
+		}
 		var m wire
 		if err := json.NewDecoder(io.LimitReader(r.Body, MaxText*2)).Decode(&m); err != nil || m.ID == "" {
 			http.Error(w, "bad clip", http.StatusBadRequest)
@@ -281,21 +290,45 @@ func (s *Store) Handler(mesh string) http.Handler {
 }
 
 // sender is who sent a request, by the address it came from.
-func (s *Store) sender(mesh, remote string) (string, bool) {
+func (s *Store) sender(mesh, remote string) (Peer, bool) {
 	ap, err := netip.ParseAddrPort(remote)
 	if err != nil {
-		return "", false
+		return Peer{}, false
 	}
 	_, peers := s.dir()
 	for _, p := range peers {
 		if p.Mesh == mesh && p.Addr == ap.Addr().Unmap() {
-			return p.Name, true
+			return p, true
 		}
 	}
-	return "", false
+	return Peer{}, false
 }
 
-func (s *Store) receive(mesh, from string, m wire) {
+// perMinute bounds what one sender may send: every clip is a notification,
+// and the list's bound of 50 bounds what is kept, not what is shown.
+const perMinute = 20
+
+// allowLocked is whether a sender may send one more now.
+func (s *Store) allowLocked(key string) bool {
+	if s.recent == nil {
+		s.recent = map[string][]time.Time{}
+	}
+	now := s.now()
+	kept := s.recent[key][:0]
+	for _, t := range s.recent[key] {
+		if now.Sub(t) < time.Minute {
+			kept = append(kept, t)
+		}
+	}
+	if len(kept) >= perMinute {
+		s.recent[key] = kept
+		return false
+	}
+	s.recent[key] = append(kept, now)
+	return true
+}
+
+func (s *Store) receive(mesh string, from Peer, m wire) {
 	now := s.now()
 	exp := time.Unix(m.Expires, 0)
 	// The sender says how long; this side says how long at most.
@@ -305,11 +338,17 @@ func (s *Store) receive(mesh, from string, m wire) {
 	if !exp.After(now) {
 		return
 	}
-	c := Clip{ID: m.ID, Text: m.Text, Secret: m.Secret, Mesh: mesh, From: from,
-		Created: time.Unix(m.Created, 0), Expires: exp}
+	// Nor may it date a clip ahead, to keep it first in the list and in
+	// `paste`.
+	created := time.Unix(m.Created, 0)
+	if created.After(now) {
+		created = now
+	}
+	c := Clip{ID: m.ID, Text: m.Text, Secret: m.Secret, Mesh: mesh, From: from.Name,
+		Unsigned: !from.Signed, Created: created, Expires: exp}
 	s.mu.Lock()
 	// A retry after a lost answer is the same clip, not a second one.
-	if slices.ContainsFunc(s.received, func(x Clip) bool { return x.ID == c.ID && x.From == from }) {
+	if slices.ContainsFunc(s.received, func(x Clip) bool { return x.ID == c.ID && x.From == c.From }) {
 		s.mu.Unlock()
 		return
 	}
@@ -317,7 +356,7 @@ func (s *Store) receive(mesh, from string, m wire) {
 	s.pruneLocked()
 	s.saveLocked()
 	s.mu.Unlock()
-	s.log.Info("clip arrived", "from", from, "mesh", mesh, "secret", c.Secret)
+	s.log.Info("clip arrived", "from", c.From, "mesh", mesh, "secret", c.Secret)
 	if s.Arrived != nil {
 		s.Arrived(c)
 	}

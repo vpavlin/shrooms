@@ -55,6 +55,10 @@ type Peer struct {
 	Name   string
 	Addr   netip.Addr
 	Online bool
+	// Signed: the name is the one its admin signed into its credential, not
+	// only what it announces. Anyone can announce a name, and hold it while
+	// the device that really has it is away (audit F-43).
+	Signed bool
 }
 
 // Directory says who is where, now. It is asked on every send and every
@@ -63,15 +67,17 @@ type Directory func() ([]Mesh, []Peer)
 
 // Clip is one clip, as either side keeps it.
 type Clip struct {
-	ID      string    `json:"id"`
-	Text    string    `json:"text"`
-	Secret  bool      `json:"secret,omitempty"`
-	Mesh    string    `json:"mesh"`
-	From    string    `json:"from,omitempty"` // received: who sent it
-	To      []Target  `json:"to,omitempty"`   // sent: each recipient and how it went
-	Created time.Time `json:"created"`
-	Expires time.Time `json:"expires"`
-	Taken   time.Time `json:"taken,omitzero"` // received: first copied
+	ID     string `json:"id"`
+	Text   string `json:"text"`
+	Secret bool   `json:"secret,omitempty"`
+	Mesh   string `json:"mesh"`
+	From   string `json:"from,omitempty"` // received: who sent it
+	// Unsigned: the sender's name is only what it announced (Peer.Signed).
+	Unsigned bool      `json:"unsigned,omitempty"`
+	To       []Target  `json:"to,omitempty"` // sent: each recipient and how it went
+	Created  time.Time `json:"created"`
+	Expires  time.Time `json:"expires"`
+	Taken    time.Time `json:"taken,omitzero"` // received: first copied
 }
 
 // Target is one recipient of a sent clip.

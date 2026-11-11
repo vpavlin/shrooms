@@ -224,6 +224,9 @@ type statusPeer struct {
 	Overlay string `json:"overlay"`
 	Online  bool   `json:"online"`
 	Relay   bool   `json:"relay,omitempty"`
+	// NameSigned: the name is the one its admin signed, not only announced
+	// (mesh.NameSigned). What a clip's sender is called by depends on it.
+	NameSigned bool `json:"name_signed,omitempty"`
 	// Services are the names this peer says it publishes (ADR-023). A claim
 	// about what it offers, not a report that anything is listening.
 	Services []string `json:"services,omitempty"`
@@ -407,9 +410,10 @@ func snapshot(m *mesh.Mesh, suffix, label string) statusPayload {
 	holds := mesh.Holders(m.Roster().Peers())
 	for _, p := range m.Roster().Current(now) {
 		sp := statusPeer{
-			Services: svc[p.ID()],
-			Bound:    bnd[p.ID()],
-			Name:     p.Name,
+			Services:   svc[p.ID()],
+			Bound:      bnd[p.ID()],
+			Name:       p.Name,
+			NameSigned: m.NameSigned(p.ID(), p.Name),
 			// Qualified by the mesh label when this device has more than one,
 			// or a peer on the second mesh is named at an address on the
 			// first. The phone showed a bound ssh port as laptop.mesh:22 when

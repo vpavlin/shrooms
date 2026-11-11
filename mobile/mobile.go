@@ -1162,7 +1162,15 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 	// The clipboard's userspace stack (ADR-083). What it sends goes into the
 	// mux as though the tun had read it; what is for it is taken out of
 	// WireGuard's write path below, before the kernel would get it.
-	us, err := ustack.New(wg.DefaultMTU, mux.Inject)
+	// Above the kernel's own ports, as this phone sets them: a maker may have
+	// widened Linux's default, and a reply to another app's port inside the
+	// band would be taken by the stack and never reach that app.
+	portRange, _ := os.ReadFile("/proc/sys/net/ipv4/ip_local_port_range")
+	low, safe := ustack.PortsAbove(string(portRange))
+	if !safe {
+		log.Warn("the kernel's ports reach the top; the clipboard's may collide with another app's", "range", strings.TrimSpace(string(portRange)))
+	}
+	us, err := ustack.New(wg.DefaultMTU, low, mux.Inject)
 	if err != nil {
 		mux.Close()
 		return fmt.Errorf("clipboard stack: %w", err)
@@ -1211,7 +1219,7 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 			closeAll()
 			return fmt.Errorf("mesh %q: %w", mc.Label, err)
 		}
-		toStack := func(p []byte) bool { return ustack.Wants(p, clip.Port) }
+		toStack := func(p []byte) bool { return us.Wants(p, clip.Port) }
 		dev, err := wg.NewDevice(wg.SelfOnly(wg.Divert(translated, toStack, us.Deliver), self), ms.Identity.WGPriv, listen,
 			device.NewLogger(device.LogLevelError, "[wg "+mc.Label+"] "))
 		if err != nil {

@@ -953,7 +953,14 @@ Item {
             devices: d.devices || [], meshes: d.meshes || []
         }
         var ms = root.clipData.meshes
-        if (ms.length && ms.indexOf(root.clipMesh) < 0) root.clipMesh = ms[0]
+        // The first mesh with somebody on it to send to: a laptop's first
+        // mesh may be one it is alone on.
+        if (ms.length && ms.indexOf(root.clipMesh) < 0) {
+            var withDevices = ms.filter(function(m) {
+                return root.clipData.devices.some(function(d) { return d.mesh === m })
+            })
+            root.clipMesh = withDevices.length ? withDevices[0] : ms[0]
+        }
         if (!ms.length) root.clipMesh = ""
     }
 
@@ -3847,7 +3854,7 @@ Layout.preferredWidth: 0
                                             }
                                         }
                                         Text {
-                                            text: (modelData.from || "?")
+                                            text: (modelData.from || "?") + (modelData.unsigned ? " (unsigned)" : "")
                                                   + (root.clipMeshes.length > 1 ? "." + modelData.mesh : "")
                                                   + "  " + root.clipAge(modelData.created)
                                                   + (modelData.secret ? "  goes in " + root.clipLeft(modelData.expires) : "")

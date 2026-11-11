@@ -47,7 +47,7 @@ func clipDirectory(snapshot func() statusPayload) clip.Directory {
 			if p.Contested && p.DNSName != "" {
 				name, _, _ = strings.Cut(p.DNSName, ".")
 			}
-			peers = append(peers, clip.Peer{Mesh: p.Mesh, Name: name, Addr: a, Online: p.Online})
+			peers = append(peers, clip.Peer{Mesh: p.Mesh, Name: name, Addr: a, Online: p.Online, Signed: p.NameSigned})
 		}
 		return meshes, peers
 	}
@@ -360,7 +360,12 @@ func cmdClipList(args []string) error {
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "ARRIVED\tFROM\tID\tTEXT")
 	for _, c := range l.Received {
-		fmt.Fprintf(tw, "%s\t%s.%s\t%s\t%s\n", c.Created.Format("Jan 2 15:04"), c.From, c.Mesh, c.ID[:8], preview(c))
+		from := c.From + "." + c.Mesh
+		if c.Unsigned {
+			// A name only announced, not signed: say so where it is read.
+			from += " (unsigned)"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", c.Created.Format("Jan 2 15:04"), from, c.ID[:8], preview(c))
 	}
 	fmt.Fprintln(tw, "\nSENT\tTO\tID\tTEXT")
 	for _, c := range l.Sent {

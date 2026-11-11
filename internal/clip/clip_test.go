@@ -24,10 +24,10 @@ var (
 func laptopView() ([]Mesh, []Peer) {
 	return []Mesh{{"home", "laptop", laptop}, {"office", "laptop", netip.MustParseAddr("fd01::1")}},
 		[]Peer{
-			{"home", "phone", phone, true},
-			{"home", "vps", vps, false},
-			{"office", "phone", work, true},
-			{"office", "colleague", netip.MustParseAddr("fd01::9"), true},
+			{"home", "phone", phone, true, true},
+			{"home", "vps", vps, false, true},
+			{"office", "phone", work, true, true},
+			{"office", "colleague", netip.MustParseAddr("fd01::9"), true, true},
 		}
 }
 
@@ -68,7 +68,7 @@ func TestResolve(t *testing.T) {
 // laptop by its address, and the VPS, offline, still waits for it.
 func TestSendAndReceive(t *testing.T) {
 	phoneView := func() ([]Mesh, []Peer) {
-		return []Mesh{{"home", "phone", phone}}, []Peer{{"home", "laptop", netip.MustParseAddr("127.0.0.1"), true}}
+		return []Mesh{{"home", "phone", phone}}, []Peer{{"home", "laptop", netip.MustParseAddr("127.0.0.1"), true, true}}
 	}
 	got := make(chan Clip, 1)
 	recv := New("", phoneView, nil)
@@ -102,7 +102,7 @@ func TestSendAndReceive(t *testing.T) {
 	}
 	// Sent again after a lost answer: still one clip.
 	send.mark(c.ID, "phone", nil)
-	recv.receive("home", "laptop", wire{ID: c.ID, Text: "x", Expires: time.Now().Add(time.Hour).Unix()})
+	recv.receive("home", Peer{Name: "laptop", Signed: true}, wire{ID: c.ID, Text: "x", Expires: time.Now().Add(time.Hour).Unix()})
 	if r, _ := recv.List(); len(r) != 1 {
 		t.Fatalf("%d clips after a retry", len(r))
 	}
@@ -140,8 +140,8 @@ func TestSecret(t *testing.T) {
 	s := New(path, laptopView, nil)
 	now := time.Now()
 	s.now = func() time.Time { return now }
-	s.receive("home", "phone", wire{ID: "k", Text: "sk-123", Secret: true, Expires: now.Add(time.Hour).Unix()})
-	s.receive("home", "phone", wire{ID: "u", Text: "https://x", Expires: now.Add(time.Hour).Unix()})
+	s.receive("home", Peer{Name: "phone", Signed: true}, wire{ID: "k", Text: "sk-123", Secret: true, Expires: now.Add(time.Hour).Unix()})
+	s.receive("home", Peer{Name: "phone", Signed: true}, wire{ID: "u", Text: "https://x", Expires: now.Add(time.Hour).Unix()})
 	if again := New(path, laptopView, nil); func() bool { r, _ := again.List(); return len(r) != 1 || r[0].ID != "u" }() {
 		t.Fatal("a secret was kept on disk")
 	}
@@ -157,7 +157,7 @@ func TestSecret(t *testing.T) {
 // A recipient keeps a clip no longer than it allows, whatever the sender asks.
 func TestExpiryCapped(t *testing.T) {
 	s := New("", laptopView, nil)
-	s.receive("home", "phone", wire{ID: "a", Text: "x", Expires: time.Now().Add(365 * 24 * time.Hour).Unix()})
+	s.receive("home", Peer{Name: "phone", Signed: true}, wire{ID: "a", Text: "x", Expires: time.Now().Add(365 * 24 * time.Hour).Unix()})
 	r, _ := s.List()
 	if len(r) != 1 || r[0].Expires.After(time.Now().Add(MaxTTL+time.Minute)) {
 		t.Fatalf("%+v", r)
@@ -196,5 +196,30 @@ func TestRefusedBacksOff(t *testing.T) {
 	s.flush(context.Background())
 	if dials != 2 {
 		t.Fatalf("%d tries after it", dials)
+	}
+}
+
+// A sender may not date a clip ahead, nor send a stream of them; and a name
+// its admin did not sign is said to be only announced.
+func TestWhatASenderMayNotDo(t *testing.T) {
+	s := New("", laptopView, nil)
+	future := time.Now().Add(time.Hour)
+	s.receive("home", Peer{Name: "vps"}, wire{ID: "f", Text: "x", Created: future.Unix(), Expires: future.Unix()})
+	r, _ := s.List()
+	if len(r) != 1 || r[0].Created.After(time.Now().Add(time.Second)) || !r[0].Unsigned {
+		t.Fatalf("%+v", r)
+	}
+	h := s.Handler("home")
+	codes := map[int]int{}
+	for i := 0; i < perMinute+3; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/v1/clip",
+			strings.NewReader(`{"id":"`+strconv.Itoa(i)+`","text":"hi","expires":`+itoa(future.Unix())+`}`))
+		req.RemoteAddr = "[fd00::3]:4000"
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		codes[w.Code]++
+	}
+	if codes[http.StatusTooManyRequests] != 3 {
+		t.Fatalf("%v", codes)
 	}
 }

@@ -6,9 +6,9 @@
 // tunnel's, for the ports it serves and the replies to the ones it dialled
 // from — and what it sends goes into WireGuard from the same address the
 // kernel would use, because a peer accepts nothing else from this device.
-// Its own connections take ports from PortLow up, above Linux's ephemeral
-// range, so a reply meant for one of them is told from another app's by its
-// port alone.
+// Its own connections take ports above the kernel's ephemeral range (PortsAbove),
+// so a reply meant for one of them is told from another app's by its port
+// alone.
 package ustack
 
 import (
@@ -29,8 +29,30 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip/transport/tcp"
 )
 
-// PortLow is the first port the stack dials from. Linux hands out 32768-60999.
+// PortLow is the first port the stack dials from when the kernel's range is
+// Linux's default, 32768-60999.
 const PortLow = 61000
+
+// lowest is as high as the band may start and still leave it ports to use.
+const lowest = 65000
+
+// PortsAbove is the first port the stack may dial from, given the kernel's
+// ip_local_port_range as written in /proc: one above its top, and never below
+// PortLow. A phone whose maker widened the range up to the top leaves no room
+// that cannot collide; false says so, and the band is then the last 535.
+func PortsAbove(procRange string) (uint16, bool) {
+	var lo, hi int
+	if _, err := fmt.Sscan(procRange, &lo, &hi); err != nil || hi <= 0 {
+		return PortLow, true
+	}
+	switch {
+	case hi < PortLow:
+		return PortLow, true
+	case hi < lowest:
+		return uint16(hi + 1), true
+	}
+	return lowest, false
+}
 
 const nic = 1
 
@@ -39,6 +61,7 @@ type Stack struct {
 	s    *stack.Stack
 	ep   *channel.Endpoint
 	send func([]byte)
+	low  uint16 // the first port it dials from
 
 	mu     sync.Mutex
 	addrs  []netip.Addr
@@ -46,8 +69,9 @@ type Stack struct {
 	done   chan struct{}
 }
 
-// New makes a stack that hands each packet it sends to send, which owns it.
-func New(mtu int, send func([]byte)) (*Stack, error) {
+// New makes a stack that dials from low up and hands each packet it sends to
+// send, which owns it.
+func New(mtu int, low uint16, send func([]byte)) (*Stack, error) {
 	s := stack.New(stack.Options{
 		NetworkProtocols:   []stack.NetworkProtocolFactory{ipv6.NewProtocol},
 		TransportProtocols: []stack.TransportProtocolFactory{tcp.NewProtocol},
@@ -56,7 +80,7 @@ func New(mtu int, send func([]byte)) (*Stack, error) {
 	if err := s.SetTransportProtocolOption(tcp.ProtocolNumber, &sack); err != nil {
 		return nil, fmt.Errorf("tcp sack: %v", err)
 	}
-	if err := s.SetPortRange(PortLow, 65535); err != nil {
+	if err := s.SetPortRange(low, 65535); err != nil {
 		return nil, fmt.Errorf("port range: %v", err)
 	}
 	ep := channel.New(256, uint32(mtu), "")
@@ -64,7 +88,7 @@ func New(mtu int, send func([]byte)) (*Stack, error) {
 		return nil, fmt.Errorf("nic: %v", err)
 	}
 	s.AddRoute(tcpip.Route{Destination: header.IPv6EmptySubnet, NIC: nic})
-	u := &Stack{s: s, ep: ep, send: send, done: make(chan struct{})}
+	u := &Stack{s: s, ep: ep, send: send, low: low, done: make(chan struct{})}
 	go u.pump()
 	return u, nil
 }
@@ -171,11 +195,11 @@ func fullAddr(a netip.AddrPort) tcpip.FullAddress {
 // Wants is whether a packet from the tunnel is the stack's: TCP to one of
 // the ports it serves, or a reply to a connection it made. IPv6 with no
 // extension headers only; ForSelf has already said it is for this device.
-func Wants(pkt []byte, serves uint16) bool {
+func (u *Stack) Wants(pkt []byte, serves uint16) bool {
 	if len(pkt) < 40+4 || pkt[0]>>4 != 6 || pkt[6] != 6 { // TCP
 		return false
 	}
 	src := uint16(pkt[40])<<8 | uint16(pkt[41])
 	dst := uint16(pkt[42])<<8 | uint16(pkt[43])
-	return dst == serves || (src == serves && dst >= PortLow)
+	return dst == serves || (src == serves && dst >= u.low)
 }

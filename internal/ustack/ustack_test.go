@@ -17,12 +17,12 @@ func TestBackToBack(t *testing.T) {
 	other := netip.MustParseAddr("fd99:1:2::a") // another mesh's address on A
 	var a, b *Stack
 	var err error
-	a, err = New(1280, func(p []byte) { b.Deliver(p) })
+	a, err = New(1280, PortLow, func(p []byte) { b.Deliver(p) })
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err = New(1280, func(p []byte) {
-		if !Wants(p, 9181) {
+	b, err = New(1280, PortLow, func(p []byte) {
+		if !a.Wants(p, 9181) {
 			t.Errorf("A is sent a packet it would not take")
 		}
 		a.Deliver(p)
@@ -93,8 +93,26 @@ func TestWants(t *testing.T) {
 		{tcp(9181, 45000), false}, // a reply to another app's kernel socket
 		{tcp(443, 61234), false},  // anything else
 	} {
-		if Wants(c.p, 9181) != c.want {
+		if (&Stack{low: PortLow}).Wants(c.p, 9181) != c.want {
 			t.Errorf("%v: want %v", c.p[40:44], c.want)
+		}
+	}
+}
+
+func TestPortsAbove(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		low  uint16
+		safe bool
+	}{
+		{"32768\t60999\n", 61000, true},
+		{"10000 62000", 62001, true},
+		{"1024 65535", 65000, false},
+		{"", 61000, true}, // unreadable: assume the default
+	} {
+		low, safe := PortsAbove(c.in)
+		if low != c.low || safe != c.safe {
+			t.Errorf("%q: %d %v, want %d %v", c.in, low, safe, c.low, c.safe)
 		}
 	}
 }
