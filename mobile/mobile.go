@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -31,6 +32,7 @@ import (
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun"
 
+	"github.com/vpavlin/shrooms/internal/clip"
 	"github.com/vpavlin/shrooms/internal/cred"
 	dnssrv "github.com/vpavlin/shrooms/internal/dns"
 	"github.com/vpavlin/shrooms/internal/identity"
@@ -38,6 +40,7 @@ import (
 	"github.com/vpavlin/shrooms/internal/mesh"
 	"github.com/vpavlin/shrooms/internal/rendezvous"
 	"github.com/vpavlin/shrooms/internal/state"
+	"github.com/vpavlin/shrooms/internal/ustack"
 	"github.com/vpavlin/shrooms/internal/v4"
 	"github.com/vpavlin/shrooms/internal/waku"
 	"github.com/vpavlin/shrooms/internal/wg"
@@ -105,6 +108,11 @@ type session struct {
 	// at both layers separates them, and guessing between them wasted a day.
 	dnsIntercept *dnssrv.Intercept
 	dnsServer    *dnssrv.Server
+
+	// ustack is where clips are taken and sent from (ADR-083): this app is
+	// outside its own tunnel, so the kernel cannot do it for it.
+	ustack        *ustack.Stack
+	clipListeners []net.Listener
 }
 
 // b32 matches how admin keys are written in a config: uppercase, unpadded.
@@ -1151,12 +1159,22 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 	// an ordinary packet when the intercept sees it.
 	mux := wg.NewMux(intercept)
 
+	// The clipboard's userspace stack (ADR-083). What it sends goes into the
+	// mux as though the tun had read it; what is for it is taken out of
+	// WireGuard's write path below, before the kernel would get it.
+	us, err := ustack.New(wg.DefaultMTU, mux.Inject)
+	if err != nil {
+		mux.Close()
+		return fmt.Errorf("clipboard stack: %w", err)
+	}
+
 	var instances []*meshInstance
 	closeAll := func() {
 		for _, in := range instances {
 			in.dev.Close()
 		}
 		mux.Close()
+		us.Close()
 	}
 
 	blocks := meshBlocks(meshes)
@@ -1189,7 +1207,12 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 		listen := cfg.ListenPort + uint16(i)
 		// Only what is addressed to this device reaches the phone: WireGuard
 		// checks a packet's source, not where it is going (F-26).
-		dev, err := wg.NewDevice(wg.SelfOnly(translated, self), ms.Identity.WGPriv, listen,
+		if err := us.Add(self); err != nil {
+			closeAll()
+			return fmt.Errorf("mesh %q: %w", mc.Label, err)
+		}
+		toStack := func(p []byte) bool { return ustack.Wants(p, clip.Port) }
+		dev, err := wg.NewDevice(wg.SelfOnly(wg.Divert(translated, toStack, us.Deliver), self), ms.Identity.WGPriv, listen,
 			device.NewLogger(device.LogLevelError, "[wg "+mc.Label+"] "))
 		if err != nil {
 			closeAll()
@@ -1302,6 +1325,7 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 		mux:       mux,
 		cancel:    cancel, done: make(chan struct{}),
 		dnsIntercept: intercept,
+		ustack:       us,
 	}
 
 	// One reader on the node, feeding every mesh — and any enrolment in
@@ -1363,6 +1387,7 @@ func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger
 			"meshes", len(instances))
 	}
 	running = s
+	serveClips(s, configDir, log)
 	return nil
 }
 
@@ -1408,6 +1433,12 @@ func stopSession(stopNode bool) error {
 		in.dev.Close()
 	}
 	err := s.mux.Close()
+	for _, ln := range s.clipListeners {
+		ln.Close()
+	}
+	if s.ustack != nil {
+		s.ustack.Close()
+	}
 	if stopNode {
 		stopNodeLocked()
 	}

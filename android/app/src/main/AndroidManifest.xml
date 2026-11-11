@@ -66,6 +66,31 @@
             </intent-filter>
         </activity>
 
+        <!-- Text shared from any app goes into the clips screen, to send to
+             another of this person's devices (ADR-083): no app may read the
+             clipboard from the background, so the share sheet is how a phone
+             sends. An alias, so MainActivity keeps one intent filter; off in
+             Shrooms Agents, which has no mesh to send on. -->
+        <activity-alias
+            android:name=".ShareClip"
+            android:targetActivity=".MainActivity"
+            android:label="Send to a device"
+            android:enabled="${shroomsOnly}"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity-alias>
+
+        <!-- Copy, from a clip's notification. Not exported: only that
+             notification's PendingIntent reaches it. -->
+        <receiver
+            android:name=".ClipCopyReceiver"
+            android:enabled="${shroomsOnly}"
+            android:exported="false" />
+
         <!-- The mesh on a home screen: state, reachable peers, and a way in
              and out. See ShroomsWidget. -->
         <!-- Exported, because it has to be: the system delivers

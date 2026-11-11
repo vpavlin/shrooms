@@ -24,6 +24,10 @@ android {
         // no node — building the other ABIs would produce an APK that installs
         // and then cannot start.
         ndk { abiFilters += "arm64-v8a" }
+
+        // What only the Shrooms app has: the clipboard's share target and
+        // its Copy receiver (ADR-083). Off in Shrooms Agents below.
+        manifestPlaceholders["shroomsOnly"] = "true"
     }
 
     // Shrooms Agents' own key (docs/agents.md). Never in the repository:
@@ -68,6 +72,7 @@ android {
             // its prefs). Never published.
             isDebuggable = project.findProperty("debuggable") == "true"
             matchingFallbacks += "release"
+            manifestPlaceholders["shroomsOnly"] = "false"
         }
     }
 

@@ -883,6 +883,10 @@ func writeBackupState(dir string, raw []byte) error {
 	return writeFileAtomic(backupStatePath(dir), raw, 0o600)
 }
 
+// Dir is the directory this state is kept in, for what keeps its own files
+// beside it.
+func (s *State) Dir() string { return s.dir }
+
 // Save writes state atomically. The sequence number changes on every announce,
 // so a torn write here would make the device look replayed to its peers.
 func (s *State) Save() error {

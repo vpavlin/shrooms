@@ -19,11 +19,15 @@ Item {
     property bool keycardInstalled: true
     property int holdPolls: 0
     property int signPolls: 0
+    // A shrooms_core from before the clipboard: Basecamp's own answer.
+    property bool clipsOld: false
+    property string clipPref: ""
 
     function fakeCall(module, method, args) {
         calls.push(method + " " + JSON.stringify(args))
         console.error("CALL " + method + " " + JSON.stringify(args))
         if (oldCore && (method === "joinWithInviteStart" || method === "servicesOf")) return ""
+        if (clipsOld && method.indexOf("clip") === 0) return JSON.stringify({ error: "Invalid response" })
         if (module === "keycard") {
             if (!keycardInstalled) return ""
             switch (method) {
@@ -55,7 +59,24 @@ Item {
         case "grantSigned": return JSON.stringify({ ok: true })
         case "revokeSigned": return JSON.stringify({ ok: true })
         case "status": return statusDoc
-        case "getPref": return ""
+        case "getPref": return args[0] === "clip_recent" ? clipPref : ""
+        case "clips": return JSON.stringify({
+            received: [{ id: "r1", text: "https://example.org", mesh: "home", from: "phone",
+                         created: "2026-11-11T10:00:00.123456789+01:00", expires: "2099-01-01T00:00:00Z" },
+                       { id: "r2", text: "hunter2", secret: true, mesh: "home", from: "laptop",
+                         created: "2026-11-11T10:00:00Z", expires: "2099-01-01T00:00:00Z" }],
+            sent: [{ id: "s1", text: "", secret: true, mesh: "home",
+                     to: [{ name: "phone", sent: "2026-11-11T10:00:01Z" }, { name: "vps", error: "connection refused" }],
+                     created: "2026-11-11T10:00:00Z", expires: "2099-01-01T00:00:00Z" }],
+            devices: [{ mesh: "home", name: "laptop", online: true }, { mesh: "home", name: "phone", online: false },
+                      { mesh: "office", name: "desk", online: true }],
+            meshes: ["home", "office"] })
+        case "clipSend":
+            var rq = JSON.parse(args[0])
+            if (rq.to && rq.to.indexOf("nope") >= 0) return JSON.stringify({ error: "no device called nope on home", detail: "the daemon answered 400" })
+            return JSON.stringify({ id: "s2", text: rq.text, mesh: rq.mesh, to: [] })
+        case "clipTake": return JSON.stringify({ id: args[0], text: "x" })
+        case "clipDelete": return JSON.stringify({ ok: true })
         case "servicesOf": return JSON.stringify({ services: ["svc-" + args[0] + ":80"] })
         case "services": return JSON.stringify({ services: ["top:81"] })
         case "hostsSuffix": return JSON.stringify({ hosts_suffix: "internal", default: "mesh", legacy: "mesh" })
@@ -178,6 +199,49 @@ Item {
             view.logLevel = "error"
             check(view.shownLog.length === 1 && view.shownLog[0].msg === "c", "error shows errors")
             view.logLevel = "all"
+
+            // The clipboard (ADR-083): read when opened, sent as the daemon's
+            // JSON, a received clip copied and taken, a secret masked.
+            clipPref = '["home/phone"]'
+            view.clipsOpen = true
+            view.loadClips()
+            check(!view.clipsCoreOld && view.clipData.received.length === 2 && view.clipMesh === "home",
+                  "clips read, the first mesh chosen: " + view.clipsProblem + " " + view.clipMesh)
+            check(view.clipDevices.map(function (d) { return d.name }).join(",") === "phone,laptop",
+                  "devices on the chosen mesh, the recent one first: " + view.clipDevices.map(function (d) { return d.name }))
+            check(view.clipShown(view.clipData.received[1], true) === "(secret)", "a received secret is masked")
+            check(view.clipShown(view.clipData.sent[0], false) === "(secret)", "a delivered secret reads as one")
+            check(view.clipAge(view.clipData.received[0].created) !== "", "a nanosecond time is read")
+            check(!view.sendClip("hello"), "nothing is sent with no device chosen")
+            view.toggleClipTo("laptop")
+            view.clipSecret = true
+            check(view.sendClip("hello"), "sent")
+            check(lastCall("clipSend") === 'clipSend ["{\\"text\\":\\"hello\\",\\"secret\\":true,\\"mesh\\":\\"home\\",\\"to\\":[\\"laptop\\"]}"]',
+                  "the request names the device, the mesh and the secret: " + lastCall("clipSend"))
+            check(view.clipRecent[0] === "home/laptop" && view.clipRecent[1] === "home/phone" && !view.clipSecret,
+                  "the recipient remembered first, secret reset: " + JSON.stringify(view.clipRecent))
+            check(lastCall("setPref").indexOf("clip_recent") > 0, "recents saved")
+            view.toggleClipAll()
+            check(view.clipAll && view.clipTo.length === 0, "all clears the chosen devices")
+            view.sendClip("to all")
+            check(lastCall("clipSend").indexOf('all\\":true') > 0 && lastCall("clipSend").indexOf('mesh\\":\\"home') > 0,
+                  "all of one mesh, named: " + lastCall("clipSend"))
+            view.chooseClipMesh("office")
+            check(!view.clipAll && view.clipDevices.length === 1 && view.clipDevices[0].name === "desk", "another mesh, its devices")
+            view.toggleClipTo("nope")
+            check(!view.sendClip("x") && view.clipSaidBad && view.clipSaid === "no device called nope on home",
+                  "the daemon's refusal is said: " + view.clipSaid)
+            view.takeClip(view.clipData.received[1])
+            check(lastCall("clipTake") === 'clipTake ["r2"]' && view.clipShown(view.clipData.received[1], true) === "hunter2",
+                  "a secret clicked is taken and shown: " + lastCall("clipTake"))
+            view.deleteClip("s1")
+            check(lastCall("clipDelete") === 'clipDelete ["s1"]', "deleted")
+            clipsOld = true
+            view.loadClips()
+            check(view.clipsCoreOld && view.clipsProblem.indexOf("update shrooms_core") >= 0,
+                  "an old core is named, not an error: " + view.clipsProblem)
+            clipsOld = false
+            view.clipsOpen = false
 
             // An older core: the join falls back and says what it cannot know.
             oldCore = true

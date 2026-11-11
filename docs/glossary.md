@@ -38,6 +38,9 @@ that every path, ADR and package symbol below (such as `agent.LocalAddr`) still 
   `lanhost.Alias`; ADR-068.
 - **`.mesh` names**: `laptop.office.mesh`, answered by the daemon's own DNS
   (`internal/dns`, `mesh.QualifiedDNSName`); ADR-032.
+- **Clip**: a short text sent to named devices on one mesh (`shrooms clipboard copy`),
+  kept a day for picking up; a secret one is never written down.
+  `internal/clip`, `clip.Store`; ADR-083.
 
 ## Shrooms Agents
 

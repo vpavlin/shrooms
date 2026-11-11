@@ -65,6 +65,8 @@ func main() {
 		err = cmdServices(os.Args[2:])
 	case "hosts":
 		err = cmdHosts(os.Args[2:])
+	case "clipboard", "clip":
+		err = cmdClipboard(os.Args[2:])
 	case "key":
 		err = cmdKey(os.Args[2:])
 	case "keys":
@@ -141,6 +143,13 @@ Usage:
   shrooms paths [NAME]               show probed candidates and which won
   shrooms memory                     where the daemon's memory goes
   shrooms hosts [--write]            /etc/hosts entries, so you can use names
+  shrooms clipboard copy --to DEV[,DEV] [TEXT]
+                                     send a clip to your other devices (or
+                                       stdin); --all --mesh M for all of one
+                                       mesh, --secret for a key or password
+  shrooms clipboard paste [ID]       print the newest clip that arrived
+  shrooms clipboard list             what arrived and what was sent
+  shrooms clipboard remove ID        forget one
   shrooms key show                   print the network key
   shrooms key rotate                 replace it — a new key is a NEW mesh, and
                                        every device must join again. To remove
