@@ -15,17 +15,19 @@ class H(BaseHTTPRequestHandler):
             time.sleep(3)
         if self.path == "/invite/hold":
             time.sleep(1)
-        code = 400 if self.path.endswith("/refuse") else 200
+        code = 400 if self.path.endswith("/refuse") or '"nope"' in body else 200
         out = json.dumps({"method": self.command, "path": self.path, "body": body}).encode()
         if code != 200:
-            out = b"no mesh called \"nope\""
+            out = b"no mesh called \"nope\"\n"
+        if self.path.startswith("/clips/dead"):
+            code, out = 404, b"404 page not found\n"
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(out)))
         self.end_headers()
         self.wfile.write(out)
 
-    do_GET = do_POST = answer
+    do_GET = do_POST = do_DELETE = answer
 
     def log_message(self, *a):
         pass

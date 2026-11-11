@@ -141,7 +141,8 @@ enum class RequestOutcome {
 RequestOutcome httpRequestUnix(const std::string& path, const std::string& method,
                                const std::string& target, const std::string& contentType,
                                const std::string& requestBody, std::string& body,
-                               std::string& err, int timeoutS = 2)
+                               std::string& err, int timeoutS = 2,
+                               size_t maxResponse = kMaxResponse)
 {
     int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0) {
@@ -214,7 +215,7 @@ RequestOutcome httpRequestUnix(const std::string& path, const std::string& metho
         }
         if (n == 0) break;
         raw.append(buf, static_cast<size_t>(n));
-        if (raw.size() > kMaxResponse) {
+        if (raw.size() > maxResponse) {
             err = "response is implausibly large";
             ::close(fd);
             return RequestOutcome::Failed;
@@ -1138,6 +1139,107 @@ std::string ShroomsCoreImpl::cardPath(const std::string& adminKeysCsv)
     return "{\"bip32_path\":\"m/64265'/" + std::to_string(account) + "'/0'\",\"account\":" +
            std::to_string(account) + ",\"known\":" + (known ? "true" : "false") +
            (from.empty() ? std::string() : ",\"from\":" + jsonString(from)) + "}";
+}
+
+// --- the clipboard between devices (ADR-083) -----------------------------------
+
+namespace {
+
+// Fifty clips each way, each up to 64 KiB, is more than the 1 MiB a status
+// document is held to. A list that overflowed would come back as an error and
+// take the whole panel with it, so /clips gets room for the worst case.
+constexpr size_t kMaxClipsResponse = 8u << 20;
+
+/** A clip's id fit for a URL path: the daemon's hex ids, a prefix of one, or "latest". */
+bool clipId(const std::string& id)
+{
+    if (id == "latest") return true;
+    if (id.empty() || id.size() > 64) return false;
+    for (unsigned char c : id) {
+        if (!std::isxdigit(c)) return false;
+    }
+    return true;
+}
+
+/**
+ * The daemon's own sentence out of a refusal, as the error the view shows.
+ *
+ * The clip endpoints refuse in plain text that is meant to be read ("no
+ * device called phone on home"), and errorJson() would bury it in a detail
+ * behind "the Shrooms daemon refused the request". A 404 with Go's stock body
+ * is a daemon from before clips, which is said as that.
+ */
+std::string clipError(RequestOutcome outcome, const std::string& err)
+{
+    if (outcome == RequestOutcome::Unreachable) {
+        return errorJson("cannot reach the Shrooms daemon", withPermissionHint(err));
+    }
+    const std::string prefix = "the daemon answered ";
+    if (err.compare(0, prefix.size(), prefix) == 0) {
+        std::string msg;
+        const auto colon = err.find(": ", prefix.size());
+        if (colon != std::string::npos) msg = err.substr(colon + 2);
+        while (!msg.empty() && std::isspace(static_cast<unsigned char>(msg.back()))) msg.pop_back();
+        if (msg == "404 page not found") {
+            return errorJson("this daemon has no clipboard; update it", err);
+        }
+        if (!msg.empty()) return errorJson(msg, err);
+    }
+    return errorJson("the Shrooms daemon refused the request", err);
+}
+
+/**
+ * One request to the clip endpoints, on whichever socket path answers. As
+ * postToDaemon(), the second path is tried only when the first was not
+ * reached: a clip the daemon took is a clip on its way, and sending it again
+ * elsewhere would be a second clip.
+ */
+std::string clipRequest(const std::string& method, const std::string& target,
+                        const std::string& requestBody)
+{
+    std::string body, err, firstErr;
+    RequestOutcome outcome = RequestOutcome::Unreachable;
+    for (const char* path : {kSocket, kLegacySocket}) {
+        outcome = httpRequestUnix(path, method, target,
+                                  requestBody.empty() ? "" : "application/json",
+                                  requestBody, body, err, 2, kMaxClipsResponse);
+        if (outcome != RequestOutcome::Unreachable) break;
+        if (firstErr.empty()) firstErr = err;
+    }
+    if (outcome == RequestOutcome::Ok) {
+        return body.empty() ? std::string("{\"ok\":true}") : body;
+    }
+    return clipError(outcome, outcome == RequestOutcome::Unreachable ? firstErr : err);
+}
+
+}  // namespace
+
+std::string ShroomsCoreImpl::clips()
+{
+    return clipRequest("GET", "/clips", "");
+}
+
+std::string ShroomsCoreImpl::clipSend(const std::string& requestJson)
+{
+    // Only the shape is checked: what the request means is the daemon's.
+    size_t i = 0;
+    while (i < requestJson.size() && std::isspace(static_cast<unsigned char>(requestJson[i]))) ++i;
+    if (i == requestJson.size() || requestJson[i] != '{') {
+        return errorJson("a clip request is a JSON object", requestJson.substr(0, 80));
+    }
+    return clipRequest("POST", "/clips", requestJson);
+}
+
+std::string ShroomsCoreImpl::clipTake(const std::string& id)
+{
+    if (!clipId(id)) return errorJson("that is not a clip id", id);
+    return clipRequest("POST", "/clips/" + id + "/take", "");
+}
+
+std::string ShroomsCoreImpl::clipDelete(const std::string& id)
+{
+    if (!clipId(id)) return errorJson("that is not a clip id", id);
+    return clipRequest("DELETE", "/clips/" + id, "");
 }
 
 // --- agents ------------------------------------------------------------------
