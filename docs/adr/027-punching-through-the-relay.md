@@ -1,6 +1,8 @@
 # 027. Punch through the relay we already have
 
-**Status:** proposed; every part exists except the coordination
+**Status:** proposed; every part exists except the coordination. Reviewed
+2026-11-08 (laptop/reviewer): the direction holds, on the conditions in
+"Review, 2026-11-08" below; three of them are built ahead of the decision.
 
 ## Context
 
@@ -124,3 +126,71 @@ VPS is not visible in practice, this is optimisation rather than function — th
 honest reason to build it anyway is that a relay is a machine somebody has to
 keep running, and a mesh that needs one less often is a mesh that survives its
 owner losing interest.
+
+Or measurement showing that today's probing already punches every pair whose
+NATs allow it, and that the pairs left on a relay have endpoint-dependent
+mapping on both sides, where coordination cannot help either (the review's
+first point).
+
+## Review, 2026-11-08
+
+Asked for by the owner before deciding; done by laptop/reviewer against
+master at ed75456. The direction holds. What it found, and what follows:
+
+- **Probing already punches, continuously.** A relayed peer has no fresh
+  disco path, so it is probed every round at all its candidates, reflexive
+  ones and the address its probes came from included, from WireGuard's own
+  socket. Two forgiving NATs already meet that way. A coordinated punch adds
+  most for a peer that is not being probed (a backgrounded phone) and for a
+  pair where one side maps per destination and the other filters by address
+  only.
+- **"Symmetric means relay" holds only when both sides are.** One forgiving
+  side can be reached from a symmetric one once it has sent anything to the
+  symmetric side's IP. Port prediction and spraying, for port-restricted
+  against symmetric, are not to be built.
+- **Authority.** The network key is held by every member and the epoch seal
+  is not replay protection. A punch request must be signed by the requesting
+  device (or carried inside its WireGuard tunnel), carry a nonce and an
+  issued-at time, be refused when older than about 10 s or seen before, and
+  come from a roster peer that is not revoked and is reached through a relay
+  now.
+- **Targets.** Never an address that is only in the request: one the relay
+  attests to, else one in the peer's own signed announce, else where its
+  probes came from. Public unicast only, at most two, not the relay's, not
+  ours.
+- **Rates.** About ten probes over two seconds per punch; one punch per peer
+  a minute, backing off after failures to half an hour; a few a minute in
+  all; a pair marked futile for an hour after repeated failures or when both
+  sides map per destination.
+- **Timing** relative, not by clock: the receiver starts on receipt and says
+  "go", the sender starts on "go"; bursts last at least the longer of 2 s and
+  three relay round trips.
+- **UPnP-IGD** in Go as decided, answering only to the default gateway,
+  bounded parsing, the WireGuard port alone, leased, never announcing a private
+  or CGNAT "external" address, and through claimedByPeers like NAT-PMP.
+- **Testing** in CI as well as on hardware: network namespaces with nftables
+  emulate the NAT kinds, and the expected matrix is direct for independent ×
+  independent and for address-restricted × dependent, relay for
+  port-restricted × dependent and dependent × dependent, direct for two IPv6
+  firewalls. The field matrix (home router, carrier NAT, venue Wi-Fi) stays a
+  spike before release.
+
+**Built ahead of the decision**, because each is wrong today whatever is
+decided:
+
+- **What a member can make the mesh probe and answer is bounded**
+  (`internal/disco/bounds.go`). The same abuse the review describes for a
+  punch request exists in announces: a member announcing a stranger's address
+  made every member probe it. Announced endpoints are filtered to reachable
+  addresses, deduplicated and capped at eight, public first; a peer is probed
+  at most once a second; pongs to one source are a token bucket, against a
+  ping replayed from a spoofed source.
+- **A roamed endpoint is conceded to only with two-way evidence**
+  (`yieldRoam`, `twoWay`): the relay, or an address a probe was answered from
+  within `PathFresh`. Conceding to any roamed address pinned one-way paths,
+  which punching would make more common.
+- **Status reports each mesh's NAT and whether a peer's probes arrive**
+  (`meshes[].nat`, a peer's `heard`; `shrooms paths`), so the measurement
+  above can be made. The hint that existed looked at addresses with the
+  disagreements already removed and could never fire.
+

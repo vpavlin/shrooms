@@ -52,6 +52,13 @@ const (
 	// better route still wins.
 	SwitchMargin = 15 * time.Millisecond
 
+	// ProbeEagerRounds is how many rounds a peer with no working path is
+	// probed every ProbeInterval before the interval starts doubling, and
+	// ProbeBackoffMax the longest it grows to. Eager long enough for a punch
+	// between two forgiving NATs, which meets within a few rounds.
+	ProbeEagerRounds = 5
+	ProbeBackoffMax  = 5 * time.Minute
+
 	// MaxReflexive caps how many distinct self-addresses we remember. Under
 	// endpoint-dependent (symmetric) NAT every peer observes a different port,
 	// so this set grows with peers rather than converging — which is itself the
@@ -124,6 +131,14 @@ type Prober struct {
 	// selfAddrs are this machine's own addresses, so a candidate that is
 	// really us can be recognised. Set by SetSelfAddrs as interfaces change.
 	selfAddrs map[netip.Addr]bool
+
+	// lastRound is when each peer was last probed (ProbeFloor), and pongs
+	// what each source address may still be answered (bounds.go).
+	lastRound map[string]time.Time
+	pongs     map[netip.AddrPort]*pongBucket
+	// misses counts a peer's probe rounds in a row with no working path to
+	// it, for the backoff in NeedsProbe.
+	misses map[string]int
 }
 
 // NewProber returns a prober that sends via the given function.
@@ -166,7 +181,38 @@ func (p *Prober) isSelf(ap netip.AddrPort) bool {
 // behind NAT may only be reachable on one of them, and which one is not
 // predictable. This is also the punch — the outbound packet opens our NAT
 // mapping so the peer's own probe can get back in.
+//
+// Bounded (bounds.go): unusable addresses are not probed, at most
+// MaxCandidates plus one more (Heard) are, and a peer is probed at most once
+// per ProbeFloor however often its announce changes.
 func (p *Prober) Probe(peerID string, candidates []netip.AddrPort, now time.Time) {
+	p.mu.Lock()
+	if p.lastRound == nil {
+		p.lastRound = make(map[string]time.Time)
+	}
+	if last, ok := p.lastRound[peerID]; ok && now.Sub(last) >= 0 && now.Sub(last) < ProbeFloor {
+		p.mu.Unlock()
+		return
+	}
+	p.lastRound[peerID] = now
+	if !p.hasFreshLocked(peerID, now) {
+		if p.misses == nil {
+			p.misses = make(map[string]int)
+		}
+		p.misses[peerID]++
+	}
+	p.mu.Unlock()
+	kept := candidates[:0:0]
+	for _, c := range candidates {
+		if usableTarget(c) {
+			kept = append(kept, c)
+		}
+	}
+	if len(kept) > MaxCandidates+1 {
+		kept = kept[:MaxCandidates+1]
+	}
+	candidates = kept
+
 	// Paths this peer has not answered on for PathForget are forgotten here,
 	// on its next probe, so the record does not keep addresses from networks
 	// it left long ago.
@@ -233,9 +279,24 @@ func (p *Prober) HandlePing(m *Message, from netip.AddrPort) {
 		id := hex.EncodeToString(m.SenderPub[:])
 		p.heard[id] = from
 		p.heardAt[id] = time.Now()
+		// It is probing us now: probing back now is what opens both NATs, so
+		// a peer in backoff is searched for eagerly again.
+		if p.misses[id] > 0 {
+			delete(p.misses, id)
+			delete(p.lastRound, id)
+		}
 		p.mu.Unlock()
 	}
 
+	// At most so many pongs to one source (bounds.go): a captured ping
+	// replayed from a spoofed address would otherwise make us answer the
+	// spoofed one as often as the replays came.
+	p.mu.Lock()
+	ok := p.allowPong(from, time.Now())
+	p.mu.Unlock()
+	if !ok {
+		return
+	}
 	pkt, err := EncodePong(p.key, p.selfPriv, m.TxID, from)
 	if err != nil {
 		return
@@ -292,6 +353,7 @@ func (p *Prober) HandlePong(m *Message, from netip.AddrPort, now time.Time) (pee
 		return "", false
 	}
 	delete(p.pending, m.TxID)
+	delete(p.misses, pr.peerID) // found: the next search starts eager
 
 	// Record where the peer saw us. This is reflexive discovery: with several
 	// peers we get several independent vantage points and need no STUN server.
@@ -363,9 +425,52 @@ func usableReflexive(ap netip.AddrPort) bool {
 
 // NeedsProbe reports whether a peer should be probed now: either it has no
 // working path, or its best one is due for renewal before it expires.
+//
+// A peer with no working path is searched for every ProbeInterval at first,
+// then less and less often while nothing answers (searchEvery), down to one
+// round every ProbeBackoffMax. It used to be every 3 s for as long as the peer
+// stayed relayed: on 2026-11-08 a phone on a carrier that maps a new port per
+// destination was probed, and probed back, every 3 s all day for paths that
+// could never form, which on a phone is the radio woken every 3 s.
 func (p *Prober) NeedsProbe(peerID string, now time.Time) bool {
 	best, ok := p.Best(peerID, now)
-	return !ok || now.Sub(best.LastPong) >= PathRefresh
+	if ok {
+		return now.Sub(best.LastPong) >= PathRefresh
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	last, probed := p.lastRound[peerID]
+	return !probed || now.Sub(last) >= searchEvery(p.misses[peerID])
+}
+
+// searchEvery is how long to wait between rounds for a peer that has not
+// answered misses rounds in a row: ProbeInterval for the first
+// ProbeEagerRounds, then doubling, up to ProbeBackoffMax.
+func searchEvery(misses int) time.Duration {
+	if misses < ProbeEagerRounds {
+		return ProbeInterval
+	}
+	d := ProbeInterval
+	for i := ProbeEagerRounds; i <= misses && d < ProbeBackoffMax; i++ {
+		d *= 2
+	}
+	return min(d, ProbeBackoffMax)
+}
+
+// ResetSearch makes the next round for a peer immediate and eager again:
+// something changed that could make a path work where it did not (it
+// announced new endpoints, its probes reached us, we moved). Every peer when
+// peerID is "".
+func (p *Prober) ResetSearch(peerID string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if peerID == "" {
+		p.misses = nil
+		p.lastRound = nil
+		return
+	}
+	delete(p.misses, peerID)
+	delete(p.lastRound, peerID)
 }
 
 // Best returns the preferred working path for a peer.
@@ -593,4 +698,14 @@ func better(a, b Path) bool {
 		return a6
 	}
 	return a.RTT < b.RTT
+}
+
+// hasFreshLocked reports a fresh path to a peer. Caller holds p.mu.
+func (p *Prober) hasFreshLocked(peerID string, now time.Time) bool {
+	for _, path := range p.paths[peerID] {
+		if path.Fresh(now) {
+			return true
+		}
+	}
+	return false
 }

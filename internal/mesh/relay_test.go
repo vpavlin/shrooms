@@ -333,3 +333,27 @@ func TestARelayThatAnswersIsKeptWithoutItsAnnounces(t *testing.T) {
 		t.Errorf("a relay that stopped answering is still selected: %+v", got)
 	}
 }
+
+// After a move the relay must learn the new address at once, not at the next
+// refresh: it forwarded relayed peers to the old port for up to a minute
+// (2026-11-08).
+func TestAMoveReRegistersWithTheRelayAtOnce(t *testing.T) {
+	if registrationDue(false, false, time.Second) {
+		t.Error("registered again a second after the last time, with nothing changed")
+	}
+	if !registrationDue(false, true, time.Second) {
+		t.Error("a move waited for the refresh")
+	}
+	if !registrationDue(true, false, time.Second) {
+		t.Error("a new relay waited for the refresh")
+	}
+	if !registrationDue(false, false, RelayRefresh) {
+		t.Error("the refresh never came")
+	}
+	m := &Mesh{log: slog.New(slog.DiscardHandler)}
+	m.prober = disco.NewProber(disco.Key{}, nil, func([]byte, netip.AddrPort) error { return nil })
+	m.NetworkChanged()
+	if !m.reRegister.Load() {
+		t.Error("NetworkChanged did not ask for a registration")
+	}
+}

@@ -36,7 +36,7 @@ number appears, its source is named.
 | [024](024-ask-the-router.md) | Ask the router for a way in | accepted; built and proven |
 | [025](025-control-from-a-desktop-app.md) | Control from a desktop app | accepted; settings, mesh on/off, joining and leaving built |
 | [026](026-announce-what-is-bound.md) | Announce what is bound to the mesh address | accepted; built, off by default |
-| [027](027-punching-through-the-relay.md) | Punch through the relay we already have | proposed; every part exists except the coordination |
+| [027](027-punching-through-the-relay.md) | Punch through the relay we already have | proposed; reviewed 2026-11-08 — conditions recorded; probe bounds, the two-way roam rule and NAT diagnostics built ahead of the decision, which waits on measuring |
 | [028](028-when-the-fleet-turns-on-rln.md) | When the fleet turns on RLN | proposed; nothing to build yet, two questions to ask |
 | [029](029-disco-proves-the-device.md) | Disco proves the device, not just the mesh | accepted; the first half of Phase 4 |
 | [030](030-tailscale-shaped-not-tor-shaped.md) | Tailscale-shaped, not Tor-shaped | accepted; scopes four design notes |

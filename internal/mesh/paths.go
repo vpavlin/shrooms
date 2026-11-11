@@ -478,6 +478,13 @@ func relayObservationIsUseful(ap netip.AddrPort) bool {
 	return !netip.MustParsePrefix("100.64.0.0/10").Contains(a)
 }
 
+// registrationDue: register with the relay now when it is a different relay,
+// when this node moved (NetworkChanged), or when the last registration is
+// RelayRefresh old.
+func registrationDue(relayChanged, moved bool, since time.Duration) bool {
+	return relayChanged || moved || since >= RelayRefresh
+}
+
 // registerWithRelay tells our relay where to reach us.
 //
 // The relay's mapping is soft state with a TTL, and a NAT rebinding invalidates
@@ -501,9 +508,10 @@ func (m *Mesh) registerWithRelay() {
 		// The set of usable endpoints just changed, so the data plane is stale.
 		m.requestResync()
 	}
-	if !changed && now.Sub(m.relayRegistered) < RelayRefresh {
+	if !registrationDue(changed, m.reRegister.Load(), now.Sub(m.relayRegistered)) {
 		return
 	}
+	m.reRegister.Store(false)
 	m.relayRegistered = now
 
 	targets := m.registerWith(now)
@@ -658,7 +666,9 @@ func (m *Mesh) probeAll(now time.Time) {
 		if !m.prober.NeedsProbe(p.ID(), now) {
 			continue
 		}
-		cands := parseCandidates(p.Endpoints)
+		// Bounded: what a member announces is not a list of addresses for the
+		// whole mesh to probe (disco.Candidates).
+		cands := disco.Candidates(parseCandidates(p.Endpoints))
 		// Where this peer's own packets have arrived from, which is all we have
 		// about one that announces nothing — a phone whose OS will not let it
 		// list its own addresses, most often. Appended rather than preferred:
