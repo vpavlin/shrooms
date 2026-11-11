@@ -165,3 +165,36 @@ func TestExpiryCapped(t *testing.T) {
 }
 
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
+
+// A recipient on an older shrooms refuses: the sender says so in words, and
+// tries it again later rather than every 15 seconds.
+func TestRefusedBacksOff(t *testing.T) {
+	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	addr := ln.Addr().String()
+	ln.Close() // nothing listens: refused
+	dials := 0
+	s := New("", laptopView, nil)
+	now := time.Now()
+	s.now = func() time.Time { return now }
+	s.Dial = func(ctx context.Context, network, _ string) (net.Conn, error) {
+		dials++
+		return (&net.Dialer{}).DialContext(ctx, network, addr)
+	}
+	if _, err := s.Send(Request{Text: "x", To: []string{"phone"}}); err != nil {
+		t.Fatal(err)
+	}
+	s.flush(context.Background())
+	_, sent := s.List()
+	if e := sent[0].To[0].Error; !strings.Contains(e, "older shrooms") {
+		t.Fatalf("error %q", e)
+	}
+	s.flush(context.Background())
+	if dials != 1 {
+		t.Fatalf("%d tries within the backoff", dials)
+	}
+	now = now.Add(31 * time.Second)
+	s.flush(context.Background())
+	if dials != 2 {
+		t.Fatalf("%d tries after it", dials)
+	}
+}
