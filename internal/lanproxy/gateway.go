@@ -1,7 +1,7 @@
 // Package lanproxy is the gateway side of ADR-068: it answers for the LAN hosts
 // a node offers, in a userspace TCP stack, and proxies to the LAN. Its own
-// package so that only a desktop daemon links gVisor; the phone, which is never
-// a gateway, does not.
+// package so that the phone, which is never a gateway, does not link it. (It
+// links gVisor all the same now, for the clipboard's stack: internal/ustack.)
 package lanproxy
 
 import (
