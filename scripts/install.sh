@@ -972,9 +972,13 @@ The second line says traffic arriving over the mesh is trusted, which matches
 how access is decided here: by membership, enforced by WireGuard, not by port.
 On a mesh you share with other people do not do that — it gives their devices
 everything on this machine, not only what you published. There, open the
-specific ports instead:
+specific ports instead, each to this machine's mesh addresses only:
 
-  sudo firewall-cmd --permanent --add-port=80/tcp
+  sudo firewall-cmd --permanent --add-rich-rule='rule family=ipv6 destination address=<overlay>/128 port port=80 protocol=tcp accept'
+
+and the clipboard's port, 9181/tcp, the same way (ADR-083); without it a clip
+sent here waits and the sender reads "did not answer". \`shrooms status\` lists
+the overlay address of each mesh.
 EOF
     elif command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi '^Status: active'; then
         cat <<EOF
@@ -985,7 +989,9 @@ ufw is active.
 
 The second line trusts anything arriving over the mesh, which is right for your
 own devices. On a mesh shared with other people, allow the published ports
-instead: sudo ufw allow in on $iface to any port 80 proto tcp
+instead, and the clipboard's (9181/tcp, ADR-083):
+  sudo ufw allow in on $iface to any port 80 proto tcp
+  sudo ufw allow in on $iface to any port 9181 proto tcp
 EOF
     elif command -v nft >/dev/null 2>&1 && nft list ruleset 2>/dev/null | grep -q 'chain input'; then
         cat <<EOF

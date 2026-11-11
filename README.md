@@ -206,6 +206,15 @@ announce addresses, show each other as online, and every handshake fails —
 which looks like almost anything except a closed port. `install.sh` prints the
 right command for whichever firewall it finds running.
 
+A firewall that also filters what arrives over the mesh (the mesh interface in
+firewalld's `public` zone, with ports opened one by one) must let in the
+clipboard's port, **9181/tcp**, on the mesh addresses, or clips sent to that
+machine wait and their sender reads "did not answer" (ADR-083):
+
+```console
+$ sudo firewall-cmd --permanent --add-rich-rule='rule family=ipv6 destination address=<overlay>/128 port port=9181 protocol=tcp accept'
+```
+
 **Resource use is negligible.** A measured Core-mode node acting as a relay sits
 at **~20 MiB RSS and 1–2% of one core**. Any VPS tier will do; what matters is
 bandwidth allowance and latency, since relayed traffic takes a detour through

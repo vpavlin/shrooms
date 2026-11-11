@@ -85,7 +85,11 @@ sheet, because no Android app can read the clipboard in the background.
   short): one command with verbs, not three more at the top of the CLI. `/clips` on the socket for
   the apps, with the devices a clip can go to.
 - `clips.json` in the state directory, 0600, without secrets.
-- Port 9181 on the overlay addresses is the clipboard's.
+- Port 9181 on the overlay addresses is the clipboard's. A host firewall that
+  filters the mesh interface port by port (atlas: firewalld, the interface in
+  `public`, a rich rule per overlay /128) must open it; the installers and the
+  README say so. Found in review: no laptop or phone in the first run had such
+  a firewall.
 - The two-node end-to-end test runs node B in its own network namespace. On one
   kernel the two overlay addresses were both local, so nothing the tunnel had
   to carry could be tested; it now checks a clip each way through it.
