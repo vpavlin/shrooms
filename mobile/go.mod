@@ -27,6 +27,7 @@ require (
 require (
 	github.com/ProjectZKM/Ziren/crates/go-runtime/zkvm_runtime v0.0.0-20251001021608-1fe7b43fc4d6 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 // indirect
+	github.com/google/btree v1.1.2 // indirect
 	github.com/holiman/uint256 v1.3.2 // indirect
 	github.com/keycard-tech/keycard-go/v4 v4.0.1 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
@@ -36,8 +37,10 @@ require (
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/time v0.9.0 // indirect
 	golang.org/x/tools v0.51.0 // indirect
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
+	gvisor.dev/gvisor v0.0.0-20250503011706-39ed1f5ac29c // indirect
 )
 
 replace github.com/vpavlin/shrooms => ../

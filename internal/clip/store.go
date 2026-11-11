@@ -341,12 +341,21 @@ func (s *Store) flush(ctx context.Context) {
 		addr netip.Addr
 		body []byte
 	}
-	_, peers := s.dir()
 	var jobs []job
 	s.mu.Lock()
 	if s.pruneLocked() {
 		s.saveLocked()
 	}
+	// Nothing waiting is the usual case, and asking who is online is not free:
+	// on the phone it is a status snapshot, every 15 seconds.
+	waiting := slices.ContainsFunc(s.sent, func(c Clip) bool { return !c.Delivered() })
+	if !waiting {
+		s.mu.Unlock()
+		return
+	}
+	s.mu.Unlock()
+	_, peers := s.dir()
+	s.mu.Lock()
 	for _, c := range s.sent {
 		for _, t := range c.To {
 			if !t.Sent.IsZero() {

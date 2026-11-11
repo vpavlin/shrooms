@@ -87,6 +87,7 @@ not described. That they are all here is checked; what they say is not.
 | `internal/service` | Package service publishes local ports on the mesh under their own names. |
 | `internal/state` | Package state handles on-disk configuration and persistent device state. |
 | `internal/topic` | Package topic derives the mesh's rotating rendezvous content topics. |
+| `internal/ustack` | Package ustack is a userspace TCP stack holding this device's own overlay addresses, for a process that cannot use the kernel's: the Android app, which is outside its own tunnel (ADR-083). |
 | `internal/v4` | Package v4 gives every peer a synthetic IPv4 address (ADR-021). |
 | `internal/waku` | Package waku is a cgo binding over liblogosdelivery (Logos Delivery / Waku). |
 | `internal/wg` | Package wg embeds wireguard-go and shares its UDP socket with our control protocol. |
