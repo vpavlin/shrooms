@@ -239,6 +239,16 @@ func TestAFirstCageBuildsTheWorkbench(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+	// Until the build is over. Returning while it still ran left it writing
+	// into the temporary directories as they were removed, and the test
+	// failed in its cleanup ("directory not empty"), once in CI on 2026-11-11.
+	deadline = time.Now().Add(5 * time.Second)
+	for m.Cages.Status().Building {
+		if time.Now().After(deadline) {
+			t.Fatal("the workbench build never finished")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 func TestACageIsRefusedWithoutPodman(t *testing.T) {
