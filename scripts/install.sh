@@ -746,8 +746,92 @@ else
     echo "    sudo shrooms hosts | sudo tee -a /etc/hosts"
 fi
 
+# Daily updates (ADR-082). Docker has no auto-update, so pi5 and jimmy-crib ran
+# whatever image was last pulled by hand: weeks old, missing fixes the rest of
+# the fleet had. podman's auto-update needs a label this unit never set. This
+# works the same under both: pull, and only if the image changed, keep the
+# running one as a rollback tag, restart, check the daemon answers, and put the
+# rollback back if it does not. A random time in the day, so a bad image reaches
+# one machine first and rolls itself back, rather than the fleet at once.
+# AUTO_UPDATE=no at install leaves it out.
+if [ "${AUTO_UPDATE:-yes}" != no ]; then
+    echo "==> daily updates of $IMAGE, with rollback"
+    mkdir -p /usr/local/lib/shrooms
+    cat > /usr/local/lib/shrooms/update <<EOF
+#!/bin/sh
+RUNTIME=$RUNTIME
+IMAGE=$IMAGE
+EOF
+    cat >> /usr/local/lib/shrooms/update <<'EOF'
+set -u
+running=$($RUNTIME inspect -f '{{.Image}}' shrooms 2>/dev/null || true)
+$RUNTIME pull -q "$IMAGE" >/dev/null || { echo "pull failed; keeping what runs"; exit 0; }
+pulled=$($RUNTIME image inspect -f '{{.Id}}' "$IMAGE" 2>/dev/null || true)
+if [ -z "$running" ] || [ "$running" = "$pulled" ]; then
+    echo "up to date"
+    exit 0
+fi
+# An image that was rolled back is not tried again every day; a newer one is.
+refused=/var/lib/shrooms/update-refused
+if [ "$(cat $refused 2>/dev/null)" = "$pulled" ]; then
+    echo "$pulled was rolled back before; waiting for a newer image"
+    exit 0
+fi
+tag=rollback-$(date +%Y%m%d-%H%M)
+repo=${IMAGE%:*}
+$RUNTIME tag "$running" "$repo:$tag"
+echo "new image $pulled; running $running kept as $repo:$tag"
+systemctl restart shrooms
+# Healthy is the daemon answering on its socket within two minutes.
+i=0
+while [ $i -lt 24 ]; do
+    sleep 5
+    if timeout 15 /usr/local/bin/shrooms status >/dev/null 2>&1; then
+        echo "updated; the daemon answers"
+        # Rollback tags beyond the newest three go.
+        $RUNTIME images --format '{{.Repository}}:{{.Tag}}' "$repo" 2>/dev/null |
+            grep ':rollback-' | sort -r | tail -n +4 | xargs -r $RUNTIME rmi >/dev/null 2>&1
+        exit 0
+    fi
+    i=$((i+1))
+done
+echo "the daemon did not answer after the update; rolling back to $repo:$tag"
+echo "$pulled" > $refused
+$RUNTIME tag "$repo:$tag" "$IMAGE"
+systemctl restart shrooms
+exit 1
+EOF
+    chmod 755 /usr/local/lib/shrooms/update
+    cat > /etc/systemd/system/shrooms-update.service <<'EOF'
+[Unit]
+Description=shrooms: update the daemon's image, rolling back if it does not answer
+After=network-online.target shrooms.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/shrooms/update
+EOF
+    cat > /etc/systemd/system/shrooms-update.timer <<'EOF'
+[Unit]
+Description=shrooms: daily image update
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=20h
+FixedRandomDelay=true
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+fi
+
 systemctl daemon-reload
 systemctl enable shrooms >/dev/null 2>&1
+if [ "${AUTO_UPDATE:-yes}" != no ]; then
+    systemctl enable --now shrooms-update.timer >/dev/null 2>&1
+fi
 # The flag, not a stat of the file: a unit left behind by a previous install on
 # a machine whose resolvectl has since gone would answer yes to the stat, and be
 # enabled to run a helper that now exits immediately.
