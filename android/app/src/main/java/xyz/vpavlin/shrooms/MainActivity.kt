@@ -84,7 +84,27 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         if (packageName == AGENTS_PACKAGE) intent.getStringExtra(EXTRA_PEERS)?.let { AgentHosts.savePeers(this, it) }
+        else clipsFrom(intent)
         agentFrom(intent)?.let { openAgent.value = it }
+    }
+
+    // The clips screen (ADR-083), at activity level because a notification
+    // tap or a share arrives here, not in the composition.
+    private val clipsOpen = androidx.compose.runtime.mutableStateOf(false)
+    private val clipDraft = androidx.compose.runtime.mutableStateOf<String?>(null)
+    /** Opened by a share from another app: closing it goes back there, not to the mesh. */
+    private var clipsShared = false
+
+    private fun clipsFrom(i: Intent?) {
+        if (i == null) return
+        if (i.action == Intent.ACTION_SEND && i.type?.startsWith("text/") == true) {
+            clipDraft.value = i.getStringExtra(Intent.EXTRA_TEXT).orEmpty()
+            clipsShared = true
+            clipsOpen.value = true
+        } else if (i.getBooleanExtra(Clips.EXTRA_OPEN, false)) {
+            clipsShared = false
+            clipsOpen.value = true
+        }
     }
 
 
@@ -148,6 +168,7 @@ class MainActivity : ComponentActivity() {
             return
         }
 
+        clipsFrom(intent)
         setContent {
             LogosTheme {
                 val dir = filesDir.absolutePath
@@ -230,6 +251,18 @@ class MainActivity : ComponentActivity() {
                             meshLabel = "",
                             onClose = { inviting = false },
                         )
+                    } else if (clipsOpen.value) {
+                        val close = {
+                            clipsOpen.value = false
+                            if (clipsShared) finish()
+                        }
+                        BackHandler { close() }
+                        ClipsScreen(
+                            dir = dir,
+                            draft = clipDraft.value,
+                            onDraftUsed = { clipDraft.value = null },
+                            onClose = close,
+                        )
                     } else if (inSettings) {
                         // System back leaves settings rather than the app: this
                         // is a screen swapped in by state, not an Activity, so
@@ -260,6 +293,7 @@ class MainActivity : ComponentActivity() {
                             onSettings = { inSettings = true },
                             onInvite = { inviting = true },
                             onAgents = { openAgentsApp(snap.peers) },
+                            onClips = { clipsShared = false; clipsOpen.value = true },
                             onLeftMesh = {
                                 // The tunnel is built from the config at
                                 // connect time, so a mesh added, removed or
@@ -671,6 +705,7 @@ private fun MeshScreen(
     onSettings: () -> Unit = {},
     onInvite: () -> Unit = {},
     onAgents: () -> Unit = {},
+    onClips: () -> Unit = {},
     onLeftMesh: () -> Unit = {},
 ) {
     // Leaving edits the config; the running session still holds the mesh it
@@ -715,6 +750,16 @@ private fun MeshScreen(
                     if (snap.connected) "CONNECTED" else "OFFLINE",
                     style = MaterialTheme.typography.labelSmall,
                     color = if (snap.connected) Palette.Phosphor else Palette.Ash,
+                    modifier = Modifier.weight(1f),
+                )
+                // Up here rather than with the links at the bottom: that row
+                // is already a phone's width, and a clip is something reached
+                // for often, mid-task, with one thumb.
+                Text(
+                    "clips",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Palette.Phosphor,
+                    modifier = Modifier.clickable { onClips() }.padding(start = 12.dp, top = 4.dp, bottom = 4.dp),
                 )
             }
             Spacer(Modifier.height(12.dp))
@@ -1375,7 +1420,7 @@ private fun Detail(key: String, value: String) {
 }
 
 @Composable
-private fun Dot(colour: Color, size: Int = 8) =
+internal fun Dot(colour: Color, size: Int = 8) =
     Box(Modifier.size(size.dp).background(colour, CircleShape))
 
 @Composable
