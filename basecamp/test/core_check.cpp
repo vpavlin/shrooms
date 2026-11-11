@@ -109,6 +109,28 @@ int main()
     r = core.revokeSigned("of fice", "x", "y");
     CHECK(has(r, "\"error\"") && !has(r, "\"path\""), "a label that is not one reached the daemon: %s", r.c_str());
 
+    // The clipboard (ADR-083): the request passed through, ids kept out of
+    // the path unless they are ids, and a refusal in the daemon's words.
+    r = core.clips();
+    CHECK(has(r, "\"path\": \"/clips\"") && has(r, "\"GET\""), "%s", r.c_str());
+    r = core.clipSend(R"({"text":"a \"b\"","to":["phone"],"secret":true})");
+    CHECK(has(r, "\"POST\"") && has(r, "\"path\": \"/clips\"")
+          && has(r, R"({\"text\":\"a \\\"b\\\"\",\"to\":[\"phone\"],\"secret\":true})"), "%s", r.c_str());
+    r = core.clipSend(R"({"text":"x","to":["nope"]})");
+    CHECK(has(r, R"("error":"no mesh called \"nope\"")") && has(r, "400"), "the daemon's sentence is the error: %s", r.c_str());
+    r = core.clipSend("text");
+    CHECK(has(r, "\"error\"") && !has(r, "\"path\""), "a request that is not JSON reached the daemon: %s", r.c_str());
+    r = core.clipTake("latest");
+    CHECK(has(r, "\"path\": \"/clips/latest/take\"") && has(r, "\"POST\""), "%s", r.c_str());
+    r = core.clipTake("0a1b2c");
+    CHECK(has(r, "\"path\": \"/clips/0a1b2c/take\""), "%s", r.c_str());
+    r = core.clipTake("../status");
+    CHECK(has(r, "\"error\"") && !has(r, "\"path\""), "an id that is not one reached the daemon: %s", r.c_str());
+    r = core.clipDelete("0a1b2c");
+    CHECK(has(r, "\"path\": \"/clips/0a1b2c\"") && has(r, "\"DELETE\""), "%s", r.c_str());
+    r = core.clipDelete("dead00");
+    CHECK(has(r, "has no clipboard"), "a daemon from before clips is named: %s", r.c_str());
+
     // The card's account for a mesh, from the admin files, matched by key.
     {
         char tmpl[] = "/tmp/core_check_XXXXXX";

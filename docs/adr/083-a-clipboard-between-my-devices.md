@@ -1,8 +1,8 @@
 # 083. A clipboard between my devices, on the mesh
 
 **Status:** accepted 2026-11-11 by the owner ("let's do it. It would be super
-useful to have this thing"); built in the daemon and CLI. The phone, the
-Android app and Basecamp follow.
+useful to have this thing"); built: the daemon and CLI, the phone's core,
+the Android app and the Basecamp view.
 
 ## Context
 
