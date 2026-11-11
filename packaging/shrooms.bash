@@ -125,7 +125,7 @@ _shrooms() {
         cword=$COMP_CWORD
     fi
 
-    local commands="init join invite prepare daemon status mesh config reload bound paths memory services hosts key keys credential keycard admin version help"
+    local commands="init join invite prepare daemon status mesh config reload bound paths memory services hosts copy paste clips key keys credential keycard admin version help"
     local common="--config --state"
 
     # A path-valued flag completes as a path, whichever command it belongs to.
@@ -158,6 +158,14 @@ _shrooms() {
         --device)
             _shrooms_offer "$(_shrooms_devices)"
             return
+            ;;
+        --to)
+            # A clip's recipients: the devices this one can reach. Only for
+            # copy; services' --to is a port.
+            if [ "${words[1]}" = copy ]; then
+                _shrooms_offer "$(_shrooms_peer_names)"
+                return
+            fi
             ;;
         --life|--within|--keep-for|--ttl|--timeout)
             COMPREPLY=($(compgen -W "$_shrooms_durations" -- "$cur"))
@@ -196,6 +204,15 @@ _shrooms() {
             ;;
         status)
             COMPREPLY=($(compgen -W "--json --ipv4 --socket" -- "$cur"))
+            ;;
+        copy)
+            COMPREPLY=($(compgen -W "--to --all --mesh --secret --ttl --socket" -- "$cur"))
+            ;;
+        paste)
+            COMPREPLY=($(compgen -W "--socket" -- "$cur"))
+            ;;
+        clips)
+            COMPREPLY=($(compgen -W "rm --json --socket" -- "$cur"))
             ;;
         mesh|meshes)
             # The labels come from the config rather than from status, because

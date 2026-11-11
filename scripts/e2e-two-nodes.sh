@@ -24,10 +24,12 @@ WORK=$(mktemp -d)
 SOCKS=$(mktemp -d /tmp/e2e-sock-XXXXXX)   # short: a unix path is capped near 108
 PIDS=()
 
+NS=e2eb$$
 cleanup() {
   for p in "${PIDS[@]:-}"; do kill "$p" 2>/dev/null; done
   sleep 1
   for p in "${PIDS[@]:-}"; do kill -9 "$p" 2>/dev/null; done
+  ip netns del "$NS" 2>/dev/null
   rm -rf "$WORK" "$SOCKS"
 }
 trap cleanup EXIT
@@ -42,6 +44,17 @@ note() { printf '         %s\n' "$1"; }
 [ "$(id -u)" -eq 0 ] || { echo "needs root: a WireGuard device is CAP_NET_ADMIN"; exit 77; }
 [ -e /dev/net/tun ] || modprobe tun 2>/dev/null
 [ -e /dev/net/tun ] || { echo "no /dev/net/tun and modprobe did not help"; exit 77; }
+
+# Node B in a network namespace of its own, joined to this one by a veth pair.
+# On one kernel the two overlay addresses are both local: a connection between
+# them is delivered on the spot and never crosses WireGuard, so anything that
+# needs the tunnel to have carried it — a clip, which knows its sender by the
+# address it arrived from — could not be tested at all.
+ip netns add "$NS" || { echo "cannot make a network namespace"; exit 77; }
+ip link add e2eva type veth peer name e2evb netns "$NS"
+ip addr add 10.199.0.1/24 dev e2eva && ip link set e2eva up
+ip -n "$NS" addr add 10.199.0.2/24 dev e2evb && ip -n "$NS" link set e2evb up && ip -n "$NS" link set lo up
+INB=(ip netns exec "$NS")
 
 # Ports well clear of anything a developer is likely to be running.
 A_WG=51990; A_DELIVERY=31990; A_IF=e2ea
@@ -116,7 +129,7 @@ else
 fi
 {
   printf 'delivery_port = %d\n' "$B_DELIVERY"
-  printf 'entry_nodes = ["/ip4/127.0.0.1/tcp/%d/p2p/%s"]\n' "$A_DELIVERY" "$PEER_A"
+  printf 'entry_nodes = ["/ip4/10.199.0.1/tcp/%d/p2p/%s"]\n' "$A_DELIVERY" "$PEER_A"
   grep '^mesh\.e2e\.admin_keys' "$WORK/a/config.toml"
 } >> "$WORK/b/config.toml"
 ok "node B is pointed at node A as its only bootstrap"
@@ -135,7 +148,7 @@ fi
 "$BIN_B" credential set "$BLOB" --config "$WORK/b/config.toml" --state "$WORK/b/state" \
   >/dev/null 2>&1
 
-"$BIN_B" daemon --config "$WORK/b/config.toml" --state "$WORK/b/state" \
+"${INB[@]}" "$BIN_B" daemon --config "$WORK/b/config.toml" --state "$WORK/b/state" \
     --socket "$SOCKS/b.sock" >"$WORK/b/daemon.log" 2>&1 &
 PIDS+=($!)
 if wait_for 90 "$SOCKS/b.sock"; then ok "node B is up"; else
@@ -177,6 +190,46 @@ if saw "$SOCKS/a.sock" "up "; then ok "a tunnel is established (${n}s)"; else
   note "$("$BIN" status --socket "$SOCKS/a.sock" 2>&1 | tail -3 | tr '\n' ' ')"
 fi
 
+# --- a clip each way (ADR-083) ---------------------------------------------
+# Through the tunnel, named by its sender's address: B learns it came from
+# alpha because WireGuard only takes alpha's address from alpha.
+CLIP="e2e clip $$ https://example.org/?a=1&b=2"
+"$BIN" copy --socket "$SOCKS/a.sock" --to beta "$CLIP" >"$WORK/a/copy.log" 2>&1 ||
+  bad "node A could not send a clip: $(cat "$WORK/a/copy.log")"
+n=0
+while [ "$n" -lt 40 ]; do
+  [ "$("$BIN_B" paste --socket "$SOCKS/b.sock" 2>/dev/null)" = "$CLIP" ] && break
+  sleep 2; n=$((n+2))
+done
+if [ "$("$BIN_B" paste --socket "$SOCKS/b.sock" 2>/dev/null)" = "$CLIP" ]; then
+  ok "a clip goes from A to B (${n}s)"
+else
+  bad "the clip never reached node B"
+  note "$("$BIN" clips --socket "$SOCKS/a.sock" 2>&1 | tail -2 | tr '\n' ' ')"
+  grep -i clip "$WORK/a/daemon.log" | tail -3 | sed 's/^/         /'
+fi
+if "$BIN_B" clips --json --socket "$SOCKS/b.sock" 2>/dev/null | grep -q '"from":"alpha"'; then
+  ok "node B knows it came from alpha"
+else
+  bad "node B does not say who sent the clip"
+fi
+"$BIN_B" copy --socket "$SOCKS/b.sock" --all --secret "e2e secret $$" >/dev/null 2>&1
+n=0
+while [ "$n" -lt 40 ]; do
+  [ "$("$BIN" paste --socket "$SOCKS/a.sock" 2>/dev/null)" = "e2e secret $$" ] && break
+  sleep 2; n=$((n+2))
+done
+if [ "$("$BIN" paste --socket "$SOCKS/a.sock" 2>/dev/null)" = "e2e secret $$" ]; then
+  ok "a secret goes from B to all of the mesh (${n}s)"
+else
+  bad "the secret never reached node A"
+fi
+if grep -q "e2e secret $$" "$WORK/a/state/clips.json" "$WORK/b/state/clips.json" 2>/dev/null; then
+  bad "a secret was written to disk"
+else
+  ok "the secret is on neither disk"
+fi
+
 # --- does a restart come back on remembered endpoints? --------------------
 #
 # The remembered roster is meant to give WireGuard an endpoint to try before the
@@ -197,7 +250,7 @@ else
   bad "node B kept no roster to come back to"
 fi
 
-"$BIN_B" daemon --config "$WORK/b/config.toml" --state "$WORK/b/state" \
+"${INB[@]}" "$BIN_B" daemon --config "$WORK/b/config.toml" --state "$WORK/b/state" \
     --socket "$SOCKS/b2.sock" >"$WORK/b/daemon.log" 2>&1 &
 PIDS+=($!)
 if wait_for 90 "$SOCKS/b2.sock"; then ok "node B restarts"; else
