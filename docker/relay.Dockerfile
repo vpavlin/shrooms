@@ -20,7 +20,7 @@
 # any machine. The node image cannot, because liblogosdelivery has to be built
 # or fetched per architecture and building it from source has been broken
 # upstream since September. None of that applies here.
-FROM --platform=$BUILDPLATFORM golang:1.26.10-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.26.11-alpine AS build
 WORKDIR /src
 
 # Dependencies first, so a source change does not re-download the module cache.

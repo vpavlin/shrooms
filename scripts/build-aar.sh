@@ -27,7 +27,7 @@ OUT=android/logosvpn.aar
 MOBILE_VER=$(awk '/golang.org\/x\/mobile v/ {print $2; exit}' mobile/go.mod)
 [ -n "$MOBILE_VER" ] || { echo "no golang.org/x/mobile version in mobile/go.mod"; exit 1; }
 
-echo "==> binding (container: JDK + Go 1.26.10 + gomobile $MOBILE_VER)"
+echo "==> binding (container: JDK + Go 1.26.11 + gomobile $MOBILE_VER)"
 # A persistent module cache, because this container is --rm and without one
 # every build re-downloads x/mobile, x/tools, x/mod and x/sync and recompiles
 # gomobile from source. That was minutes of every build and every publish, paid
@@ -44,7 +44,7 @@ docker run --rm \
     -v "$PWD:/src" -v "$SDK:/sdk:ro" -w /src/mobile \
     -e ANDROID_HOME=/sdk -e ANDROID_NDK_HOME="/sdk/ndk/$NDK_VER" \
     -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
-    golang:1.26.10 bash -euc '
+    golang:1.26.11 bash -euc '
         apt-get update -qq && apt-get install -y -qq default-jdk-headless >/dev/null 2>&1
         go install golang.org/x/mobile/cmd/gomobile@'"$MOBILE_VER"' golang.org/x/mobile/cmd/gobind@'"$MOBILE_VER"'
 

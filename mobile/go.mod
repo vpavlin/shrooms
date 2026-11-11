@@ -12,7 +12,7 @@ module github.com/vpavlin/shrooms/mobile
 
 go 1.26.0
 
-toolchain go1.26.10
+toolchain go1.26.11
 
 // No multipath TCP on our listeners (ADR-075): nothing here uses it, and
 // CVE-2026-98432's published root exploit went through an MPTCP listener.

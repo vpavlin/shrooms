@@ -29,7 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         $( [ "$TARGETARCH" = arm64 ] && [ "$BUILDARCH" != arm64 ] && echo gcc-aarch64-linux-gnu libc6-dev-arm64-cross ) \
     && rm -rf /var/lib/apt/lists/*
 
-ARG GO_VERSION=1.26.10
+ARG GO_VERSION=1.26.11
 RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${BUILDARCH}.tar.gz" \
         | tar -C /usr/local -xz
 ENV PATH=/usr/local/go/bin:$PATH
