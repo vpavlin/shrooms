@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -16,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -39,6 +41,9 @@ type Store struct {
 	sent     []Clip
 	kick     chan struct{}
 	client   *http.Client
+	// retry is when each recipient that failed is tried again, by mesh and
+	// name. In memory: a restart trying everyone once more is no loss.
+	retry map[string]backoff
 }
 
 // New opens the store kept at path, or one kept nowhere when path is "".
@@ -148,6 +153,15 @@ func (s *Store) Send(req Request) (Clip, error) {
 	s.mu.Unlock()
 	s.Kick()
 	return c, nil
+}
+
+// Online is a recipient coming online: whatever waits for it goes now, past
+// any backoff from while it was away.
+func (s *Store) Online(mesh, name string) {
+	s.mu.Lock()
+	delete(s.retry, mesh+"/"+name)
+	s.mu.Unlock()
+	s.Kick()
 }
 
 // Kick has the outbox try now: a clip was sent, or a peer came online.
@@ -365,6 +379,9 @@ func (s *Store) flush(ctx context.Context) {
 			if !ok || !p.Online {
 				continue
 			}
+			if b, ok := s.retry[c.Mesh+"/"+t.Name]; ok && s.now().Before(b.next) {
+				continue
+			}
 			body, _ := json.Marshal(wire{ID: c.ID, Text: c.Text, Secret: c.Secret,
 				Created: c.Created.Unix(), Expires: c.Expires.Unix()})
 			jobs = append(jobs, job{c.ID, t.Name, p.Addr, body})
@@ -405,6 +422,20 @@ func (s *Store) post(ctx context.Context, addr netip.Addr, body []byte) error {
 func (s *Store) mark(id, name string, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.retry == nil {
+		s.retry = map[string]backoff{}
+	}
+	for _, c := range s.sent {
+		if c.ID == id {
+			key := c.Mesh + "/" + name
+			if err == nil {
+				delete(s.retry, key)
+			} else {
+				s.retry[key] = s.retry[key].after(s.now())
+			}
+			break
+		}
+	}
 	for i := range s.sent {
 		if s.sent[i].ID != id {
 			continue
@@ -415,7 +446,7 @@ func (s *Store) mark(id, name string, err error) {
 				continue
 			}
 			if err != nil {
-				t.Error = err.Error()
+				t.Error = describe(err)
 			} else {
 				t.Sent, t.Error = s.now(), ""
 				s.log.Info("clip delivered", "to", name)
@@ -427,4 +458,38 @@ func (s *Store) mark(id, name string, err error) {
 		}
 	}
 	s.saveLocked()
+}
+
+// backoff spaces out tries at a recipient that keeps failing: one on an older
+// shrooms refuses every 15 seconds for as long as the clip lives, otherwise.
+type backoff struct {
+	next time.Time
+	wait time.Duration
+}
+
+func (b backoff) after(now time.Time) backoff {
+	switch {
+	case b.wait == 0:
+		b.wait = 30 * time.Second
+	case b.wait < 5*time.Minute:
+		b.wait *= 2
+	}
+	if b.wait > 5*time.Minute {
+		b.wait = 5 * time.Minute
+	}
+	b.next = now.Add(b.wait)
+	return b
+}
+
+// describe says why a recipient does not have a clip yet, in words for the
+// person who sent it.
+func describe(err error) string {
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return "no clipboard there yet: it runs an older shrooms"
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return "did not answer"
+	}
+	return err.Error()
 }

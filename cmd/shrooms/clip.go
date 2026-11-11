@@ -88,7 +88,7 @@ func (c *clipServer) run(ctx context.Context) {
 			if p.Online {
 				now[p.Mesh+"/"+p.Name] = true
 				if !online[p.Mesh+"/"+p.Name] {
-					c.store.Kick()
+					c.store.Online(p.Mesh, p.Name)
 				}
 			}
 		}
