@@ -55,6 +55,8 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -80,6 +82,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -485,8 +488,10 @@ fun AgentsScreen(peers: List<Peer>, onClose: () -> Unit, initial: OpenSession? =
     // Refreshed while the list is on screen, so a session that starts waiting
     // for an answer shows it without a pull. What is found is remembered for
     // the notification watcher (AgentWatch).
-    LaunchedEffect(refresh, open, named) {
-        if (open != null) return@LaunchedEffect
+    val visible = screenVisible()
+    LaunchedEffect(refresh, open, named, visible) {
+        if (open != null || !visible) return@LaunchedEffect
+        var cacheWritten = ""
         while (isActive) {
             // The tasks from the machines already known, alongside the search
             // for machines rather than after it, which takes a while; not
@@ -499,7 +504,10 @@ fun AgentsScreen(peers: List<Peer>, onClose: () -> Unit, initial: OpenSession? =
             // another machine's name for a mesh would otherwise stay a week.
             val merged = HostCache.merge(HostCache.renamed(meshNames(peers, handed, cands), hosts.orEmpty()), found, System.currentTimeMillis())
             hosts = merged
-            cachePrefs.edit().putString("cache", HostCache.encode(merged)).apply()
+            // Written when it changed: the whole list, every 10 s, was a file
+            // rewrite every round.
+            val enc = HostCache.encode(merged)
+            if (enc != cacheWritten) { cachePrefs.edit().putString("cache", enc).apply(); cacheWritten = enc }
             // The watcher keeps asking a machine that missed a round, too.
             if (merged.isNotEmpty()) AgentHosts.save(ctx, merged.map { AgentHosts.Host(it.name, it.mesh, it.address) })
             // Kept when some machine answered, so a round with none does not empty the list.
@@ -1146,22 +1154,32 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String
     LaunchedEffect(o) {
         withContext(Dispatchers.IO) { runCatching { client.history(o.session, 30) } }.onSuccess { earlier = it }
     }
-    // Kept on the phone, as it is now, for when the machine cannot be reached.
-    LaunchedEffect(o) {
-        var saved = -1L to -1
-        while (isActive) {
-            delay(5_000)
-            val now = (events.lastOrNull()?.seq ?: 0L) to earlier.size
-            if (keptAt == 0L && events.isNotEmpty() && now != saved) {
-                val ev = events.toList()
-                val ea = earlier
-                withContext(Dispatchers.IO) { History.save(ctx, o.host, o.session, ev, ea) }
-                saved = now
-            }
+    // Kept on the phone, as it is now, for when the machine cannot be reached:
+    // every 30 s while on screen, and once when it is left. It was every 5 s
+    // whenever anything had arrived, up to 1 MB rewritten each time.
+    val saveShown = screenVisible()
+    var saved by remember(o) { mutableStateOf(-1L to -1) }
+    suspend fun saveIfChanged() {
+        val now = (events.lastOrNull()?.seq ?: 0L) to earlier.size
+        if (keptAt == 0L && events.isNotEmpty() && now != saved) {
+            val ev = events.toList()
+            val ea = earlier
+            withContext(Dispatchers.IO) { History.save(ctx, o.host, o.session, ev, ea) }
+            saved = now
         }
     }
-    // The session's own figures — context, model, auto-approve — kept fresh.
-    LaunchedEffect(o) {
+    LaunchedEffect(o, saveShown) {
+        if (!saveShown) { saveIfChanged(); return@LaunchedEffect }
+        while (isActive) {
+            delay(30_000)
+            saveIfChanged()
+        }
+    }
+    // The session's own figures — context, model, auto-approve — kept fresh,
+    // while it is on screen.
+    val figuresShown = screenVisible()
+    LaunchedEffect(o, figuresShown) {
+        if (!figuresShown) return@LaunchedEffect
         while (isActive) {
             withContext(Dispatchers.IO) { runCatching { client.sessions() } }.getOrNull()
                 ?.firstOrNull { it.name == o.session }?.let {
@@ -1181,6 +1199,9 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String
     // scrolled through its own history for ten seconds before settling.
     // Made again since its copy was kept: start over without the copy.
     var copyStale by remember(o) { mutableStateOf(0) }
+    // While the screen is hidden the stream and its tick wait, and carry on
+    // from the last event when it is back (screenVisible).
+    val shown = rememberUpdatedState(screenVisible())
     LaunchedEffect(o, tail, copyStale) {
         events.clear()
         streaming = ""
@@ -1210,6 +1231,7 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String
         var quiet = 0
         launch {
             while (isActive) {
+                if (!shown.value) snapshotFlow { shown.value }.first { it }
                 // The machine answered: what is shown is its own from here.
                 if (answered.get() && keptAt != 0L) keptAt = 0
                 val i = info
@@ -1258,18 +1280,27 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String
                 delay(120)
             }
         }
+        // Reconnects back off, 2 s doubling to a minute, and start over at 2 s
+        // once a connection opens: an agent that refused or a machine that
+        // was away was asked every 2 s for as long as the screen stayed open.
+        var wait = 2000L
         while (isActive) {
+            if (!shown.value) snapshotFlow { shown.value }.first { it }
+            var opened = false
             val r = withContext(Dispatchers.IO) {
                 runCatching {
-                    client.follow(o.session, after.get(), stop = { !isActive },
-                        tail = tail, onOpen = { answered.set(true) }) { e ->
+                    // Ends at the next line once the screen is hidden; the
+                    // server's comment every 20 s bounds the wait.
+                    client.follow(o.session, after.get(), stop = { !isActive || !shown.value },
+                        tail = tail, onOpen = { answered.set(true); opened = true }) { e ->
                         if (e.kind != "partial") after.set(e.seq)
                         pending += e
                     }
                 }
             }
             r.onFailure { connError = it.message ?: "connection lost" }
-            delay(2000)
+            wait = if (opened) 2000L else (wait * 2).coerceAtMost(60_000L)
+            if (shown.value) delay(wait)
         }
     }
 
@@ -1831,7 +1862,16 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String
                                     .onFailure { actionError = it.message ?: "could not transcribe it again" }
                             }
                         }, reading = readingNow?.takeIf { item is ChatItem.Said && it.id == "${o.host}/${o.session}/${item.seq}" },
-                            onRead = { said -> Speech.say(ctx, "${o.host}/${o.session}/${said.seq}", said.text) })
+                            onRead = { said -> Speech.say(ctx, "${o.host}/${o.session}/${said.seq}", said.text) },
+                            onMore = { seq ->
+                                // The event as the agent keeps it, whole, in place of the cut copy.
+                                scope.launch {
+                                    val e = withContext(Dispatchers.IO) { runCatching { client.event(o.session, seq) }.getOrNull() }
+                                    val i = events.indexOfFirst { it.seq == seq }
+                                    if (e != null && i >= 0) events[i] = e
+                                    else actionError = "could not fetch the rest from ${o.host}"
+                                }
+                            })
                     }
                 }
                 // At the top (the list is laid out from the bottom): what was
@@ -2166,13 +2206,20 @@ private fun CopyLink(text: String) {
 
 @Composable
 private fun ChatRow(item: ChatItem, onAnswer: (String, Boolean, Map<String, String>?) -> Unit,
-                    onRetryVoice: (String) -> Unit = {}, reading: Speech.Reading? = null, onRead: ((ChatItem.Said) -> Unit)? = null) {
+                    onRetryVoice: (String) -> Unit = {}, reading: Speech.Reading? = null, onRead: ((ChatItem.Said) -> Unit)? = null,
+                    onMore: ((Long) -> Unit)? = null) {
+    // Text the phone's saved copy cut (History.STRING): the rest from the agent.
+    @Composable fun ReadMore(seq: Long, text: String) {
+        if (onMore != null && History.wasCut(text)) Text("read more", style = MaterialTheme.typography.labelSmall,
+            color = Palette.Sky, modifier = Modifier.clickable { onMore(seq) }.padding(vertical = 6.dp))
+    }
     when (item) {
         is ChatItem.You -> Bubble(Palette.Phosphor.copy(alpha = 0.08f), Palette.Phosphor.copy(alpha = 0.35f)) {
             Stamp((if (item.outside) listOf(item.by.uppercase(), whenSaid(item.time))
                    else listOf(if (item.voice) "YOU 🎤" else "YOU", item.by, whenSaid(item.time))).filter { it.isNotEmpty() }.joinToString("  ·  "),
                 Palette.Phosphor, copy = item.text)
             Text(spans(Markdown.links(item.text)), style = MaterialTheme.typography.bodyMedium)
+            ReadMore(item.seq, item.text)
         }
         is ChatItem.Said -> Bubble(Palette.Panel) {
             Stamp(whenSaid(item.time), copy = item.text) {
@@ -2182,6 +2229,7 @@ private fun ChatRow(item: ChatItem, onAnswer: (String, Boolean, Map<String, Stri
                     modifier = Modifier.clickable { onRead(item) }.padding(start = 6.dp, end = 10.dp, top = 2.dp, bottom = 2.dp))
             }
             if (reading == null) MarkdownText(item.text) else ReadingView(reading)
+            ReadMore(item.seq, item.text)
         }
         is ChatItem.Earlier -> if (item.user) {
             Bubble(Palette.Phosphor.copy(alpha = 0.05f), Palette.Line) {
@@ -2222,6 +2270,7 @@ private fun ChatRow(item: ChatItem, onAnswer: (String, Boolean, Map<String, Stri
                 color = if (item.error) Palette.Rust else Palette.Ash,
                 modifier = Modifier.clickable(enabled = more) { expanded = !expanded }.padding(start = 16.dp),
             ) }
+            if (expanded) Row(Modifier.padding(start = 16.dp)) { ReadMore(item.seq, item.text) }
         }
         is ChatItem.Prompt -> if (item.questions.isNotEmpty()) QuestionCard(item, onAnswer) else PromptCard(item, onAnswer)
         is ChatItem.Done -> Label("— ${item.note}${whenSaid(item.time).let { if (it.isEmpty()) "" else "  ·  $it" }}")

@@ -30,18 +30,18 @@ type Who func(netip.Addr) string
 func Handler(log *slog.Logger, m *Manager, who Who) http.Handler {
 	h := &handler{log: log, m: m, who: who}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /v1/sessions", h.list)
+	mux.HandleFunc("GET /v1/sessions", gzipped(h.list))
 	mux.HandleFunc("GET /v1/meshes", h.meshList)
 	// What the model did, turn by turn, by day, session, the device that asked
 	// and model (usage.go); ?since=2006-01-02 limits it.
 	// For Prometheus, beside the daemon's own (metrics.go).
 	mux.HandleFunc("GET /metrics", h.metrics)
-	mux.HandleFunc("GET /v1/usage", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /v1/usage", gzipped(func(w http.ResponseWriter, r *http.Request) {
 		host, _ := os.Hostname()
 		// Rows first: reading them is what brings the limits up to date.
 		rows := m.Usage(r.URL.Query().Get("since"))
 		writeJSON(w, http.StatusOK, map[string]any{"machine": host, "rows": rows, "limits": m.Limits(), "credits": m.Credits()})
-	})
+	}))
 	mux.HandleFunc("GET /v1/harnesses", func(w http.ResponseWriter, r *http.Request) {
 		// With whether sessions can be caged here, for "+ session".
 		writeJSON(w, http.StatusOK, map[string]any{"harnesses": m.Harnesses(), "cage": m.Cages.Status()})
@@ -55,8 +55,8 @@ func Handler(log *slog.Logger, m *Manager, who Who) http.Handler {
 	mux.HandleFunc("GET /v1/sessions/{name}/schedule", h.scheduleList)
 	mux.HandleFunc("POST /v1/sessions/{name}/schedule", h.scheduleSet)
 	mux.HandleFunc("DELETE /v1/sessions/{name}/schedule/{id}", h.scheduleRemove)
-	mux.HandleFunc("GET /v1/sessions/{name}/history", h.history)
-	mux.HandleFunc("GET /v1/sessions/{name}/search", h.search)
+	mux.HandleFunc("GET /v1/sessions/{name}/history", gzipped(h.history))
+	mux.HandleFunc("GET /v1/sessions/{name}/search", gzipped(h.search))
 	mux.HandleFunc("POST /v1/sessions/{name}/files", h.upload)
 	// A file from another agent's session, if this one takes them (drop.go).
 	mux.HandleFunc("POST /v1/sessions/{name}/drop", h.drop)
@@ -71,7 +71,7 @@ func Handler(log *slog.Logger, m *Manager, who Who) http.Handler {
 	mux.HandleFunc("POST /v1/sessions/{name}/transcribe", h.transcribe)
 	mux.HandleFunc("POST /v1/sessions/{name}/voice", h.voice)
 	mux.HandleFunc("POST /v1/sessions/{name}/voice/{id}/retry", h.retryVoice)
-	mux.HandleFunc("GET /v1/conversations", h.conversations)
+	mux.HandleFunc("GET /v1/conversations", gzipped(h.conversations))
 	mux.HandleFunc("POST /v1/terminals/{pid}/stop", h.stopTerminal)
 	mux.HandleFunc("GET /v1/sessions/{name}/events", h.events)
 	mux.HandleFunc("POST /v1/sessions/{name}/messages", h.message)
@@ -88,7 +88,7 @@ func Handler(log *slog.Logger, m *Manager, who Who) http.Handler {
 	mux.HandleFunc("POST /a2a/{name}", h.a2a)
 	mux.HandleFunc("POST /a2a", h.a2a)
 	// Tasks (tasks.go): the apps' list, and the worker's word on one.
-	mux.HandleFunc("GET /v1/tasks", h.tasksList)
+	mux.HandleFunc("GET /v1/tasks", gzipped(h.tasksList))
 	mux.HandleFunc("POST /v1/tasks/{id}", h.taskUpdate)
 	// The asker's acknowledgement, as A2A's AckTask, for apps whose way to an
 	// agent is the /v1 API (Basecamp's core forwards nothing else).

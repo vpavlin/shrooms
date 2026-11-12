@@ -442,9 +442,15 @@ class AgentClient(private val address: String) {
         }
     }
 
-    /** The A2A tasks this machine's sessions were given (AgentTasks). */
+    /**
+     * The A2A tasks this machine's sessions were given (AgentTasks), as a list
+     * shows them: brief=1, each request and latest word cut to what a row and
+     * TaskCache keep. The whole list carried every task's full conversation:
+     * 290 KB from a busy laptop, fetched every few seconds, drained a phone
+     * (2026-11-09). An agent older than brief=1 ignores it and sends it all.
+     */
     fun tasks(timeoutMs: Int = 4000): List<AgentTask> {
-        val a = JSONObject(request("GET", "/v1/tasks", null, timeoutMs)).optJSONArray("tasks") ?: return emptyList()
+        val a = JSONObject(request("GET", "/v1/tasks?brief=1", null, timeoutMs)).optJSONArray("tasks") ?: return emptyList()
         return (0 until a.length()).map { AgentTasks.parse(a.getJSONObject(it)) }
     }
 
@@ -620,6 +626,13 @@ class AgentClient(private val address: String) {
             c.disconnect()
         }
         return last
+    }
+
+    /** One event of a session, whole, as the agent keeps it: for "read more" on one the phone's copy cut. */
+    fun event(session: String, seq: Long): AgentEvent? {
+        var got: AgentEvent? = null
+        follow(session, seq - 1, stop = { got != null }) { e -> if (e.kind != "partial" && e.seq == seq) got = e }
+        return got
     }
 
     private fun open(method: String, path: String, timeoutMs: Int): HttpURLConnection {

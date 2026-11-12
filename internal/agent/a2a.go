@@ -743,6 +743,11 @@ func (h *handler) tasksList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	withHistory := q.Get("history") != "0"
+	// brief=1: what a list shows of a task, the request and the latest word
+	// cut to briefText, no artifacts. Everything a row needs; a task's whole
+	// conversation is for whoever opens it. Measured 2026-11-09: 41 finished
+	// tasks were 290 KB in full, 137 KB with history=0 (each result whole).
+	brief := q.Get("brief") == "1"
 
 	var out []a2aTask
 	var updated []time.Time
@@ -784,7 +789,34 @@ func (h *handler) tasksList(w http.ResponseWriter, r *http.Request) {
 			out[i].History, out[i].Artifacts = nil, nil
 		}
 	}
+	if brief {
+		for i := range out {
+			out[i].Artifacts = nil
+			for j := range out[i].History {
+				briefParts(out[i].History[j].Parts)
+			}
+			if m := out[i].Status.Message; m != nil {
+				c := *m
+				c.Parts = append([]a2aPart(nil), m.Parts...)
+				briefParts(c.Parts)
+				out[i].Status.Message = &c
+			}
+			if l, ok := out[i].Metadata["shrooms/last_worker_line"].(string); ok {
+				out[i].Metadata["shrooms/last_worker_line"] = trim(l, briefText)
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"tasks": out})
+}
+
+// briefText is how much of a task's request and latest word brief=1 keeps:
+// what the apps show in a row, and keep on the phone (TaskCache, 500).
+const briefText = 500
+
+func briefParts(ps []a2aPart) {
+	for k := range ps {
+		ps[k].Text = trim(ps[k].Text, briefText)
+	}
 }
 
 // taskTitle is an asker's title as a list shows it: one line, and short. It

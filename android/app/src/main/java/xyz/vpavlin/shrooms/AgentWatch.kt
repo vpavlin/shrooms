@@ -29,6 +29,23 @@ import kotlinx.coroutines.launch
  */
 object AgentWatch {
     const val EVERY_MS = 15_000L
+    /** With the screen off: a notification a minute late costs less than the radio woken four times a minute. */
+    const val EVERY_MS_SCREEN_OFF = 60_000L
+
+    /**
+     * The machines to ask in one round: one address per machine, the one that
+     * answered last first, and a machine that missed rounds skipped in all but
+     * every 2^(misses-1)-th, up to 16. A machine on two meshes was asked
+     * twice and notified about twice; one that went away was asked every round
+     * for the week it is remembered. Pure, for the tests.
+     */
+    fun roundTargets(hosts: List<AgentHosts.Host>, lastGood: Map<String, String>, misses: Map<String, Int>, round: Long): List<List<AgentHosts.Host>> =
+        hosts.groupBy { it.name }.map { (name, hs) ->
+            hs.sortedBy { if (it.address == lastGood[name]) 0 else 1 }
+        }.filter { hs ->
+            val m = misses[hs.first().name] ?: 0
+            m < 2 || round % (1L shl (m - 1).coerceAtMost(4)) == 0L
+        }
     const val CHANNEL = "agents"
     const val EXTRA_ADDRESS = "agent_address"
     const val EXTRA_HOST = "agent_host"
@@ -117,6 +134,9 @@ object AgentHosts {
 /** One watcher loop, hosted by whichever service is running (see [start]). */
 class AgentWatcher(private val ctx: Context) {
     private val seen = mutableMapOf<String, AgentWatch.Seen>()
+    private val lastGood = mutableMapOf<String, String>() // machine -> address that answered
+    private val misses = mutableMapOf<String, Int>()
+    private var round = 0L
 
     suspend fun run() {
         ensureChannel(ctx)
@@ -124,22 +144,37 @@ class AgentWatcher(private val ctx: Context) {
             // What was written while a machine was unreachable goes as soon
             // as it is back, app open or not.
             runCatching { Outbox.flush(ctx) }
-            for (h in AgentHosts.load(ctx)) {
-                val sessions = runCatching { AgentClient(h.address).sessions(5000) }.getOrNull() ?: continue
+            round++
+            for (addrs in AgentWatch.roundTargets(AgentHosts.load(ctx), lastGood, misses, round)) {
+                var h = addrs.first()
+                var sessions: List<AgentSession>? = null
+                for (a in addrs) {
+                    sessions = runCatching { AgentClient(a.address).sessions(5000) }.getOrNull()
+                    if (sessions != null) { h = a; break }
+                }
+                if (sessions == null) { misses[h.name] = (misses[h.name] ?: 0) + 1; continue }
+                misses.remove(h.name)
+                lastGood[h.name] = h.address
                 for (s in sessions) {
                     val key = "${h.address}/${s.name}"
-                    val said = AgentWatch.change(seen[key], s)
+                    val before = seen[key]
+                    val said = AgentWatch.change(before, s)
                     seen[key] = AgentWatch.Seen(s.state, s.lastSeq, s.turns, s.tasksStalled, s.taskRequests.size)
                     if (said != null && AgentWatch.visible != key) notify(h, s, said)
                     if (AgentWatch.visible == key) Unread.seen(ctx, h.name, s.name, s.turns)
                     // Kept up to date for offline; the one on screen keeps itself.
-                    if (AgentWatch.visible != key) {
+                    // Only when something happened since the last round:
+                    // refresh loads and parses the whole saved history (up to
+                    // 1 MB) before it can tell that nothing is new, and did so
+                    // for every session every 15 s with the screen off.
+                    if (AgentWatch.visible != key && (before == null || before.lastSeq != s.lastSeq)) {
                         runCatching { History.refresh(ctx, AgentClient(h.address), h.name, s.name, s.lastSeq) }
                             .onSuccess { Speech.heard(ctx, h.name, s.name, it) }
                     }
                 }
             }
-            delay(AgentWatch.EVERY_MS)
+            val screenOn = (ctx.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager).isInteractive
+            delay(if (screenOn) AgentWatch.EVERY_MS else AgentWatch.EVERY_MS_SCREEN_OFF)
         }
     }
 
