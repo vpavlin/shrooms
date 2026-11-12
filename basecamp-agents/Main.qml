@@ -5947,6 +5947,14 @@ Item {
                             }
                         }
                     }
+                    // With nothing written and the agent done, a one-click yes
+                    // to "shall I go ahead?" (the phone's 👍). Not while it
+                    // works, where it would approve something not yet asked.
+                    Lnk {
+                        visible: composer.text.trim() === "" && root.agentAttached.length === 0 && !root.agentWorking
+                        text: "👍"; font.pixelSize: root.fs(16)
+                        onClicked: root.sendToAgent("👍 Go ahead.")
+                    }
                     Lnk {
                         text: "SEND"; font.pixelSize: root.fs(12)
                         base: (composer.text.trim() !== "" || root.agentAttached.length > 0) ? cPhosphor : cAsh

@@ -1970,11 +1970,16 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String
             }
             Spacer(Modifier.width(8.dp))
             val canSend = (input.isNotBlank() || attached.isNotEmpty()) && uploading.isEmpty()
+            // With nothing written and the agent done, the button says yes:
+            // a turn so often ends in "shall I go ahead?" that typing "go"
+            // every time was the chore. Not while it works, where a stray
+            // tap would approve something not yet asked.
+            val canNod = !canSend && input.isBlank() && attached.isEmpty() && uploading.isEmpty() && !working
             Box(
                 Modifier.size(44.dp)
-                    .background(if (canSend) Palette.Phosphor else Palette.Line, CircleShape)
-                    .clickable(enabled = canSend) {
-                        val text = input.trim()
+                    .background(if (canSend || canNod) Palette.Phosphor else Palette.Line, CircleShape)
+                    .clickable(enabled = canSend || canNod) {
+                        val text = if (canSend) input.trim() else NOD
                         val files = attached
                         setInput("")
                         attached = emptyList()
@@ -1983,10 +1988,13 @@ private fun SessionScreen(o: OpenSession, onBack: () -> Unit, onRenamed: (String
                             created = System.currentTimeMillis(), attachments = files))
                     },
                 contentAlignment = Alignment.Center,
-            ) { Text("↑", color = Palette.Void, style = MaterialTheme.typography.titleMedium) }
+            ) { Text(if (canNod) "👍" else "↑", color = Palette.Void, style = MaterialTheme.typography.titleMedium) }
         }
     }
 }
+
+/** What the 👍 button sends: words too, so every harness reads it as a yes. */
+const val NOD = "👍 Go ahead."
 
 /**
  * A reply while it is read aloud: as the sentences being read, the current
