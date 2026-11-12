@@ -37,7 +37,7 @@ func cmdInit(args []string) error {
 	adminDir := fs.String("admin-dir", defaultAdminDir(), "where to keep the admin key")
 	noAdmin := fs.Bool("no-admin", false, "do not mint an authority; membership is the network key alone")
 	sock := fs.String("socket", DefaultSocket, "control socket, so a waiting daemon picks this up")
-	label := fs.String("mesh", "", "create an additional mesh with this name (ADR-015)")
+	label := fs.String("mesh", "", "the mesh's name on this device: required, for the first mesh as for any other (ADR-015)")
 	// The authority is a Keycard on a reader rather than a key in a file, so
 	// nothing secret is written here and admitting a device needs the card.
 	card := fs.Bool("keycard", false, "the authority is a Keycard on a reader")

@@ -51,9 +51,10 @@ topic is its own devices, so publisher anonymity would be worth little anyway.
 
 **A phone tells its service nodes more.** Phones run their delivery node as
 Edge (`mobile/support.go`): instead of relaying, they subscribe through filter
-and publish through lightpush, to service nodes they do not choose. Such a node sees the phone's IP, the content topic it follows,
-and every message it publishes, with the timing — still sealed, but attributed
-rather than mixed into gossip.
+and publish through lightpush, to service nodes they do not choose. Such a
+node sees the phone's IP, the content topic it follows, and every message it
+publishes, with the timing — still sealed, but attributed rather than mixed
+into gossip.
 
 **WireGuard traffic is identifiable as WireGuard.** Handshake packets have
 distinctive sizes (148/92/32). An ISP can tell you run a VPN, though not what
@@ -224,12 +225,6 @@ every member can reach every granted port; there is no per-member list. A
 grant reaches the daemon through `/lan-grant`, which is root-only on the
 control socket; withdrawing or narrowing it closes open connections.
 
-**Metrics are readable by every member.** A node serves Prometheus metrics on
-its mesh addresses, port 9180 by default (docs/metrics.md): what each peer's
-tunnel carried, what the delivery node exchanged, what the machine's
-interfaces moved. Nobody outside the mesh can reach them, and nothing inside it
-asks who is reading. `metrics_port = 0` turns them off.
-
 **Shrooms Agents hands every member a shell, in effect.** `shrooms-agent` on a
 machine lets any member of the meshes it serves start and drive coding-agent
 sessions there, as the user it runs as or in a session's cage, with no login
@@ -238,6 +233,12 @@ session can also publish files
 ([ADR-079](docs/adr/079-sessions-publish-files.md)), which the whole mesh then
 reads without a password. Installing the agent on a machine is deciding that
 every device on those meshes may run code on it.
+
+**Metrics are readable by every member.** A node serves Prometheus metrics on
+its mesh addresses, port 9180 by default (docs/metrics.md): what each peer's
+tunnel carried, what the delivery node exchanged, what the machine's
+interfaces moved. Nobody outside the mesh can reach them, and nothing inside it
+asks who is reading. `metrics_port = 0` turns them off.
 
 **~~Disco authenticates mesh membership, not device identity.~~** Closed
 (ADR-029). Disco packets and relay registrations both carry an ed25519 signature

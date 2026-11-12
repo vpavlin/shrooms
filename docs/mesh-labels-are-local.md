@@ -19,7 +19,7 @@ evening to untangle on 2026-08-25.
 nothing; two devices disagreeing proves nothing either.
 
 **It is** how you address a specific mesh on *this* device: `--mesh <label>`,
-`vps.<label>.internal`, `admin-<label>.json`.
+`vps.<label>.mesh`, `admin-<label>.json`.
 
 So to answer *are these two machines on the same mesh?*, compare something the
 mesh actually derives from:
@@ -34,7 +34,7 @@ Two of those match iff it is one mesh. The label tells you nothing.
 
 ## The qualified name uses the resolver's label
 
-`vps.home.internal` asks *this* device's resolver for the mesh *this* device
+`vps.home.mesh` asks *this* device's resolver for the mesh *this* device
 calls `home`. On a device that calls the same mesh `test`, that name is not a
 qualified name at all — it is a device called `vps` followed by a label that
 matches nothing.
@@ -47,7 +47,11 @@ used for months stop working, correctly.
 
 ## The short form picks, and may pick wrong
 
-`vps.internal` with no label resolves through the first mesh in config order
+*Historical: the short form was removed on 2026-09-29. A name is answered only
+with its mesh in it (`mesh.ResolveQualified`), so the rest of this section
+describes what used to happen, and why it went.*
+
+`vps.mesh` with no label resolves through the first mesh in config order
 that has a `vps`. It used to be refused when more than one mesh answered, and
 that was changed deliberately ([`fc12b75`](../adr/015-multiple-meshes-one-daemon.md)):
 ambiguity is the normal case for your own devices, so refusing removed exactly

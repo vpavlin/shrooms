@@ -186,7 +186,7 @@ install: check-lib
 	@echo "  $(PREFIX)/share/bash-completion/completions/shrooms"
 	@echo
 	@echo "next:"
-	@echo "  sudo shrooms init --relay --name $$(hostname)   # or: shrooms join <INVITE-TOKEN>"
+	@echo "  sudo shrooms init --mesh <name> --relay --name $$(hostname)   # or: shrooms join <INVITE-TOKEN>"
 	@echo "  sudo systemctl daemon-reload"
 	@echo "  sudo systemctl enable --now shrooms"
 	@echo
