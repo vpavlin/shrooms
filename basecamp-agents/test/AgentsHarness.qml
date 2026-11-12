@@ -1069,15 +1069,30 @@ Item {
     // printed, and the check failed on every PR while passing here.
     property bool narrowDone: false
     property bool quitWanted: false
-    function finish() { if (narrowDone) Qt.quit(); else quitWanted = true }
+    function finish() {
+        if (narrowDone) { Qt.quit(); return }
+        quitWanted = true
+        narrowDeadline.start()
+    }
+    // Never hang the run on it: CI waited nine minutes for a reading that
+    // never came. Say so, and end.
+    Timer {
+        id: narrowDeadline
+        interval: 5000
+        onTriggered: { console.error("NARROW never ran"); Qt.quit() }
+    }
     Timer {
         id: narrowTimer
         property real lw: 320
         interval: 150
         onTriggered: {
-            var link = top.findByName(view, "newSessionLink"), list = top.findByName(view, "hostMeshes")
-            var right = link ? link.mapToItem(link.parent.parent, link.width, 0).x : -1
-            console.error("NARROW fits=" + (link !== null && right <= link.parent.parent.width + 0.5) + " gives=" + (list !== null && list.elide === Text.ElideRight && list.Layout.fillWidth))
+            try {
+                var link = top.findByName(view, "newSessionLink"), list = top.findByName(view, "hostMeshes")
+                var right = link ? link.mapToItem(link.parent.parent, link.width, 0).x : -1
+                console.error("NARROW fits=" + (link !== null && right <= link.parent.parent.width + 0.5) + " gives=" + (list !== null && list.elide === Text.ElideRight && list.Layout.fillWidth))
+            } catch (e) {
+                console.error("NARROW failed: " + e)
+            }
             view.listWidth = lw
             top.narrowDone = true
             if (top.quitWanted) Qt.quit()
