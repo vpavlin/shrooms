@@ -330,15 +330,13 @@ Item {
         onTriggered: {
             console.error("HOSTSCROLL=" + top.hostScrollSeen + " TOP=" + top.hostScrollTop)
             // The narrowest list: "+ session" still inside it, the meshes cut short.
-            var lw = view.listWidth
+            // Cut short is read as the text being truncated, not from its
+            // Layout.fillWidth: Qt 6.4 (CI's) gives no attached Layout to a
+            // reference from outside the item, and the check threw there.
+            narrowTimer.lw = view.listWidth
             view.listWidth = 200
             view.forceLayout ? view.forceLayout() : null
-            Qt.callLater(function() {
-                var link = top.findByName(view, "newSessionLink"), list = top.findByName(view, "hostMeshes")
-                var right = link ? link.mapToItem(link.parent.parent, link.width, 0).x : -1
-                console.error("NARROW fits=" + (link !== null && right <= link.parent.parent.width + 0.5) + " gives=" + (list !== null && list.elide === Text.ElideRight && list.Layout.fillWidth))
-                view.listWidth = lw
-            })
+            narrowTimer.start()
             var kinds = []
             for (var i = 0; i < chatCount(); i++) kinds.push(view.chatModelAt(i).kind)
             console.error("ROWS=" + kinds.join(","))
@@ -1068,6 +1066,41 @@ Item {
                            session: h.sessions[0].name, address: h.address })
         deepTimer.start()
     }
+    // Read once the narrow width has been laid out, and the run does not end
+    // before it has been. It used to be a Qt.callLater with nothing waiting for
+    // it: on CI's slower runners the harness quit first, NARROW was never
+    // printed, and the check failed on every PR while passing here.
+    property bool narrowDone: false
+    property bool quitWanted: false
+    function finish() {
+        if (narrowDone) { Qt.quit(); return }
+        quitWanted = true
+        narrowDeadline.start()
+    }
+    // Never hang the run on it: CI waited nine minutes for a reading that
+    // never came. Say so, and end.
+    Timer {
+        id: narrowDeadline
+        interval: 5000
+        onTriggered: { console.error("NARROW never ran"); Qt.quit() }
+    }
+    Timer {
+        id: narrowTimer
+        property real lw: 320
+        interval: 150
+        onTriggered: {
+            try {
+                var link = top.findByName(view, "newSessionLink"), list = top.findByName(view, "hostMeshes")
+                var right = link ? link.mapToItem(link.parent.parent, link.width, 0).x : -1
+                console.error("NARROW fits=" + (link !== null && right <= link.parent.parent.width + 0.5) + " gives=" + (list !== null && list.elide === Text.ElideRight && list.truncated))
+            } catch (e) {
+                console.error("NARROW failed: " + e)
+            }
+            view.listWidth = lw
+            top.narrowDone = true
+            if (top.quitWanted) Qt.quit()
+        }
+    }
     Timer {
         id: deepTimer
         interval: 300; repeat: true
@@ -1116,7 +1149,7 @@ Item {
                     view.openSession(view.agentHosts[0], firstS)
                     comp.text = ""
                     view.pumpAgent()
-                Qt.quit()
+                top.finish()
             }
         }
     }
