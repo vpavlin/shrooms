@@ -479,10 +479,21 @@ echo "agents panel OK${AGENTS_SHOT:+ (picture: $shot)}"
 echo
 echo "==> the task controls, by clicking them"
 # qmltestrunner ships in the same bin directory as the qml runtime
-# (qt6-declarative-dev-tools) — no second search, and no second way to get it
-# wrong.
-QMLTEST=$(dirname "$QML")/qmltestrunner
-if [ ! -x "$QMLTEST" ]; then
+# (qt6-declarative-dev-tools), but on Ubuntu the runtime found first is the
+# /usr/bin/qml6 link and the runner is not beside the link: it is beside what
+# the link points at. That hid behind an earlier failure until 2026-11-12.
+QMLTEST=""
+for candidate in \
+    "$(dirname "$QML")/qmltestrunner" \
+    "$(dirname "$(readlink -f "$QML")")/qmltestrunner" \
+    $(command -v qmltestrunner6 2>/dev/null) \
+    $(command -v qmltestrunner 2>/dev/null) \
+    /usr/lib/qt6/bin/qmltestrunner \
+    $(ls -d /usr/lib/*/qt6/bin/qmltestrunner 2>/dev/null | head -1)
+do
+    [ -x "$candidate" ] && { QMLTEST=$candidate; break; }
+done
+if [ -z "$QMLTEST" ]; then
     echo "FAIL: no qmltestrunner beside $QML" >&2
     echo "  (qt6-declarative-dev-tools ships both; this is the package question" >&2
     echo "   that the qml discovery above already had to answer once)" >&2
