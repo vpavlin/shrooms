@@ -248,9 +248,12 @@ func cmdClipboard(args []string) error {
   copy --to DEV[,DEV] [TEXT]   send to your other devices; stdin without TEXT
        --all --mesh M          to every other device on one mesh
        --secret                a key or password: never written down
+       --ttl DUR               how long it waits and is kept: 24h by default,
+                               1h for a secret, at most 168h
   paste [ID]                   print the newest clip that arrived
-  list [--json]                what arrived and what was sent (the default)
-  remove ID                    forget one`)
+  list [--json]                what arrived and what was sent (the default),
+                               with each clip's ID
+  remove ID                    forget one (its ID from list)`)
 		return nil
 	default:
 		return fmt.Errorf("unknown clipboard command %q; try: copy, paste, list, remove", args[0])

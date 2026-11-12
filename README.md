@@ -207,12 +207,16 @@ which looks like almost anything except a closed port. `install.sh` prints the
 right command for whichever firewall it finds running.
 
 A firewall that also filters what arrives over the mesh (the mesh interface in
-firewalld's `public` zone, with ports opened one by one) must let in the
-clipboard's port, **9181/tcp**, on the mesh addresses, or clips sent to that
-machine wait and their sender reads "did not answer" (ADR-083):
+firewalld's `public` zone, with ports opened one by one) must let in the ports
+Shrooms serves there, on the mesh addresses `shrooms status` lists: **9181/tcp**
+for the clipboard (ADR-083), and 9180/tcp for metrics and 7387/tcp for Shrooms
+Agents where they are used. Without 9181, clips sent to that machine wait and
+their sender reads "did not answer":
 
 ```console
 $ sudo firewall-cmd --permanent --add-rich-rule='rule family=ipv6 destination address=<overlay>/128 port port=9181 protocol=tcp accept'
+$ sudo firewall-cmd --reload
+$ sudo ufw allow in on shrooms0 to any port 9181 proto tcp      # or, with ufw
 ```
 
 **Resource use is negligible.** A measured Core-mode node acting as a relay sits
@@ -739,6 +743,18 @@ that it does. `manage_hosts` keeps working for device names either way.
 Giving each service its own address, so that any protocol works without a port,
 needs a change to how addresses are derived; that is
 [ADR-019](docs/adr/019-service-addresses.md), and it is not built.
+
+### Send a text to your other devices: the clipboard
+
+A URL, an ID, a key: `shrooms clipboard copy --to phone TEXT` (or from standard
+input) sends it to the devices you name, over the mesh and nothing else
+([ADR-083](docs/adr/083-a-clipboard-between-my-devices.md)). `--all --mesh home`
+sends to every other device on one mesh; `--secret` is for keys and passwords
+and is never written to disk. On the other device, `shrooms clipboard paste`
+prints the newest clip, and `shrooms clipboard list` shows what arrived and
+what was sent. A device that is away gets it when it is back, within a day. The
+Android app takes a clip as a notification with Copy and sends from the share
+sheet ("Send to a device"); Basecamp's Shrooms view has a clipboard section.
 
 ### 7. Add more machines
 

@@ -44,7 +44,9 @@ refused. Nothing goes over Waku.
 
 **A recipient that is away gets it when it is back.** The sender keeps the clip
 and tries each recipient that is online, at once and every 15 seconds, and as
-soon as a recipient comes online. A clip lives a day by default (`--ttl`, at
+soon as a recipient comes online. A recipient that is online but does not
+answer (a host firewall in the way, say) is tried again after 30 seconds,
+doubling to every 5 minutes, until it comes online anew. A clip lives a day by default (`--ttl`, at
 most a week); the recipient keeps it no longer than that, and no longer than a
 week whatever the sender asks. Each side keeps the last 50.
 
@@ -68,14 +70,14 @@ group's tier, like the settings): the person at this machine.
 
 The Android app is excluded from its own tunnel (`addDisallowedApplication`),
 so neither its Go core nor Kotlin can reach an overlay address through the
-kernel. The phone's core will take and send clips through a small userspace
-TCP stack instead, fed from the tunnel's write path for TCP to port 9181 (and
+kernel. The phone's core takes and sends clips through a small userspace TCP
+stack instead (`internal/ustack`, `mobile/clip.go`), fed from the tunnel's write path for TCP to port 9181 (and
 replies to its own ports) and injecting into it. Its own connections use ports
 above the kernel's ephemeral range as the phone sets it (61000 and up with
 Linux's default; read from `/proc` at start, since a maker may widen it), so
 they cannot collide with other apps' kernel connections from the same
-address. Peers accept only the
-phone's /128, so the stack must send from that address and not a second one.
+address. Peers accept only the phone's /128, so the stack sends from that
+address and not a second one.
 Taking an incoming clip is a notification with Copy; sending is the share
 sheet, because no Android app can read the clipboard in the background.
 
