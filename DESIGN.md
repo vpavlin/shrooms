@@ -4,8 +4,27 @@ An overlay mesh VPN between personal devices (home, office, laptops, Android pho
 using Logos Messaging (Waku) as a rendezvous substrate rather than a central
 coordination server.
 
-Status: **design, pre-implementation.** Every claim here is traceable to research
-recorded in §11. Anything unverified is marked.
+Status: **the original design document, kept as written.** It was written
+before implementation; every claim here is traceable to research recorded in
+§11, and anything unverified is marked. Where the built system departs from it,
+the decision records say so and why ([docs/adr/README.md](docs/adr/README.md)).
+The code is the authority on how it works now.
+
+The main departures: the default fleet is `logos.test`, not `logos.dev`, which
+moved to cluster 3 while the library still said 2 (`state.DefaultPreset`;
+ADR-004 chose the public fleet). Android binds the Go core with `gomobile`,
+not hand-written JNI ([ADR-016](docs/adr/016-android-reuses-the-go-core.md)),
+and its foreground service is `specialUse`. Devices join by invite token, not
+Noise pairing ([ADR-017](docs/adr/017-invite-tokens.md)). Admin-signed
+credentials, expiry and revocation are built
+([ADR-018](docs/adr/018-credentials-instead-of-a-shared-key.md)), and disco
+proves the device, not only the mesh
+([ADR-029](docs/adr/029-disco-proves-the-device.md)); the shared network key
+remains, for reasons [ADR-020](docs/adr/020-membership-is-a-seam.md) gives.
+Names are qualified by mesh, several meshes run in one daemon
+([ADR-015](docs/adr/015-multiple-meshes-one-daemon.md)), and a Core node relays
+only its meshes' shard
+([ADR-067](docs/adr/067-a-core-node-relays-its-own-shard.md)).
 
 ---
 

@@ -30,28 +30,37 @@ the notification, and the interface.
 
 ## The Kotlin ↔ Go boundary
 
-Deliberately narrow — `gomobile bind` supports a restricted type set, and a wide
-boundary would drag Go types into Kotlin.
+Deliberately narrow in its types — `gomobile bind` supports a restricted type
+set, and a wide boundary would drag Go types into Kotlin — so it passes strings,
+mostly JSON. A sketch of the core of it; `mobile/` has the rest (settings,
+invites issued from the phone, Keycard, diagnostics):
 
 ```go
 package mobile
 
 // Start brings the mesh up on an existing TUN descriptor.
-//   tunFd     from VpnService.Builder.establish()
-//   configDir app-private storage
-//   protector Kotlin calls VpnService.protect on the fds it is handed
-func Start(tunFd int, configDir string, protector Protector) error
+//   tunFd      from VpnService.Builder.establish()
+//   configDir  app-private storage
+//   dnsServers the network's own resolvers, for the in-app resolver to forward to
+//   p          Kotlin calls VpnService.protect on the fds it is handed
+//   l          the daemon's log, to the app
+func Start(tunFd int, configDir string, dnsServers string, p Protector, l Logger) error
 func Stop() error
 
 // StatusJSON is the same payload the CLI's `status --json` returns, so both
 // front-ends read one schema.
 func StatusJSON() string
 
-// Join writes a config for a network key. Init creates a mesh.
-func Join(key, name, configDir string) error
-func Init(name, configDir string) (networkKey string, err error)
+// Init creates a mesh. JoinWithInvite redeems an invite token (ADR-017);
+// InviteToken says whether scanned text is one. Join, by network key, is a
+// stub that returns an error: that way in was removed.
+func Init(name, meshName, configDir string) (networkKey string, err error)
+func JoinWithInvite(token, name, configDir string, timeoutSeconds int) error
+func JoinAnotherWithInvite(token, label, name, configDir string, timeoutSeconds int) error
+func InviteToken(scanned string) string
 
 type Protector interface{ Protect(fd int) bool }
+type Logger interface{ Log(level, message string) }
 ```
 
 ## Stages
@@ -91,25 +100,43 @@ injected afterwards. Without them the `.aar` loads and dies at the first call
 into liblogosdelivery — which presents as a Go bug. `build-aar.sh` fails if any
 of the four is missing, because the alternative is discovering it on a phone.
 
-The build runs in a container: gomobile needs a JDK and Go ≥ 1.25, neither of
-which the core requires, and the host SDK/NDK is mounted rather than
+The build runs in a container (`golang:1.26.11`, the core's Go): gomobile needs
+a JDK, which the core does not, and the host SDK/NDK is mounted rather than
 re-downloaded.
+
+The Android `liblogosdelivery.so` is not ours to build: `make android-deps`
+(`scripts/fetch-android-lib.sh`) takes it from another project that vendors it,
+at a pinned commit, and checks each file against `deps/CHECKSUMS`.
 
 ### A2 + A3 — the app
 
-**🟨 Built, not yet run on hardware.** `make apk` produces a 51 MB
+**✅ Shipping, in daily use on a real phone.** `make apk` builds
 `android/shrooms.apk`: arm64 only, all four native libraries, no stray ABIs.
+Three variants, from `scripts/build-apk.sh`:
 
-Merged because the split was for isolating failures during debugging, and with
-no phone here the useful artefact is one that does the whole thing. The
+- `make apk`: a debug build, `xyz.vpavlin.shrooms`.
+- `RELEASE=1`: an unsigned release APK, signed elsewhere.
+- `AGENTS=1`: Shrooms Agents, `xyz.vpavlin.shrooms.agents`, a separate app from
+  the same code with its own key, which never touches the VPN.
+
+`make fdroid` builds unsigned and signs and publishes it on the F-Droid repo's
+host, where the key stays. No CI workflow builds the `.aar` or the APK; they
+are built by hand, and a phone is the test.
+
+A2 and A3 were merged because the split was for isolating failures during
+debugging, and with no phone here at the time the useful artefact is one that does the whole thing. The
 telemetry makes a failure attributable anyway: discovery, path and tunnel are
 reported separately, so "which stage" is answerable from the app itself.
 
 What is in it:
 
-- `MeshVpnService`, a foreground service holding the tunnel. `Builder` adds the
-  derived /128, routes **only** the mesh /48, MTU 1280, and excludes our own
-  package so the app's traffic is not captured by its own tunnel.
+- `MeshVpnService`, a foreground service holding the tunnel. `Builder` adds,
+  for every enabled mesh, its derived /128 and a route for **only** its /48,
+  plus its synthetic IPv4 address and block (ADR-021); MTU 1280; and excludes
+  our own package so the app's traffic is not captured by its own tunnel.
+- The delivery node runs as **Edge** by default (`mobile/support.go`): as Core
+  a phone spent mobile data relaying for others and, behind a carrier NAT,
+  failed to hold a gossip mesh at all. Desktops stay Core.
 - `Protector` forwarding `VpnService.protect`; Go refuses to start if it returns
   false or no socket is exposed.
 - The TUN descriptor is dup'd in Go, so closing it here is safe.
@@ -155,7 +182,8 @@ who can I reach, and if something is broken, what.
 - **Trouble** surfaces the same distinctions the CLI learned the hard way:
   rendezvous down is not the same as a peer being offline, and a stale handshake
   is not the same as a live one.
-- Joining is a network key, by QR from another device or pasted.
+- Joining is an invite token, by QR from another device or pasted
+  (`shrooms invite`, or the invite button in another device's app).
 
 Monospace for anything technical; addresses and keys are read character by
 character. Sober about state: green only when traffic is actually flowing,
@@ -192,7 +220,7 @@ fourth does not.
 
 **Android has no split-DNS.** `addDnsServer` makes the tunnel's resolver receive
 *every* query the device makes; `addSearchDomain` does not narrow it. A resolver
-answering only `.mesh` therefore removes name resolution entirely.
+answering only mesh names therefore removes name resolution entirely.
 
 **So it must forward** — which means the forwarding socket has to be protected,
 or it routes into the tunnel it is resolving for.
@@ -210,11 +238,14 @@ ever sees it. The resolver answers on `<mesh prefix>::53` instead: inside the
 routed prefix, assigned to nothing, so packets for it go into the tun where the
 intercept is waiting. Tailscale uses 100.100.100.100 for exactly this reason.
 
-The intercept obstacle below is real, and it is not fixable from Kotlin. The query
-has to be intercepted in the **tun read path**, before WireGuard sees it: wrap
-`tun.Device`, and for packets addressed to our own overlay address on UDP/53,
-answer locally and write the reply back into the tun. This is how Tailscale does
-it. Until that exists, claiming DNS can only break things, so the app does not.
+None of that is fixable from Kotlin. The query is intercepted in the **tun read
+path**, before WireGuard sees it: the tun device is wrapped, and packets for the
+resolver's address on UDP/53 are answered locally, the reply written back into
+the tun; everything that is not a mesh name is forwarded, on a protected
+socket, to the network's own resolvers (`dnsServers` in `Start`). This is how
+Tailscale does it. The app registers the resolver only when it has those
+upstream servers to forward to, since claiming DNS without them can only break
+things.
 
 The Linux daemon is unaffected: there the address is on a real interface and the
 kernel delivers locally, which is why the same code works.
@@ -228,11 +259,14 @@ kernel delivers locally, which is why the same code works.
   app has no privilege for. It fails with EPERM on a descriptor that is
   perfectly usable, reported as "tun from fd: permission denied" — an error that
   points at the descriptor rather than at the monitoring nobody asked for.
-- **The overlay is IPv6-only.** `VpnService` must be configured for that, and
-  route only the mesh prefix.
+- **The overlay was IPv6-only.** `VpnService` had to be configured for that,
+  routing only the mesh prefix. Each mesh now also has a synthetic IPv4 block
+  (ADR-021), routed the same way, because browsers ask for A records.
 - **Battery.** wireguard-go's persistent keepalive is 25s and disco probes every
   5s (`PathRefresh`). Both are tuned for a machine on mains power and should be
   measured before being assumed acceptable on a phone.
-- **The network key is a bearer credential** (ADR-008). Putting one on a phone
-  that can be lost sharpens the case for M5 — per-device credentials and
-  revocation — and for Android's keystore.
+- **The network key was a bearer credential** (ADR-008), and a phone can be
+  lost. Per-device credentials and revocation (M5, ADR-018) are built: a lost
+  phone is revoked with `shrooms admin revoke` and costs that phone alone. The
+  network key still sits in the app's private storage, not Android's keystore,
+  and still decrypts the control plane (SECURITY.md).

@@ -49,6 +49,13 @@ only *weak* sender anonymity: a multi-node adversary can attribute a publisher.
 Nothing we do changes this. Note the mesh's anonymity set on its own private
 topic is its own devices, so publisher anonymity would be worth little anyway.
 
+**A phone tells its service nodes more.** Phones run their delivery node as
+Edge (`mobile/support.go`): instead of relaying, they subscribe through filter
+and publish through lightpush, to service nodes they do not choose. Such a
+node sees the phone's IP, the content topic it follows, and every message it
+publishes, with the timing — still sealed, but attributed rather than mixed
+into gossip.
+
 **WireGuard traffic is identifiable as WireGuard.** Handshake packets have
 distinctive sizes (148/92/32). An ISP can tell you run a VPN, though not what
 is inside. Obfuscation is a different project; do not conflate it with this.
@@ -140,10 +147,15 @@ read-only permission. Sized honestly, that group may:
 - **join this device to another mesh** (`/join`), which is the most
   consequential thing in the tier;
 - restart the daemon (`/restart`) and read its logs (`/logs`);
-- **declare a service forwarding to any address this host can reach** — a
-  spec like `ha->192.168.0.116:80` is supported deliberately, and `/reload`
-  applies it live, so a member of this group can make the root daemon publish
-  a loopback-only admin panel, a database, or a LAN host to the whole mesh.
+- **declare a service on any port of this machine** — `/reload` applies it
+  live, so a member of this group can make the root daemon publish a
+  loopback-only admin panel or a database to the whole mesh. A service forwards
+  to this machine only, by loopback or one of its own addresses
+  (`service.LocalTarget`, [ADR-068](docs/adr/068-a-member-can-speak-for-a-lan-host.md));
+  until 2026-10-21 it could forward to any address the host could reach, LAN
+  devices included, and a spec like `ha->192.168.0.116:80` is now refused
+  with what to write instead. The group can also list LAN hosts in the config,
+  but none is offered to the mesh without the admin's grant, below.
 
 Name a **group**, not a username. On most personal Linux systems your login
 also has a group of the same name, which is why the examples read that way; on
@@ -197,6 +209,36 @@ missing is authentication in the application.
 → Bounded by M5 credentials only in the sense that mesh membership itself
 becomes revocable. Nothing here makes an unauthenticated application safe to
 publish.
+
+**A LAN host is offered under an admin's grant, and the gateway is trusted for
+its LAN** ([ADR-068](docs/adr/068-a-member-can-speak-for-a-lan-host.md)). A
+device that cannot run shrooms — a printer, a camera — reaches the mesh only
+as a named LAN host behind a member, its gateway: one LAN address, never a
+range, with its own ports, and an admin-signed grant per host naming the
+gateway, the host and the ports. Members route to a host and resolve its name
+only while a valid grant for it is in force, and the gateway proxies the
+granted TCP ports and drops everything else. The LAN address must be a private
+literal inside one of the gateway's LAN subnets, and is never announced. What
+the grant cannot do is contain the gateway: members never see the LAN address,
+so a compromised gateway can point a granted name at anything on its LAN. And
+every member can reach every granted port; there is no per-member list. A
+grant reaches the daemon through `/lan-grant`, which is root-only on the
+control socket; withdrawing or narrowing it closes open connections.
+
+**Shrooms Agents hands every member a shell, in effect.** `shrooms-agent` on a
+machine lets any member of the meshes it serves start and drive coding-agent
+sessions there, as the user it runs as or in a session's cage, with no login
+beyond the tunnel; docs/agents.md, *Access*, states that boundary. A
+session can also publish files
+([ADR-079](docs/adr/079-sessions-publish-files.md)), which the whole mesh then
+reads without a password. Installing the agent on a machine is deciding that
+every device on those meshes may run code on it.
+
+**Metrics are readable by every member.** A node serves Prometheus metrics on
+its mesh addresses, port 9180 by default (docs/metrics.md): what each peer's
+tunnel carried, what the delivery node exchanged, what the machine's
+interfaces moved. Nobody outside the mesh can reach them, and nothing inside it
+asks who is reading. `metrics_port = 0` turns them off.
 
 **~~Disco authenticates mesh membership, not device identity.~~** Closed
 (ADR-029). Disco packets and relay registrations both carry an ed25519 signature
@@ -362,9 +404,9 @@ nothing looks up. Revoking a device that was issued a longer `--life` therefore
 needs `--keep-for 0`, or peers forget the revocation while the credential is
 still valid and the device rejoins. `admin revoke` says so when it runs.
 
-**Change:** `shrooms revoke <name>` publishes a signed revocation with a
-monotonic serial, republished on every epoch rotation and on join. Peers **tear
-down live tunnels** on receipt.
+**Change:** `shrooms admin revoke --name <name>` (or `--device <hex>`)
+publishes a signed revocation with a monotonic serial, republished on every
+epoch rotation and on join. Peers **tear down live tunnels** on receipt.
 
 **Why tearing down matters:** Nebula's documented gap is that its blocklist is
 not distributed at all — you push it with Ansible — and its `disconnect_invalid`
@@ -436,6 +478,8 @@ membership change.
    device, and it re-enrols everyone: the key derives the mesh prefix, so every
    overlay address changes. It is closer to creating a new mesh than to
    rotating a credential, which is precisely what credentials fixed.
-4. **`shrooms paths` reports reflexive addresses.** More than one distinct
-   value means endpoint-dependent NAT — useful diagnostically, but it also
-   means peers learn several of your external addresses.
+4. **`shrooms paths` reports where peers see you.** Its `NAT on <mesh>` line
+   says whether this node's NAT maps the same way for every peer or gives each
+   one a new port, with the addresses each peer observed — useful
+   diagnostically, and a reminder that every peer learns your external
+   addresses.

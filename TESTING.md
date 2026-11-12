@@ -29,22 +29,30 @@ produce it:
 
 Those look identical from the outside and mean opposite things about the code.
 
-**The distinguishing evidence is already collected.** `shrooms paths` prints
-the reflexive addresses a node has been told about:
+**The distinguishing evidence is already collected.** `shrooms paths` gives a
+verdict per mesh on this node's NAT, from where its peers say they see it, and
+for each peer where that peer's probes arrive from:
 
 ```
-reflexive addresses (as peers observe us):
-  203.0.113.4:51820          ← one address: endpoint-INdependent, punchable
-  203.0.113.4:41001
-  203.0.113.4:41002          ← several: endpoint-DEPENDENT, punching cannot work
-  note: 2 distinct addresses suggests endpoint-dependent NAT
+NAT on home: a new port for every destination — direct only to a peer whose NAT is forgiving, otherwise the relay
+  seen at 203.0.113.4:41001 by 1
+  seen at 203.0.113.4:41002 by 1
+
+vps  fd3b:…
+  its probes arrive from 198.51.100.7:51820 (3s ago)
 ```
+
+The three verdicts are `maps the same way for everyone` (endpoint-independent:
+a direct path to another NATed peer can work), `a new port for every
+destination` (endpoint-dependent: punching cannot work), and `not known yet`,
+which needs at least two peers reporting. A relayed peer whose probes never
+arrive says `none of its probes has arrived here`.
 
 So the test is: on the phone, on mobile data, with at least two peers, read
-`paths`. Several distinct reflexive addresses means the NAT rewrites the port
-per destination and no amount of correct punching would help — the relay is the
-right answer and M2 is answered. One address, with the relay still in use, means
-punching should have worked and did not, which is a bug.
+`paths`. A new port per destination means no amount of correct punching would
+help — the relay is the right answer and M2 is answered. The same mapping for
+everyone on both ends, with the relay still in use, means punching should have
+worked and did not, which is a bug.
 
 Run **T3** below to settle it.
 
@@ -83,13 +91,16 @@ harness is a NAT built to be cooperative.
 
 **Pass — either outcome, provided it is the honest one:**
 
-- Direct, and `paths` shows **one** reflexive address per node. Punching works
-  between these NATs.
-- Relayed, and `paths` shows **several** reflexive addresses on at least one
-  node. Punching cannot work here and the relay correctly took over.
+- Direct, and each node's `NAT on <mesh>:` line says it maps the same way for
+  everyone. Punching works between these NATs.
+- Relayed, and at least one node's `NAT on <mesh>:` line says a new port for
+  every destination. Punching cannot work here and the relay correctly took
+  over.
 
-**Fail:** relayed while both nodes report a single reflexive address. That is
-punching not being attempted properly, not a hostile NAT.
+**Fail:** relayed while both nodes map the same way for everyone. That is
+punching not being attempted properly, not a hostile NAT. Read each side's
+`its probes arrive from` for the other: probes that never arrive say which
+direction is blocked.
 
 Repeat on a second carrier or a café network before concluding anything general;
 one NAT is one data point.
@@ -124,7 +135,7 @@ sticky (`SwitchMargin`), and a peer flipping every few seconds is a regression.
 
 The daily-driver test. **Verified once on Android; worth repeating deliberately.**
 
-**Do:** with the tunnel up and traffic flowing (`ping6 <peer>.mesh`), turn wifi
+**Do:** with the tunnel up and traffic flowing (`ping6 <peer>.<mesh>.mesh`), turn wifi
 off so the phone falls to mobile data. Then back on.
 **Pass:** the overlay survives both transitions without user action. Expect the
 path to change — direct on wifi, possibly relayed on mobile — and the ping to
@@ -156,9 +167,12 @@ discovery and path were fast while the tunnel took six minutes.
 Waku is rendezvous, not a control plane (DESIGN §2), and this is the test of
 whether that is true in practice rather than only in the document.
 
-**Do:** with tunnels established, block the messaging fleet on one host:
-`sudo iptables -A OUTPUT -p tcp --dport 30303 -j DROP` (or take that host off
-the internet briefly and back).
+**Do:** with tunnels established, cut one host off the rendezvous plane. The
+fleet's port 30303 alone is not enough: a node also bootstraps from the
+delivery port its members publish (ADR-031, `delivery_port`), so block that
+too, or simply every outbound TCP connection that does not go over the mesh —
+the tunnels are UDP:
+`sudo iptables -A OUTPUT -p tcp ! -o shrooms0 -j DROP`.
 **Pass:** existing tunnels keep carrying traffic. `status` shows the rendezvous
 warning and says explicitly that tunnels are unaffected.
 **Fail:** tunnels drop. That would mean something has quietly started depending
@@ -171,9 +185,9 @@ out a long backoff.
 
 ## T9 — names
 
-**Do:** `ping6 <peer>.mesh`, then `curl https://github.com`.
+**Do:** `ping6 <peer>.<mesh>.mesh`, then `curl https://github.com`.
 **Pass:** the first resolves through the mesh resolver, the second through the
-system's. `resolvectl query <peer>.mesh` should name `shrooms0` as the link.
+system's. `resolvectl query <peer>.<mesh>.mesh` should name `shrooms0` as the link.
 
 **Watch for:** the second failing. A resolver that takes over everything and
 answers only for the mesh removes the device's name resolution — that happened
@@ -189,8 +203,9 @@ The interesting case is deliberately the awkward one: an application that binds
 **Setup:** on one machine, something listening on IPv4 loopback only — a real
 application, or `python3 -m http.server 8000 --bind 127.0.0.1`. Then:
 
-```toml
-services = ["test:8000"]      # in that machine's config, then restart
+```console
+$ sudo shrooms services add test --port 8000
+$ sudo shrooms reload                           # applies services without a restart
 ```
 
 **Watch:** `shrooms status` on that machine lists it under *services
@@ -199,8 +214,8 @@ published here*, with the name to type.
 **Pass:** from another device, both of these return the page:
 
 ```console
-$ curl http://test.<device>.mesh          # via the shared-port name router
-$ curl http://test.<device>.mesh:8000     # the declared port
+$ curl http://test.<device>.<mesh>.mesh          # via the shared-port name router
+$ curl http://test.<device>.<mesh>.mesh:8000     # the declared port
 ```
 
 From the phone's browser too — same name, no port forwarding, nothing
@@ -215,20 +230,23 @@ configured on either end.
   is not running. Check `status` on the publishing machine: a service that
   failed to bind says so on its row.
 - *Does not resolve at all.* The device half of the name is wrong, or the
-  resolver is not registered — `resolvectl query test.<device>.mesh` names the
+  resolver is not registered — `resolvectl query test.<device>.<mesh>.mesh` names the
   link it asked.
 - *A name for a service that does not exist still resolves.* Correct. Services
   are not announced, so the name resolves to the machine that would run it, and
   an HTTP request there gets a 404 listing the names that do exist.
 
-**Also check a protocol that is not HTTP.** `ssh -p 22 ssh.<device>.mesh` with
+**Also check a protocol that is not HTTP.** `ssh -p 22 ssh.<device>.<mesh>.mesh` with
 `services = ["ssh:22"]` must work *with* the port and must not be expected to
 work without it: nothing but HTTP and TLS says the name it dialled. That
 limitation is the subject of [ADR-019](docs/adr/019-service-addresses.md).
 
 **Then:** point the application at `::` instead of loopback and restart it.
-`status` should report the service as reachable directly rather than as an
-error — the daemon must not take a port from an application that binds it.
+`status` should show the service as `held by another process (not verified)`
+rather than as an error — the daemon must not take a port from an application
+that binds it. "Not verified" because nothing checks that the process holding
+the port is the application: any local process that bound it first would be
+listed the same way.
 
 ---
 
@@ -266,9 +284,9 @@ The other half of T11, and the one nothing else covers: the machine that
 recovery key. Then `sudo systemctl restart shrooms`, `sudo shrooms invite`, and
 redeem the token on a second host prepared with `install.sh prepare --name b`.
 
-**Pass:** `admin.json` is in the invoking user's `~/.config/shrooms` on the
-**host** — not root's, and not inside the container — and is still there after
-the restart. `invite` finds it, b enrols, and each appears in the other's
+**Pass:** `admin-home.json` (one file per mesh, named by its label) is in the
+invoking user's `~/.config/shrooms` on the **host** — not root's, and not
+inside the container — and is still there after the restart. `invite` finds it, b enrols, and each appears in the other's
 `status`.
 
 **Watch for:** the admin key written into the container. That has no symptom at
@@ -285,7 +303,7 @@ that config must survive it: set `--relay` during `prepare`, leave it off during
 `init`, and check it is still on afterwards. On a host that is already *in* a
 mesh the same command must refuse rather than mint a second one.
 
-**And names, which nothing inside the container can arrange.** `ping6 b.mesh`
+**And names, which nothing inside the container can arrange.** `ping6 b.home.mesh`
 from a, with no manual step in between — and on **b**, the machine that was
 `prepare`d and then joined, which is the case that broke: the join re-execs the
 daemon in place, so no systemd event marks the moment names became answerable.
@@ -302,6 +320,60 @@ thirty seconds to be told there is still no mesh.
 do resolve, or staying silent when they do not. It reads that from a marker the
 host-side unit drops in `/run/shrooms`, which is the only place the two sides
 can both see.
+
+---
+
+## T13 — a LAN host
+
+[ADR-068](docs/adr/068-a-member-can-speak-for-a-lan-host.md). Needs a mesh
+with an admin, a gateway member on a LAN, and a device on that LAN that runs no
+shrooms — a printer, or `python3 -m http.server 8080` on another machine.
+
+**Do:** on the gateway, `mesh.home.lan_hosts = ["web=192.168.1.20/tcp:8080"]`,
+restart; then, where the admin key is,
+`shrooms admin lan grant --mesh home --name <gateway> --host web --ports 8080`.
+**Pass:** every member's `status` lists it under *LAN hosts* as `via <gateway>`,
+and `curl http://web.lan.<gateway>.home.mesh:8080` returns the page from another
+member, the phone on mobile data included. A port the grant does not name gets
+no answer at all, not even a reset.
+**Then:** withdraw the grant. An open connection closes at once and the name
+stops resolving. Stop the gateway: status says `(gateway offline)`.
+
+**Watch for:** a service written to forward to a LAN address
+(`ha:80->192.168.1.20:80`). It must be refused, with what to write instead —
+services forward to this machine only.
+
+---
+
+## T14 — a config the daemon refuses
+
+[ADR-080](docs/adr/080-the-daemon-starts-on-the-last-config-that-did.md).
+
+**Do:** on a running node, break the config — `listen_port = "abc"`, say — and
+`sudo systemctl restart shrooms`.
+**Pass:** the node comes back on its meshes, on `config.toml.last-good`;
+`shrooms status` opens with `CONFIG REFUSED` and the reason; the broken file is
+left as it was. Fix it and restart: the warning goes.
+
+**Watch for:** a node that went off the mesh it is being reached over. That is
+what this exists to prevent, and the test is worth running over ssh across the
+mesh for exactly that reason.
+
+---
+
+## The automated ones
+
+The scenarios above need real networks. What does not is in the repository:
+
+- `make test-unit`: the packages that need no library, with the race detector.
+- `make test`: everything, with liblogosdelivery (`make deps-release`).
+- `make e2e`: managing a mesh, offline — minting, admitting, renewing, a node
+  that loses its state (`scripts/e2e-management.sh`).
+- `make e2e-two-nodes`: two nodes on one machine with a local fleet — mint,
+  admit, discover, tunnel. Needs root.
+- `scripts/e2e-f03-tunnel-key.sh` and `scripts/e2e-f03-remembered.sh`: a
+  device announcing another's WireGuard key is refused, live and from
+  remembered state. Need root.
 
 ---
 

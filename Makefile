@@ -186,7 +186,7 @@ install: check-lib
 	@echo "  $(PREFIX)/share/bash-completion/completions/shrooms"
 	@echo
 	@echo "next:"
-	@echo "  sudo shrooms init --relay --name $$(hostname)   # or: join <KEY>"
+	@echo "  sudo shrooms init --mesh <name> --relay --name $$(hostname)   # or: shrooms join <INVITE-TOKEN>"
 	@echo "  sudo systemctl daemon-reload"
 	@echo "  sudo systemctl enable --now shrooms"
 	@echo
@@ -387,8 +387,8 @@ basecamp-publish: basecamp-lgx basecamp-core-lgx
 	@# publisher rather than an index written here. See scripts/publish-lan.sh.
 	@./scripts/publish-lan.sh $$(readlink -f result/*.lgx) $$(readlink -f result-core/*.lgx)
 
-## Build the .aar for the Android app. Container-based: gomobile needs a JDK
-## and Go >= 1.25, which the core deliberately does not.
+## Build the .aar for the Android app. Container-based: gomobile needs a JDK,
+## which the core does not, and the container pins the Go it builds with.
 aar: android-deps
 	./scripts/build-aar.sh
 

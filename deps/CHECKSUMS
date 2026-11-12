@@ -1,7 +1,8 @@
 # Native dependencies, pinned by content.
 #
-# liblogosdelivery has no canonical distribution and cannot be built from
-# source, so it arrives as a prebuilt binary from a release asset. It is then
+# liblogosdelivery has no canonical distribution, and building it from source
+# takes tens of minutes, so it arrives as a prebuilt binary from a release
+# asset (built from source by docker/build-lib.Dockerfile). It is then
 # linked into every binary, baked into the published container, installed under
 # /opt, and run as root with NET_ADMIN and host networking — and on Android it
 # goes inside the VPN app that sees all traffic and holds the network key.
