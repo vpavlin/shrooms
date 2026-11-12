@@ -39,8 +39,8 @@ of them is authoritative.
 **Status: working over the real internet**, on Linux and Android, daily:
 
 ```console
-$ ssh root@vps.mesh.internal             # names come from the mesh, not DNS
-$ curl http://ha.jimmy-crib.mesh.internal  # a LAN device that never joined
+$ ssh root@vps.home.mesh                        # names come from the mesh, not DNS
+$ curl http://ha.lan.jimmy-crib.home.mesh:8123  # a LAN device that never joined
 $ ping fd3b:ffe9:f81:6f18:41e:c574:c529:5bbf
 4 packets transmitted, 4 received, 0% packet loss
 rtt min/avg/max/mdev = 31.883/63.188/94.992/25.589 ms
@@ -53,7 +53,7 @@ rtt min/avg/max/mdev = 31.883/63.188/94.992/25.589 ms
 | **[Quick start](https://shrooms.vpavlin.xyz/start.html)** | A Linux laptop and an Android phone on one mesh in five minutes: one command, one app, one invite. |
 | **[Shrooms in one page](https://shrooms.vpavlin.xyz/in-one-page.html)** | What it is, how it works, what it protects and what it does not — the page to send somebody. |
 | **[On the desktop](https://shrooms.vpavlin.xyz/basecamp.html)** | The Logos Basecamp app: graph, peers, services, settings, and Keycard-signed invites. |
-| **[Shrooms Agents](https://shrooms.vpavlin.xyz/agents-start.html)** | Your Claude Code (or pi) sessions on your own machines, from your phone, in ten minutes. [One page](https://shrooms.vpavlin.xyz/agents-in-one-page.html). |
+| **[Shrooms Agents](https://shrooms.vpavlin.xyz/agents-start.html)** | Your Claude Code, pi or OpenCode sessions on your own machines, from your phone, in ten minutes. [One page](https://shrooms.vpavlin.xyz/agents-in-one-page.html). |
 
 <p>
 <img src="site/shots/window-basecamp-mesh.png" alt="Shrooms in Logos Basecamp: the mesh as a graph, peers with traffic, services" width="49%">
@@ -128,8 +128,10 @@ $ sudo mv /etc/logos-vpn /etc/shrooms && sudo mv /var/lib/logos-vpn /var/lib/shr
 $ sudo systemctl start shrooms
 ```
 
-The Android application id is still `dev.logos.vpn`, renamed separately: it
-means an uninstall and a rejoin rather than an update.
+The Android application id is `xyz.vpavlin.shrooms` (Shrooms Agents:
+`xyz.vpavlin.shrooms.agents`). An install from before the rename, as
+`dev.logos.vpn`, is a different app to Android, so moving over is an uninstall
+and a rejoin rather than an update.
 
 ---
 
@@ -221,26 +223,19 @@ That is the one you want. The other two exist for completeness:
 
 ```console
 $ make deps-basecamp HDR=/path/to/liblogosdelivery.h   # reuse a local Logos Basecamp install
-$ make deps                                            # build from source in a container (broken, see below)
+$ make deps                                            # build from source in a container
 ```
 
-⚠️ **`make deps` currently fails** — upstream logos-delivery does not compile at
-either master or the revision the Android bindings pin:
-
-```
-rest_api/endpoint/relay/handlers.nim: Error: waitFor withTimeout(...)
-has an illegal effect: NestedPoll
-```
-
-So the library exists only where Logos Basecamp is installed — which would
-make a fresh machine, CI, or a VPS unable to build at all. `make deps-release`
-works around that by downloading a repackaged copy from
-[this repo's releases](https://github.com/vpavlin/shrooms/releases/tag/deps-v1)
-(Apache-2.0 OR MIT, unmodified).
-
-Note the *toolchain* problem is solved: building in Debian bookworm (git 2.39)
-resolves dependencies cleanly, where a current host (git 2.51) fails on a nimble
-lockfile checksum. Only upstream's own compile error remains.
+liblogosdelivery has no canonical distribution, so `make deps-release`
+(`scripts/fetch-lib.sh`) downloads one from
+[this repo's releases](https://github.com/vpavlin/shrooms/releases/tag/deps-v3)
+(Apache-2.0 OR MIT) for amd64 or arm64, and refuses it unless it matches its
+sha256 in `deps/CHECKSUMS`. That copy is built from source at the pinned
+revision, with the Core shard patch
+([ADR-067](docs/adr/067-a-core-node-relays-its-own-shard.md)), by the same
+`docker/build-lib.Dockerfile` that `make deps` runs. Building it yourself takes
+tens of minutes; set `GITHUB_TOKEN`, since GitHub refuses the build's burst of
+anonymous clones.
 
 ---
 
@@ -255,8 +250,7 @@ and relays; the laptop joins.
 $ git clone https://github.com/vpavlin/shrooms
 $ cd shrooms
 
-$ make deps-basecamp \
-    HDR=$(find ~ -name liblogosdelivery.h 2>/dev/null | head -1)
+$ make deps-release
 
 $ make shrooms
 $ make test-unit          # optional, ~5s
@@ -435,16 +429,28 @@ Nothing to do — the daemon runs a resolver for the mesh and registers it with
 the system on startup:
 
 ```console
-$ ssh root@vps.mesh.internal
-$ ping6 laptop.mesh.internal
-$ resolvectl query vps.mesh.internal   # names shrooms0 as the link that answered
+$ ssh root@vps.home.mesh
+$ ping6 laptop.home.mesh
+$ resolvectl query vps.home.mesh   # names shrooms0 as the link that answered
 ```
 
 It is authoritative for one suffix and answers nothing else: no forwarding, no
 recursion, no upstream. A VPN that quietly becomes the system resolver is a
-surprise nobody asked for and a privacy leak besides, so `.mesh` is scoped to
-the interface (`resolvectl domain shrooms0 '~mesh'`) and every other name keeps
-going wherever it went before.
+surprise nobody asked for and a privacy leak besides, so the suffix is scoped
+to the interface (`resolvectl domain shrooms0 '~mesh'`) and every other name
+keeps going wherever it went before.
+
+Every name carries the mesh it is on: `<device>.<mesh>.mesh`, where `<mesh>`
+is this device's label for that mesh. There is no short form; it meant
+different machines on different devices.
+
+The suffix is `.mesh` unless the config says `hosts_suffix`.
+[ADR-032](docs/adr/032-a-suffix-that-cannot-be-taken-away.md) decided on
+`.internal`, which ICANN reserved for exactly this, with `.mesh` still
+answered beside it; the config's default has not followed yet. With
+`hosts_suffix = "internal"` both are answered, and both registered
+(`~internal ~mesh`) — but the line is set by hand for now: a config that
+`shrooms config set`, `shrooms services` or an app writes back loses it.
 
 If names do not resolve, that registration is the thing to check — serving DNS
 and *being asked* are different, and this shipped once doing only the first:
@@ -470,7 +476,7 @@ relay_token = "..."                   # only if an operator asks for one
 
 Off by default: a VPN editing a file that cloud-init and NetworkManager also
 touch should be deliberate. It also needs root, cannot do
-`<service>.<device>.mesh`, and does not exist on Android — which is why the
+`<service>.<device>.<mesh>.mesh`, and does not exist on Android — which is why the
 resolver replaces it ([ADR-013](docs/adr/013-name-resolution.md)).
 
 ### 6b. Give services their own names
@@ -486,11 +492,11 @@ services = ["immich:2283", "jellyfin:8096"]
 From any other device on the mesh — including the phone's browser:
 
 ```console
-$ curl http://immich.home-server.mesh          # no port
-$ curl http://immich.home-server.mesh:2283     # the declared port also works
+$ curl http://immich.home-server.home.mesh         # no port
+$ curl http://immich.home-server.home.mesh:2283    # the declared port also works
 ```
 
-The name is `<service>.<device>.mesh`. `grafana:443->3000` publishes 443 and
+The name is `<service>.<device>.<mesh>.mesh`. `grafana:443->3000` publishes 443 and
 forwards to 3000 when the two should differ.
 
 **How the bare name works.** Every service on a device shares that device's one
@@ -505,7 +511,7 @@ does its own TLS exactly as before.
 
 The limit is worth being plain about: it works for HTTP and TLS, because
 nothing else announces the name it dialled. `ssh`, syncthing and databases still
-need `<service>.<device>.mesh:<port>`, which always works.
+need `<service>.<device>.<mesh>.mesh:<port>`, which always works.
 
 **Why this is not just a DNS entry.** Mesh addresses are IPv6, and a great many
 self-hosted applications bind `0.0.0.0` and nothing else. Pointing a name at the
@@ -544,7 +550,7 @@ and give it to sshd:
 ListenAddress fd3b:ffe9:f81:81a7:18bc:69b1:9bb:7e69
 ```
 
-Now `ssh laptop.mesh` works from your phone on mobile data, and ssh is not
+Now `ssh laptop.home.mesh` works from your phone on mobile data, and ssh is not
 listening on your LAN, on café wifi, or on the internet at all.
 
 **One wrinkle worth knowing before it bites you.** That address exists only
@@ -580,14 +586,12 @@ test     http-alt:8080   laptop.test.mesh:8080
 They are already reachable by every member; this is about being told.
 ```
 
-On a node with more than one mesh the name carries the label, because it has
-to: the short form is answered by the first mesh alone, so `laptop.mesh:22`
-would reach an address on the wrong network where nothing is listening. A node
-with one mesh sees `laptop.mesh:22` and no label, as before.
+The name carries the mesh the port is bound on, because a port bound on one
+mesh's address is not listening on another's.
 
 **The label is the one asking, not the one answering.** Bind sshd to a second
-mesh's address and the same port is `laptop.test.mesh:22` from this machine and
-`laptop.home.mesh:22` from a device that filed the same mesh under `home` —
+mesh's address and the same port is `laptop.test.mesh:22` from this machine
+and `laptop.home.mesh:22` from a device that filed the same mesh under `home` —
 because labels are local and deliberately never announced ([ADR-015](docs/adr/015-multiple-meshes-one-daemon.md)).
 Both resolve to the same address. It looks like a bug the first time and is the
 reason no member can rename a mesh for everybody else.
@@ -615,8 +619,8 @@ interface and port. Rename pins them first.
 `fd…::/48` prefix, or the network id in the state directory's filenames. An
 evening went into learning that the hard way —
 [docs/mesh-labels-are-local.md](docs/mesh-labels-are-local.md) has the rest,
-including a short name that can resolve to a mesh where your service is not
-listening.
+including the short name, since removed, that resolved to a mesh where the
+service was not listening.
 
 Announcing is per mesh too — `mesh.<label>.announce_bound` — since telling your
 own machines what you run and telling somebody else's are different decisions.
@@ -827,7 +831,7 @@ $ ssh user@vps 'sudo bash -s -- --purge --yes' < scripts/uninstall.sh
 |---|---|
 | `tun: ... (need CAP_NET_ADMIN)` | run with `sudo`, or the host has no `/dev/net/tun` |
 | peer `online` but `no handshake` | traversal, not discovery — check `paths` and whether the port is open |
-| `.mesh` names do not resolve on Linux | the resolver is running but not registered with the host. `resolvectl status <iface>` should show it under DNS Servers with `~mesh` as the domain; if not, the daemon log says why |
+| mesh names do not resolve on Linux | the resolver is running but not registered with the host. `resolvectl status <iface>` should show it under DNS Servers with `~mesh` as a domain (and `~internal` with `hosts_suffix = "internal"`); if not, the daemon log says why. And a name needs its mesh: `vps.home.mesh`, not `vps.mesh` |
 | `!! rendezvous:` warning in `status` | the fleet is unreachable. Discovery is stalled; established tunnels keep working. Confirm with `make s1` |
 | `!! rendezvous: peers connect and are dropped immediately` | preset or `cluster_id` mismatch — you are on a different cluster than the fleet. Confirm with `different clusterId reported: N vs M` in the daemon log |
 | peer shows `stale 12m` | the tunnel is dead — the peer has not rekeyed within WireGuard's 180 s session lifetime |
@@ -835,7 +839,7 @@ $ ssh user@vps 'sudo bash -s -- --purge --yes' < scripts/uninstall.sh
 | `!! credentials due for renewal` in `status` | listed devices' memberships end within ten days, or have. Run the printed `shrooms admin renew --mesh <name>` on the machine holding that mesh's admin key |
 | no peers at all after 60 s | the daemon is not reaching the fleet; check outbound connectivity |
 | `node is offline` in the daemon log beside `Failed to query DNS` | the delivery node's resolvers are blocked, usually by a VPN's DNS-leak protection. The log line `delivery node resolves names through` says which it was given; set `name_servers` in the config to one the network allows and restart (ADR-074) |
-| `missing liblogosdelivery.h` | run `make deps-basecamp` |
+| `missing liblogosdelivery.h` | run `make deps-release` |
 | the daemon exits immediately | `libpq` missing — deploy the container rather than a bare binary |
 | `parse state: unexpected end of JSON input`, restarting in a loop | a power cut truncated `state.json`. **Do not delete it** — see [docs/when-a-node-loses-its-state.md](docs/when-a-node-loses-its-state.md) |
 | `!! no credential` on a node that is otherwise healthy | it holds no membership, so peers refuse it before it reaches their roster. The symptom shows on the peers, not here |
@@ -872,7 +876,7 @@ reality.
 
 ```console
 $ ./scripts/deploy.sh user@host [--init] [--relay] [--advertise IP:PORT] \
-      [--name NAME] [--key KEY] [--force]
+      [--name NAME] [--force]
 ```
 
 It refuses to overwrite an existing config without `--force`, and the remote
@@ -887,7 +891,7 @@ Compose UI and a `VpnService` around the same Go core — nothing in `internal/`
 is reimplemented. See [ANDROID.md](ANDROID.md) for the build and
 [ADR-016](docs/adr/016-android-reuses-the-go-core.md) for why.
 
-**Working on a real phone**, not a demo: tunnels to peers, `.mesh` names through
+**Working on a real phone**, not a demo: tunnels to peers, mesh names through
 an in-app resolver, and roaming between wifi and mobile data without user
 action — direct on wifi, relayed on the carrier's CGNAT, and the transition
 survived in both directions. Built with `make apk`, or published to an F-Droid
@@ -896,8 +900,9 @@ repo with `make fdroid`.
 ## Shrooms Agents
 
 What grows out of the mesh: talk to the coding-agent sessions on your own
-machines — Claude Code, or [pi](https://pi.dev) on any model including a
-local one — from a phone or from Basecamp, and approve what they want to do —
+machines — Claude Code, [pi](https://pi.dev) on any model including a local
+one, or OpenCode — from a phone or from Basecamp, and approve what they want
+to do —
 streamed replies, permission prompts, files, voice notes transcribed on the
 agent's machine, and conversations taken over from a terminal. Basecamp also
 shows every session as a card on a board. Usage, plan limits and a forecast of
@@ -906,9 +911,15 @@ ask each other for work as tasks that stay open until done
 ([ADR-041](docs/adr/041-agents-talk-a2a-over-the-mesh.md),
 [042](docs/adr/042-a-task-is-open-until-the-worker-finishes-it.md)), and a
 session can run in a rootless container of its own
-([ADR-037](docs/adr/037-agents-in-cages.md)). Nothing leaves the mesh:
-`shrooms-agent` listens only on each machine's mesh addresses, so being on the
-mesh is the access control.
+([ADR-037](docs/adr/037-agents-in-cages.md)). A session can publish a file
+and hand back a link the mesh can open
+([ADR-079](docs/adr/079-sessions-publish-files.md)), and keep a schedule of
+routines in a calendar of its own
+([ADR-064](docs/adr/064-an-agents-schedule-is-its-own-scala-calendar.md)).
+Nothing leaves the mesh: `shrooms-agent` listens only on each machine's mesh
+addresses, so being on the mesh is the access control, and on a unix socket
+only its own user can open. Without a mesh it runs on that socket alone, for
+one machine ([ADR-056](docs/adr/056-agents-without-a-mesh.md)).
 
 A separate app and Basecamp module beside shrooms, not part of it
 ([ADR-036](docs/adr/036-agents-grow-out-of-the-mesh.md)); the agent is a
@@ -1094,16 +1105,15 @@ a router: there is no forwarding, and `AllowedIPs` bounds what each peer may
 send. The obvious fear — "I joined a shared mesh and exposed my home network" —
 is not what happens.
 
-Names take a mesh label when they need one:
+Every name carries its mesh's label:
 
 ```console
-$ ping vps.shared.mesh     # unambiguous
-$ ping nas.mesh            # fine while only one mesh has a `nas`
+$ ping vps.shared.mesh
+$ ping nas.default.mesh
 ```
 
-The short form is answered only when exactly one mesh has that name, so a node
-with one mesh — which is most of them — sees no change, and ambiguity removes
-the short name rather than silently picking a network for you.
+There is no short form. It used to be answered by whichever mesh a device
+listed first, so the same name meant different machines on different devices.
 
 The first mesh in a config keeps the interface, port and identity it always had,
 so adding a second changes nothing about the first.
@@ -1150,15 +1160,15 @@ services = ["jellyfin:8096", "vault:8200/tls"]
 ```
 
 `/tls` means "this backend speaks TLS; route it on SNI". Everything else is
-http, and `http://jellyfin.k11.mesh` is the address that works.
+http, and `http://jellyfin.k11.home.mesh` is the address that works.
 
 ### Firewalls
 
 A host firewall does not know the mesh interface is the mesh, and puts it
 wherever it puts unknown interfaces. On Fedora and RHEL that is firewalld's
-`public` zone, which allows ssh and little else — so `ssh vps.mesh` works while
-a published service on port 80 is refused, which is a confusing pair of
-symptoms to debug.
+`public` zone, which allows ssh and little else — so `ssh vps.home.mesh`
+works while a published service on port 80 is refused, which is a confusing
+pair of symptoms to debug.
 
 ```console
 $ sudo firewall-cmd --permanent --zone=trusted --add-interface=shrooms0
@@ -1197,11 +1207,15 @@ against logos.test, idle — no VPN traffic at all — over ten minutes each:
 | **total** | **20.3 MB/h — 0.49 GB/day** | **3.4 MB/h — 0.08 GB/day** |
 | connections opened per 10 min | 139 | 90 |
 
-**Almost none of that is yours.** Of 745 messages the Core node handled, 693
+**Almost none of that was yours.** Of 745 messages the Core node handled, 693
 belonged to another application entirely and 14 were on this mesh's shard. The
-reason is in the metadata exchange — `localShards="[0,1,2,3,4,5,6,7]"` — a Core
-node subscribes to every shard in the cluster, so it carries the cluster, not
-your mesh.
+reason was in the metadata exchange — `localShards="[0,1,2,3,4,5,6,7]"` — a
+Core node subscribed to every shard in the cluster, so it carried the cluster,
+not your mesh. Since [ADR-067](docs/adr/067-a-core-node-relays-its-own-shard.md)
+a Core node relays only the shard its meshes use, which other applications
+still share; `relay_all_shards = "true"` brings back relaying every shard, for
+a node whose operator wants to carry the network. The figures above predate
+that change.
 
 By comparison shrooms's own traffic is nothing: a 512- or 1024-byte announce
 every 45s — the larger size once a mesh uses credentials, which do not fit
@@ -1233,9 +1247,11 @@ a dropped subscription self-heals within an announce interval. And lightpush
 means a service node sees you as the publisher directly, which is weaker than
 the already-weak sender anonymity [SECURITY.md](SECURITY.md) describes.
 
-**It is still Core by default**, including on Android. Someone has to relay, and
-changing what a node contributes to a shared network should be a decision rather
-than a default that quietly picks a side.
+**It is still Core by default on a desktop or server.** Someone has to relay,
+and changing what a node contributes to a shared network should be a decision
+rather than a default that quietly picks a side. Phones are the exception and
+default to Edge (`mobile/support.go`): as Core a phone cost somebody's mobile
+data and, behind a carrier NAT, failed to hold a gossip mesh at all.
 
 ## A word about the daemon
 
@@ -1280,9 +1296,9 @@ What it shows besides the graph and the roster:
   graph finds its card.
 - **A services list**, grouped by mesh: everything every peer offers, as the
   address you would actually type. Announced services (ADR-023) come out as
-  `http://immich.jimmy-crib.mesh`; bound ports (ADR-026) as
-  `jimmy-crib.mesh:22`, marked as such, because one is a URL and the other is a
-  host and a port.
+  `http://immich.jimmy-crib.home.mesh`; bound ports (ADR-026) as
+  `jimmy-crib.home.mesh:22`, marked as such, because one is a URL and the
+  other is a host and a port.
 - **A log pane**, filtered by level and copied in one click, and **a
   diagnostics report** to paste to whoever is helping.
 - **A restart button**, which is the other half of every setting whose result
@@ -1393,8 +1409,8 @@ download.
 | **M1** discovered peers replace static config | ✅ **over the real internet**: NATed laptop ↔ VPS, direct tunnel, ssh across it |
 | **M2** NAT traversal | 🟨 reflexive discovery proven on real NAT; punching between two NATed nodes still unproven — [T3](TESTING.md) settles it |
 | **M3** relay fallback | ✅ **carrying real traffic**: a phone on carrier NAT reaches its peers through a VPS relay it discovered itself |
-| **M6** name resolution | ✅ resolver registered with the host, on Linux and Android; `<service>.<device>.mesh` too |
-| **services** | ✅ local ports and LAN devices published by name, including things that never joined the mesh |
+| **M6** name resolution | ✅ resolver registered with the host, on Linux and Android; `<service>.<device>.<mesh>.mesh` too |
+| **services** | ✅ this machine's ports published by name; LAN devices that never joined the mesh offered as LAN hosts ([ADR-068](docs/adr/068-a-member-can-speak-for-a-lan-host.md)) |
 | **Android** | ✅ a full participant, in daily use — tunnels, names, roaming between wifi and mobile data |
 | **M4** seamless operation | 🟨 roaming survives, the mesh repairs itself after a rendezvous outage, and both daemon and app now restart themselves when that plane dies quietly; switching networks is still rough on the phone |
 | **M5** credentials | ✅ issued, carried, verified, revoked over the control plane, and renewed by a sweep ([ADR-018](docs/adr/018-credentials-instead-of-a-shared-key.md)); a sweep reissued to a remote device on live hardware, 2026-08-13 |
@@ -1532,8 +1548,8 @@ were:
 - *A NATed node learns its public address by reflection* — a peer's pong echoes
   the address it observed. That needs a peer outside your NAT. On a mesh whose
   members are all behind one NAT, no node can learn its own public address at
-  all, and `advertise` has to be set by hand. Asking the router instead is the
-  next thing on the roadmap.
+  all, unless the router grants a mapping (above); otherwise `advertise` has
+  to be set by hand.
 - *Carrier-grade NAT cannot be punched or mapped.* A phone on mobile data is
   behind a NAT that is not yours. One publicly reachable member is enough for
   the whole mesh, which is why relays exist.
@@ -1650,7 +1666,7 @@ short version:
 | [DESIGN.md](DESIGN.md) | architecture and the research behind each decision |
 | [PROTOTYPE.md](PROTOTYPE.md) | build plan, milestones, what each proved |
 | [SECURITY.md](SECURITY.md) | what is protected, what leaks, what is deferred |
-| [docs/adr/](docs/adr/) | why each significant decision was made (36 records) |
+| [docs/adr/](docs/adr/) | why each significant decision was made |
 | [docs/agents/](docs/agents/) | Shrooms Agents guides: [using it](docs/agents/using.md), [setting up](docs/agents/setup.md), [agents together](docs/agents/together.md), [cages](docs/agents/cages.md) |
 | [docs/agents.md](docs/agents.md) | Shrooms Agents reference: the HTTP and A2A API, events, the CLI, the files on disk |
 | [docs/agents-harnesses.md](docs/agents-harnesses.md) | Adding a coding agent to Shrooms Agents, by the example of pi; logging a machine in |
@@ -1669,7 +1685,7 @@ Done, and in daily use:
 - [x] Derived addressing, so there is no IPAM and no collisions
 - [x] WireGuard tunnels, direct where NAT allows
 - [x] NAT traversal, with relay fallback through a node you run
-- [x] Names — `<device>.mesh`, and `<service>.<device>.mesh` for what you host
+- [x] Names — `<device>.<mesh>.mesh`, and `<service>.<device>.<mesh>.mesh` for what you host
 - [x] Android, as a full participant rather than a client of something else
 - [x] Roaming between wifi and mobile data without user action
 - [x] A Basecamp view for watching a mesh
@@ -1679,7 +1695,7 @@ Done, and in daily use:
 - [x] Admin-signed credentials, expiry, revocation and renewal, so a
       compromised device costs that device
       ([ADR-018](docs/adr/018-credentials-instead-of-a-shared-key.md))
-- [x] Services published by name — `<service>.<device>.mesh`, routed by `Host`
+- [x] Services published by name — `<service>.<device>.<mesh>.mesh`, routed by `Host`
       and SNI. An address *per service*, which is what makes any protocol work
       without a port, is still only designed
       ([ADR-019](docs/adr/019-service-addresses.md))
@@ -1692,14 +1708,27 @@ Done, and in daily use:
       ([ADR-024](docs/adr/024-ask-the-router.md))
 - [x] Announce what is bound to the mesh address, so binding a service to the
       mesh is discoverable ([ADR-026](docs/adr/026-announce-what-is-bound.md))
-
-Next, roughly in order:
-
-
-- [ ] An invite that carries a per-mesh identity, so a device joining a second
+- [x] An invite that carries a per-mesh identity, so a device joining a second
       mesh derives a fresh address rather than sharing a suffix
       ([ADR-017](docs/adr/017-invite-tokens.md))
-- [ ] The admin key on a Keycard ([ADR-022](docs/adr/022-keycard-for-the-admin-key.md))
+- [x] The admin key on a Keycard ([ADR-022](docs/adr/022-keycard-for-the-admin-key.md))
+- [x] LAN hosts: a device that cannot run shrooms, offered by a gateway member
+      under an admin's grant
+      ([ADR-068](docs/adr/068-a-member-can-speak-for-a-lan-host.md))
+- [x] A refused config edit no longer takes a machine off its meshes: the
+      daemon starts on the last config that did
+      ([ADR-080](docs/adr/080-the-daemon-starts-on-the-last-config-that-did.md))
+- [x] Shrooms Agents: coding-agent sessions served to your other devices over
+      the mesh, or on one machine without it
+      ([ADR-036](docs/adr/036-agents-grow-out-of-the-mesh.md),
+      [ADR-056](docs/adr/056-agents-without-a-mesh.md))
+
+Next:
+
+- [ ] Punching between two NATed peers, coordinated over the relay they
+      already share ([ADR-027](docs/adr/027-punching-through-the-relay.md));
+      the NAT diagnostics it needs are built, and the decision waits on
+      measuring
 
 ---
 

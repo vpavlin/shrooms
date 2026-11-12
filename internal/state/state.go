@@ -236,8 +236,8 @@ type Config struct {
 	// Mode is the rendezvous node mode: ModeCore or ModeEdge.
 	//
 	// Core relays for the network. That is the neighbourly setting and it is
-	// not cheap: a Core node subscribes to every shard in the cluster, so it
-	// carries the whole cluster's traffic and not just this mesh's. Measured
+	// not cheap. It once subscribed to every shard in the cluster, so it
+	// carried the whole cluster's traffic and not just this mesh's. Measured
 	// idle on a home connection, against logos.test, over ten minutes:
 	//
 	//	Core   20.3 MB/h   (0.49 GB/day)   139 connections in 10 min
@@ -246,7 +246,9 @@ type Config struct {
 	// In that sample 693 of 745 relayed messages belonged to another
 	// application entirely, and 14 were on this mesh's shard. By comparison
 	// everything logos-vpn itself sends — a 512-byte announce every 45s, a
-	// 104-byte probe per path every 5s — is well under 1 MB/h.
+	// 104-byte probe per path every 5s — is well under 1 MB/h. Since ADR-067
+	// a Core node relays only its meshes' shard unless RelayAllShards is set;
+	// that shard is still shared with other applications.
 	//
 	// Edge uses filter and lightpush instead: it subscribes to what it wants
 	// and forwards nothing. Right for anything metered or battery-powered, and
@@ -254,9 +256,9 @@ type Config struct {
 	// gossipsub tears down every connection when the keepalive loop is late
 	// (ADR-003).
 	//
-	// Still Core by default everywhere, including Android: someone has to
-	// relay, and changing what a node contributes to the network should be a
-	// decision rather than a surprise.
+	// Still Core by default: someone has to relay, and changing what a node
+	// contributes to the network should be a decision rather than a surprise.
+	// Phones are the exception and default to Edge (mobile/support.go).
 	Mode string
 
 	// RelayAllShards makes a Core node relay every shard of the cluster, as

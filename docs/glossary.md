@@ -36,8 +36,15 @@ that every path, ADR and package symbol below (such as `agent.LocalAddr`) still 
   address. Routed into the mesh only while the host is offered and its
   gateway is online.
   `lanhost.Alias`; ADR-068.
-- **`.mesh` names**: `laptop.office.mesh`, answered by the daemon's own DNS
-  (`internal/dns`, `mesh.QualifiedDNSName`); ADR-032.
+- **Mesh names**: `laptop.office.mesh`, device then mesh label then suffix,
+  answered by the daemon's own DNS (`internal/dns`, `mesh.QualifiedDNSName`).
+  Always qualified by the mesh; there is no short form. The suffix is `.mesh`
+  unless `hosts_suffix` says otherwise. ADR-032 chose `.internal`
+  (`dns.DefaultSuffix`), with `.mesh` (`dns.LegacySuffix`) still answered;
+  the config's default has not followed yet.
+- **Last-good config**: `config.toml.last-good`, the config the daemon last
+  started cleanly on. When an edit is refused it runs on that copy and
+  `shrooms status` opens with `CONFIG REFUSED`. ADR-080.
 
 ## Shrooms Agents
 
@@ -72,6 +79,17 @@ that every path, ADR and package symbol below (such as `agent.LocalAddr`) still 
   `docs/agents-files.md`.
 - **Files between agents**: a session can push a file to another that takes
   files from it. ADR-048.
+- **Published file**: a file a session hands out as a link, through the MCP
+  tool `publish_file`: uploaded to a server named by the agent's
+  `--files-url`, or kept by the agent itself and served on its mesh
+  addresses. The whole mesh can read it; a sealed session cannot publish.
+  `internal/agent/publish.go`; ADR-079.
+- **Schedule**: a session's routines, kept in a Scala calendar of its own
+  that the owner and that session co-own. `internal/agent/schedule.go`;
+  ADR-064.
+- **Skills and responsibilities**: on a session's card, what it is good at
+  (A2A skills) and what it may do without asking; set by the owner only.
+  `internal/agent/roles.go`; ADR-063.
 - **No mesh**: the agent on one machine alone, on its socket
   (`agent.SocketPath`), this machine standing in as `agent.LocalAddr`.
   ADR-056.
