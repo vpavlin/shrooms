@@ -62,7 +62,8 @@ session on it:
   config decides. It is deliberately not defaulted to a free model: most of
   OpenCode's free ones are stealth — unreleased and anonymous, free "for a
   limited time" — and a default naming one would rot.
-- **It can be caged and sealed** (ADR-062). It keeps every project's
+- **It can be caged** (ADR-062), but not sealed: a sealed cage runs Claude
+  Code alone (`canSeal` in internal/agent/sealed.go). It keeps every project's
   conversations in one database, so a caged session gets a database of its
   own: the owner's is never mounted, which is ADR-060's line, and the
   consequence is that the cage's conversations are the cage's. Its config file

@@ -396,10 +396,14 @@ if [ -n "$ADOPT" ]; then
     id=$(basename "${conv:-x}" .jsonl); id=${id#*_}
     if [ -z "$conv" ]; then
         echo "  no pi conversation found: session $ADOPT not made"
-    elif curl -s -m 5 "http://[$a]:$PORT/v1/sessions" | grep -q "\"name\": *\"$ADOPT\""; then
+    # Through the agent's socket, as everything above: a request from this
+    # machine to its own mesh address is refused (audit F-24), and without a
+    # mesh there is no address to ask at all.
+    elif ask /v1/sessions | grep -q "\"name\": *\"$ADOPT\""; then
         echo "  session $ADOPT is there already"
     else
-        code=$(curl -s -m 30 -o /dev/null -w '%{http_code}' -X POST "http://[$a]:$PORT/v1/sessions" -H 'Content-Type: application/json' \
+        code=$(as_user curl -s -m 30 -o /dev/null -w '%{http_code}' --unix-socket "$AGENT_SOCK" -X POST "http://agent/v1/sessions" \
+            -H 'Content-Type: application/json' \
             -d "{\"name\":\"$ADOPT\",\"harness\":\"pi\",\"resume\":\"$id\",\"keep_running\":true}")
         [ "$code" = 201 ] && echo "  session $ADOPT continues $(basename "$conv"), kept running" ||
             echo "  could not make session $ADOPT ($code)"
