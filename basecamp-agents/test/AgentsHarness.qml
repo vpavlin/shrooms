@@ -1063,9 +1063,13 @@ Item {
                            session: h.sessions[0].name, address: h.address })
         deepTimer.start()
     }
-    // Read once the narrow width has been laid out. A timer, not Qt.callLater:
-    // in CI (Ubuntu's Qt 6.4) the callLater queued from inside a Timer never
-    // printed, so the check failed on every PR while passing on newer Qt.
+    // Read once the narrow width has been laid out, and the run does not end
+    // before it has been. It used to be a Qt.callLater with nothing waiting for
+    // it: on CI's slower runners the harness quit first, NARROW was never
+    // printed, and the check failed on every PR while passing here.
+    property bool narrowDone: false
+    property bool quitWanted: false
+    function finish() { if (narrowDone) Qt.quit(); else quitWanted = true }
     Timer {
         id: narrowTimer
         property real lw: 320
@@ -1075,6 +1079,8 @@ Item {
             var right = link ? link.mapToItem(link.parent.parent, link.width, 0).x : -1
             console.error("NARROW fits=" + (link !== null && right <= link.parent.parent.width + 0.5) + " gives=" + (list !== null && list.elide === Text.ElideRight && list.Layout.fillWidth))
             view.listWidth = lw
+            top.narrowDone = true
+            if (top.quitWanted) Qt.quit()
         }
     }
     Timer {
@@ -1125,7 +1131,7 @@ Item {
                     view.openSession(view.agentHosts[0], firstS)
                     comp.text = ""
                     view.pumpAgent()
-                Qt.quit()
+                top.finish()
             }
         }
     }
