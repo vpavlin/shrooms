@@ -27,14 +27,17 @@ Three choices, one sentence each, and kept true:
 
 What makes "caged" true:
 - **A private harness home.** A caged session's `~/.claude` (or
-  `~/.pi/agent`) is a directory of the cage's own. Your settings, skills and
-  plugins are let into it read-only. Its own conversations are let in
-  read-write, from the real folder for its project: `~/.claude/projects/<its
-  folder>`, or pi's `sessions/<its folder>`. Nothing else is let in: not other
-  sessions' conversations, not `history.jsonl` (every prompt typed), not
-  running sessions' keys, backups of your config, or anything someone keeps
-  there later. It is built from what is let in, so what lands there later is
-  out by default.
+  `~/.pi/agent`, or OpenCode's config and data) is a directory of the cage's
+  own. Your settings, skills and plugins are let into it read-only. Its own
+  conversations are let in read-write, from the real folder for its project:
+  `~/.claude/projects/<its folder>`, or pi's `sessions/<its folder>`.
+  OpenCode keeps every project's conversations in one database, so a caged
+  OpenCode session has a database of its own, and its conversations go with
+  its cage; its config file is not let in either, since a provider's key
+  lives in it. Nothing else is let in: not other sessions' conversations, not
+  `history.jsonl` (every prompt typed), not running sessions' keys, backups
+  of your config, or anything someone keeps there later. It is built from
+  what is let in, so what lands there later is out by default.
 - **No login and no keys.** The cage reaches its model through the agent,
   which adds the credential on the way out (ADR-059).
 
@@ -65,36 +68,42 @@ A caged session **cannot**:
 
 A caged session **can still**:
 
-- **spend tokens.** It has your model login or API keys; that is how it runs.
+- **spend tokens.** It holds no login and no key, but its model requests go
+  through the agent, which adds your credential on the way out (ADR-059): it
+  spends on your account as freely as a session outside a cage.
 - **reach the internet.** There is no egress limit. An allow-list is planned,
   not built.
 - **reach the mesh** — every service on it — but **not any agent directly**
   ([ADR-044](../adr/044-cages-reach-agents-through-their-own.md)). The agent
   port is closed inside every cage, by a rule its root cannot remove. The
   shrooms tools (`list_agents`, `ask_agent`, `task_status`, `task_update`,
-  `task_ack`, `send_file`) work through a socket to the cage's own agent,
-  mounted at `/run/shrooms-agent/proxy.sock`, which forwards only those. It
-  cannot make, delete or reconfigure a session, so a caged session cannot
-  start an uncaged one, here or anywhere. Its agent names it to the receiver
-  itself, and says it is caged; each session decides whether it takes tasks
-  from caged agents ("caged tasks" in the apps; by default caged sessions do
-  and the others do not), and files only from the sessions it allows. A
-  sealed cage gets only `task_update` (below).
+  `task_ack`, `send_file`, `publish_file`, `schedule`) work through a socket
+  to the cage's own agent, mounted at `/run/shrooms-agent/proxy.sock`, which
+  forwards only those: `publish_file` as its own session on its own machine,
+  `schedule` its own calendar only. It cannot make, delete or reconfigure a
+  session, so a caged session cannot start an uncaged one, here or anywhere.
+  Its agent names it to the receiver itself, and says it is caged. Each
+  session decides which caged agents it takes tasks from: every one, or
+  those you allow by name ("caged tasks" in the apps; by default caged
+  sessions take them from every cage and the others from none). A task from
+  any other cage is held for you to allow or decline, not run
+  ([ADR-070](../adr/070-the-owner-allows-each-cage.md)). Files it takes only
+  from the sessions it allows. A sealed cage may call only `task_update`
+  (below): its other tools are still listed to it, and refused (403) when
+  called.
 - **do anything inside its project.** The project is mounted read-write. That
   includes `.git/hooks`, a `Makefile`, a `package.json` script: anything you
   later run from that directory outside the cage runs as you.
-- **write the harness's data.** `~/.claude` (for Claude Code) or
-  `~/.pi/agent` (for pi) is mounted read-write, because transcripts and the
-  login token live there. What the harness *runs or obeys* on the machine is
-  mounted again, read-only, over it: Claude Code's `settings.json`,
+- **write its own conversations.** Its project's conversation folder is your
+  real one, read-write, so it can write anything into its own transcripts.
+  What the harness *runs or obeys* comes into its private home read-only:
+  Claude Code's `settings.json`,
   `settings.local.json`, `CLAUDE.md`, `hooks/`, `skills/`, `plugins/`,
   `commands/`, `agents/`, `output-styles/` and `bin/`; pi's `settings.json`,
   `models.json`, `mcp.json`, `extensions/`, `skills/`, `prompts/`,
-  `themes/`, `AGENTS.md`, `SYSTEM.md`, `APPEND_SYSTEM.md` and `bin/`. A caged
-  session cannot plant a hook that a session outside the cage would run.
-- **use the keys in its environment.** Every variable of the agent's that
-  ends in `_TOKEN` or `_API_KEY` is passed in (below), except GitHub's
-  (`GH_*`, `GITHUB_*`), which reach only a cage given the GitHub login.
+  `themes/`, `AGENTS.md`, `SYSTEM.md`, `APPEND_SYSTEM.md` and `bin/`;
+  OpenCode's `AGENTS.md`, `package.json` and `node_modules/`. A caged session
+  cannot plant a hook that a session outside the cage would run.
 
 Three options widen it further, and none is on by default:
 
@@ -190,9 +199,10 @@ show how instead of the option.
   default; on podman 4 install `passt` yourself.
 - **cgroups v2**, with the memory, cpu and pids controllers delegated to the
   user, for the limits each cage gets: 4 GB of memory, 2 CPUs and 2048
-  processes. These are fixed in this version; there is no flag to change
-  them. If podman cannot apply them, it refuses to make the container and the
-  session's first message fails with podman's error.
+  processes, unless a session is given memory and CPUs of its own (below,
+  "A cage's memory and CPUs"). The machine's are fixed; there is no flag to
+  change them. If podman cannot apply them, it refuses to make the container
+  and the session's first message fails with podman's error.
 
 The agent looks for `podman` on its `PATH` when it starts. If it finds it, its
 log says `cages offered`, and "in a cage" appears in "+ session" in both apps.
@@ -219,8 +229,8 @@ the agent (`internal/agent/workbench.Containerfile`):
 
 Claude Code is in neither. The machine's own `claude` program is mounted into
 the cage read-only, so a cage runs the same version as the machine and needs
-no rebuild when Claude Code updates. pi is different: a caged pi session runs
-the pi installed in the image.
+no rebuild when Claude Code updates. OpenCode is mounted the same way. pi is
+different: a caged pi session runs the pi installed in the image.
 
 The workbench is the machine's image unless you start the agent with
 `--cage-image` (see [Setting up](setup.md)). Whatever the machine's image is,
@@ -308,8 +318,8 @@ curl -X POST "http://[MESH-ADDRESS]:7387/v1/sessions/webapp/cage" \
 
 ## A cage's memory and CPUs
 
-A cage gets the machine's limits: 4 GB of memory and 2 CPUs unless the
-agent is started with others. A session can have its own. In the cage
+A cage gets the machine's limits, 4 GB of memory and 2 CPUs, which no flag
+changes. A session can have its own. In the cage
 dialog, under RESOURCES, set its memory (`16g`, `512m`) and CPUs (`8`, up
 to the machine's), or leave them empty for the machine's. Over the API:
 
@@ -333,7 +343,8 @@ build. A caged agent cannot change its own limits.
   settings, skills and plugins in it read-only and its own project's
   conversations read-write, and the directory of the machine's `claude`
   program read-only; for pi, the same with `~/.pi/agent` and its own
-  `sessions/` folder (above, "Not caged, caged, sealed");
+  `sessions/` folder; for OpenCode, a private config and database, and its
+  program read-only (above, "Not caged, caged, sealed");
 - `shrooms-agent` itself, for the shrooms MCP tools, and the cage's socket to
   its own agent at `/run/shrooms-agent/proxy.sock`, which they go through.
   **Not** the shrooms daemon's control socket: your user's tier on it can
@@ -386,7 +397,7 @@ later. A GitHub login reaches a cage only as the `gh` login mounted
 read-only. The variables are written to a file only you can read
 (`cages/<container>.env` in the agent's state directory,
 `~/.local/share/shrooms-agent` by default) rather than on podman's command
-line, so keys do not show up in the process list.
+line.
 
 **Network.** The cage has an address of its own (`fd5e:ca9e:1::2`) and a
 default route through pasta, which carries its traffic out on the machine's
@@ -451,7 +462,10 @@ the test's message is refused as "being built".
 ## Cleaning up
 
 Deleting a session deletes its container (`podman rm -f`), everything
-installed in it, and its environment file. Taking a session out of its cage
+installed in it, its environment file, its private harness home and the
+gateway's files, in `cages/` in the agent's state directory. Claude Code's
+and pi's conversations, in your own folders, stay; a caged OpenCode
+session's, in its own database, go with it. Taking a session out of its cage
 does the same. You should not need to do more.
 
 If containers are left over, for example from a session deleted while podman

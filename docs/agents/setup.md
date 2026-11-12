@@ -2,21 +2,23 @@
 
 This page takes a machine to one that serves its coding agents to Basecamp
 and, once it is in a shrooms mesh, to your phone and your other machines. It covers the agent on each
-machine, Claude Code and pi as the agent runs them, voice notes, cages, and
+machine, Claude Code, pi and OpenCode as the agent runs them, voice notes, cages, and
 getting the two apps. The last part is what to check when something does not
 connect.
 
 Shrooms Agents has three parts:
 
 - **`shrooms-agent`**, a daemon on each machine that runs coding agents. It
-  keeps that machine's sessions (a name, a directory, and Claude Code or pi
-  working in it) and serves them over HTTP on the machine's mesh addresses,
-  port 7387, and nowhere else.
+  keeps that machine's sessions (a name, a directory, and Claude Code, pi or
+  OpenCode working in it) and serves them over HTTP on a unix socket only its
+  user can open, and, once the machine is in a mesh, on its mesh addresses,
+  port 7387. Nowhere else.
 - **The Android app**, Shrooms Agents, a separate app next to the shrooms app.
 - **The Basecamp module**, `shrooms_agents`, which uses `shrooms_core` for its
   networking.
 
-The agent has no logins and no tokens. The mesh is the access control: only
+The agent has no logins and no tokens. On the machine, the socket's
+permissions are the access control; between machines, the mesh is: only
 members of your meshes can reach the address it listens on, and every request
 is attributed to the device it came from. The reasoning is in
 [the reference](../agents.md), "Access: the bind is the access control".
@@ -41,16 +43,17 @@ On each machine that will run agents:
   can, so the agent refuses to be installed for root. On a desktop, use your
   own account. On a server, a dedicated account is better (see "On a server").
 - **The coding agents themselves, set up as that user.** The installer
-  installs neither Claude Code nor pi. Each must work from a terminal as that
-  user first: installed, logged in or given its keys, and paid for. The agent
-  only runs what is already there. Install them with their own instructions:
-  [Claude Code](https://code.claude.com/docs/en/setup),
-  [pi](https://pi.dev). Ideally before the agent; one installed later is
-  picked up within 30 seconds, as long as it lands on the `PATH` the agent
-  started with (see "pi is not offered" under "Troubleshooting").
+  installs none of Claude Code, pi or OpenCode. Each must work from a terminal
+  as that user first: installed, logged in or given its keys, and paid for.
+  The agent only runs what is already there. Install them with their own
+  instructions: [Claude Code](https://code.claude.com/docs/en/setup),
+  [pi](https://pi.dev), [OpenCode](https://opencode.ai). Ideally before the
+  agent; pi or OpenCode installed later is picked up within 30 seconds, as
+  long as it lands on the `PATH` the agent started with (see "pi is not
+  offered" under "Troubleshooting").
 
-You need at least one of Claude Code or pi. A machine with neither still runs
-the agent, but its sessions have nothing to run.
+You need at least one of them. A machine with none still runs the agent, but
+its sessions have nothing to run.
 
 ## Install the agent
 
@@ -82,10 +85,8 @@ the agent, but its sessions have nothing to run.
    ```
 
    Without a mesh, the second line is `this machine only: Basecamp's Shrooms
-   Agents finds it here`, and so is the last.
-
-   ```
-   ```
+   Agents finds it here`, and the last says how to add your other machines
+   and your phone.
 
    It also tells you if Claude Code is missing or not logged in for that
    user. Fix those before you go on (see "Claude Code").
@@ -99,6 +100,7 @@ later, run it again.
 |---|---|
 | `--user NAME` | Serve this user's agents instead of the user running sudo. Use it when you are root, or when the agent runs under a dedicated account. |
 | `--voice` | Also build whisper.cpp's `parakeet-cli` and download the Parakeet model, checked by sha256, for voice notes. |
+| `--files-url URL` | The mesh's file server, where sessions publish files (`publish_file`, ADR-079): any server that takes an HTTP PUT. Written to the drop-in `~/.config/systemd/user/shrooms-agent.service.d/20-files-url.conf` as `SHROOMS_AGENT_FILES_URL`. Without it, the agent keeps published files itself and serves them on its mesh addresses. |
 | `--adopt-pi NAME` | Take over a pi agent that already runs on its own (a `pi-agent.service` that keeps pi in tmux) and continue its newest conversation as session `NAME`, kept running. See "pi". |
 | `--image REF` | Take the binary from this image. The default is `ghcr.io/vpavlin/shrooms-agent:latest`, which has one static binary per architecture (amd64, arm64). |
 | `--binary PATH` | Install this binary instead of pulling an image. No container runtime is needed. In the portable package, `bin/shrooms-agent` next to the script is used automatically. |
@@ -126,13 +128,13 @@ something can later go wrong:
 
   The installer installs the `acl` package if `setfacl` is missing.
 - **The firewall.** If firewalld or ufw is active, the installer opens TCP
-  7387 to this machine's own mesh addresses only. If neither is active, it
-  does nothing.
+  7387 to this machine's own mesh addresses only. If neither is active, or
+  there is no mesh yet, it does nothing.
 - **The service.** `/etc/systemd/user/shrooms-agent.service`, enabled and
   started for the user, with lingering turned on (`loginctl enable-linger`)
   so it keeps running while the user is logged out. It starts the agent
   through a login shell (`bash -lc`), so sessions find the same programs a
-  terminal would: `claude`, `pi`, `nix`, `go`. "pi not found" under
+  terminal would: `claude`, `pi`, `opencode`, `nix`, `go`. "pi is not offered" under
   "Troubleshooting" covers the catch.
 
 If `~/.config/systemd/user/shrooms-agent.service` exists, it overrides the
@@ -148,11 +150,19 @@ systemctl --user status shrooms-agent
 journalctl --user -u shrooms-agent -n 50
 ```
 
-At startup the log shows a `serving agents` line for each mesh, a `harness`
-line for pi if pi was found, and either `voice notes on` or
-`voice notes off` with the reason.
+At startup the log shows a `serving agents` line for the socket and one for
+each mesh, a `harness` line for pi and for OpenCode if they were found, and
+either `voice notes on` or `voice notes off` with the reason. Without a mesh
+it says `no mesh yet: serving this machine only, on its socket`, with why.
 
-From any device in the mesh, use the machine's mesh address (shown by
+On the machine itself, ask through the socket; a request to the machine's own
+mesh address is refused, since any local user could make one:
+
+```
+curl --unix-socket "$XDG_RUNTIME_DIR/shrooms-agent/agent.sock" http://agent/v1/harnesses
+```
+
+From any other device in the mesh, use the machine's mesh address (shown by
 `shrooms status` on that machine):
 
 ```
@@ -273,6 +283,42 @@ Things to know about pi:
   continues pi's newest conversation as session `NAME`, kept running. If you
   run it again, it finds the session and leaves it as it is.
 
+## OpenCode
+
+OpenCode ([opencode.ai](https://opencode.ai)) is another open harness, on
+OpenCode's own models (some of them free) or any provider it is set up with.
+The agent offers it when it finds `opencode` on its `PATH`, at startup or, if
+it is installed later, within 30 seconds, and runs it as `opencode acp`, its
+ACP server (ADR-061). Its providers, keys and settings are OpenCode's own,
+the same as on the command line.
+
+1. **Install OpenCode as the agent's user**, and check that it answers from a
+   terminal with the model you want.
+2. **Give the service its keys**, as for pi: a provider key exported in
+   `~/.bashrc` does not reach a systemd service, so put it in an
+   `EnvironmentFile=` drop-in (see "pi", step 3). OpenCode's free models need
+   no key.
+3. **Optionally, a default model for the machine** with `--opencode-model`,
+   such as `--opencode-model opencode/…` (see "Changing the agent's flags").
+   Without it, OpenCode's own config decides. A session's own model, chosen
+   in the apps, wins over both.
+
+Things to know about OpenCode:
+
+- **No approvals.** It runs its tools without asking; its own `permission`
+  config decides what may run, so its sessions have no auto-approve switch.
+- **The mesh's agents as tools** are given to it over ACP when each session
+  starts, and the note on how to use them with its first message. Nothing is
+  written to its config.
+- **No taking over.** Its conversations from a terminal are not listed, and
+  cannot be continued as a session.
+- **In a cage** it reaches OpenCode's own provider through the agent
+  (ADR-059): the free models with no key, the paid ones with
+  `OPENCODE_API_KEY` from the agent's environment. Its config file is not let
+  in, since a provider's key lives in it, and its conversations are the
+  cage's own, in a database of its own ([Cages](cages.md)). Sealed cages run
+  Claude Code only.
+
 ## Changing the agent's flags
 
 The installed unit runs `shrooms-agent` with no flags. To change one,
@@ -297,9 +343,12 @@ Then restart with `systemctl --user restart shrooms-agent`.
 | `--port` | `7387` | The port on each mesh address. The apps and the installer's firewall rule expect 7387. |
 | `--state` | `~/.local/share/shrooms-agent` | Where sessions and their history are kept. |
 | `--socket` | `/run/shrooms/shrooms.sock` | The shrooms daemon's control socket. |
+| `--agent-socket` | `$XDG_RUNTIME_DIR/shrooms-agent/agent.sock` | The agent's own socket, for this user only. |
 | `--claude` | `claude` | The Claude Code binary. |
 | `--pi` | `pi` | The pi binary. `""` leaves pi out. |
 | `--pi-args` | none | Extra arguments for every pi session. |
+| `--opencode` | `opencode` | The OpenCode binary. `""` leaves OpenCode out. |
+| `--opencode-model` | none | The model an OpenCode session uses when it names none. Empty leaves OpenCode's own config to decide. |
 | `--mcp` | `true` | Give every session the mesh's agents as MCP tools and tell it how to use them ([Agents together](together.md)). |
 | `--cages` | `true` | Offer cages when podman is installed. |
 | `--cage-image` | the workbench | The image cages are made from, for the whole machine. |
@@ -307,11 +356,16 @@ Then restart with `systemctl --user restart shrooms-agent`.
 | `--stt-model` | `~/.local/share/whisper/ggml-parakeet-tdt-0.6b-v3-q4_k.bin` | The speech-to-text model for voice notes. |
 | `--stt-bin` | from the model | `parakeet-cli` for a Parakeet model, otherwise `whisper-cli`. |
 | `--stt-threads` | cores, up to 12 | Threads used for transcription. |
+| `--uploads-keep` | `336h` | How long files sent to sessions are kept; `0` keeps them for good (ADR-078). |
+| `--files-url` | `$SHROOMS_AGENT_FILES_URL` | The mesh's file server, where sessions publish files; empty, the agent serves them itself (ADR-079). The installer's `--files-url` sets the variable. |
+| `--schedules` | `~/.config/shrooms-agent/schedules.json` | The sessions' schedules: this machine's Scala and which calendar is whose (ADR-064). None when the file is missing. |
 | `--verbose` | `false` | Log Claude Code's stderr as well. |
 
-The agent reads the mesh addresses once, at startup. If the machine joins
-another mesh, restart the agent, and run the installer again so the firewall
-opens the new address too.
+The agent asks the daemon for its mesh addresses every 30 seconds while it
+serves no mesh, and every minute after, and starts serving on a new one by
+itself: the machine's first mesh, or another it joins later. No restart is
+needed. Run the installer again, though, so the firewall opens the new
+address too.
 
 ## Voice notes
 
@@ -476,8 +530,9 @@ needs nix with flakes.
    shrooms. Where the daemon runs in a container, the ACL from
    `install-agent.sh` does the same.
 
-The module finds agents among the peers in the daemon's status. Nothing in
-it needs to be configured.
+The module finds agents among the peers in the daemon's status, and this
+machine's own agent on its socket, with or without a mesh (ADR-056).
+Nothing in it needs to be configured.
 
 ## Sessions kept running
 
@@ -521,17 +576,24 @@ Everything belongs to the agent's user. Under the state directory,
 
 | Path | What it is |
 |---|---|
-| `sessions.json` | The sessions: name, directory, harness, settings (auto-approve, keep running, cage) |
+| `sessions.json` | The sessions: name, directory, harness, settings (auto-approve, keep running, model, skills, meshes, who it takes tasks and files from, cage) |
 | `events/NAME.jsonl` | Each session's history as the apps show it |
 | `tasks.json` | Tasks between agents ([Agents together](together.md)) |
-| `uploads/NAME/` | Files and voice notes sent to a session |
-| `cages/` | The environment files of caged sessions, readable only by the owner |
+| `uploads/NAME/` | Files and voice notes sent to a session, kept two weeks (`--uploads-keep`) |
+| `published/` | Files sessions published, when there is no `--files-url`; served at `/files/` |
+| `archive/NAME/` | A caged session's working directory as a fresh start cleared it, kept 30 days |
+| `schedules/NAME.json` | What the schedule runner remembers of a session's calendar |
+| `cages/` | What caged sessions are started with, their private harness homes and their sockets, readable only by the owner |
 
 Elsewhere:
 
 - `~/.claude/`: Claude Code's login, settings and transcripts.
 - `~/.pi/agent/`: pi's `settings.json`, `models.json`, `mcp.json` and
   `sessions/`.
+- `~/.config/opencode/`, `~/.local/share/opencode/`: OpenCode's settings and
+  conversations.
+- `~/.config/shrooms-agent/schedules.json`: the sessions' schedules, if any.
+- `$XDG_RUNTIME_DIR/shrooms-agent/agent.sock`: the agent's socket.
 - `~/.local/bin/parakeet-cli`, `~/.local/share/whisper/`: voice notes.
 - `~/.config/systemd/user/shrooms-agent.service.d/`: your drop-ins.
 - Logs: `journalctl --user -u shrooms-agent`.
@@ -547,28 +609,34 @@ Start with the log, as the agent's user:
 journalctl --user -u shrooms-agent -b
 ```
 
-**The log repeats "waiting for the shrooms daemon".** The `why` field
-explains it:
+**The log says "no mesh yet: serving this machine only, on its socket".**
+Basecamp on this machine reaches the agent; nothing else does. The `why`
+field says why there is no mesh:
 
-- `permission denied`: the user cannot read the socket. Run the installer
-  again, which repairs the ACL. If it happened right after a reboot or a
-  shrooms update, check that `/etc/tmpfiles.d/shrooms-agent-USER.conf`
+- `permission denied`: the user cannot read the daemon's socket. Run the
+  installer again, which repairs the ACL. If it happened right after a reboot
+  or a shrooms update, check that `/etc/tmpfiles.d/shrooms-agent-USER.conf`
   starts with a `d /run/shrooms` line and that the drop-in
   `/etc/systemd/system/shrooms.service.d/20-agent-access.conf` exists. Both
   are needed, because `/run/shrooms` is created anew whenever the daemon
   starts.
-- `no such file`, or `connection refused`: shrooms is not running.
-- `the daemon reports no meshes yet`: join a mesh.
+- `no such file`, or `connection refused`: shrooms is not running, or not
+  installed.
+- `the daemon reports no meshes`: join a mesh.
 
-**"this device is not in a mesh called …".** `--meshes` names a mesh this
-device is not in. Mesh labels are listed by `shrooms status`.
+Once the cause is fixed, the agent finds the mesh within half a minute and
+logs `serving agents` with the mesh; it does not need a restart.
+
+**"not serving on the meshes asked for", "this device is not in a mesh
+called …".** `--meshes` names a mesh this device is not in, and the agent
+serves no mesh until it is. Mesh labels are listed by `shrooms status`.
 
 **Every reply says "Not logged in · Please run /login".** Claude Code is not
 logged in for the agent's user. See "Claude Code". Typing `/login` in the app
 does not work.
 
 **pi is not offered, or the log has no `harness name=pi` line.** The agent
-did not find `pi` on its `PATH`. The service starts the agent through a login
+did not find `pi` on its `PATH`. The same goes for OpenCode and `opencode`. The service starts the agent through a login
 shell, which reads `~/.profile` or `~/.bash_profile` but often not
 `~/.bashrc`, and most `.bashrc` files stop early when not interactive. pi
 installed through nvm or a Node version manager set up in `.bashrc` is
@@ -601,7 +669,9 @@ the list for a week. Check, in order:
    dropping it. Run the installer again, which adds the rule for the current
    mesh addresses. Under firewalld, the default zone takes the mesh
    interface, so without the rule port 7387 is closed.
-4. The machine joined a new mesh after the agent started: restart the agent.
+4. The machine joined a new mesh after the agent started: the agent serves
+   on it within a minute by itself, but the firewall opens it only once the
+   installer has run again.
 
 **The phone app says "No agents found".** It has not been given any peers.
 Open it from the "agents" link in the shrooms app, or add a machine by name.
