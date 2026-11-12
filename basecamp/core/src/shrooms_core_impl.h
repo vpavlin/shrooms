@@ -457,6 +457,36 @@ public:
      */
     std::string cardPath(const std::string& adminKeysCsv);
 
+    // --- the clipboard between devices (ADR-083) ---------------------------
+    //
+    // Each is one request to the daemon's /clips endpoints, on whichever
+    // socket path answers. A refusal comes back as {"error": the daemon's own
+    // sentence, "detail": the transport's account}, because "no device called
+    // phone on home" is what the person needs to read, not "answered 400".
+
+    /**
+     * @brief What arrived, what was sent, and where a clip can go:
+     * {"received":[...],"sent":[...],"devices":[{mesh,name,online}],"meshes":[...]}.
+     */
+    std::string clips();
+
+    /**
+     * @brief Sends a clip. The request is the daemon's own JSON
+     * ({"text","to":[...],"all","mesh","secret","ttl"}), passed through;
+     * the daemon decides whether it is a request it can carry. Returns the
+     * clip as queued.
+     */
+    std::string clipSend(const std::string& requestJson);
+
+    /**
+     * @brief Marks a received clip copied and returns it with its text (a
+     * secret then goes five minutes later). The id may be "latest".
+     */
+    std::string clipTake(const std::string& id);
+
+    /** @brief Forgets a clip; a sent one still waiting is not sent. */
+    std::string clipDelete(const std::string& id);
+
     /**
      * @brief Starts looking for agents (docs/agents.md) among the given peers,
      * in the background, and returns what has been found so far.

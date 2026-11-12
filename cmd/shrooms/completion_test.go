@@ -67,7 +67,7 @@ func TestCompletionKnowsEveryCommand(t *testing.T) {
 	// set-key is a tombstone: the case survives only to tell somebody with an
 	// old note what replaced it. Completing to a command that exists to say it
 	// does not exist would be a peculiar thing to offer.
-	skip := map[string]bool{"meshes": true, "help": true, "set-key": true}
+	skip := map[string]bool{"meshes": true, "clip": true, "help": true, "set-key": true}
 	for _, c := range commandsIn(t, "main.go") {
 		if skip[c] || offered[c] {
 			continue
@@ -87,6 +87,7 @@ func TestCompletionKnowsEverySubcommand(t *testing.T) {
 		{"admin.go", "admin"},
 		{"keycard.go", "keycard"},
 		{"services.go", "services"},
+		{"clip.go", "clipboard"},
 	} {
 		// Aliases carry no extra meaning for a person pressing Tab, and
 		// no-slots is an error tag rather than a verb.

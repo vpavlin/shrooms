@@ -130,26 +130,37 @@ for m in json.load(sys.stdin).get("meshes") or []:
     fi
 }
 
+# The agent's port, and the clipboard's (9181, ADR-083). The clipboard is the
+# daemon's, not the agent's, and the daemon's installers only advise; but this
+# is the script that already opens ports on a machine that filters the mesh
+# interface port by port (atlas: firewalld, a rich rule per overlay /128), so
+# it opens both, and a clip sent to such a machine is not left waiting.
 firewall() { # add | remove
-    local verb=$1 a
+    local verb=$1 a p ports="$PORT 9181"
+    # Removing the agent leaves the clipboard's port: the daemon still uses it.
+    [ "$verb" = add ] || ports=$PORT
     if command -v firewall-cmd >/dev/null && firewall-cmd --state >/dev/null 2>&1; then
         for a in $(overlays); do
-            local rule="rule family=ipv6 destination address=$a/128 port port=$PORT protocol=tcp accept"
-            if [ "$verb" = add ]; then
-                firewall-cmd -q --permanent --add-rich-rule="$rule" 2>/dev/null || true
-            else
-                firewall-cmd -q --permanent --remove-rich-rule="$rule" 2>/dev/null || true
-            fi
+            for p in $ports; do
+                local rule="rule family=ipv6 destination address=$a/128 port port=$p protocol=tcp accept"
+                if [ "$verb" = add ]; then
+                    firewall-cmd -q --permanent --add-rich-rule="$rule" 2>/dev/null || true
+                else
+                    firewall-cmd -q --permanent --remove-rich-rule="$rule" 2>/dev/null || true
+                fi
+            done
         done
         firewall-cmd -q --reload
-        if [ "$verb" = add ]; then echo "  firewalld: port $PORT open to $(overlays | tr '\n' ' ')only"
+        if [ "$verb" = add ]; then echo "  firewalld: ports $PORT and 9181 open to $(overlays | tr '\n' ' ')only"
         else echo "  firewalld: port $PORT closed again"; fi
     elif command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
         for a in $(overlays); do
-            if [ "$verb" = add ]; then ufw allow to "$a" port "$PORT" proto tcp >/dev/null
-            else ufw delete allow to "$a" port "$PORT" proto tcp >/dev/null 2>&1 || true; fi
+            for p in $ports; do
+                if [ "$verb" = add ]; then ufw allow to "$a" port "$p" proto tcp >/dev/null
+                else ufw delete allow to "$a" port "$p" proto tcp >/dev/null 2>&1 || true; fi
+            done
         done
-        if [ "$verb" = add ]; then echo "  ufw: port $PORT open to $(overlays | tr '\n' ' ')only"
+        if [ "$verb" = add ]; then echo "  ufw: ports $PORT and 9181 open to $(overlays | tr '\n' ' ')only"
         else echo "  ufw: port $PORT closed again"; fi
     fi
 }

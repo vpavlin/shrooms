@@ -145,6 +145,11 @@ func (m *Mux) dispatch(pkt []byte) {
 	m.unrouted.Add(1)
 }
 
+// Inject sends a packet into the mesh as though the tun had read it: what a
+// userspace stack beside the tun sends (ADR-083). Copied, routed and dropped
+// when a mesh is behind exactly as a read is.
+func (m *Mux) Inject(pkt []byte) { m.dispatch(pkt) }
+
 // destination reads a packet's destination address, for either family.
 func destination(pkt []byte) (netip.Addr, bool) {
 	if len(pkt) < 20 {

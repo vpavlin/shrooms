@@ -1907,6 +1907,14 @@ func serveControl(ctx context.Context, log *slog.Logger, path string, instances 
 		go newMetricsServer(cfg.MetricsPort, snapshot, log).run(ctx)
 	}
 
+	// The shared clipboard (ADR-083): taken on the mesh addresses, sent and
+	// read through this socket.
+	if rt != nil && rt.st != nil {
+		clips := newClipServer(rt.st.Dir(), snapshot, log)
+		go clips.run(ctx)
+		clipHandlers(mux, clips)
+	}
+
 	// A second, read-only mux for the loopback port (ADR-025).
 	//
 	// The port used to be handed the same mux as the unix socket, which put

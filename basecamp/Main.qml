@@ -895,6 +895,212 @@ Item {
         loadServices()
     }
 
+    // --- the clipboard between devices (ADR-083) -------------------------------
+    //
+    // The same as the phone's: pick devices, send a string, and copy what the
+    // others sent. Read only while the section is open: a poll that runs for a
+    // panel nobody looks at is the kind of thing that drained the phone (#56).
+    property bool clipsOpen: false
+    property var clipData: ({ received: [], sent: [], devices: [], meshes: [] })
+    // Why there are no clips to show, when there are none to show.
+    property string clipsProblem: ""
+    // An installed shrooms_core from before the clipboard: Basecamp answers a
+    // method it does not have with {"error":"Invalid response"} (no detail,
+    // which this core always adds) or nothing at all.
+    property bool clipsCoreOld: false
+    property string clipMesh: ""
+    property var clipTo: []
+    property bool clipAll: false
+    property bool clipSecret: false
+    // "mesh/name", most recent first: the devices clips usually go to, ahead
+    // of the rest. Kept as a view preference, like the text size.
+    property var clipRecent: []
+    property bool clipRecentLoaded: false
+    // Received secrets shown in clear, by id: once clicked, never before.
+    property var clipRevealed: ({})
+    property string clipSaid: ""
+    property bool clipSaidBad: false
+
+    onClipsOpenChanged: if (clipsOpen) Qt.callLater(root.loadClips)
+
+    function loadClips() {
+        if (!haveCore) return
+        if (!clipRecentLoaded) {
+            clipRecentLoaded = true
+            var saved = String(callCore("getPref", ["clip_recent"]) || "").trim()
+            for (var u = 0; u < 2 && saved.charAt(0) === '"'; u++) {
+                try { saved = String(JSON.parse(saved)).trim() } catch (e) { break }
+            }
+            if (saved.charAt(0) === "[") {
+                try { root.clipRecent = JSON.parse(saved) } catch (e) { root.clipRecent = [] }
+            }
+        }
+        var d = coreJson("clips", [])
+        if (d === null || (d.error !== undefined && d.detail === undefined)) {
+            root.clipsCoreOld = true
+            root.clipsProblem = "the installed shrooms_core has no clipboard: update shrooms_core "
+                              + "in Basecamp as well as this view; they ship separately."
+            return
+        }
+        root.clipsCoreOld = false
+        if (d.error) {
+            root.clipsProblem = d.error
+            return
+        }
+        root.clipsProblem = ""
+        root.clipData = {
+            received: d.received || [], sent: d.sent || [],
+            devices: d.devices || [], meshes: d.meshes || []
+        }
+        var ms = root.clipData.meshes
+        // The first mesh with somebody on it to send to: a laptop's first
+        // mesh may be one it is alone on.
+        if (ms.length && ms.indexOf(root.clipMesh) < 0) {
+            var withDevices = ms.filter(function(m) {
+                return root.clipData.devices.some(function(d) { return d.mesh === m })
+            })
+            root.clipMesh = withDevices.length ? withDevices[0] : ms[0]
+        }
+        if (!ms.length) root.clipMesh = ""
+    }
+
+    readonly property var clipMeshes: clipData.meshes || []
+
+    /** Where a clip can go on the chosen mesh: recent first, then online, then by name. */
+    readonly property var clipDevices: {
+        var out = []
+        var ds = clipData.devices || []
+        for (var i = 0; i < ds.length; i++) {
+            if (root.clipMesh && clipMeshes.length > 1 && ds[i].mesh !== root.clipMesh) continue
+            out.push(ds[i])
+        }
+        var recent = root.clipRecent
+        function rank(d) {
+            var r = recent.indexOf((d.mesh || "") + "/" + d.name)
+            return r < 0 ? 1000 : r
+        }
+        out.sort(function (a, b) {
+            var ra = rank(a), rb = rank(b)
+            if (ra !== rb) return ra - rb
+            if (!!a.online !== !!b.online) return a.online ? -1 : 1
+            return String(a.name).localeCompare(String(b.name))
+        })
+        return out
+    }
+
+    function chooseClipMesh(m) {
+        if (m === root.clipMesh) return
+        root.clipMesh = m
+        // Names chosen on one mesh mean other devices, or none, on the next.
+        root.clipTo = []
+        root.clipAll = false
+    }
+    function toggleClipTo(name) {
+        var to = root.clipTo.slice()
+        var i = to.indexOf(name)
+        if (i >= 0) to.splice(i, 1); else to.push(name)
+        root.clipTo = to
+        root.clipAll = false
+    }
+    function toggleClipAll() {
+        root.clipAll = !root.clipAll
+        if (root.clipAll) root.clipTo = []
+    }
+
+    function clipSay(text, bad) {
+        root.clipSaid = text
+        root.clipSaidBad = !!bad
+    }
+
+    /** Sends; true when the daemon took it, so the field can be cleared. */
+    function sendClip(text) {
+        if (!String(text || "").trim()) { clipSay("nothing to send", true); return false }
+        if (!root.clipAll && !root.clipTo.length) { clipSay("pick a device to send it to", true); return false }
+        var req = { text: String(text), secret: root.clipSecret }
+        if (root.clipMesh) req.mesh = root.clipMesh
+        if (root.clipAll) req.all = true
+        else req.to = root.clipTo.slice()
+        var d = coreJson("clipSend", [JSON.stringify(req)])
+        if (d === null || (d.error !== undefined && d.detail === undefined)) {
+            root.clipsCoreOld = true
+            clipSay("the installed shrooms_core cannot send clips: update it", true)
+            return false
+        }
+        if (d.error) { clipSay(d.error, true); return false }
+        var recent = root.clipRecent.slice()
+        var names = root.clipAll ? [] : root.clipTo
+        for (var i = names.length - 1; i >= 0; i--) {
+            var k = (root.clipMesh || "") + "/" + names[i]
+            var at = recent.indexOf(k)
+            if (at >= 0) recent.splice(at, 1)
+            recent.unshift(k)
+        }
+        root.clipRecent = recent.slice(0, 12)
+        savePref("clip_recent", JSON.stringify(root.clipRecent))
+        var to = root.clipAll ? "all of " + (root.clipMesh || "the mesh") : root.clipTo.join(", ")
+        clipSay((root.clipSecret ? "secret" : "clip") + " sent to " + to, false)
+        root.clipSecret = false
+        loadClips()
+        return true
+    }
+
+    /** Copies a received clip and tells the daemon it was taken. */
+    function takeClip(c) {
+        if (!c || !c.id) return
+        // Not copyText(): that repeats what it copied on screen, and this may
+        // be a secret.
+        clipboard.text = String(c.text || "")
+        clipboard.selectAll()
+        clipboard.copy()
+        clipboard.text = ""
+        if (c.secret) {
+            var r = Object.assign({}, root.clipRevealed)
+            r[c.id] = true
+            root.clipRevealed = r
+        }
+        var d = coreJson("clipTake", [c.id])
+        if (d && d.error) clipSay("copied, but " + d.error, true)
+        else clipSay("copied " + (c.secret ? "a secret" : "the clip") + " from " + (c.from || "?")
+                     + (c.secret ? "; it goes in five minutes" : ""), false)
+        loadClips()
+    }
+
+    function deleteClip(id) {
+        var d = coreJson("clipDelete", [id])
+        if (d && d.error) clipSay(d.error, true)
+        loadClips()
+    }
+
+    /** Go's RFC 3339 has nanoseconds; Date.parse may refuse more than milliseconds. */
+    function clipTime(s) {
+        if (!s) return 0
+        var t = Date.parse(String(s).replace(/(\.\d{3})\d+/, "$1"))
+        return isNaN(t) ? 0 : t
+    }
+    function clipAge(s) {
+        var t = clipTime(s)
+        return t ? ago(t) + " ago" : ""
+    }
+    /** "4m" until it goes, for a secret, which goes soon. */
+    function clipLeft(s) {
+        var t = clipTime(s)
+        if (!t) return ""
+        var left = Math.max(0, (t - Date.now()) / 1000)
+        if (left < 60) return Math.round(left) + "s"
+        if (left < 3600) return Math.round(left / 60) + "m"
+        return Math.round(left / 3600) + "h"
+    }
+    function clipShown(c, received) {
+        if (c.secret && (!received || !root.clipRevealed[c.id])) return "(secret)"
+        return String(c.text || "").replace(/\s+/g, " ")
+    }
+    Timer {
+        interval: 3000
+        repeat: true
+        running: root.clipsOpen && root.haveCore && !root.clipsCoreOld
+        onTriggered: root.loadClips()
+    }
+
     // --- joining -------------------------------------------------------------
     //
     // Started on the core's own thread and watched from here: the daemon waits
@@ -3389,6 +3595,348 @@ Layout.preferredWidth: 0
                                       + "and drops every tunnel for a few seconds"
                                 color: cAsh
                                 font.family: "monospace"; font.pixelSize: root.fs(9)
+                            }
+                        }
+                    }
+
+                    // --- clipboard (ADR-083) ---------------------------------------
+                    //
+                    // A string to another of my devices, and what they sent me. The
+                    // phone's screen in the same order: compose, received, sent.
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        Layout.preferredWidth: 0
+                        spacing: 8
+                        visible: root.haveCore
+
+                        Text {
+                            text: (root.clipsOpen ? "clipboard ▾" : "clipboard ▸")
+                                  + (root.clipData.received.length ? "  " + root.clipData.received.length : "")
+                            color: cPhosphor
+                            font.family: "monospace"; font.pixelSize: root.fs(11)
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.clipsOpen = !root.clipsOpen
+                            }
+                        }
+
+                        ColumnLayout {
+                            visible: root.clipsOpen
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: 0
+                            spacing: 8
+
+                            Text {
+                                visible: root.clipsProblem !== ""
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 0
+                                wrapMode: Text.WordWrap
+                                color: root.clipsCoreOld ? cAmber : cRust
+                                font.family: "monospace"; font.pixelSize: root.fs(10)
+                                text: root.clipsProblem
+                            }
+
+                            ColumnLayout {
+                                visible: !root.clipsCoreOld
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 0
+                                spacing: 8
+
+                                // Which mesh, when there is more than one: "all"
+                                // never spans meshes, and the office mesh has other
+                                // people's machines on it.
+                                Flow {
+                                    visible: root.clipMeshes.length > 1
+                                    Layout.fillWidth: true
+                                    spacing: root.sz(10)
+                                    Repeater {
+                                        model: root.clipMeshes.length > 1 ? root.clipMeshes : []
+                                        delegate: Text {
+                                            text: modelData
+                                            color: modelData === root.clipMesh ? root.meshTint(modelData) : cAsh
+                                            font.family: "monospace"; font.pixelSize: root.fs(11)
+                                            font.underline: modelData === root.clipMesh
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: root.chooseClipMesh(modelData)
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Text {
+                                    visible: root.clipsProblem === "" && root.clipDevices.length === 0
+                                    Layout.fillWidth: true
+                                    Layout.preferredWidth: 0
+                                    wrapMode: Text.WordWrap
+                                    color: cAsh
+                                    font.family: "monospace"; font.pixelSize: root.fs(10)
+                                    text: "no other device on " + (root.clipMesh || "this mesh") + " to send to"
+                                }
+
+                                // Recipients: the ones used last first, a dot for
+                                // whether each is there now. One that is away gets
+                                // the clip when it is back.
+                                Flow {
+                                    Layout.fillWidth: true
+                                    spacing: root.sz(6)
+                                    Repeater {
+                                        model: root.clipDevices
+                                        delegate: Rectangle {
+                                            readonly property bool chosen: root.clipTo.indexOf(modelData.name) >= 0
+                                            width: chipRow.implicitWidth + root.sz(14)
+                                            height: root.sz(22)
+                                            radius: root.sz(11)
+                                            color: chosen ? cLine : "transparent"
+                                            border.color: chosen ? cPhosphor : cLine
+                                            Row {
+                                                id: chipRow
+                                                anchors.centerIn: parent
+                                                spacing: root.sz(5)
+                                                Rectangle {
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                    width: root.sz(6); height: root.sz(6); radius: root.sz(3)
+                                                    color: modelData.online ? cPhosphor : cAsh
+                                                }
+                                                Text {
+                                                    text: modelData.name
+                                                    color: chosen ? cBone : cAsh
+                                                    font.family: "monospace"; font.pixelSize: root.fs(10)
+                                                }
+                                            }
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: root.toggleClipTo(modelData.name)
+                                            }
+                                        }
+                                    }
+                                    Rectangle {
+                                        visible: root.clipDevices.length > 0
+                                        width: allText.implicitWidth + root.sz(14)
+                                        height: root.sz(22)
+                                        radius: root.sz(11)
+                                        color: root.clipAll ? cLine : "transparent"
+                                        border.color: root.clipAll ? cPhosphor : cLine
+                                        Text {
+                                            id: allText
+                                            anchors.centerIn: parent
+                                            text: "all of " + (root.clipMesh || "the mesh")
+                                            color: root.clipAll ? cBone : cAsh
+                                            font.family: "monospace"; font.pixelSize: root.fs(10)
+                                        }
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: root.toggleClipAll()
+                                        }
+                                    }
+                                }
+
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: Math.min(root.sz(140),
+                                                                     Math.max(root.sz(56), clipField.contentHeight + root.sz(12)))
+                                    color: cPanel
+                                    border.color: clipField.activeFocus ? cAsh : cLine
+                                    clip: true
+                                    TextEdit {
+                                        id: clipField
+                                        anchors.fill: parent
+                                        anchors.margins: root.sz(6)
+                                        color: cBone
+                                        font.family: "monospace"; font.pixelSize: root.fs(11)
+                                        wrapMode: TextEdit.WrapAnywhere
+                                        selectByMouse: true
+                                        // Ctrl+Enter sends; Enter alone is a new line,
+                                        // since a clip may be several.
+                                        Keys.onReturnPressed: function (e) {
+                                            if (e.modifiers & Qt.ControlModifier) {
+                                                if (root.sendClip(clipField.text)) clipField.text = ""
+                                            } else {
+                                                e.accepted = false
+                                            }
+                                        }
+                                    }
+                                    Text {
+                                        visible: clipField.text === "" && !clipField.activeFocus
+                                        anchors.fill: parent
+                                        anchors.margins: root.sz(6)
+                                        color: cAsh
+                                        font.family: "monospace"; font.pixelSize: root.fs(10)
+                                        text: "a URL, an ID, a key… (Ctrl+V to paste, Ctrl+Enter to send)"
+                                        wrapMode: Text.WordWrap
+                                    }
+                                }
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: root.sz(14)
+                                    Text {
+                                        text: "paste"
+                                        color: cPhosphor
+                                        font.family: "monospace"; font.pixelSize: root.fs(11)
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: {
+                                                clipField.text = ""
+                                                clipField.paste()
+                                            }
+                                        }
+                                    }
+                                    Text {
+                                        // A secret is never written to disk on either
+                                        // side and goes five minutes after it is copied.
+                                        text: (root.clipSecret ? "■" : "□") + " secret"
+                                        color: root.pick(root.clipSecret)
+                                        font.family: "monospace"; font.pixelSize: root.fs(11)
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: root.clipSecret = !root.clipSecret
+                                        }
+                                    }
+                                    Item { Layout.fillWidth: true }
+                                    Text {
+                                        text: "send"
+                                        color: (clipField.text.trim() !== "" && (root.clipAll || root.clipTo.length))
+                                               ? cPhosphor : cAsh
+                                        font.family: "monospace"; font.pixelSize: root.fs(12)
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: if (root.sendClip(clipField.text)) clipField.text = ""
+                                        }
+                                    }
+                                }
+
+                                Text {
+                                    visible: root.clipSaid !== ""
+                                    Layout.fillWidth: true
+                                    Layout.preferredWidth: 0
+                                    wrapMode: Text.WordWrap
+                                    color: root.clipSaidBad ? cRust : cPhosphor
+                                    font.family: "monospace"; font.pixelSize: root.fs(10)
+                                    text: root.clipSaid
+                                }
+
+                                // --- received: a click copies -------------------
+                                Text {
+                                    text: "received" + (root.clipData.received.length ? "" : "  nothing yet")
+                                    color: cAsh
+                                    font.family: "monospace"; font.pixelSize: root.fs(10)
+                                    Layout.topMargin: root.sz(4)
+                                }
+                                Repeater {
+                                    model: root.clipData.received
+                                    delegate: RowLayout {
+                                        Layout.fillWidth: true
+                                        Layout.preferredWidth: 0
+                                        spacing: root.sz(8)
+                                        Text {
+                                            text: root.clipShown(modelData, true)
+                                            color: recvCopy.containsMouse ? cPhosphor
+                                                 : (modelData.taken ? cAsh : cBone)
+                                            font.family: "monospace"; font.pixelSize: root.fs(11)
+                                            font.italic: modelData.secret === true && !root.clipRevealed[modelData.id]
+                                            elide: Text.ElideRight
+                                            Layout.fillWidth: true
+                                            Layout.preferredWidth: 0
+                                            MouseArea {
+                                                id: recvCopy
+                                                anchors.fill: parent
+                                                hoverEnabled: true
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: root.takeClip(modelData)
+                                            }
+                                        }
+                                        Text {
+                                            text: (modelData.from || "?") + (modelData.unsigned ? " (unsigned)" : "")
+                                                  + (root.clipMeshes.length > 1 ? "." + modelData.mesh : "")
+                                                  + "  " + root.clipAge(modelData.created)
+                                                  + (modelData.secret ? "  goes in " + root.clipLeft(modelData.expires) : "")
+                                            color: cAsh
+                                            font.family: "monospace"; font.pixelSize: root.fs(9)
+                                        }
+                                        Text {
+                                            text: "×"
+                                            color: recvDel.containsMouse ? cRust : cAsh
+                                            font.family: "monospace"; font.pixelSize: root.fs(12)
+                                            MouseArea {
+                                                id: recvDel
+                                                anchors.fill: parent
+                                                hoverEnabled: true
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: root.deleteClip(modelData.id)
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // --- sent: who has it, who is still waited for --
+                                Text {
+                                    visible: root.clipData.sent.length > 0
+                                    text: "sent"
+                                    color: cAsh
+                                    font.family: "monospace"; font.pixelSize: root.fs(10)
+                                    Layout.topMargin: root.sz(4)
+                                }
+                                Repeater {
+                                    model: root.clipData.sent
+                                    delegate: ColumnLayout {
+                                        Layout.fillWidth: true
+                                        Layout.preferredWidth: 0
+                                        spacing: 2
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            spacing: root.sz(8)
+                                            Text {
+                                                text: root.clipShown(modelData, false)
+                                                color: cBone
+                                                font.family: "monospace"; font.pixelSize: root.fs(11)
+                                                font.italic: modelData.secret === true
+                                                elide: Text.ElideRight
+                                                Layout.fillWidth: true
+                                                Layout.preferredWidth: 0
+                                            }
+                                            Text {
+                                                text: (root.clipMeshes.length > 1 ? modelData.mesh + "  " : "")
+                                                      + root.clipAge(modelData.created)
+                                                color: cAsh
+                                                font.family: "monospace"; font.pixelSize: root.fs(9)
+                                            }
+                                            Text {
+                                                text: "×"
+                                                color: sentDel.containsMouse ? cRust : cAsh
+                                                font.family: "monospace"; font.pixelSize: root.fs(12)
+                                                MouseArea {
+                                                    id: sentDel
+                                                    anchors.fill: parent
+                                                    hoverEnabled: true
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: root.deleteClip(modelData.id)
+                                                }
+                                            }
+                                        }
+                                        Flow {
+                                            Layout.fillWidth: true
+                                            spacing: root.sz(10)
+                                            Repeater {
+                                                model: modelData.to || []
+                                                delegate: Text {
+                                                    text: (modelData.sent ? "✓ " : "… ") + modelData.name
+                                                          + (modelData.error && !modelData.sent ? "  " + modelData.error : "")
+                                                    color: modelData.sent ? cPhosphor
+                                                         : (modelData.error ? cRust : cAmber)
+                                                    font.family: "monospace"; font.pixelSize: root.fs(9)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

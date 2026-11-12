@@ -446,7 +446,7 @@ private fun contextColour(used: Long, window: Long): Color {
 }
 
 @Composable
-private fun Link(text: String, colour: Color = Palette.Phosphor, onClick: () -> Unit) =
+internal fun Link(text: String, colour: Color = Palette.Phosphor, onClick: () -> Unit) =
     Text(text, style = MaterialTheme.typography.labelSmall, color = colour, maxLines = 1, softWrap = false,
         modifier = Modifier.clickable { onClick() }.padding(horizontal = 8.dp, vertical = 10.dp))
 

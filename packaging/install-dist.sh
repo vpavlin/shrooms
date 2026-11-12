@@ -101,6 +101,11 @@ extra mesh):
   sudo firewall-cmd --add-port=51820/udp --permanent && sudo firewall-cmd --reload
   # or: sudo ufw allow 51820/udp
 
+If a host firewall filters what arrives over the mesh, also let in the
+clipboard's port, 9181/tcp, on the mesh addresses (shrooms status lists them):
+  sudo firewall-cmd --permanent --add-rich-rule='rule family=ipv6 destination address=<overlay>/128 port port=9181 protocol=tcp accept'
+  # or: sudo ufw allow in on shrooms0 to any port 9181 proto tcp
+
 To undo this, from the same directory:
   sudo ./uninstall.sh            # the software
   sudo ./uninstall.sh --purge    # config and identity too
