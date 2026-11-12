@@ -1,10 +1,11 @@
 # Agents on the mesh
 
-**Status (2026-10-08):** in daily use from a phone and from Basecamp since
+**Status (2026-11-12):** in daily use from a phone and from Basecamp since
 2026-10-03, the day it was built. **Shrooms Agents** is its own app and its
-own Basecamp module, beside shrooms (decided 2026-10-03, below).
+own Basecamp module, beside shrooms (decided 2026-10-03, below). It also runs
+on a machine with no mesh, for that machine's own user (ADR-056).
 
-Talk to the coding-agent sessions (Claude Code, pi) on every machine you own,
+Talk to the coding-agent sessions (Claude Code, pi, OpenCode) on every machine you own,
 from the phone, over the mesh — and approve what they want to do from there.
 It replaces `cl` (tmux sessions reached over SSH), whose phone interface is a
 terminal.
@@ -18,8 +19,8 @@ to use it:
 
 - [Using it](agents/using.md): the apps — the list, the board, a
   conversation, files and voice notes, reading aloud, usage;
-- [Setting up](agents/setup.md): installing the agent, Claude Code and
-  pi, voice notes, the apps, troubleshooting;
+- [Setting up](agents/setup.md): installing the agent, Claude Code, pi
+  and OpenCode, voice notes, the apps, troubleshooting;
 - [Agents together](agents/together.md): agents asking each other, tasks
   and the watchdog, from a shell or any A2A client;
 - [Cages](agents/cages.md): sessions in containers of their own.
@@ -29,9 +30,9 @@ to use it:
 ```
 Shrooms Agents (Android)  ─┐
 Shrooms Agents (Basecamp) ─┼─ HTTP over the mesh ──▶  shrooms-agent (each machine)
-other agents (A2A)        ─┤                              │ stream-json, one process per session
-                           │                              ▼
-                           │                    claude -p, or pi (optionally in a cage)
+other agents (A2A)        ─┤   (or its own socket,        │ one process per session
+                           │    on this machine)          ▼
+                           │              claude -p, pi or opencode acp (optionally in a cage)
 shrooms (VPN, the mesh) ───┘  the network all of them run over
 ```
 
@@ -58,26 +59,45 @@ shrooms (VPN, the mesh) ───┘  the network all of them run over
     forbids it in a view, on threads of its own so no call freezes the window.
 - One repository, one set of tools.
 - **Not only Claude Code.** Sessions run on a pluggable harness: Claude Code,
-  or pi (on any model pi is set up with, a local one included), with more to
-  be added the same way — docs/agents-harnesses.md is the guide.
+  pi (on any model pi is set up with, a local one included), or OpenCode
+  (over its ACP server, ADR-061), with more to be added the same way —
+  docs/agents-harnesses.md is the guide. A harness is offered whole or not at
+  all (ADR-062).
 - **Cages.** A session can run in a rootless podman container of its own
   instead of as the user directly (docs/agents-in-cages.md,
   [Cages](agents/cages.md)).
 
 ## Access: the bind is the access control
 
-`shrooms-agent` listens on this device's **overlay address** on each mesh it
-serves, on a fixed port (**7387**), and nowhere else. Per ADR-026, only mesh
-members can route to that address: the WireGuard tunnel admits configured
-members only. So:
+`shrooms-agent` listens in two places, and no others:
 
-- reachable by members of those meshes, not by the LAN or the internet;
+- **its own unix socket**, always (ADR-056): `agent.SocketPath()`,
+  `$XDG_RUNTIME_DIR/shrooms-agent/agent.sock` by default (`--agent-socket`),
+  in a 0700 directory, so only its user can open it. This machine's user,
+  Basecamp on it, the sessions' own tools and the cages' proxies reach the
+  agent here. A request over the socket is this machine's, and is recorded as
+  from this machine, by its name on the mesh (its hostname without one);
+- this device's **overlay address** on each mesh it serves, on a fixed port
+  (**7387**). Per ADR-026, only mesh members can route to that address: the
+  WireGuard tunnel admits configured members only.
+
+Without a shrooms daemon, or with one in no mesh, the agent serves the socket
+alone, with no TCP at all, and this machine is the only one. It keeps asking
+the daemon (every 30 s while it serves no mesh, every minute after) and starts
+serving on a mesh address as soon as there is one: when shrooms is installed,
+when the machine joins its first mesh or another one. No restart.
+
+So:
+
+- reachable by this machine's user and by members of those meshes, not by the
+  LAN or the internet;
 - the caller's source address *is* its device key's overlay address, so every
   request is attributed to a named device with no logins and no tokens. The
   name is the peer's as the daemon lists it, `NAME.MESH` (`laptop.default`);
-  a request from an address the daemon does not name as a peer — this machine
-  itself, Basecamp on it, a session's own `shrooms-agent a2a` — is recorded
-  with no device (`by` empty);
+- a TCP request the daemon does not name as a peer is refused (403): one from
+  loopback or from this machine's own mesh address included. Any local user
+  can make one of those, so they say nothing about who asks; this machine's
+  user comes through the socket (audit F-24, 2026-10-19);
 - the port appears in peers' view through `announce_bound`, which is how the
   phone discovers it.
 
@@ -86,9 +106,8 @@ listed in its config.** Every device on the meshes is the owner's today; the
 list is the rail for the day a mesh is shared. To change later: a per-device
 allowlist by key.
 
-Another local user on the same machine can also connect to the overlay
-address. That machine is already theirs to run code on, so it is not a new
-exposure.
+Another local user on the same machine can connect to the overlay address,
+but is refused there, as above, and cannot open the socket.
 
 ### Sessions per mesh
 
@@ -103,9 +122,9 @@ From a mesh not on the list, the session does not exist. It is not listed,
 can't be opened, renamed, caged or deleted, isn't on the machine's A2A card,
 can't be asked or sent files, and its tasks are hidden. Every such route
 answers as it would for a session that isn't there. The caller's mesh is
-part of the name the daemon gives it (`phone.home`). This machine itself
-(loopback, or one of its own mesh addresses) always sees every session. An
-address the agent can't name is no one, on no mesh.
+part of the name the daemon gives it (`phone.home`). This machine itself,
+through the socket, always sees every session. An address the agent can't
+name is no one, on no mesh, and is refused.
 
 **Moving a session between meshes** is changing that list. For example, a
 session for the household goes on `home` alone, and one for work on `office`
@@ -135,9 +154,10 @@ session's directory. Observed on 2.1.287:
   has gone.
 
 The user's own Claude Code settings apply (permission rules, model, hooks), so
-a session behaves as it would in a terminal. pi runs in its RPC mode; its
-codec translates what it writes into the same stream-json messages, so the
-apps and the event log see one shape (docs/agents-harnesses.md).
+a session behaves as it would in a terminal. pi runs in its RPC mode, and
+OpenCode as its ACP server (`opencode acp`, ADR-061); each one's codec
+translates what it writes into the same stream-json messages, so the apps and
+the event log see one shape (docs/agents-harnesses.md, ADR-054).
 
 A process lives while the session is in use and is stopped after it has been
 idle for 30 minutes; one that has not ended 30 s later (Claude Code keeps
@@ -150,23 +170,28 @@ or digit, at most 64 characters.
 
 ## API (HTTP + JSON, server-sent events)
 
-On each machine's overlay addresses, port 7387. Bodies are JSON; an error is
-`{"error": "…"}` with a 4xx or 5xx status. `{name}` is a session's name.
+On each machine's overlay addresses, port 7387, and on the agent's socket.
+Bodies are JSON; an error is `{"error": "…"}` with a 4xx or 5xx status.
+`{name}` is a session's name.
 
 ### Sessions
 
 | Route | Request | Response and notes |
 |---|---|---|
-| `GET /v1/sessions` | `?tail=N` (at most 20) | `{sessions: [Info], limits, credits}`: the sessions (fields below), with where the Claude subscription stands (`limits`) and the pay-as-you-go keys (`credits`), so an app shows both at a glance without asking for usage. `?tail=N` adds each session's `tail`: its last N lines, oldest first — what was asked (`› you:`), the model's text, its tools (`▸ Bash make test`) and tasks (`◆ task …`) — for Basecamp's board |
-| `POST /v1/sessions` | `{name, dir, harness?, auto_approve?, keep_running?, cage?}` | 201, the new session's Info. Claude Code unless `harness` names another (`GET /v1/harnesses`). `dir` (`~` is the agent user's home) is made if it does not exist, once the request is otherwise accepted, and refused if it is a file. `cage: {}` runs it in a container of its own; `{"image": …, "nix": true, "github": true}` for another image, the machine's nix, the owner's gh login; `{"sealed": true}` a sealed cage (ADR-045: internet only, the machine's sealed token, asks nothing, results in `~/shrooms-outbox/<session>`; Claude Code only; refused without the token). Info's `cage` then carries `sealed` and `outbox` |
-| `POST /v1/sessions` | `{name, resume, dir?, harness?, cage?}` | 201: continue an existing conversation — Claude Code's, or with `harness: "pi"` pi's — by its id, in the directory it ran in (read from its transcript when `dir` is not given). Refused for one whose directory is not on this machine: a `~/.claude` copied from another machine brings its transcripts along, and those cannot be continued here, nor is their directory made |
+| `GET /v1/sessions` | `?tail=N` (at most 20) | `{sessions: [Info], limits, credits, machine}`: the sessions (fields below), this machine's name, with where the Claude subscription stands (`limits`) and the pay-as-you-go keys (`credits`), so an app shows both at a glance without asking for usage. `?tail=N` adds each session's `tail`: its last N lines, oldest first — what was asked (`› you:`), the model's text, its tools (`▸ Bash make test`) and tasks (`◆ task …`) — for Basecamp's board |
+| `POST /v1/sessions` | `{name, dir, harness?, auto_approve?, keep_running?, cage?}` | 201, the new session's Info. Claude Code unless `harness` names another (`pi`, `opencode`; `GET /v1/harnesses`). `dir` (`~` is the agent user's home) is made if it does not exist, once the request is otherwise accepted, and refused if it is a file. `cage: {}` runs it in a container of its own; `{"image": …, "nix": true, "github": true, "shared": true, "memory": "16g", "cpus": "8"}` for another image, the machine's nix, the owner's gh login, the folder caged sessions share (ADR-057), and limits of its own; `{"sealed": true}` a sealed cage (ADR-045: internet only, the machine's sealed token, asks nothing, results in `~/shrooms-outbox/<session>`; Claude Code only; refused without the token). Info's `cage` then carries `sealed` and `outbox` |
+| `POST /v1/sessions` | `{name, resume, dir?, harness?, cage?}` | 201: continue an existing conversation — Claude Code's, or with `harness: "pi"` pi's; not OpenCode's, whose conversations are not listed (`takeover` off) — by its id, in the directory it ran in (read from its transcript when `dir` is not given). Refused for one whose directory is not on this machine: a `~/.claude` copied from another machine brings its transcripts along, and those cannot be continued here, nor is their directory made |
 | `DELETE /v1/sessions/{name}` | | 204: stop and forget it (its event log goes too) |
-| `PATCH /v1/sessions/{name}`, `POST /v1/sessions/{name}/settings` | `{auto_approve?, starred?, keep_running?, accept_caged?, accept_files_from?, fresh_by_agents?}` | 200, Info. 403 to a request carrying `X-Shrooms-Caged`. `accept_caged`: whether the session takes tasks from caged agents (ADR-044; default yes for a caged session, no otherwise). `meshes`: the meshes it is there for, the whole list, empty for all (Sessions per mesh); `accept_files_from`: who the session takes files from, the whole list; `ignore_file_request`: a refused sender's request set aside (docs/agents-files.md). `accept_caged_from`: the caged agents it takes tasks from although `accept_caged` is off, the whole list, MACHINE/SESSION or MACHINE/*, which starts the tasks held from them; `decline_tasks_from`: reject the tasks held from one (ADR-070). POST is for clients that cannot send PATCH (Android's HttpURLConnection). A star is kept on the agent, so every device lists starred sessions first, above each machine's others. `keep_running`: for an agent that works on its own (a heartbeat, a chat bridge in its extensions), Jimmy on pi5 being the first. Auto-approve and keep-running changes are recorded as `setting` events |
+| `PATCH /v1/sessions/{name}`, `POST /v1/sessions/{name}/settings` | `{auto_approve?, starred?, keep_running?, model?, skills?, responsibilities?, meshes?, accept_caged?, accept_caged_from?, decline_tasks_from?, accept_files_from?, ignore_file_request?, fresh_by_agents?}` | 200, Info. 403 to a request carrying `X-Shrooms-Caged`. POST is for clients that cannot send PATCH (Android's HttpURLConnection). A star is kept on the agent, so every device lists starred sessions first, above each machine's others. `keep_running`: for an agent that works on its own (a heartbeat, a chat bridge in its extensions), Jimmy on pi5 being the first. `model`: the model it runs on, `""` for its harness's default on this machine; kept across restarts, its process stopped so the next message runs on it; 409 unless the session is idle with no prompt waiting. `skills` (`[{name, description?, tags?}]`, A2A's AgentSkill) and `responsibilities` (`[text]`): what it is good at and may do without asking, on its card and in `list_agents` (ADR-063); each the whole list, at most 20. `meshes`: the meshes it is there for, the whole list, empty for all (Sessions per mesh). `accept_caged`: whether the session takes tasks from caged agents (ADR-044; default yes for a caged session, no otherwise); turned on, it starts the tasks held from them. `accept_caged_from`: the caged agents it takes tasks from although `accept_caged` is off, the whole list, MACHINE/SESSION or MACHINE/*, which starts the tasks held from them; `decline_tasks_from`: reject the tasks held from one (ADR-070). `accept_files_from`: who the session takes files from, the whole list; `ignore_file_request`: a refused sender's request set aside (docs/agents-files.md). `fresh_by_agents`: other agents may start it fresh (ADR-072). Every change but a star and a set-aside request is recorded as a `setting` event |
 | `POST /v1/sessions/{name}/rename` | `{name}` | 200, Info; 409 if the name is taken or not valid, 404 if there is no such session. The event log moves with it; files sent to it stay where they were kept, since its messages name them by path; its process goes on undisturbed. Recorded as a `renamed` event, on which every app following it moves what it keeps under the name (the copy, unread, auto-play, the outbox) |
 | `POST /v1/sessions/{name}/restart` | | 204: end the session's process at once — killed, since a request hanging on a dropped connection (`API Error: Connection dropped (ECONNRESET)`) answers neither an interrupt nor the end of its input — and start it again on the same conversation. The turn in progress is lost; turns queued behind it go on. Only this session's process: the others on the machine, which a restart of shrooms-agent would end too, are untouched. A `restarted` event |
 | `POST /v1/sessions/{name}/new` | | 200 `{session, archived}`: start it on a fresh conversation (ADR-072): its name, cage, model, settings and role stay; the next message begins a new conversation, the old one stays in its history (a `new_conversation` event). A caged session's working directory is cleared into `archive/<session>/<time>/` beside the agent's state, kept 30 days, but for dot-entries, `AGENTS.md`, `CLAUDE.md` and what `.keep` lists; its cage, with what is installed, is not touched. An uncaged one's directory is not touched. 409 while it works, has messages waiting or has a task open; 403 from a cage. Another agent asks with a task instead (`shrooms/fresh`, docs/agents/together.md) |
-| `POST /v1/sessions/{name}/cage` | `{"cage": {image?, nix?, github?}}` or `{"cage": null}` | 200, Info; 409 unless the session is idle with no prompt waiting, or when the machine has no podman. Moves a session into a cage, changes its cage, or takes it out. Its process is stopped and the conversation resumes where it now runs with the next message; a cage changed or left is deleted, with what was installed in it. A `caged` event |
-| `GET /v1/harnesses` | | `{harnesses: [{name, title, caps: {approve, takeover}}], cage: {available, image, images, nix, ready, building, error}}`. The coding agents this machine runs sessions of, Claude Code first. `approve`: it asks before using tools, so auto-approve means something; `takeover`: its conversations from elsewhere can be listed and continued. `cage`: `available` where the agent found podman (absent fields when it did not), `image` the machine's, `images` those offered (the machine's first, then the workbench and the desktop), `nix` when the machine has nix to give, `ready` once the image is there, `building` while it is built, `error` why the last build failed |
+| `POST /v1/sessions/{name}/cage` | `{"cage": {image?, nix?, github?, shared?, sealed?}}` or `{"cage": null}` | 200, Info; 409 unless the session is idle with no prompt waiting, or when the machine has no podman. Moves a session into a cage, changes its cage, or takes it out. Its process is stopped and the conversation resumes where it now runs with the next message; a cage changed or left is deleted, with what was installed in it. A `caged` event |
+| `POST /v1/sessions/{name}/cage/limits` | `{memory, cpus}` | 200, Info: a caged session's own memory (`16g`, `512m`) and CPUs (`8`, at most the machine's cores), `""` for the machine's (4g and 2). Applied to its cage as it is (`podman update`), so what was installed stays. 409 for a session not caged or a limit not valid; 403 from a cage. A `setting` event |
+| `GET /v1/sessions/{name}/schedule` | | `{routines: [CalEvent], paused}`: the routines in the session's own Scala calendar (ADR-064), each `{id, title, author, start, recur?, fields}`; `paused` says why none runs, or is empty. 409 when the machine runs no schedules or the session has no calendar |
+| `POST /v1/sessions/{name}/schedule` | `{id?, title, start, freq?, interval?, prompt?, checks?, enabled?, maxCost?, timeoutMin?}` | 200 `{id}`: adds a routine, or changes the one `id` names. `start` RFC 3339; `freq` `daily`, `weekly`, `monthly` or `yearly`, empty for once; a prompt, checks (shell lines run first, the model woken only when their output changed), or both. What the `schedule` tool calls |
+| `DELETE /v1/sessions/{name}/schedule/{id}` | | 204: removes a routine |
+| `GET /v1/harnesses` | | `{harnesses: [{name, title, caps: {approve, takeover}}], cage: {available, image, images, nix, sealed, shared, shared_in, shared_root, ready, building, error}}`. The coding agents this machine runs sessions of, Claude Code first, then those found (`pi`, `opencode`). `approve`: it asks before using tools, so auto-approve means something (Claude Code only); `takeover`: its conversations from elsewhere can be listed and continued. `cage`: `available` where the agent found podman (absent fields when it did not), `image` the machine's, `images` those offered (the machine's first, then the workbench and the desktop), `nix` when the machine has nix to give, `sealed` when it has a token for sealed cages, `shared` and `shared_in` (`/shared`) for the shared folder and `shared_root` podman's volume directory where it is on the machine (ADR-057), `ready` once the image is there, `building` while it is built, `error` why the last build failed |
 
 ### A session's conversation
 
@@ -186,6 +211,8 @@ On each machine's overlay addresses, port 7387. Bodies are JSON; an error is
 | `POST /v1/sessions/{name}/files` | `?name=FILE`, the bytes as the body | 201 `{path}`: kept under the agent's state directory (50 MB at most), for the next message to name. The name is reduced to safe characters and prefixed with the time, so it cannot decide where the file lands |
 | `POST /v1/sessions/{name}/voice` | `?name=FILE&id=ID`, the audio as the body | 202 `{path}`: a voice note as a turn. Kept like a file and answered at once; transcribed here in the background and sent as the device's message (a `message` event with `voice`, the recording's path). Its progress is a `voice` event. The same `id` again answers 200 `{"duplicate":true}`. 501 when this machine has no speech-to-text |
 | `POST /v1/sessions/{name}/voice/{id}/retry` | | 202: transcribe a failed voice note again, from its kept recording; 409 if there is no such note, it did not fail, or the recording is gone |
+| `POST /v1/sessions/{name}/publish` | `?area=&folder=&name=`, the file as the body | 200 `{url, urls, size}`: a file a session publishes for people and other agents to open (ADR-079), what `publish_file` calls. `area` is one of `projects`, `reviews`, `releases`, `notes`, `tmp`; `folder` what it belongs to (the session's name by default, at most four deep); at most 100 MB. Put on the mesh's file server (`--files-url`, any server that takes a PUT, checked after) or, without one, kept in `published/` and served at `/files/` on this agent's mesh addresses, `urls` one per mesh by `MACHINE.MESH.mesh`, the session's own meshes first. Only this machine's sessions, over the socket or their cage's proxy, a cage only as its own session (403 otherwise); never a sealed one (403). A `file` event `{published, name, size}`. 400 for an area or name not allowed, 502 when it could not be stored |
+| `GET /files/{path...}` | | What this agent keeps in `published/`, to anyone who passes the gate (mesh members, and this machine's user). Nothing under a dot-name |
 | `POST /v1/sessions/{name}/transcribe` | `?name=FILE&lang=CODE`, the audio as the body | 200 `{path, text}`: a voice note kept like a file and transcribed on this machine, not sent. Parakeet v3 (the default) detects the language and ignores `lang`; with a Whisper model (`--stt-model`), naming it halves the time. 501 without speech-to-text |
 
 Voice notes are on when the agent finds its model (by default
@@ -201,7 +228,8 @@ reaches a speech service.
 | `GET /v1/usage` | `?since=2006-01-02` | `{machine, rows, limits, credits}`: usage, plan limits and credits (below). `machine` is the hostname |
 | `GET /v1/conversations` | `?limit=N` | `{conversations: [{id, dir, modified, size, last_user, last_assistant, adopted_by, terminals: [{pid, dir, tmux, args}]}]}`, newest first (30 by default, at most 200): this machine's Claude Code conversations — where each ran, its last exchange, the session continuing it, and any terminal `claude` open in the same directory (with its tmux session). Only those whose directory is on this machine |
 | `POST /v1/terminals/{pid}/stop` | | 204: end a terminal's `claude` so its conversation can be continued here; only Claude Code run by this user by hand (404 otherwise) |
-| `GET /v1/peers` | | `{peers: [{name, mesh, overlay}]}`: the mesh as this machine sees it, so a client that knows one agent finds the rest. Names and mesh addresses only: what any member already sees |
+| `GET /v1/peers` | | `{peers: [{name, mesh, overlay}], self: [{name, mesh, overlay}]}`: the mesh as this machine sees it, so a client that knows one agent finds the rest, and this machine on each of its meshes, so one found on one mesh is found on the others. Names and mesh addresses only: what any member already sees |
+| `GET /metrics` | | Prometheus' text format, beside the daemon's (docs/metrics.md): from the usage the event logs hold, `shrooms_agent_tokens_total` (by `kind`), `shrooms_agent_turns_total`, `shrooms_agent_cost_usd_total` and `shrooms_agent_busy_seconds_total`, labelled by machine, session, harness, model and provider; `shrooms_agent_tokens_per_second` and `shrooms_agent_sessions` (by state) as they are now; and the machine's load. A session kept to some meshes is counted only for a scraper on one of them |
 
 ### Tasks and A2A
 
@@ -216,7 +244,7 @@ and docs/agents-together.md ("On the wire: A2A").
 | `GET /a2a/{name}/.well-known/agent-card.json` | | A session's Agent Card: `name` `HOSTNAME/SESSION`, a description with its harness and directory, one JSON-RPC interface at `/a2a/{name}`, `streaming` on, push notifications off, the shrooms task extension (docs/a2a-tasks.md, not required), text in and out |
 | `POST /a2a/{name}` | JSON-RPC 2.0 (below) | The session's A2A endpoint. Always HTTP 200; failures are JSON-RPC errors |
 | `POST /a2a` | JSON-RPC 2.0 | The same, the session found from the message's `metadata["shrooms/session"]`, its `taskId`, or the `id` param (`SESSION:MESSAGE-ID`) |
-| `GET /v1/tasks` | `?session=NAME` | `{tasks: [Task]}`: the tasks on this machine as A2A shows them (below), for the apps — Basecamp's board draws a line from asker to worker from it |
+| `GET /v1/tasks` | `?session=NAME&history=0&since=T&limit=N` | `{tasks: [Task]}`: the tasks on this machine as A2A shows them (below), for the apps — Basecamp's board draws a line from asker to worker from it. For pollers (ADR-069): `history=0` leaves out each task's `history` and `artifacts`; `since` (RFC 3339; 400 if not) only tasks changed after it; `limit` the newest N of those the caller may see. With `since` or `limit` the list is newest first. A task deleted since does not appear in a `since` list, so a poller still asks for the whole list now and then |
 | `POST /v1/tasks/{id}` | `{state, summary, session?}` | 200, the Task: the worker's word on a task given to its session — `state` `done`, `blocked` or `failed` (also `completed`, `input-required`). Only from this machine (403 for a caller the mesh names, or when `session` is not the task's); 404 for no such task; 409 for one already closed or another state. A `task` event. What `task_update` and `shrooms-agent a2a update` call |
 | `POST /v1/sessions/{name}/drop` | `?name=&note=&tell=0`, the file as the body, `X-Shrooms-From-Session` | 201, `{path, size}`: a file from another agent's session, kept in its own folder (docs/agents-files.md). 403 when the session does not take files from that sender (the request is kept for the apps), 400 over the limits |
 | `GET /v1/meshes` | | `{meshes: [label]}`: this machine's meshes, by its labels, which a session may be limited to |
@@ -232,7 +260,7 @@ The JSON-RPC methods:
 
 | Method | Params | Result and notes |
 |---|---|---|
-| `SendMessage` | `{message: {messageId, role, parts, metadata?, taskId?}, configuration?: {blocking}, referenceTaskIds?}` | `{task}`. Text parts only. The task id is `SESSION:MESSAGE-ID`; the same messageId again is the same task. A busy session queues it. `blocking` waits up to 10 minutes, until the task is finished or needs input. A message with `taskId` adds to an open task — the answer to "blocked". The message reaches the session as from the device the mesh names, with the sender's claim from `metadata["shrooms/from"]` after it ("pi5.default (pi5/jimmy)"). More than 30 new tasks to one session from one device in an hour are refused (-32050). From a cage (the `X-Shrooms-Caged` header, which only a cage's own agent sets — ADR-044) the claim is its agent's ("laptop (laptop/review, in a cage)"), and a session that takes no tasks from caged agents refuses it (-32051) |
+| `SendMessage` | `{message: {messageId, role, parts, metadata?, taskId?}, configuration?: {blocking}, referenceTaskIds?}` | `{task}`. Text parts only. The task id is `SESSION:MESSAGE-ID`; the same messageId again is the same task. A busy session queues it. `blocking` waits up to 10 minutes, until the task is finished, needs input or is held for the owner. A message with `taskId` adds to an open task — the answer to "blocked". The message reaches the session as from the device the mesh names, with the sender's claim from `metadata["shrooms/from"]` after it ("pi5.default (pi5/jimmy)"). `metadata["shrooms/title"]` names the task in lists; `metadata["shrooms/fresh"]: true` starts the session on a fresh conversation first, where its owner allows that (`fresh_by_agents`) and nothing else is open there, or refuses the task (-32052, with why; ADR-072). More than 30 new tasks to one session from one device in an hour are refused (-32050). From a cage (the `X-Shrooms-Caged` header, which only a cage's own agent sets — ADR-044) the claim is its agent's ("laptop (laptop/review, in a cage)"). A session that does not take tasks from that caged agent (`accept_caged` off, the sender not in `accept_caged_from`) holds the task for its owner in `TASK_STATE_AUTH_REQUIRED` (ADR-070), a `task-request` event, until the owner allows the sender (the held tasks start) or declines it (they are rejected); a caged sender its agent cannot name is refused (-32051) |
 | `SendStreamingMessage` | as SendMessage | Server-sent events of JSON-RPC responses: `{task}` first, then `{statusUpdate: {taskId, contextId, status, final}}` on each change, ending with the final one |
 | `GetTask` | `{id}` | `{task}` |
 | `SubscribeToTask` | `{id}` | as SendStreamingMessage |
@@ -244,18 +272,20 @@ The JSON-RPC methods:
 Errors: -32700 not JSON, -32600 not JSON-RPC 2.0, -32601 no such method,
 -32602 bad params or no such session, -32001 no such task, -32002 not
 cancelable, -32004 streaming unsupported, -32050 over the rate, -32051 refused
-from a cage.
+from a cage whose sender could not be named, -32052 a fresh start refused.
 
 A Task is `{id, contextId, status: {state, message?, timestamp}, artifacts?,
-metadata}`. `state` is A2A's (`TASK_STATE_SUBMITTED` while queued, `WORKING`,
-`INPUT_REQUIRED` — also while a permission prompt waits on the worker —,
-`COMPLETED`, `FAILED`, `CANCELED`). The status message is the worker's
-summary or, while it works, the last thing it said; a completed task also has
-it as the `result` artifact. `contextId` is the session's conversation id.
-`metadata` carries the extension's fields: `shrooms/session`, `shrooms/from`,
-`shrooms/acknowledged`, `shrooms/nudges`, `shrooms/last_nudge`,
-`shrooms/stalled`, `shrooms/queued`, `shrooms/expired`,
-`shrooms/last_worker_line`.
+history?, metadata}`. `state` is A2A's (`TASK_STATE_SUBMITTED` while queued,
+`WORKING`, `INPUT_REQUIRED` — also while a permission prompt waits on the
+worker —, `AUTH_REQUIRED` while held for the owner, `COMPLETED`, `FAILED`,
+`CANCELED`, `REJECTED`). The status message is the worker's summary or, while
+it works, the last thing it said; a completed task also has it as the
+`result` artifact. `history` holds the request, so a list can say what was
+asked. `contextId` is the session's conversation id. `metadata` carries the
+extension's fields: `shrooms/session`, `shrooms/from`, `shrooms/title`,
+`shrooms/caged` (asked from a cage), `shrooms/acknowledged`,
+`shrooms/nudges`, `shrooms/last_nudge`, `shrooms/stalled`, `shrooms/queued`,
+`shrooms/expired`, `shrooms/last_worker_line`.
 
 The watchdog (`supervise.go`, every 30 s): a session idle with a task it has
 started is reminded after 5 minutes quiet (Claude Code, and not while its
@@ -290,13 +320,20 @@ cage):
 | `context_used`, `context_window` | how much of the model's context the conversation fills, as of the last reply |
 | `preview` | the start of the last thing the model said |
 | `model` | the model, as its harness names it (pi: `provider/model`) |
-| `harness`, `caps` | `claude` or `pi`, and `{approve, takeover}` as in `GET /v1/harnesses` |
+| `model_setting` | the model chosen for it (settings' `model`); absent for its harness's default on this machine |
+| `tokens_per_second` | how fast its model wrote in its last turn: output tokens over the time spent generating; absent when not known |
+| `harness`, `caps` | `claude`, `pi` or `opencode`, and `{approve, takeover}` as in `GET /v1/harnesses` |
+| `skills`, `responsibilities` | what it is good at (`[{name, description?, tags?}]`) and what it may do without asking, as its owner set them (ADR-063) |
 | `starred` | listed first, on every device |
 | `keep_running` | never stopped as idle, started again when it ends |
 | `fresh_by_agents` | other agents may start it on a fresh conversation with a task marked `shrooms/fresh` (ADR-072); off by default, set only by its owner |
+| `meshes` | the meshes it is there for; absent for all of them (Sessions per mesh) |
+| `accept_caged`, `accept_caged_from` | whether it takes tasks from every caged agent, and the caged agents it takes them from by name (MACHINE/SESSION or MACHINE/*) |
+| `task_requests` | `[{task, from, title?, at}]`: tasks held from caged agents it does not take tasks from, until the owner allows or declines them (ADR-070) |
+| `accept_files_from`, `file_requests` | who it takes files from, and `[{from, name, size?, at}]`, senders refused lately, for the apps to offer (docs/agents-files.md) |
 | `tasks_open`, `tasks_stalled` | its A2A tasks, and of them those it stopped making progress on |
 | `limited` | `{reason, until?}` while the session cannot work for want of quota (`limited.go`): a Claude Code session when the subscription refused a request and that window has not reset ("limit reached (5 hours)"), a pi session when the Venice key its provider uses has no DIEM and no USD left ("no DIEM left today (venice)"). `until` is when it comes back, if known. So the apps can set it apart instead of the owner finding out by sending a message |
-| `cage` | `{image, nix?, github?}` for a session that runs in a container of its own |
+| `cage` | for a session that runs in a container of its own: `{image, nix?, github?, shared?, memory?, cpus?, machine_memory?, machine_cpus?, sealed?, outbox?}`. `shared` is the volume of the folder it shares (ADR-057); `memory` and `cpus` its own limits, the `machine_` ones what it gets without them; `outbox` a sealed cage's, on the machine |
 | `tail` | with `?tail=N` only: its last lines |
 
 ## Events
@@ -312,8 +349,8 @@ data?}`; `by` is the device that caused it, as the mesh names it.
 | `answer` | `{prompt, allow, message, answers?}` | a permission prompt or question answered |
 | `stopped` | `{reason}` | the process ended (`finished`, or why); its waiting prompts are dropped |
 | `partial` | `{text}` | reply text as it is written. Live only — never kept or numbered (its `seq` is the last real event's) — since the whole message follows as a `claude` event |
-| `setting` | `{auto_approve}`, `{keep_running}`, `{accept_caged}`, `{accept_files_from}`, `{meshes}` or `{fresh_by_agents}` | a setting changed |
-| `file` | `{from, name, path, size}` | a file from another agent's session was kept (docs/agents-files.md) |
+| `setting` | `{auto_approve}`, `{keep_running}`, `{model}`, `{skills, responsibilities}`, `{meshes}`, `{accept_caged}`, `{accept_caged_from}`, `{accept_files_from}`, `{fresh_by_agents}` or `{cage_memory, cage_cpus}` | a setting changed |
+| `file` | `{from, name, path, size}`, or `{published, name, size}` | a file from another agent's session was kept (docs/agents-files.md), or the session published one, at the URL `published` (ADR-079) |
 | `file-request` | `{from, name, size, at}` | a sender the session does not take files from tried; the apps offer to allow it |
 | `task-request` | `{task, from, title, at}` | a caged agent the session does not take tasks from asked; its task is held (`task_requests` in the session's info) until the owner allows or declines it (ADR-070) |
 | `restarted` | `{}` | the process was restarted on request |
@@ -322,6 +359,7 @@ data?}`; `by` is the device that caused it, as the mesh names it.
 | `caged` | `{caged, image?, nix?, github?}` | moved into a cage, its cage changed, or taken out |
 | `voice` | `{id, path, status, error?}` | a voice note: `transcribing`, or `failed` with why; once transcribed it becomes a `message` |
 | `task` | `{id, state, summary}` | a task finished by its worker (`completed`, `input-required`, `failed`), marked `stalled` by the watchdog, or `expired` |
+| `schedule` | `{changed}`, `{paused}`, `{resumed}` or `{routine, note}` | its schedule (ADR-064): changes to its calendar that its owner did not make, in words; why nothing in it runs, and when it runs again; a routine whose checks do not run. `by` is `schedule` |
 
 ## Usage
 
@@ -429,19 +467,27 @@ guide):
 - **Tools.** shrooms-agent gives each session its own binary as an MCP server,
   `shrooms-agent mcp`, named `shrooms`: `list_agents` (every session on the
   mesh, as `MACHINE/SESSION`, harness, state, directory — machines by their
-  mesh names, each once), `ask_agent` (`to`, `text`, `title` naming a new
-  task in lists, `wait` default true, `task` to answer one that needs input:
-  the reply, or the task to follow), `task_status`, `task_ack` (the asker
-  closes a task it has the result of), `task_update` (the worker finishes
-  one: done, blocked or failed, with a summary) and `send_file` (`to`,
-  `path`, `note`: a file of at most 100 MB (`MaxDrop`) to a session that
-  takes files from this one; [Files between agents](agents-files.md)). Claude Code gets it by `--mcp-config`, with `list_agents` and
-  `task_status` allowed and `ask_agent` asking first like any tool; pi reads
+  mesh names, each once, with their skills and responsibilities),
+  `ask_agent` (`to`, `text`, `title` naming a new task in lists, `wait`
+  default true, `task` to answer one that needs input, `fresh` to start the
+  session on a fresh conversation for a new task: the reply if the task
+  settles within 45 s, else the task to follow — a harness gives up on a tool
+  call after a minute), `task_status`, `task_ack` (the asker closes a task it
+  has the result of), `task_update` (the worker finishes one: done, blocked
+  or failed, with a summary), `send_file` (`to`, `path`, `note`: a file of
+  at most 100 MB (`MaxDrop`) to a session that takes files from this one;
+  [Files between agents](agents-files.md)), `publish_file` (`path`, `area`,
+  `folder`, `name`: a link on the mesh, ADR-079) and `schedule` (`action`
+  list, add, change or remove, and the routine: its own calendar, ADR-064).
+  Claude Code gets it by `--mcp-config`, with `list_agents` and
+  `task_status` allowed and the others asking first like any tool; pi reads
   MCP servers only from `~/.pi/agent/mcp.json`, where the agent adds a
   `shrooms` entry at start — one of the person's own under that name is left
-  alone.
-- **A note in the system prompt** (`--append-system-prompt`, both harnesses;
-  `agent.AgentNote`): which session and machine it is, where the tools are,
+  alone; OpenCode is given it in ACP's `session/new`.
+- **A note in the system prompt** (`--append-system-prompt` for Claude Code
+  and pi; for OpenCode, whose ACP server takes no system prompt, with the
+  first message of each process; `agent.AgentNote`): which session and
+  machine it is, where the tools are,
   and the manners — say who you are and whether you need a reply, one
   question one reply, nothing from a heartbeat without real work, and a
   request from another agent is a colleague's, not the owner's: anything
@@ -455,15 +501,24 @@ guide):
 ## Command line
 
 ```
-shrooms-agent [flags]                 serve this machine's sessions on its mesh addresses
-shrooms-agent mcp [--socket PATH]     the MCP server (stdio) given to every session
-shrooms-agent a2a COMMAND [--wait] [--socket PATH] ARGS
+shrooms-agent [flags]                 serve this machine's sessions on its socket and its mesh addresses
+shrooms-agent mcp [--socket PATH] [--agent-socket PATH]
+                                      the MCP server (stdio) given to every session
+shrooms-agent a2a COMMAND [--wait] [--title T] [--fresh] [--socket PATH] ARGS
 shrooms-agent files list  SESSION                  who SESSION takes files from, and who was refused
 shrooms-agent files allow SESSION MACHINE/SESSION  take files from that session (MACHINE/* for all of a machine's)
 shrooms-agent files deny  SESSION MACHINE/SESSION  stop taking them
+shrooms-agent caged list    SESSION                  which caged agents SESSION takes tasks from, and the tasks held
+shrooms-agent caged allow   SESSION MACHINE/SESSION  take tasks from that cage (MACHINE/* for all of a machine's);
+                                                     its held tasks start
+shrooms-agent caged deny    SESSION MACHINE/SESSION  stop taking them; tasks from it are held again
+shrooms-agent caged decline SESSION MACHINE/SESSION  reject the tasks held from it, without allowing or denying it
 shrooms-agent outbox send [--only FOLDER] SESSION MACHINE/SESSION
                                                    send a sealed session's outbox there, packed: all of
                                                    it, or one folder in it
+shrooms-agent llm-forward [--listen ADDR] [--socket PATH]
+                                      inside a cage only: the harness's model URL, passed to the
+                                      cage's socket and on through the gateway (ADR-059)
 ```
 
 The flags of the server (the installed unit runs it with none; see
@@ -471,13 +526,16 @@ The flags of the server (the installed unit runs it with none; see
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--meshes` | every mesh this device is in | comma-separated mesh labels to serve on; one this device is not in is an error |
+| `--meshes` | every mesh this device is in | comma-separated mesh labels to serve on; while one is a mesh this device is not in, no mesh is served (logged as `not serving on the meshes asked for`), only the socket |
 | `--port` | `7387` | the port on each mesh address; the apps and the installer's firewall rule expect 7387 |
 | `--state` | `~/.local/share/shrooms-agent` | the state directory (below) |
-| `--socket` | `/run/shrooms/shrooms.sock` | the shrooms daemon's control socket: the mesh addresses to serve on, and the peers' names. The agent waits for it, every 5 s, logging why (not there, or permission denied); the addresses are read once at start, the names every minute |
+| `--socket` | `/run/shrooms/shrooms.sock` | the shrooms daemon's control socket: the mesh addresses to serve on, and the peers' names. With no daemon, or one in no mesh, the agent serves its own socket alone and logs why (`no mesh yet: serving this machine only, on its socket`; `permission denied` is a socket this user may not read). It asks again every 30 s while it serves no mesh, every minute after, and serves each new mesh address as it appears, with the peers' names, without a restart |
+| `--agent-socket` | `$XDG_RUNTIME_DIR/shrooms-agent/agent.sock` (`~/.local/state/shrooms-agent/agent.sock` without it; `$SHROOMS_AGENT_SOCKET` wins) | this agent's own socket, for this machine's user only (ADR-056); its sessions are told it in `SHROOMS_AGENT_SOCKET` |
 | `--claude` | `claude` | the Claude Code binary |
-| `--pi` | `pi` | pi (pi.dev), offered for new sessions when found; `""` leaves it out. With pi found, credits are watched and `~/.pi/agent/mcp.json` gets its `shrooms` entry |
+| `--pi` | `pi` | pi (pi.dev), offered for new sessions when found, at start or within 30 s of being installed; `""` leaves it out. With pi found, credits are watched and `~/.pi/agent/mcp.json` gets its `shrooms` entry |
 | `--pi-args` | none | extra arguments for every pi session, e.g. `"--provider ollama --model qwen3"` |
+| `--opencode` | `opencode` | OpenCode (opencode.ai), offered for new sessions when found; `""` leaves it out |
+| `--opencode-model` | none | the model an OpenCode session uses when it names none (`opencode/…`); empty leaves OpenCode's own config to decide |
 | `--mcp` | `true` | give every session the mesh's agents as MCP tools and the note on how to use them |
 | `--cages` | `true` | offer cages when podman is here; at start, the images caged sessions use are built again if this agent's Containerfile is newer |
 | `--cage-image` | the workbench, built here when first needed | the image cages are made from |
@@ -485,19 +543,22 @@ The flags of the server (the installed unit runs it with none; see
 | `--stt-model` | `~/.local/share/whisper/ggml-parakeet-tdt-0.6b-v3-q4_k.bin` | the speech-to-text model, Parakeet or Whisper; voice notes are off when it is missing |
 | `--stt-bin` | `parakeet-cli` for a Parakeet model, else `whisper-cli` | the CLI that runs it; voice notes are off when it is not on the PATH |
 | `--stt-threads` | the machine's cores, up to 12 | threads for transcription |
+| `--uploads-keep` | `336h` (14 days) | how long files sent to sessions, by devices and by other agents, are kept; `0` keeps them for good (ADR-078) |
+| `--files-url` | `$SHROOMS_AGENT_FILES_URL` | the mesh's file server, where sessions publish files: any server that takes an HTTP PUT (`http://files.pi5.office.mesh`). Empty: the agent keeps them in `published/` and serves them at `/files/` (ADR-079) |
+| `--schedules` | `~/.config/shrooms-agent/schedules.json` | the sessions' schedules: this machine's Scala and which calendar is whose (ADR-064); none when the file is missing |
 | `--verbose` | `false` | debug logging, Claude Code's stderr included |
 
 Run as root it warns: every session could do anything on the machine.
 
 `shrooms-agent a2a`, a client for agents and people (machines found through
-the daemon's socket; MACHINE is a peer's name as `shrooms status` shows it, or
+the daemon's socket, or, with no mesh, this machine alone through the agent's; MACHINE is a peer's name as `shrooms status` shows it, or
 its overlay address; a task is `MACHINE/SESSION:MESSAGE-ID`, as `send`
 prints it — `SESSION:MESSAGE-ID` works too, the machine then found by asking):
 
 | Command | What it does |
 |---|---|
 | `a2a list` | the agents on the mesh: `MACHINE/SESSION`, harness, state, directory; machines without an agent, or away, left out |
-| `a2a send [--wait] [--title T] MACHINE/SESSION TEXT` | ask a session (`SendMessage`); `--wait` waits for the task to settle and prints the reply; `--title` names the task in lists |
+| `a2a send [--wait] [--title T] [--fresh] MACHINE/SESSION TEXT` | ask a session (`SendMessage`); `--wait` waits for the task to settle and prints the reply; `--title` names the task in lists; `--fresh` starts the session on a fresh conversation for it, where its owner allows that (ADR-072) |
 | `a2a reply [--wait] TASK TEXT` | more on a task you sent — the answer it asked for, or a correction — on the same task, not a new one (`SendMessage` with its `taskId`; what `ask_agent` with `task` does) |
 | `a2a send-file [--note N] MACHINE/SESSION FILE` | push a file to a session that takes files from this one |
 | `a2a get TASK` | where a task stands, and its reply (`GetTask`) |
@@ -507,11 +568,14 @@ prints it — `SESSION:MESSAGE-ID` works too, the machine then found by asking):
 
 A task's state, as `get` prints it: `submitted` (queued: the session is busy
 and has not read it yet), `working`, `input-required` (it asks you: answer
-with `reply`), `completed`, `failed`, `rejected` (refused, with why),
-`canceled`.
+with `reply`), `auth-required` (from a cage: held until that session's owner
+allows or declines you), `completed`, `failed`, `rejected` (refused, with
+why), `canceled`.
 
 `shrooms-agent mcp` speaks MCP over stdin and stdout, one JSON-RPC message per
-line, with the six tools above; `--socket PATH` names another daemon socket.
+line, with the eight tools above; `--socket PATH` names another daemon socket
+and `--agent-socket PATH` the agent it belongs to, both passed by the agent
+that starts the session.
 
 ## State on disk
 
@@ -520,19 +584,30 @@ Everything belongs to the agent's user. The state directory (`--state`,
 
 | Path | What it is |
 |---|---|
-| `sessions.json` | the sessions, sorted by name, each `{name, dir, harness?, claude_id?, auto_approve?, starred?, keep_running?, cage?}`. `harness` is left out for Claude Code, which every session was before there were others; `claude_id` is the harness's conversation id to resume by, named for Claude Code, the only harness when the file was first written; `cage` is `{image?, container, nix?, github?}`, `container` being podman's name for it — the session's name when it was caged and a few random letters, so a rename leaves it be and a later session of the same name gets its own. Written whole and renamed into place, 0600 |
+| `sessions.json` | the sessions, sorted by name, each `{name, dir, harness?, claude_id?, auto_approve?, starred?, keep_running?, cage?, accept_caged?, accept_files_from?, accept_caged_from?, fresh_by_agents?, meshes?, model_setting?, skills?, responsibilities?}`. `harness` is left out for Claude Code, which every session was before there were others; `claude_id` is the harness's conversation id to resume by, named for Claude Code, the only harness when the file was first written; `accept_caged` is left out while it follows the default; `cage` is `{image?, container, nix?, github?, shared?, memory?, cpus?, sealed?, outbox?}`, `container` being podman's name for it — the session's name when it was caged and a few random letters, so a rename leaves it be and a later session of the same name gets its own. Written whole and renamed into place, 0600 |
 | `events/NAME.jsonl` | each session's events, one JSON object per line, as served by `…/events`; the newest 2000 are also kept in memory (the board's `tail` reads those). Moved on rename, deleted with the session |
 | `tasks.json` | the machine's A2A tasks: `{id, session, message_id, from, request, refs?, created, started?, updated, state, summary?, follow_ups?}` and the watchdog's `acked`, `acked_at`, `nudges`, `last_nudge`, `stalled`, `paused`, `expired`. Closed tasks are dropped a week after their last change |
 | `published/` | files sessions published when the agent has no file server (`--files-url`), served at `/files/` on its mesh addresses; `tmp/` emptied after two weeks (ADR-079) |
 | `uploads/NAME/` | files and voice notes sent to a session, as `YYYYMMDD-HHMMSS-NAME` (numbered when two come in the same second); mounted read-only into cages, all of them, since a renamed session's messages name files under its old name; removed 14 days after they arrive (`--uploads-keep`, 0 keeps them; ADR-078) |
-| `cages/CONTAINER.env` | a caged session's environment: the provider keys and settings passed through to it (`ANTHROPIC_*`, `PI_*`, `OPENAI_*`, `VENICE_*`, … and `SHROOMS_AGENT_SESSION`), 0600; deleted with its cage |
+| `archive/SESSION/TIME/` | a caged session's working directory as it was cleared by a fresh start (ADR-072); removed after 30 days |
+| `schedules/SESSION.json` | the schedule runner's own record per session (ADR-064): the window it last looked at, the calendar as last compared, the runs done, the checks' last output (hashed), why it is paused, the day's wakes. The routines themselves are in the session's calendar |
+| `sealed-claude-token` | the Claude Code token sealed cages run on (`--sealed-token`), 0600 |
+| `cages/CONTAINER.env` | what a caged session's harness is started with, 0600, given to `podman exec` as a file so nothing shows in the process list: `HOME`, `PATH`, `SHROOMS_AGENT_SESSION`, the proxy's socket, the gateway's base URL and stand-in key, and of the agent's environment only the time zone, locale, proxies and the settings its harness names. No provider key or token since ADR-059; only a sealed cage the gateway cannot serve still carries its sealed token here. Deleted with its cage |
+| `cages/CONTAINER.home/HARNESS/` | the cage's private harness home: what the harness writes that is not its conversation (prompt history, caches); for OpenCode its config and its database of conversations too. Deleted with its cage |
+| `cages/CONTAINER.gw/` | the gateway's files, laid over the harness's own in the cage and written at every start (ADR-059): for Claude Code an empty credentials file over the owner's login, for pi its `models.json` with the cloud providers pointed at the gateway and a stand-in key. Deleted with its cage |
+| `cages/CONTAINER.d/` | the directory holding the cage's socket to its agent (`proxy.sock`), mounted read-only at `/run/shrooms-agent` (ADR-044) |
+| `cages/CONTAINER.claude/` | a sealed cage's own `~/.claude`: its settings, login state and transcripts |
+| `cages/sealed-seccomp.json` | podman's default seccomp profile without user namespaces, which sealed cages run with (ADR-045) |
 
 Elsewhere: Claude Code's transcripts under `~/.claude/projects/` (or
 `$CLAUDE_CONFIG_DIR`), read for history, search, conversations and usage
 limits; pi's under `~/.pi/agent/sessions/` (or `$PI_CODING_AGENT_DIR`,
 `$PI_CODING_AGENT_SESSION_DIR`); pi's `models.json` (credits) and `mcp.json`
-(the `shrooms` entry). [Setting up](agents/setup.md), "Where things
-live", lists the rest.
+(the `shrooms` entry); OpenCode's under `~/.local/share/opencode/` (a
+caged session's in its own cage); the schedules file (`--schedules`,
+`~/.config/shrooms-agent/schedules.json`); the agent's socket
+(`--agent-socket`). [Setting up](agents/setup.md), "Where things live",
+lists the rest.
 
 ## How the apps use it
 
@@ -651,7 +726,7 @@ The socket ACL needs two things to last, both learnt the hard way:
   Without the `d` line the ACL is applied at boot only to a directory that
   already exists, and it does not: jimmy-crib rebooted, the container made
   the directory without the ACL, and the agent waited for a socket it could
-  not read (2026-10-04; its log now says why it waits). `-` everywhere, so the
+  not read (2026-10-04; its log now says why it serves no mesh). `-` everywhere, so the
   line changes nothing about a directory that is there.
 - **Across restarts of shrooms**, a drop-in,
   `/etc/systemd/system/shrooms.service.d/20-agent-access.conf`:

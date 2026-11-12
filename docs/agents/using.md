@@ -33,7 +33,7 @@ Each session is a card with:
   on this device, with the app in front. Each device counts its own.
 - **A preview**: the start of its last reply, two lines.
 - **A line of facts**: when it last did something, how full its context is,
-  the harness (Claude Code or pi), the model, "auto-approve" if it never asks,
+  the harness (Claude Code, pi or OpenCode), the model, "auto-approve" if it never asks,
   and its directory.
 - **"1 task" or "n tasks"** when other agents have given it tasks that are
   still open, and **"⚠ a task stalled — no progress after the reminders"**
@@ -98,8 +98,8 @@ conversation. Esc first closes whatever is nearer: a dialog, or the search.
 Tap or click a session to open it. Its header has the name, the machine and
 mesh, harness, model and a thin bar for how full the context is. Under that,
 the session's switches and actions (each described below): auto-approve,
-auto-play, stop, search, cage, caged tasks, files, meshes, restart and
-delete.
+auto-play, stop, search, model, skills, cage, caged tasks, files, meshes,
+new conversation, restart and delete.
 
 **Replies stream** as they are written, with a cursor at the end, and
 "thinking…" or "writing…" while a turn is in progress. Replies are rendered as
@@ -131,8 +131,8 @@ is always asked, even in a session that auto-approves.
 prompts come to you; tap it and it becomes "AUTO-APPROVE": the session runs
 whatever it decides to run without asking, as `claude
 --dangerously-skip-permissions` would. Tap again to go back. The change is
-noted in the conversation. pi never asks for permission, so a pi session has
-no such switch. Auto-approve in a cage is much safer than on the machine
+noted in the conversation. pi and OpenCode never ask for permission, so their
+sessions have no such switch. Auto-approve in a cage is much safer than on the machine
 itself; see [Cages](cages.md).
 
 **Stopping a turn.** "■ stop", in the header and beside "thinking…" while it
@@ -158,13 +158,25 @@ unread count, queued messages and what it is doing go with it.
 **Model.** "model" in the header chooses the model the session runs on: type
 it, or pick one its machine's sessions already run on. For Claude Code, `haiku`,
 `sonnet`, `opus` or a full name; for pi, `provider/model`, e.g.
-`venice/claude-haiku-5-5`. The session is stopped, and your next message
+`venice/claude-haiku-5-5`; for OpenCode, its own names, such as
+`opencode/…`. The session is stopped, and your next message
 carries on in the same conversation on the new model. It stays chosen across
 restarts, and the link reads "MODEL" while it is set; "DEFAULT" goes back to
-the machine's (for pi, the agent's `--pi-args`). Over the API:
+the machine's (for pi, the agent's `--pi-args`; for OpenCode, its
+`--opencode-model` or OpenCode's own config). Over the API:
 `POST /v1/sessions/NAME/settings {"model": "…"}`, while the session is idle.
 Typing `/model` in a message works for Claude Code, not for pi, which
 receives it as text.
+
+**Skills.** "skills" in the header says what the session is for
+([ADR-063](../adr/063-what-each-agent-is-for.md)), in a dialog of two
+boxes: **GOOD AT**, a skill a line, as `name: what it means #tags`, and
+**RESPONSIBLE FOR**, what it may do without asking you, a line each. **SET**
+keeps them on the agent. Other agents read them on the session's card and in
+`list_agents`, and ask the one whose skills fit. Only you set them; a session
+cannot set its own. Once set, the link reads "SKILLS", and the change is noted
+in the conversation. Over the API: `POST /v1/sessions/NAME/settings` with
+`skills` and `responsibilities`.
 
 **Delete.** "delete" in the header, or on the phone a long press on the
 session in the list. This stops the session and removes it from the list.
@@ -198,7 +210,8 @@ this phone.
   dot, dash and underscore.
 - **directory**: where it works, on that machine. `~` is that machine's home.
   A directory that does not exist is made.
-- **the harness**, when the machine has more than one: Claude Code or pi.
+- **the harness**, when the machine has more than one: Claude Code, pi or
+  OpenCode.
 - **auto-approve**: never ask, as above. Only for a harness that asks.
 - **in a cage**, when the machine has podman: run the session in a rootless
   container of its own. Root inside, and of the machine only the project, the
@@ -394,8 +407,15 @@ panel has an **OUTBOX** field: the outbox is sent to a task's asker when the
 task ends, and from there you can send it all to another session.
 
 **Caged tasks.** "caged tasks" in a session's header says whether it takes
-tasks from agents in cages; lit, "CAGED TASKS", it does. By default caged
-sessions do and the others do not. A refused task is answered at once.
+tasks from agents in cages; lit, "CAGED TASKS", it takes them from every
+cage. By default caged sessions do and the others do not. Its dialog also
+lists the cages it takes tasks from by name (TAKES TASKS FROM, `machine/session`
+or `machine/*`, with **add** and **×**). A task from any other cage is held,
+not refused ([ADR-070](../adr/070-the-owner-allows-each-cage.md)): the link
+turns amber, "caged tasks · 1 asking", and the dialog has it under WANTS TO
+GIVE IT A TASK, with **allow**, which adds that cage and starts its held
+tasks, and **decline**, which rejects them and tells the asker. The asker
+sees the task as auth-required until then.
 
 "cage" in an open session's header moves it in or out of a cage. For a
 session on the machine, it offers the same options as a new caged session and

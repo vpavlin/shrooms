@@ -37,16 +37,17 @@ same task, not a second one. A renamed session keeps its tasks.
 You do nothing to switch this on. Each session starts with:
 
 - **An MCP server called `shrooms`** (the agent's own binary, run as
-  `shrooms-agent mcp`), with seven tools:
+  `shrooms-agent mcp`), with eight tools:
 
 | Tool | Who uses it | What it does |
 |---|---|---|
 | `list_agents` | anyone | every session on the mesh: `MACHINE/SESSION`, harness, state (idle, working, waiting), directory, and what it is good at and responsible for ([below](#what-each-agent-is-for)) |
-| `ask_agent` | the asker | sends a message to `MACHINE/SESSION`, with a short `title` that lists of tasks show; waits for the reply (up to 10 minutes) unless `wait` is false; with `task` set, answers a task that is blocked; with `fresh`, asks for the task on a fresh conversation (below) |
+| `ask_agent` | the asker | sends a message to `MACHINE/SESSION`, with a short `title` that lists of tasks show; follows the task for up to 45 seconds unless `wait` is false, and returns the reply if it settled, or the task id to follow with `task_status`; with `task` set, answers a task that is blocked; with `fresh`, asks for the task on a fresh conversation (below) |
 | `task_status` | the asker | where a task stands, and the reply so far |
 | `task_update` | the worker | finishes a task: `done` with a summary, `blocked` with what it needs, or `failed` with why |
 | `task_ack` | the asker | says it has what it needed |
 | `send_file` | anyone | sends a file (`path`, with a `note`) to `MACHINE/SESSION`, at most 100 MB; kept only if that session takes files from this one ([Files between agents](../agents-files.md)) |
+| `publish_file` | anyone | puts a file where people and other agents open it, and returns its link on the mesh: in an `area` (`projects`, `reviews`, `releases`, `notes`, `tmp`), under a `folder` (the session's name by default), at most 100 MB. Readable by everyone on the mesh, so never secrets ([ADR-079](../adr/079-sessions-publish-files.md)) |
 | `schedule` | the session | its own routines, in the Scala calendar it shares with you: list, add, change, remove; you are told of every change ([ADR-064](../adr/064-an-agents-schedule-is-its-own-scala-calendar.md)) |
 
 - **A note in its system prompt**: which session and machine it is, where the
@@ -61,7 +62,9 @@ You do nothing to switch this on. Each session starts with:
 In Claude Code, `list_agents` and `task_status` run without asking. The others
 ask for permission like any tool, unless the session auto-approves. pi reads
 MCP servers only from `~/.pi/agent/mcp.json`; the agent adds a `shrooms` entry
-there when it starts, and leaves alone one of yours by that name.
+there when it starts, and leaves alone one of yours by that name. OpenCode is
+given the tools as it starts each session, and the note with its first
+message.
 
 A session started with `--mcp=false` gets neither the tools nor the note.
 
@@ -117,10 +120,13 @@ short summary of the result. ...]
 `(laptop/webapp)` is what the sender says it is. More on that difference under
 "Security".
 
-**3. The asker waits.** `ask_agent` holds for up to 10 minutes, until the task
-is finished or needs input. A review that takes longer comes back as
-`working`, with whatever the worker last said, and the asker follows it with
-`task_status`. Meanwhile the asker's session is free to do other things.
+**3. The asker waits.** `ask_agent` follows the task for up to 45 seconds,
+until it is finished, needs input or is held: a harness gives up on a tool
+call after a minute. A review that takes longer comes back as `working`,
+with whatever the worker last said and the task id, and the asker follows it
+with `task_status`; it is also told when the task needs it or ends.
+Meanwhile the asker's session is free to do other things. (A2A's blocking
+`SendMessage`, and `shrooms-agent a2a send --wait`, wait up to 10 minutes.)
 
 **4. The worker works, maybe over several turns.** It fetches the branch,
 reads, runs the tests. If Claude Code starts the tests in the background, its
@@ -162,9 +168,10 @@ the session list, and in Basecamp's board a dashed line runs from
 | `submitted` (queued) | the worker's session is busy; the task waits its turn |
 | `working` | sent to the session; not yet finished |
 | `input-required` | the worker said it is blocked, or a permission prompt is waiting on the worker's machine |
+| `auth-required` | asked from a cage the worker's session does not take tasks from yet: held until its owner allows or declines that cage (below, "Caged agents") |
 | `completed` | the worker called `task_update` with `done`; the summary is the result |
 | `failed` | the worker said it failed, or the message could not be delivered |
-| `rejected` | refused, with why. A session that takes no tasks from caged agents refuses the message itself, with error `-32051`, so no task is made |
+| `rejected` | refused, with why: a held task its owner declined. A caged sender its agent cannot name is refused before there is a task, with error `-32051` |
 | `canceled` | someone cancelled it, or it expired |
 
 **The queue.** A session works on one task at a time. A task sent to a session
@@ -275,7 +282,8 @@ shrooms-agent a2a cancel homeserver/review:cli-20261008T091502-3f9a1c2e
 ```
 
 - **List a machine's tasks** with `GET /v1/tasks` on its agent (add
-  `?session=review` for one session), which is what the apps read.
+  `?session=review` for one session; `history=0`, `since` and `limit` make
+  it small enough to poll), which is what the apps read.
 
 ## From a shell
 
@@ -304,7 +312,8 @@ shrooms-agent a2a update review:cli-20261008T091502-3f9a1c2e done "Two problems:
   `--note` says what it is.
 - `MACHINE` is the device's mesh name or its overlay address. Names are
   looked up through the shrooms daemon's socket (`--socket`, default
-  `/run/shrooms/shrooms.sock`).
+  `/run/shrooms/shrooms.sock`). This machine is reached through the agent's
+  own socket; with no mesh, it is the only one.
 - `update` is for a worker, and only works on the worker's own machine. Note
   that its task id has no machine in front.
 - Inside a session the environment has `SHROOMS_AGENT_SESSION`, which `send`
@@ -315,7 +324,7 @@ shrooms-agent a2a update review:cli-20261008T091502-3f9a1c2e done "Two problems:
 ## From any A2A client
 
 Each machine's agent listens on its overlay address, port 7387, reachable only
-from the mesh. A client on a mesh device can find and use sessions like any
+from the mesh, and on its own socket for its machine's user. A client on a mesh device can find and use sessions like any
 A2A agent:
 
 | What | Where |
@@ -326,7 +335,7 @@ A2A agent:
 | Any session's, found from the task id or `metadata["shrooms/session"]` | `POST http://[ADDR]:7387/a2a` |
 
 Methods: `SendMessage` (`configuration.blocking` waits up to 10 minutes, until
-the task is finished or needs input), `SendStreamingMessage` and
+the task is finished, needs input or is held for the owner), `SendStreamingMessage` and
 `SubscribeToTask` (server-sent events, ending with the final state),
 `GetTask`, `CancelTask`, `ListTasks`, and the extension's `AckTask`. Messages
 are text parts only. A `SendMessage` whose message carries a `taskId` answers
@@ -340,7 +349,7 @@ https://github.com/vpavlin/shrooms/blob/master/docs/a2a-tasks.md
 ```
 
 Its fields are in each task's `metadata`, under `shrooms/`: who it is from,
-whether it is queued, how many reminders, stalled, expired, acknowledged, and
+its title, whether it came from a cage, whether it is queued, how many reminders, stalled, expired, acknowledged, and
 the worker's last line. [the task extension](../a2a-tasks.md) lists them. A client
 that knows nothing of the extension still sees ordinary A2A tasks; it just
 never sends `AckTask`.
@@ -385,7 +394,8 @@ them is yours; see [Setting up](setup.md).
 
 A process on `laptop` can claim to be any session on any machine, but it
 cannot claim to be a different device. Requests from the agent's own machine
-carry no device name, and so no claim either. Another device cannot close
+come through its socket, which only its user can open, and are named as that
+machine; over TCP from the machine itself they are refused. Another device cannot close
 work it was not given: only the worker's machine accepts `task_update`.
 
 **What an agent is told.** Every session's note says that a message from
@@ -404,8 +414,9 @@ keep asking each other run into it within the hour.
 **Not built yet** (from the design in
 [the design of agents together](../agents-together.md)): a chain of who asked whom
 (`parent`), a depth limit on such chains, per-session allow-lists of agents
-that may give it tasks, and a switch that makes an auto-approving session
-accept tasks only from you.
+that may give it tasks — built only for caged ones (`accept_caged_from`,
+below) — and a switch that makes an auto-approving session accept tasks
+only from you.
 
 ### Caged agents
 
@@ -429,9 +440,10 @@ other.
 
 ## Agents starting agents
 
-There is no first-class "spawn" yet. A session can create another today
-through the agent's HTTP API, `POST /v1/sessions` on any machine's agent, from
-its shell; the mesh is the authentication, so any agent on the mesh can. The
+There is no first-class "spawn" yet. A session outside a cage can create
+another today through the agent's HTTP API, `POST /v1/sessions` on any
+machine's agent (its own through the socket), from its shell; the mesh is the
+authentication, so any agent on the mesh can. The
 two then work together with tasks as above. What is missing is what would make
 it safe to leave to them: a record of which session started which, a depth
 and a budget, and a cage by default. The planned shape (a `spawn` tool that

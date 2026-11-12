@@ -31,7 +31,7 @@ var mcpTools = []map[string]any{
 	{
 		"name": "ask_agent",
 		"description": "Send a message to another agent session (MACHINE/SESSION, from list_agents) and, by default, wait for its reply — " +
-			"up to 10 minutes. It becomes a task, which stays open until the other agent finishes it (done) or needs something " +
+			"up to 45 s; a task still going then is returned with its id, to follow with task_status. It becomes a task, which stays open until the other agent finishes it (done) or needs something " +
 			"(input-required: answer with ask_agent and task set); a busy session queues it. From a cage, a session whose owner has " +
 			"not allowed you holds it (auth-required) until they allow or decline you; nothing to do but wait. With wait false it returns a task id " +
 			"for task_status. When you have what you needed, close it with task_ack.",
