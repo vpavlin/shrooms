@@ -361,7 +361,7 @@ user_systemctl restart shrooms-agent
 # --- what there is ----------------------------------------------------------------
 echo "==> checking"
 # The agent's own socket, with or without a mesh; then the mesh, if any.
-ask() { as_user curl -s -m 3 --unix-socket "$AGENT_SOCK" "http://agent$1"; }
+ask() { as_user curl -s -m 10 --unix-socket "$AGENT_SOCK" "http://agent$1"; }
 ok=0
 for _ in $(seq 1 20); do
     ask /v1/harnesses >/dev/null 2>&1 && ok=1 && break

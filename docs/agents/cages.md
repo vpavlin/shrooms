@@ -88,7 +88,9 @@ A caged session **can still**:
   sessions take them from every cage and the others from none). A task from
   any other cage is held for you to allow or decline, not run
   ([ADR-070](../adr/070-the-owner-allows-each-cage.md)). Files it takes only
-  from the sessions it allows. A sealed cage gets only `task_update` (below).
+  from the sessions it allows. A sealed cage may call only `task_update`
+  (below): its other tools are still listed to it, and refused (403) when
+  called.
 - **do anything inside its project.** The project is mounted read-write. That
   includes `.git/hooks`, a `Makefile`, a `package.json` script: anything you
   later run from that directory outside the cage runs as you.
