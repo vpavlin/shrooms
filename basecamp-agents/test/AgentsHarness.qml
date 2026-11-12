@@ -330,6 +330,9 @@ Item {
         onTriggered: {
             console.error("HOSTSCROLL=" + top.hostScrollSeen + " TOP=" + top.hostScrollTop)
             // The narrowest list: "+ session" still inside it, the meshes cut short.
+            // Cut short is read as the text being truncated, not from its
+            // Layout.fillWidth: Qt 6.4 (CI's) gives no attached Layout to a
+            // reference from outside the item, and the check threw there.
             narrowTimer.lw = view.listWidth
             view.listWidth = 200
             view.forceLayout ? view.forceLayout() : null
@@ -1089,7 +1092,7 @@ Item {
             try {
                 var link = top.findByName(view, "newSessionLink"), list = top.findByName(view, "hostMeshes")
                 var right = link ? link.mapToItem(link.parent.parent, link.width, 0).x : -1
-                console.error("NARROW fits=" + (link !== null && right <= link.parent.parent.width + 0.5) + " gives=" + (list !== null && list.elide === Text.ElideRight && list.Layout.fillWidth))
+                console.error("NARROW fits=" + (link !== null && right <= link.parent.parent.width + 0.5) + " gives=" + (list !== null && list.elide === Text.ElideRight && list.truncated))
             } catch (e) {
                 console.error("NARROW failed: " + e)
             }
