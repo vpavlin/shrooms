@@ -1789,7 +1789,17 @@ func (m *Mesh) announceWith(now time.Time, fresh bool) error {
 	// changes — so say why, once per state rather than every 45 seconds.
 	if len(a.Endpoints) == 0 && wanted == 0 && !m.noEndpoints {
 		m.noEndpoints = true
-		if err := LocalAddrsProblem(); err != nil {
+		// On a phone the app reports the addresses (ProvideLocalAddrs), and
+		// the netlink error below is expected and beside the point: this
+		// warning named it on mobile data on 2026-10-31, when what had
+		// happened was that the network's addresses were none worth giving
+		// (the carrier's NAT).
+		if given, ok := providedAddrs.Load().([]netip.Addr); ok {
+			m.log.Warn("announcing no endpoints: none of the addresses this device's network has can be given",
+				"network", given,
+				"effect", "peers can see this node but cannot dial it",
+				"fix", "it needs a peer that can reach it first — a relay, or a node with a public address")
+		} else if err := LocalAddrsProblem(); err != nil {
 			m.log.Warn("announcing no endpoints: cannot list this device's own addresses",
 				"err", err,
 				"effect", "peers can see this node but cannot dial it",
@@ -2563,6 +2573,9 @@ const RoamFights = 3
 // RoamTruce is how long to leave a peer's endpoint alone after conceding.
 const RoamTruce = 2 * time.Minute
 
+// RoamTruceMax is the longest a truce grows to (see yieldRoam).
+const RoamTruceMax = 16 * time.Minute
+
 // yieldRoam decides whether to keep correcting an endpoint or accept the one
 // the device learned, and reports true when it is time to stop.
 //
@@ -2599,6 +2612,26 @@ func (m *Mesh) yieldRoam(id, name string, now time.Time) bool {
 	if now.Before(f.until) {
 		return true
 	}
+	// Drifting again as soon as a truce ends is the same fight, not a new
+	// one: concede at once, for twice as long, up to RoamTruceMax. A phone
+	// on mobile data and k11 went round the cycle every three minutes all of
+	// a morning (2026-10-31), two rewrites each time, because each truce
+	// started the count from zero. A peer that stays settled through a whole
+	// truce's length starts from the shortest one again, so a working
+	// direct path is still corrected back to within RoamTruce.
+	if !f.until.IsZero() {
+		if now.Sub(f.until) < RoamTruce/2 {
+			if f.truce < RoamTruceMax {
+				f.truce = min(max(f.truce, RoamTruce)*2, RoamTruceMax)
+			}
+			f.until, f.last = now.Add(f.truce), now
+			m.roams[id] = f
+			m.log.Info("keeping the endpoint WireGuard learned; ours kept being overwritten",
+				"peer", name, "for", f.truce)
+			return true
+		}
+		f.until, f.truce = time.Time{}, 0
+	}
 	// A peer that stopped drifting starts again from zero, so an occasional
 	// correction never accumulates into a concession.
 	if !f.last.IsZero() && now.Sub(f.last) > RoamTruce {
@@ -2611,6 +2644,7 @@ func (m *Mesh) yieldRoam(id, name string, now time.Time) bool {
 		return false
 	}
 	f.count = 0
+	f.truce = RoamTruce
 	f.until = now.Add(RoamTruce)
 	m.roams[id] = f
 	m.log.Info("keeping the endpoint WireGuard learned; ours kept being overwritten",
@@ -2644,6 +2678,7 @@ type roamFight struct {
 	count int
 	last  time.Time
 	until time.Time
+	truce time.Duration // the current truce's length; grows while the fight goes on
 }
 
 // hostEntries is what the managed /etc/hosts block should contain.

@@ -150,6 +150,24 @@ func SessionRebuilt(configDir, why string) {
 	_ = os.Remove(sessionPath(configDir))
 }
 
+// sessionRestarted records that the app is ending this process on purpose to
+// start again (NoteRestart), so the next start does not read it as a kill.
+func sessionRestarted(configDir, why string) {
+	if configDir == "" {
+		return
+	}
+	if b, err := os.ReadFile(sessionPath(configDir)); err == nil {
+		var prev sessionRecord
+		if json.Unmarshal(b, &prev) == nil && prev.Started > 0 {
+			ran := time.Since(time.Unix(prev.Started, 0)).Round(time.Second)
+			appendCapped(stopsPath(configDir),
+				fmt.Sprintf("%s  restarted on purpose after %s: %s\n", time.Now().Format("2006-01-02 15:04:05"), ran, why),
+				maxStopBytes)
+		}
+	}
+	_ = os.Remove(sessionPath(configDir))
+}
+
 // SessionStopped records that this session ended on purpose.
 //
 // Whatever calls this is saying "we meant it" — so the absence of the call is

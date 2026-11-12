@@ -1,6 +1,7 @@
 # 039. On a phone, the app tells the core what it cannot see
 
-**Status:** accepted, built 2026-10-06 — PRs #20 and #19 (strudelPi), merged
+**Status:** accepted, built 2026-10-06 — PRs #20 and #19 (strudelPi), merged.
+Amended by ADR-073: rebuilds that do not help escalate to a restart.
 
 ## Context
 
