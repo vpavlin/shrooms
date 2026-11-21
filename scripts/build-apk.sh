@@ -39,6 +39,9 @@ if [ "${AGENTS:-0}" = "1" ]; then
 elif [ "${RELEASE:-0}" = "1" ]; then
     TASK=assembleRelease
     ARGS="-PversionCode=${VERSION_CODE:-1} -PversionName=${VERSION_NAME:-0.1-prototype}"
+    # APP_ID publishes the release under another application id (a fork's own).
+    # Release only: Shrooms Agents is recognised by its package name.
+    [ -n "${APP_ID:-}" ] && ARGS="$ARGS -PapplicationId=$APP_ID"
     BUILT=android/app/build/outputs/apk/release/app-release-unsigned.apk
     OUTPUT=android/shrooms-unsigned.apk
 else
