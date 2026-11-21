@@ -73,6 +73,8 @@ unzip -l "$OUT" | grep -E '\.so|classes\.jar' | awk '{printf "    %-40s %8.1f MB
 
 # A missing dependency here is a runtime crash on a phone, a long way from here.
 for lib in libgojni.so liblogosdelivery.so librln.so libc++_shared.so; do
-    unzip -l "$OUT" | grep -q "$lib" || { echo "MISSING $lib"; exit 1; }
+    # Not grep -q: it exits at the first match, unzip dies of SIGPIPE, and
+    # pipefail reports a library that is there as missing.
+    unzip -l "$OUT" | grep "$lib" >/dev/null || { echo "MISSING $lib"; exit 1; }
 done
 echo "    all four native libraries present"
