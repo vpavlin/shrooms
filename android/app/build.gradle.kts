@@ -9,7 +9,10 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "xyz.vpavlin.shrooms"
+        // -PapplicationId: a fork published under its own id installs beside
+        // the upstream app. Android ties an app's updates to its signing key,
+        // so a build signed with another key cannot share the id.
+        applicationId = (project.findProperty("applicationId") as String?) ?: "xyz.vpavlin.shrooms"
         // The prebuilt liblogosdelivery is compiled against API 24, so nothing
         // older can load it.
         minSdk = 26
