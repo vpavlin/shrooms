@@ -3,6 +3,8 @@ package mesh
 import (
 	"sync"
 	"time"
+
+	"github.com/vpavlin/shrooms/internal/wg"
 )
 
 // RateSamples is how much recent history is kept per peer, for a sparkline.
@@ -118,14 +120,9 @@ func (r *rates) forget(id string) {
 // Rate reports throughput for a peer.
 func (m *Mesh) Rate(id string) Rate { return m.rates.rate(id) }
 
-// sampleRates reads the data plane and updates every peer's throughput.
-// Called on the probe tick, which is often enough to watch a transfer and rare
-// enough to cost nothing.
-func (m *Mesh) sampleRates(now time.Time) {
-	stats, err := m.dev.PeerStats()
-	if err != nil {
-		return
-	}
+// sampleRates updates every peer's throughput from the tick's read of the data
+// plane. Called on the probe tick, which is often enough to watch a transfer.
+func (m *Mesh) sampleRates(stats map[string]wg.PeerStat, now time.Time) {
 	for _, p := range m.roster.Peers() {
 		if st, ok := stats[p.WGPub.String()]; ok {
 			m.rates.observe(p.ID(), st.RxBytes, st.TxBytes, now)

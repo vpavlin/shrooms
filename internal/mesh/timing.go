@@ -3,6 +3,8 @@ package mesh
 import (
 	"sync"
 	"time"
+
+	"github.com/vpavlin/shrooms/internal/wg"
 )
 
 // Milestones are the stages a peer passes through from nothing to a working
@@ -116,12 +118,9 @@ func fromMemory(t Timing) bool {
 // the full breakdown once.
 //
 // Polled rather than event-driven because wireguard-go does not tell us when a
-// handshake completes; the UAPI is the only source, and it is cheap to read.
-func (m *Mesh) checkTunnels(now time.Time) {
-	stats, err := m.dev.PeerStats()
-	if err != nil {
-		return
-	}
+// handshake completes; the UAPI is the only source. stats is the tick's one
+// read of it, shared with sampleRates.
+func (m *Mesh) checkTunnels(stats map[string]wg.PeerStat) {
 	for _, p := range m.roster.Peers() {
 		st, ok := stats[p.WGPub.String()]
 		if !ok || !st.Handshaked() {

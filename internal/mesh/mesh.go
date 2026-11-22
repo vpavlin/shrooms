@@ -776,9 +776,14 @@ func (m *Mesh) Run(ctx context.Context) error {
 			m.registerWithRelay()
 			m.reportUnknown()
 			m.reportUnreachable(now)
-			m.checkTunnels(now)
+			// One read of the data plane for both: each used to make its
+			// own, and a read is a full UAPI dump and parse, so every tick
+			// did the same work twice, on a phone too.
+			if stats, err := m.dev.PeerStats(); err == nil {
+				m.checkTunnels(stats)
+				m.sampleRates(stats, now)
+			}
 			m.checkExpiries(now)
-			m.sampleRates(now)
 			m.pruneForgotten(now)
 		case now := <-ticker.C:
 			// A rendezvous node that dropped and came back has lost its
