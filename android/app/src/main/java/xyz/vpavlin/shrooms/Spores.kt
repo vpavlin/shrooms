@@ -144,11 +144,18 @@ internal fun DrawScope.drawSpores(spores: List<Spore>, t: Float, alpha: Float = 
  * A phase in [0, scale) that goes round every [periodMs], stepped every
  * [stepMs]: motion that asks for a frame a few times a second, where an
  * infinite animation asks for every one for as long as it runs.
+ *
+ * Only while the screen is on screen (screenVisible): the VPN's foreground
+ * service keeps the process alive after Home, and the mesh graph's two phases
+ * went on stepping in the pocket, about fifteen wakeups a second for a
+ * picture nobody saw. The phase is read off the clock, so it is in the right
+ * place when the screen is back.
  */
 @Composable
 internal fun steppedPhase(periodMs: Long, stepMs: Long, scale: Float = 1f): Float {
-    val v by androidx.compose.runtime.produceState(0f, periodMs, stepMs, scale) {
-        while (true) {
+    val visible = screenVisible()
+    val v by androidx.compose.runtime.produceState(0f, periodMs, stepMs, scale, visible) {
+        while (visible) {
             value = (System.currentTimeMillis() % periodMs).toFloat() / periodMs * scale
             kotlinx.coroutines.delay(stepMs)
         }
